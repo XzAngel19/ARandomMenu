@@ -1,5 +1,5 @@
 return {
-    stamp = "v146-20261028-x2duels-gun-probe",
+    stamp = "v147-20261028-x2duels-oth-raycast",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -25060,6 +25060,8 @@ local function buildX2Duels(runtime: any): ()
         silentAimFov = false,
         silentAimFovRadius = 200,
         mouseCompatibility = false,
+        silentBackend = "Oth",
+        raycastCompatibility = false,
         autoShootTeamCheck = true,
         autoShootWallCheck = true,
         autoShootRange = 1000,
@@ -26029,7 +26031,7 @@ local function buildX2Duels(runtime: any): ()
         return false, false
     end
 
-    local function redirectRay(origin: Vector3, direction: Vector3): Vector3?
+    local function redirectRay(origin: Vector3, direction: Vector3, allowUnattributed: boolean?): Vector3?
         if runtimeState.suppressRaycast or os.clock() < runtimeState.nativeAimUntil
             or not settings.silentAim then
             return nil
@@ -26037,8 +26039,19 @@ local function buildX2Duels(runtime: any): ()
         local equipped: Tool? = equippedTool()
         -- MouseCast is also used for pings. A weapon being equipped and a ray
         -- near the camera do not prove that the ray belongs to a weapon.
-        if not equipped or toolKind(equipped) == nil or not isWeaponCaller(equipped) then
-            return nil
+        if not equipped or toolKind(equipped) == nil then return nil end
+        local identified: boolean, foreign: boolean = isWeaponCaller(equipped)
+        if not identified then
+            if not allowUnattributed or not settings.raycastCompatibility then return nil end
+            -- Even in compatibility mode, known camera and ping callers are
+            -- unrelated to a weapon and must remain untouched.
+            if foreign and type(host.getcallingscript) == "function" then
+                local ok: boolean, caller: any = pcall(host.getcallingscript)
+                if ok and typeof(caller) == "Instance" then
+                    local lower: string = string.lower(caller.Name)
+                    if string.find(lower, "camera", 1, true) or string.find(lower, "ping", 1, true) then return nil end
+                end
+            end
         end
         local target: {[string]: any}? = selectedTarget()
         if not target or direction.Magnitude < 0.05 then
@@ -26058,7 +26071,7 @@ local function buildX2Duels(runtime: any): ()
         if offset.Magnitude < 0.05 or offset.Magnitude > direction.Magnitude then
             return nil -- preserve the native ray's range, never extend it
         end
-        if toolKind(equipped) == "Gun" then runtimeState.redirectCount += 1 end
+        runtimeState.redirectCount += 1
         return offset.Unit * direction.Magnitude
     end
 
@@ -26141,7 +26154,7 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.mouseCastModule = candidate
             runtimeState.mouseCastLoading = false
         end
-        if not settings.silentAim or not candidate or runtimeState.mouseCastApi
+        if not settings.silentAim or settings.silentBackend == "Oth" or not candidate or runtimeState.mouseCastApi
             or runtimeState.mouseCastLoading then return end
         runtimeState.mouseCastLoading = true
         local generation: number = runtimeState.mouseCastGeneration
@@ -26356,7 +26369,47 @@ local function buildX2Duels(runtime: any): ()
         lease.active = false
     end
 
+    -- OTH backend is strictly opt-in through the Silent master. It hooks only
+    -- the namecall Raycast path, matching the user's working Vape method. No
+    -- fallback to hookmetamethod/hookfunction/raw writes if OTH is absent.
+    local function installOthRaycast(): boolean
+        local record: any = runtimeState.othRaycast
+        if record then record.active = true; return true end
+        local othApi: any = host.oth
+        if type(othApi) ~= "table" or type(othApi.hook) ~= "function"
+            or type(host.getrawmetatable) ~= "function" or type(host.getnamecallmethod) ~= "function"
+            or type(host.checkcaller) ~= "function" then return false end
+        local got: boolean, meta: any = pcall(host.getrawmetatable, game)
+        if not got or type(meta) ~= "table" or type(meta.__namecall) ~= "function" then return false end
+        local predecessor: any = nil
+        record = {active = true, target = meta.__namecall}
+        local callback: any = function(object: any, ...: any): any
+            if not predecessor then return nil end
+            if not record.active or runtimeState.closed or not settings.silentAim then return predecessor(object, ...) end
+            local args: any = table.pack(...)
+            local methodOk: boolean, method: any = pcall(host.getnamecallmethod)
+            if object ~= currentWorkspace or not methodOk or method ~= "Raycast"
+                or typeof(args[1]) ~= "Vector3" or typeof(args[2]) ~= "Vector3" then
+                return predecessor(object, unpack(args, 1, args.n))
+            end
+            local callerOk: boolean, executorCaller: any = pcall(host.checkcaller)
+            if not callerOk or executorCaller ~= false then return predecessor(object, unpack(args, 1, args.n)) end
+            local ok: boolean, direction: any = pcall(redirectRay, args[1], args[2], true)
+            if ok and typeof(direction) == "Vector3" then
+                args[2] = direction
+                runtimeState.othRedirectSerial = (runtimeState.othRedirectSerial or 0) + 1
+            end
+            return predecessor(object, unpack(args, 1, args.n))
+        end
+        local ok: boolean, old: any = pcall(othApi.hook, record.target, callback)
+        if not ok or type(old) ~= "function" then record.active = false; return false end
+        predecessor, record.callback, record.predecessor = old, callback, old
+        runtimeState.othRaycast = record
+        return true
+    end
+
     local function installHooks(): boolean
+        if settings.silentBackend == "Oth" then return installOthRaycast() end
         local hookFunction: any = host.hookfunction
         local debugApi: any = host.debug
         local canIdentifyCaller: boolean = type(host.getcallingscript) == "function"
@@ -26444,6 +26497,14 @@ local function buildX2Duels(runtime: any): ()
     end
 
     local function uninstallHooks(): ()
+        if settings.silentBackend == "Oth" then
+            -- OTH unhook semantics differ by executor; some remove all later
+            -- hooks even when given a callback. Keep one inert, reusable node
+            -- instead of displacing a foreign hook. Rejoin clears it.
+            local record: any = runtimeState.othRaycast
+            if record then record.active = false end
+            return
+        end
         -- Wrappers retained inside a later foreign hook must stay inert even if
         -- Silent is enabled again; never resurrect a retired chain node.
         for _, key: string in ipairs({"mouseHookLease", "knifeHookLease", "rayHookLease", "raycastHookLease"}) do
@@ -27232,6 +27293,11 @@ local function buildX2Duels(runtime: any): ()
         end
         if now >= runtimeState.nextStatsAt then
             runtimeState.nextStatsAt = now + 0.25
+            if settings.silentAim and settings.silentBackend == "Oth"
+                and (runtimeState.othRedirectSerial or 0) > (runtimeState.othReportedSerial or 0) then
+                runtimeState.othReportedSerial = runtimeState.othRedirectSerial
+                setCombatStatus(silentAimCard, "Silent AIM", "Oth Raycast redirected; hit not confirmed.")
+            end
             updateStats()
         end
     end
@@ -27397,6 +27463,8 @@ local function buildX2Duels(runtime: any): ()
     ): any
         local configuration: {[string]: any} = table.clone(parentConfiguration)
         configuration.categoryName = category
+        -- Do not silently re-arm an experimental hook from an old profile.
+        if name == "Silent AIM" then configuration.restore = false end
         return host.createUniversalFeature(name, description, order, callback, configuration)
     end
 
@@ -27500,6 +27568,9 @@ local function buildX2Duels(runtime: any): ()
     updateStats()
 
     local function silentAdapterAvailable(gun: Tool?): boolean
+        if settings.silentBackend == "Oth" then
+            return runtimeState.othRaycast ~= nil and runtimeState.othRaycast.active == true
+        end
         local debugApi: any = host.debug
         local canIdentifyCaller: boolean = type(host.getcallingscript) == "function"
             or (type(debugApi) == "table" and type(debugApi.info) == "function")
@@ -27531,8 +27602,8 @@ local function buildX2Duels(runtime: any): ()
                 installHooks()
                 discoverMouseCast()
                 setCombatStatus(silentAimCard, "Silent AIM", silentAdapterAvailable(findWeapon("Gun"))
-                    and "Adapter loaded; weapon compatibility unconfirmed."
-                    or "Waiting for a compatible silent aim adapter or gun.")
+                    and (settings.silentBackend == "Oth" and "Oth Raycast installed; weapon compatibility unconfirmed." or "Adapter loaded; weapon compatibility unconfirmed.")
+                    or (settings.silentBackend == "Oth" and "Oth Raycast unavailable: requires oth.hook, getrawmetatable, getnamecallmethod and checkcaller." or "Waiting for a compatible silent aim adapter or gun."))
             else
                 cancelGun("Silent AIM")
                 runtimeState.selected = nil
@@ -27560,10 +27631,9 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.nextSelectionAt = 0
         runtimeState.mouseShot = nil
     end, "Body prefers UpperTorso/Torso and falls back to the root if needed.")
-    host.addToggleOption(silentAimCard, "Mouse Compatibility", false, function(value: boolean): ()
-        settings.mouseCompatibility = value
-        if not value then runtimeState.mouseShot = nil end
-    end, "Allow unattributed native Mouse.Hit/Target reads while the observed Gun is equipped. Other unidentifiable game scripts could also be affected.")
+    host.addToggleOption(silentAimCard, "Raycast Compatibility", false, function(value: boolean): ()
+        settings.raycastCompatibility = value
+    end, "Allow unattributed or foreign Raycasts while a weapon is equipped, excluding identified camera/ping scripts. May affect other game controls. Oth Raycast only.")
     host.addToggleOption(silentAimCard, "Aim FOV", false, function(value: boolean): ()
         settings.silentAimFov = value
         runtimeState.selected = nil
@@ -27584,7 +27654,7 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "The action equips the gun and attempts a camera-free shot. If native firing cannot identify the weapon script, Mouse Compatibility permits extra mouse reads and may affect other unidentifiable scripts. It requires checkcaller and the observed gun signature. An adapter or redirected read does not prove a hit."
+        "Oth Raycast mode only; no legacy hook fallback. Raycast Compatibility can affect unrelated game scripts. Equipped Gun/Knife can be aimed without turning the camera. Hook installation or redirected rays do not prove a hit or prevent detection."
     )
 
     local function pressSenderButton(): ()
@@ -27887,6 +27957,10 @@ local function buildX2Duels(runtime: any): ()
                 .. " · redirects " .. tostring(probe.redirects) .. " · " .. tostring(#probe.events) .. " events")
         end
         local function start(): ()
+            if settings.silentBackend == "Oth" then
+                report("Gun Probe disabled: it uses legacy hooks. Use Oth Silent AIM instead.")
+                return
+            end
             if probe.active then return end
             probe.active, probe.guard = true, false
             probe.started, probe.expires, probe.nextTick = os.clock(), os.clock() + 60, 0
@@ -27998,9 +28072,9 @@ local function buildX2Duels(runtime: any): ()
         -- No profile restoration: a diagnostic hook must never start on injection.
         local configuration: any = table.clone(parentConfiguration)
         configuration.categoryName, configuration.restore = "Combat", false
-        calibrationCard = host.createUniversalFeature("Gun Probe", "Temporary broad Mouse test and shooting diagnostics (60 seconds)", 3,
+        calibrationCard = host.createUniversalFeature("Gun Probe", "Unavailable in Oth mode: the old probe uses legacy hooks", 3,
             function(enabled: boolean): () if enabled then start() else stop("Stopped") end end, configuration)
-        statusRow = addCombatStatusRow(calibrationCard, "Status", "Off")
+        statusRow = addCombatStatusRow(calibrationCard, "Status", "Disabled: old probe uses legacy hooks")
         host.addActionOption(calibrationCard, "Equip gun", function(): ()
             if not probe.active then report("Enable Gun Probe first"); return end
             local gun: Tool? = findWeapon("Gun")
@@ -28008,6 +28082,7 @@ local function buildX2Duels(runtime: any): ()
             else report("No gun found or equip failed") end
         end)
         host.addActionOption(calibrationCard, "Save report", function(): ()
+            if not probe.started then report("No probe session to save") return end
             report(save() and "Saved X2Duels-calibration.json" or "Save failed: writefile/JSON unavailable")
         end)
         host.addActionOption(calibrationCard, "Save gun sources", function(): ()
@@ -28041,7 +28116,7 @@ local function buildX2Duels(runtime: any): ()
                 report("Gun sources saved: " .. tostring(saved) .. "/" .. tostring(attempted) .. "; review before sharing")
             end)
         end)
-        host.addInformationOption(calibrationCard, "Temporary broad Mouse redirection can affect unrelated scripts. Fire normally while enabled. Records gun structure, input and remote method/type metadata, not argument values. Sources are separately saved on request and may contain sensitive data. Review files before sharing. OFF or 60s stops hooks. Not proof of hits.")
+        host.addInformationOption(calibrationCard, "Disabled in Oth mode because this old diagnostic installs legacy hooks. It cannot capture a new report until an Oth-based probe is implemented.")
         runtimeState.calibration = {tick = tick, stop = stop}
     end
 

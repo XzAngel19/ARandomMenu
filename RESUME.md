@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v146-20261028-x2duels-gun-probe`**.
+> **`v147-20261028-x2duels-oth-raycast`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,43 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1Q. X2 Duels: Gun Probe temporal v146
+## 1R. X2 Duels: Silent AIM Oth Raycast v147
+
+El usuario probó Vape en Delta: reporta kick con hook habitual, sin kick en esa
+prueba con Oth; solo Raycast parece funcionar y Projectile quizás reconoce el
+cuchillo. Es una observación real del usuario, no prueba de inmunidad futura,
+daño, ni velocidad/gravedad del arma. Vape universal usa `oth.hook` sobre
+`__namecall`; no se copia código ni se usa `oth` como garantía anticheat.
+
+- Reutilizar la tarjeta **Silent AIM** existente en Combat. El backend por
+  defecto es Oth Raycast (`oth.hook`, `getrawmetatable`, `getnamecallmethod`,
+  `checkcaller`): si falta/falla, muestra estado unavailable y **no** recurre a
+  `hookmetamethod`, `hookfunction`, fallback raw ni MouseCast. No se restaura el
+  master al inyectar; el usuario lo activa explícitamente. El master con Gun o
+  Knife equipados intenta redirigir solo Raycast nativo, conserva longitud,
+  argumentos y Wall/Team/partida/rango/FOV; no gira cámara ni inventa remotos.
+- `Raycast Compatibility` OFF por defecto permite aceptar rayos sin procedencia
+  fiable o ajenos con arma equipada; excluye callers Camera/Ping identificados,
+  pero puede afectar otros scripts. OFF restringe a caller atribuible al arma.
+  `Mouse Compatibility` se quitó de la UI pues el backend Oth no la usa; el código
+  legado existe únicamente para fixtures de regresión, sin selector productivo.
+- La acción táctil equipa Gun y activa la Tool nativa; el estado distingue hook
+  instalado, redirección observada y daño desconocido. También redirige rayos de
+  Knife dentro de Silent, sin subordinar la tarjeta independiente Knife Throw.
+  No se añadió Projectile: ninguna captura acredita velocidad/gravedad ni que
+  esa ruta inflija daño. Auto Shoot/Knife Throw conservan opciones independientes.
+- OFF/destrucción desactiva el callback Oth sin borrar hooks ajenos; se conserva
+  un nodo inerte reutilizable porque `oth.unhook` tiene semánticas distintas por
+  executor y puede quitar hooks posteriores. Reentrar a Roblox lo elimina;
+  reinyecciones sin reentrar pueden acumular nodos inertes. Gun Probe v146 queda
+  **bloqueado** en Oth por usar hooks anteriores; no genera captura nueva.
+- Los mocks prueban ausencia de fallback, provenance/opción amplia, camera/ping,
+  checkcaller, alcance, equipar Knife, equipo, OFF/ON sin nodo nuevo y botón
+  táctil. No prueban semántica OTH off-thread de Delta, reconocimiento de caller,
+  ni impactos/detección en Roblox. Solicitar versión Delta, modo 1v1/2v2 y Status;
+  usar cuenta de prueba, no la principal.
+
+## 1Q. X2 Duels: Gun Probe temporal v146 (histórico; bloqueado en v147)
 
 El usuario usa Delta en celular y pidió un módulo temporal para diagnosticar
 su disparo. **Gun Probe** es una tarjeta Combat separada y no se restaura al
@@ -1097,7 +1133,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v146, Gun Probe temporal para investigar
-Delta y disparo móvil; compatibilidad, captura y daño en vivo pendientes.
+*Última actualización: 2026-10-28 · v147, Oth Raycast en Silent AIM X2;
+comportamiento real en Delta, reconocimiento de arma y daño pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

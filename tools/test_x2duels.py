@@ -217,7 +217,7 @@ def run_integration_contracts() -> None:
     require(base, '"Target Part"', "independent Silent target-part selector")
     require(base, '"Aim FOV"', "optional screen-space aim filter")
     require(base, '"Aim FOV Radius"', "screen-space aim radius")
-    require(base, '"Mouse Compatibility"', "explicit continuous Mouse compatibility option")
+    require(base, '"Raycast Compatibility"', "explicit OTH broad Raycast option")
     require(base, 'offset.Magnitude > direction.Magnitude', "native ray range preservation")
     require(base, 'You can\'t shoot: a wall or another body is blocking the shot.', "visible wall reason")
     require(base, 'TextWrapped = true', "readable mobile status")
@@ -491,7 +491,7 @@ local silentFeature = featuresByName["Silent AIM"]
 assert(not ex.state.valueControls["MVSD.SilentAIM.Mode"],
     "obsolete visible camera-lock mode is still exposed")
 assert(ex.state.toggleControls["MVSD.SilentAIM.WallCheck"], "Silent Wall Check is missing")
-assert(ex.state.toggleControls["MVSD.SilentAIM.MouseCompatibility"]
+assert(ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
     and ex.state.toggleControls["MVSD.SilentAIM.AimFOV"]
     and ex.state.valueControls["MVSD.SilentAIM.AimFOVRadius"]
     and ex.state.valueControls["MVSD.SilentAIM.TargetPart"],
@@ -631,11 +631,89 @@ core.settings.teamCheck = true
 core.settings.hitboxTeamCheck = true
 
 local silentFeature = featuresByName["Silent AIM"]
+-- Older fixtures below still exercise the historical backend explicitly;
+-- production defaults to OTH and never selects Legacy from the UI.
 local autoWinFeature = featuresByName["Auto Win"]
 local autoShootFeature = featuresByName["Auto Shoot"]
 local knifeThrowFeature = featuresByName["Knife Throw"]
 local senderBinding = ex.state.shortcutBindings["MVSD.SilentAIM"]
 assert(senderBinding and senderBinding.onPress, "Silent AIM action binding missing")
+-- OTH default: no detected legacy hook fallback; broad mode is opt-in.
+do
+    assert(core.settings.silentBackend == "Oth" and not core.settings.raycastCompatibility,
+        "OTH and conservative Raycast compatibility defaults changed")
+    local oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldDebug = oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, debug
+    local installed, legacyCalls, calls, captured = nil, 0, 0, nil
+    local previousHookMeta, previousHookFunction = hookmetamethod, hookfunction
+    hookmetamethod = function() legacyCalls += 1; error("legacy hook invoked") end
+    hookfunction = function() legacyCalls += 1; error("legacy hook invoked") end
+    local predecessor = function(object, ...) calls += 1; captured = table.pack(...); return object, "ok" end
+    getrawmetatable = function() return {__namecall = predecessor} end
+    getnamecallmethod = function() return "Raycast" end
+    checkcaller = function() return false end
+    getcallingscript, debug = nil, {}
+    oth = nil
+    silentFeature.onToggle(true)
+    assert(legacyCalls == 0 and string.find(silentFeature.status, "unavailable", 1, true),
+        "absent OTH did not fail closed")
+    silentFeature.onToggle(false)
+    oth = {hook = function(target, callback) assert(target == predecessor); installed = callback; return predecessor end}
+    nativeHumanoid:EquipTool(nativeGun)
+    silentFeature.onToggle(true)
+    nativeNow += 0.2
+    coreTask.callback(0.1)
+    assert(installed and legacyCalls == 0, "OTH did not install independently")
+    local origin, direction = Vector3.new(0, 3, 0), Vector3.new(0, 0, -500)
+    local cameraBefore = workspace.CurrentCamera.CFrame
+    installed(workspace, origin, direction, nil)
+    assert(captured.n == 3 and captured[2] == direction, "unattributed Raycast changed without opt-in")
+    local compatibility = ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
+    assert(compatibility, "OTH compatibility option missing")
+    compatibility.setChecked(true)
+    installed(workspace, origin, direction, nil)
+    assert(captured.n == 3 and captured[2] ~= direction and math.abs(captured[2].Magnitude - 500) < 0.01,
+        "OTH Raycast did not redirect/preserve native range and nil arguments")
+    assert(workspace.CurrentCamera.CFrame == cameraBefore, "OTH moved camera")
+    local short = Vector3.new(0, 0, -1)
+    installed(workspace, origin, short)
+    assert(captured[2] == short, "OTH extended a native ray beyond its range")
+    nativeHumanoid:EquipTool(nativeKnife)
+    installed(workspace, origin, direction)
+    assert(captured[2] ~= direction, "OTH did not handle the equipped knife's ray")
+    nativeHumanoid:EquipTool(nativeGun)
+    checkcaller = function() return true end
+    installed(workspace, origin, direction)
+    assert(captured[2] == direction, "OTH modified executor Raycast")
+    checkcaller = function() return false end
+    local cameraScript = Instance.new("LocalScript")
+    cameraScript.Name = "CameraModule"
+    getcallingscript = function() return cameraScript end
+    installed(workspace, origin, direction)
+    assert(captured[2] == direction, "OTH compatibility changed camera Raycast")
+    getcallingscript = nil
+    HarnessMatchData[HarnessHeroGuy].team = "Red"
+    installed(workspace, origin, direction)
+    assert(captured[2] == direction, "OTH targeted a teammate")
+    HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    silentFeature.onToggle(false)
+    installed(workspace, origin, direction)
+    assert(captured[2] == direction, "OTH remained active after OFF")
+    local node = installed
+    silentFeature.onToggle(true)
+    nativeNow += 0.2
+    coreTask.callback(0.1)
+    assert(installed == node, "OTH enabled a duplicate hook")
+    installed(workspace, origin, direction)
+    assert(captured[2] ~= direction, "OTH reusable node did not resume")
+    silentFeature.onToggle(false)
+    compatibility.setChecked(false)
+    featuresByName["Gun Probe"].onToggle(true)
+    assert(string.find(featuresByName["Gun Probe"].status, "disabled", 1, true) and legacyCalls == 0,
+        "legacy Gun Probe was not blocked in OTH mode")
+    oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, debug = oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldDebug
+    hookmetamethod, hookfunction = previousHookMeta, previousHookFunction
+end
+core.settings.silentBackend = "Legacy" -- historical integration tests only
 local shotsAtStart = nativeGunShots
 senderBinding.onPress()
 assert(nativeGunShots == shotsAtStart, "Silent AIM action fired while disabled")
@@ -1328,7 +1406,7 @@ do
     assert(currentIndex(nativeMouse, "Hit") == nativeHit,
         "anonymous action lease did not expire")
 
-    local compatibility = ex.state.toggleControls["MVSD.SilentAIM.MouseCompatibility"]
+    local compatibility = {setChecked = function(value) core.settings.mouseCompatibility = value end}
     compatibility.setChecked(true)
     assert(currentIndex(nativeMouse, "Target") == nativeTarget.part,
         "explicit compatibility did not permit an anonymous native Mouse.Target")
@@ -2174,6 +2252,7 @@ for _, candidate in ipairs(ex.allFeatures) do
     if candidate.sectionName == "MVSD" and candidate.name == "Silent AIM" then feature = candidate end
 end
 assert(feature and feature.shortcutButton, "mobile Silent action slot missing")
+ex.state.x2duelsCore.settings.silentBackend = "Legacy" -- historical touch fixture
 local localPlayer = game:GetService("Players").LocalPlayer
 local backpack = localPlayer:FindFirstChildOfClass("Backpack")
 local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -2349,6 +2428,38 @@ assert(throws == 1 and sawThrowMode and throwMode.Value == false
     and not feature.enabled and not mobileCore.settings.silentAim,
     "mobile Knife Throw did not use/restore ThrowMode independently")
 knifeThrow.activate()
+
+-- The actual touch action with an OTH namecall fixture. This verifies the UI
+-- and forwarding contract, not Delta's off-thread behaviour or real hits.
+do
+    local oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldClock = oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, os.clock
+    local hook, captured = nil, nil
+    local original = function(_object, _origin, direction) captured = direction; return {Instance = target.part} end
+    getrawmetatable = function() return {__namecall = original} end
+    getnamecallmethod = function() return "Raycast" end
+    checkcaller = function() return false end
+    getcallingscript = function() return gunScript end
+    oth = {hook = function(_target, callback) hook = callback; return original end}
+    os.clock = function() return 1000 end
+    mobileCore.settings.silentBackend = "Oth"
+    mobileCore.settings.wallCheck = false
+    knife.Parent = backpack
+    gun.Parent = localPlayer.Character
+    gun.Activate = function()
+        shots += 1
+        hook(workspace, Vector3.new(0, 3, 0), Vector3.new(0, 0, -500))
+    end
+    feature.activate()
+    scheduledCore.callback(0.1)
+    local before, beforeCamera = shots, camera.CFrame
+    action.button.InputBegan:Fire(touch)
+    UserInputService.InputEnded:Fire(touch)
+    assert(shots == before + 1 and captured and captured.X > 0,
+        "mobile OTH action failed to redirect the native fixture Raycast")
+    assert(camera.CFrame == beforeCamera, "mobile OTH changed the camera")
+    feature.activate()
+    oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, os.clock = oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldClock
+end
 task.delay = oldDelay
 ex.state.destruct()
 print("[X2MOBILE] touch actions, FOV and independent automatic cards: PASS")
@@ -2412,8 +2523,8 @@ assert(not migrated.settings.safePlace and not migrated.settings.rematch,
 assert(ex.configData.states["MVSD.SilentAIM.AutoShoot"] == nil
     and ex.configData.states["MVSD.SilentAIM.KnifeThrow"] == nil,
     "legacy nested toggles were not removed")
-assert(migrated.settings.silentAim and ex.configData.states["MVSD.AutoFarm"] == true,
-    "migration discarded unrelated v142 preferences")
+assert(not migrated.settings.silentAim and ex.configData.states["MVSD.AutoFarm"] == true,
+    "experimental OTH restored automatically or unrelated preference lost")
 assert(ex.configData.values["MVSD.SilentAIM.Mode"] == nil
     and not ex.featureConnections.X2DuelsLegitAim,
     "legacy Legit profile resurrected a visible camera lock")
