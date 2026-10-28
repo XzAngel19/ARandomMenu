@@ -1,34 +1,36 @@
 # X2 Duels: captura de código y remotes
 
-## Opción integrada: Gun Probe (v149)
+## Opción integrada: Gun Probe (v150)
 
-**Antecedente:** el usuario reportó una expulsión BAC-1583 al activar la v148.
-La v149 elimina sus hooks de Mouse y de Raycast directo; Gun Probe comparte con
-Silent AIM un solo `oth.hook` sobre `__namecall`. Esto **no garantiza** que el
-juego no vuelva a expulsar. Reiniciar Roblox antes de usarla elimina los nodos
-inactivos de la sesión anterior.
+**Advertencia:** el usuario reportó BAC-1583 con v148 y que la v149 impide
+disparar. La causa no se conoce y v150 **no corrige ni valida** ese problema.
+No activar el Probe hasta investigar; Oth no garantiza evitar una expulsión.
 
-En X2 Duels: **Combat → Gun Probe**, activar, **Equip gun** y disparar usando
-el control normal. Guarda `X2Duels-calibration.json` con **Save report** o al
-apagar; también se sobrescribe al iniciar y aproximadamente cada 3 segundos si
-hay cambios, y al llegar a 60 s. Conservar una copia antes de otra sesión.
-Status muestra si el Oth namecall se instaló o falló guardar; la ubicación de
-archivos depende de Delta. `Save gun sources` es opcional y requiere las APIs
-`decompile`/`writefile` (no son hooks Oth).
+La opción **Combat → Gun Probe → Test workspace** funciona con el módulo apagado
+y sin instalar hooks. Escribe `X2Duels-workspace-test.txt` en la raíz del
+workspace del executor, sin tocar el informe previo. Status muestra si leyó y
+verificó el contenido, si solo vio el archivo, si no pudo verificarlo o si falló.
+El nombre relativo se usa en móvil y escritorio; cada executor decide dónde
+está físicamente esa raíz y puede no exponerla al gestor de archivos.
 
-Se observan llamadas de Raycast, FindPartOnRay, ScreenPointToRay, remotos y
-cambios de la configuración de Silent que pasen por namecall. Mouse properties,
-Ray.new y llamadas directas fuera de namecall **no se capturan**. Otros scripts
-pueden producir eventos similares, y una redirección no confirma impacto. Los
-400 eventos más recientes, vectores y nombres de script/remoto se guardan en el
-JSON: revisa privacidad antes de compartir. Si te expulsan, el guardado parcial
-puede no incluir los últimos segundos o fallar por completo.
+Al usar Probe en una versión futura validada, su informe
+`X2Duels-calibration.json` usa esa misma raíz y se sobrescribe al empezar (se
+intenta guardar antes de instalar Oth), al guardar cambios cada ~3 s y al parar.
+Copia el archivo anterior antes de otra captura. Un kick inmediato puede perder
+los últimos segundos o el archivo completo. `Save gun sources` es opcional y
+usa `decompile`/`writefile`.
+
+El hook Oth compartido observa solo determinadas llamadas que pasan por
+`__namecall`; no captura lecturas Mouse, `Ray.new` ni llamadas directas fuera de
+namecall. El JSON contiene hasta los 400 eventos más recientes y puede incluir
+vectores y nombres de scripts/remotos; revisar privacidad antes de compartir.
+Otros scripts pueden producir eventos y una redirección no confirma impacto.
 
 ## Recolector independiente anterior
 
 **Advertencia:** el recolector siguiente usa `hookmetamethod`, no Oth. El usuario
 reportó expulsiones con hooks tradicionales en este juego; no se recomienda
-usarlo en esa situación. Es distinto de Gun Probe v149.
+usarlo en esa situación. Es distinto de Gun Probe v150.
 
 `X2DuelsDecompiler.luau` es una herramienta independiente del menú. Se ejecuta dentro de X2 Duels para reunir la evidencia que el RBXL y el log anteriores no contienen. **No envía disparos ni modifica sus argumentos.**
 

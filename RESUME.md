@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v149-20261028-x2duels-shared-oth`**.
+> **`v150-20261028-x2duels-workspace-save`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -67,6 +67,38 @@
   órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
+
+## 1U. X2 Duels: guardado en workspace universal v150
+
+El usuario indicó que el JSON no apareció en workspace y pidió que funcione en
+Delta y PC. No se conoce la causa ni se ha validado ninguno de esos executors en
+vivo. `Gun Probe` usa un **nombre relativo plano** `X2Duels-calibration.json`:
+por contrato de `writefile`, apunta a la raíz del workspace del executor, sin
+carpetas ni rutas OS hardcodeadas. La ubicación física, visibilidad externa y
+permisos dependen del executor/dispositivo; no hay API universal para forzar el
+mismo directorio físico ni garantizar éxito. No se envía información por red.
+
+- Busca APIs de filesystem en el entorno del módulo y, si faltan, en `getgenv`.
+  Distingue fallos de JSON, `writefile` ausente/error/false, archivo no visible
+  a `isfile`, y contenido distinto en `readfile`. El status diferencia contenido
+  verificado, solo existencia, y escritura sin verificar. Un resultado sin error
+  **no prueba** que el usuario pueda acceder al directorio desde el dispositivo.
+- `Test workspace` crea únicamente `X2Duels-workspace-test.txt` en raíz y verifica
+  si puede; no requiere activar Gun Probe, instalar hooks ni borrar el JSON previo.
+  Reutilizar el nombre sobrescribe el test. No confundir ese archivo con el JSON.
+- Al activar Probe se intenta guardar snapshot mínimo **antes de instalar Oth**;
+  luego se guarda de nuevo al arrancar, por cambios ~3 s, manual y al detener.
+  Esto sobrescribe el informe anterior al empezar; copiarlo antes. Un kick
+  inmediato puede perder el contenido restante, no guardar o truncar escritura.
+  `Save gun sources` opcional usa la misma raíz/resolución/chequeo, y decompile.
+- El usuario también reportó que Gun Probe impide disparar. El puente Oth puede
+  interferir con las llamadas originales (hay llamadas anidadas en el observador),
+  pero no hay diagnóstico probado en Delta ni se ha corregido en esta versión.
+  **No instruir a reactivar Gun Probe** hasta investigarlo; `Test workspace` puede
+  utilizarse con el módulo apagado. Oth no garantiza evitar BAC-1583.
+- Mocks prueban ruta relativa, entorno `getgenv`, test sin hook/sin sobrescribir
+  JSON, contenido/existencia/sin verificación, errores false/ausencia/JSON,
+  snapshot previo al hook y ciclos Oth. No prueban directorios o disparos reales.
 
 ## 1T. X2 Duels: Gun Probe Oth compartido v149
 
@@ -1198,7 +1230,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v149, Oth compartido para Gun Probe y Silent;
-BAC-1583, comportamiento real en Delta y daño pendientes de diagnóstico.
+*Última actualización: 2026-10-28 · v150, guardado raíz de workspace y test sin hook;
+BAC-1583, fallo de disparo y guardado real en Delta/PC pendientes de diagnóstico.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

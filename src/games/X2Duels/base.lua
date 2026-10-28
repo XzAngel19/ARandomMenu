@@ -2896,7 +2896,42 @@ local function buildX2Duels(runtime: any): ()
                 wallCheck = settings.wallCheck, teamCheck = settings.teamCheck, targetPart = settings.silentAimPart,
                 range = settings.maxDistance, fov = settings.silentAimFov, fovRadius = settings.silentAimFovRadius}
         end
-        local function save(): boolean
+        -- A bare filename targets the executor's own workspace root on both
+        -- desktop and mobile. Never assume an OS-specific absolute directory.
+        local reportPath: string = "X2Duels-calibration.json"
+        local function executorFunction(name: string): any
+            local direct: any = host[name]
+            if type(direct) == "function" then return direct end
+            if type(host.getgenv) == "function" then
+                local ok: boolean, env: any = pcall(host.getgenv)
+                if ok and type(env) == "table" and type(env[name]) == "function" then return env[name] end
+            end
+            return nil
+        end
+        local function writeWorkspace(path: string, data: string): (boolean, string)
+            local write: any = executorFunction("writefile")
+            if not write then return false, "writefile unavailable" end
+            local ok: boolean, result: any = pcall(write, path, data)
+            if not ok or result == false then
+                return false, "writefile: " .. string.sub(tostring(result), 1, 100)
+            end
+            local read: any = executorFunction("readfile")
+            if read then
+                local readOk: boolean, content: any = pcall(read, path)
+                if readOk and type(content) == "string" then
+                    if content ~= data then return false, "readfile content differs" end
+                    return true, "content verified"
+                end
+            end
+            local exists: any = executorFunction("isfile")
+            if exists then
+                local existsOk: boolean, present: any = pcall(exists, path)
+                if existsOk and present == true then return true, "file exists (content unverified)" end
+                if existsOk and present == false then return false, "file not visible to isfile" end
+            end
+            return true, "write returned; unverified"
+        end
+        local function save(): (boolean, string)
             local output: any = {
                 version = 3, backend = "Oth shared namecall", placeId = game.PlaceId,
                 touch = inputService.TouchEnabled == true, keyboard = inputService.KeyboardEnabled == true,
@@ -2905,13 +2940,15 @@ local function buildX2Duels(runtime: any): ()
                 limitations = {"Mouse property reads, direct function calls and Ray.new are not intercepted"},
                 aim = aimSnapshot(),
                 checkcaller = type(host.checkcaller) == "function", getcallingscript = type(host.getcallingscript) == "function",
-                decompile = type(host.decompile) == "function", gun = probe.gunInfo,
+                decompile = executorFunction("decompile") ~= nil, gun = probe.gunInfo,
                 dropped = probe.dropped, events = probe.events, sources = probe.sources or {},
                 note = "Passive observations, not all APIs. Calls may be unrelated; missing events do not prove an API is unused. Silent AIM may alter rays. This is not proof of hits.",
             }
             local ok: boolean, encoded: any = pcall(function(): string return game:GetService("HttpService"):JSONEncode(output) end)
-            if not ok or type(host.writefile) ~= "function" then return false end
-            return pcall(host.writefile, "X2Duels-calibration.json", encoded)
+            if not ok or type(encoded) ~= "string" then
+                return false, "JSONEncode: " .. string.sub(tostring(encoded), 1, 100)
+            end
+            return writeWorkspace(reportPath, encoded)
         end
         local function stop(reason: string): ()
             if not probe.active then return end
@@ -2925,8 +2962,9 @@ local function buildX2Duels(runtime: any): ()
             table.clear(probe.links)
             -- Leave inert reusable OTH nodes; unhook semantics vary and may
             -- otherwise remove a hook installed later by another script.
-            local saved: boolean = save()
-            report(reason .. (saved and " · saved X2Duels-calibration.json" or " · save failed (writefile/JSON unavailable)"))
+            local saved: boolean, message: string = save()
+            probe.saveFailed, probe.saveMessage = not saved, message
+            report(reason .. (saved and " · workspace/" .. reportPath .. " · " .. message or " · save failed: " .. message))
         end
         local function bindGun(gun: Tool?): ()
             if probe.gun == gun then return end
@@ -2961,14 +2999,16 @@ local function buildX2Duels(runtime: any): ()
             if now >= (probe.nextSaveAt or 0) then
                 probe.nextSaveAt = now + 3
                 if #probe.events ~= probe.savedCount or probe.dropped ~= probe.savedDropped then
-                    probe.saveFailed = not save()
-                    if not probe.saveFailed then probe.savedCount, probe.savedDropped = #probe.events, probe.dropped end
+                    local saved: boolean, message: string = save()
+                    probe.saveFailed, probe.saveMessage = not saved, message
+                    if saved then probe.savedCount, probe.savedDropped = #probe.events, probe.dropped end
                 end
             end
             report((not gun and "Waiting for gun" or (gun.Parent == localPlayer.Character and "Gun equipped" or "Gun in inventory"))
                 .. " · Oth namecall " .. (probe.namecallInstalled and "OK" or "unavailable")
                 .. " · " .. tostring(#probe.events) .. " events"
-                .. (probe.saveFailed and " · save failed" or ""))
+                .. (probe.saveFailed and (" · save failed: " .. tostring(probe.saveMessage))
+                    or (" · workspace/" .. reportPath .. " · " .. tostring(probe.saveMessage or "pending"))))
         end
         local function observeCall(object: any, method: string, args: any, redirected: boolean): ()
             if not probe.active or probe.guard then return end
@@ -3017,9 +3057,14 @@ local function buildX2Duels(runtime: any): ()
             probe.started, probe.expires, probe.nextTick, probe.stoppedAt = os.clock(), os.clock() + 60, 0, nil
             probe.nextSaveAt, probe.savedCount, probe.savedDropped, probe.saveFailed = 0, -1, -1, false
             probe.events, probe.dropped, probe.gun, probe.gunInfo, probe.sources, probe.aimKey = {}, 0, nil, nil, {}, nil
+            probe.namecallInstalled = false
             local lease: any = {active = true}
             probe.lease = lease
             record("start", {touch = inputService.TouchEnabled == true, silent = settings.silentAim})
+            -- Try a minimal snapshot before installing the hook, in case hook
+            -- installation itself interrupts the session. Later saves replace it.
+            local initialSaved: boolean, initialMessage: string = save()
+            probe.saveFailed, probe.saveMessage = not initialSaved, initialMessage
             local inputOk: boolean, inputLink: any = pcall(function(): any
                 return inputService.InputBegan:Connect(function(input: any, processed: boolean): ()
                     if not lease.active or not probe.gun or probe.gun.Parent ~= localPlayer.Character then return end
@@ -3047,12 +3092,21 @@ local function buildX2Duels(runtime: any): ()
         end)
         host.addActionOption(calibrationCard, "Save report", function(): ()
             if not probe.started then report("No probe session to save") return end
-            report(save() and "Saved X2Duels-calibration.json" or "Save failed: writefile/JSON unavailable")
+            local saved: boolean, message: string = save()
+            probe.saveFailed, probe.saveMessage = not saved, message
+            report(saved and ("workspace/" .. reportPath .. " · " .. message) or ("save failed: " .. message))
         end)
+        host.addActionOption(calibrationCard, "Test workspace", function(): ()
+            -- This diagnostic deliberately does not start Gun Probe or install hooks.
+            local path: string = "X2Duels-workspace-test.txt"
+            local saved: boolean, message: string = writeWorkspace(path, "ARandomMenu workspace test\n")
+            report(saved and ("workspace/" .. path .. " · " .. message) or ("workspace test failed: " .. message))
+        end, "Test executor workspace without enabling Gun Probe or installing hooks.")
         host.addActionOption(calibrationCard, "Save gun sources", function(): ()
             local gun: Tool? = findWeapon("Gun")
             if not probe.active or not gun then report("Enable Gun Probe and obtain a gun first"); return end
-            if type(host.decompile) ~= "function" or type(host.writefile) ~= "function" then
+            local decompile: any = executorFunction("decompile")
+            if not decompile or not executorFunction("writefile") then
                 report("Gun source capture requires decompile and writefile"); return
             end
             report("Saving gun sources; please wait...")
@@ -3064,11 +3118,12 @@ local function buildX2Duels(runtime: any): ()
                     if not lease.active then return end
                     if item:IsA("LocalScript") or item:IsA("ModuleScript") then
                         attempted += 1
-                        local ok: boolean, source: any = pcall(host.decompile, item)
+                        local ok: boolean, source: any = pcall(decompile, item)
                         if not lease.active then return end
                         if ok and type(source) == "string" and #source > 0 then
                             local filename: string = "X2Duels-gun-source-" .. tostring(attempted) .. ".luau"
-                            if pcall(host.writefile, filename, source) then
+                            local written: boolean = writeWorkspace(filename, source)
+                            if written then
                                 saved += 1
                                 table.insert(probe.sources, {file = filename, name = item.Name, class = item.ClassName})
                             end

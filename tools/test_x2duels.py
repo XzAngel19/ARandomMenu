@@ -645,6 +645,51 @@ do
     local oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldDebug = oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, debug
     local installed, legacyCalls, calls, captured = nil, 0, 0, nil
     local hookInstalls, currentOthMethod = 0, "Raycast"
+    local previousWriteFile, previousReadFile, previousIsFile = writefile, readfile, isfile
+    local files = {}
+    local fsWrite = function(path, data) files[path] = data end
+    local fsRead = function(path) if files[path] == nil then error("not found") end return files[path] end
+    local fsExists = function(path) return files[path] ~= nil end
+    -- Functions may be in getgenv only. Test workspace without activating
+    -- Gun Probe, Silent AIM, or a hook, and preserve the existing report.
+    writefile, readfile, isfile = nil, nil, nil
+    GENV.writefile, GENV.readfile, GENV.isfile = fsWrite, fsRead, fsExists
+    local probeCard = featuresByName["Gun Probe"]
+    -- The real UI animates in a nested spawned task; the harness runs spawn
+    -- synchronously, so suppress that nested animation while testing callbacks.
+    local oldSpawn, actionRunning = task.spawn, false
+    task.spawn = function(fn, ...)
+        if actionRunning then return end
+        actionRunning = true
+        fn(...)
+        actionRunning = false
+    end
+    local testWorkspace = ex.state.shortcutBindings[probeCard.configKey .. "Test workspace"]
+    assert(testWorkspace and testWorkspace.onPress, "workspace test action missing")
+    files["X2Duels-calibration.json"] = "previous report"
+    testWorkspace.onPress()
+    assert(files["X2Duels-workspace-test.txt"] == "ARandomMenu workspace test\n"
+        and files["X2Duels-calibration.json"] == "previous report" and hookInstalls == 0
+        and string.find(probeCard.status, "content verified", 1, true),
+        "workspace test did not use getgenv/verify or installed a hook/overwrote report")
+    GENV.writefile, GENV.readfile, GENV.isfile = nil, nil, nil
+    testWorkspace.onPress()
+    assert(string.find(probeCard.status, "writefile unavailable", 1, true), "missing writefile not reported")
+    writefile = function() return false end
+    testWorkspace.onPress()
+    assert(string.find(probeCard.status, "writefile: false", 1, true), "false writefile result not reported")
+    writefile = function() end
+    readfile = function() return "wrong" end
+    testWorkspace.onPress()
+    assert(string.find(probeCard.status, "content differs", 1, true), "readback mismatch not reported")
+    readfile, isfile = nil, function() return false end
+    testWorkspace.onPress()
+    assert(string.find(probeCard.status, "not visible", 1, true), "invisible file not reported")
+    isfile = nil
+    testWorkspace.onPress()
+    assert(string.find(probeCard.status, "unverified", 1, true), "unverified write not distinguished")
+    writefile, readfile, isfile = fsWrite, fsRead, fsExists
+    task.spawn = oldSpawn
     local previousHookMeta, previousHookFunction = hookmetamethod, hookfunction
     hookmetamethod = function() legacyCalls += 1; error("legacy hook invoked") end
     hookfunction = function() legacyCalls += 1; error("legacy hook invoked") end
@@ -667,7 +712,17 @@ do
     assert(string.find(featuresByName["Gun Probe"].status, "unavailable", 1, true) and legacyCalls == 0,
         "failed OTH hook did not fail closed")
     featuresByName["Gun Probe"].onToggle(false)
-    oth = {hook = function(target, callback) hookInstalls += 1; assert(target == predecessor); installed = callback; return predecessor end}
+    files["X2Duels-calibration.json"] = nil
+    oth = {hook = function(target, callback)
+        hookInstalls += 1
+        assert(files["X2Duels-calibration.json"] ~= nil, "initial report was not written before OTH installation")
+        assert(target == predecessor)
+        installed = callback
+        return predecessor
+    end}
+    probeCard.onToggle(true)
+    assert(installed and hookInstalls == 1, "probe-first did not install its node")
+    probeCard.onToggle(false)
     nativeHumanoid:EquipTool(nativeGun)
     silentFeature.onToggle(true)
     nativeNow += 0.2
@@ -717,7 +772,6 @@ do
     assert(captured[2] ~= direction, "OTH reusable node did not resume")
     -- A single OTH node is shared by Silent AIM and Gun Probe. Start passive
     -- observation while Silent is enabled, and verify both toggle orders.
-    local probeCard = featuresByName["Gun Probe"]
     local oldEncode = HttpService.JSONEncode
     local snapshot, saveCount = nil, 0
     HttpService.JSONEncode = function(_, value)
@@ -731,7 +785,8 @@ do
     remote.Name = "fire"
     remote.Parent = nativeGun
     probeCard.onToggle(true)
-    assert(installed == hookNode and hookInstalls == 1 and saveCount == 1,
+    assert(installed == hookNode and hookInstalls == 1 and saveCount >= 2
+        and files["X2Duels-calibration.json"] == "{}",
         "probe installed a second OTH hook or missed the initial crash-safe snapshot")
     UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(25, 25, 0)}, false)
     nativeGun.Activated:Fire()
@@ -815,6 +870,11 @@ do
     assert(string.find(probeCard.status, "save failed", 1, true), "probe hid writefile failure")
     probeCard.onToggle(false)
     writefile = previousWrite
+    HttpService.JSONEncode = function() error("simulated JSON failure") end
+    probeCard.onToggle(true)
+    assert(string.find(probeCard.status, "JSONEncode", 1, true), "JSON encoding failure not reported")
+    probeCard.onToggle(false)
+    writefile, readfile, isfile = previousWriteFile, previousReadFile, previousIsFile
     HttpService.JSONEncode = oldEncode
     remote.Parent = nil
     oth, getrawmetatable, getnamecallmethod, checkcaller, getcallingscript, debug = oldOth, oldMeta, oldMethod, oldCheck, oldCaller, oldDebug
