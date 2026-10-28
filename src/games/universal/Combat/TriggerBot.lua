@@ -168,9 +168,11 @@ function Module.init(context: Runtime): any
                     nextShotAt = now + options["Delay"].Value
                     local fired: boolean = false
                     if kind == "Gun" then
-                        fired = x2Core.fireGun(target)
+                        -- The crosshair already selected this target. Do not
+                        -- move the camera/character using Silent AIM's sender.
+                        fired = x2Core.fireGun(target, true)
                     else
-                        fired = x2Core.fireKnife(target)
+                        fired = x2Core.fireKnife(target, true)
                     end
                     trigger:SetStatus(
                         fired and (kind == "Knife" and "throw queued" or "fired gun")

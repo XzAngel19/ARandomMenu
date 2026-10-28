@@ -235,6 +235,7 @@ local Manifest: Manifest = {
         {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
         {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
         {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
+        {placeId = 124848751642883, module = "X2Duels", displayName = "X2 Duels (1v1)"},
     },
 
     gameModules = {

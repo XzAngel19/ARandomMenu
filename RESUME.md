@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v141-20261026-mm2-performance`**.
+> **`v142-20261027-x2duels-evidence`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v141: 92 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v142: 93 fuentes,
      64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -68,63 +68,79 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
+## 1A. X2Duels (MVS): evidencia 1v1 y contratos v142
 
-- PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
-  Fuentes activas: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y sus dos
-  perfiles. La sección de menú existente se llama `MVSD`; `Render/TeamESP.lua`
-  fue eliminado y no debe volver como módulo independiente.
-- Hay exactamente cinco tarjetas X2: **Auto Farm** y **Auto Win** en
-  **Utilities**, **Silent AIM**, **Kill Aura** en Combat y **Hitbox** en
-  Exploits. El único TriggerBot es el universal, adaptado al core X2 para
-  Gun/Knife; no se debe crear otra tarjeta.
-- Silent AIM contiene las secciones Gun y Knife. Auto Shoot sigue el master y
-  muestra Legit/Silent. Knife Throw es una subopción de Silent AIM: intenta la
-  activación nativa en cada tick, sin slider ni temporizador de intervalo;
-  solo espera el windup de la propia animación. Desktop usa mouse2 + Activate;
-  touch usa y restaura ForceThrow. No se inventan argumentos de ThrowEvent.
-- La keybind de Silent AIM se registra con `state.bindFeatureActivationKey` y
-  ejecuta la acción nativa solamente con `Sender = Button`; nunca cambia el
-  toggle maestro. Con `Sender = CFrame`, Auto Shoot/native activation funciona
-  sin esperar ese botón. La activación comparte ancestry del objetivo, Team
-  Check, Wall Check y raycast antes de disparar.
-- Auto Win es únicamente una tarjeta de estado de sesión: `Wins`, `Time Played`,
-  `Kills` y `Loses`. No tiene ráfagas, selección automática de combate, límite
-  de cinco victorias, Play Again, clicks GUI ni `RematchTeleport`. Las wins
-  provienen de resultados/notificaciones locales explícitos; kills usan el
-  tercer Player observado en `Combat/DestroyBody`; las muertes locales se
-  deduplican por ronda para Loses. Son contadores cliente observados, no una
-  garantía de autoridad del servidor.
-- Auto Farm busca monedas Halloween `PumpkinCurrency_*` y `Farms/PumpCoins`
-  dinámicos por contacto nativo. Los podios resuelven `StringValue`/`ObjectValue`
-  contra jugadores y equipos; sin una entrada enemiga no se farmean granjas y
-  ningún modelo cercano se considera propio por proximidad. El teleport usa el
-  CFrame de la moneda invisible con TouchTransmitter, no el root del dueño.
-  Reintenta y restaura el CFrame al apagarse. Un intento no se cuenta como
-  moneda confirmada. El RBXL guarda algunas partes con `CanTouch=false`; la
-  recolección real sigue pendiente y no se inventan argumentos para
-  `CollectEventSpawnable`.
-- Team Check falla cerrado: usa los atributos MVS `Team`/`Game`, rechaza FFA,
-  lobby y lados desconocidos como objetivos y no cae al `Team` común de Roblox.
-  El mismo resolver alimenta combate y RoleColors del ESP universal
-  (PlayerESP/Chams/Nametags): enemigo rojo, aliado verde y desconocido ámbar.
-  Unknown sigue fail-closed para combate con Team Check activo; desactivarlo
-  debe ser explícito. No convertir una pantalla ambigua en una victoria.
-- El log `2026-10-24T16_49_55Z.log` de TestingStuff capturó `DefaultGun` (`fire`
-  sin argumentos y `showBeam` con dos Vector3 + Handle), llamadas nativas de
-  `DefaultKnife`, `PlayerRespawned` y `SetDead`. La réplica de Beam/PlaySound no
-  demuestra daño ni kills. No se inventan argumentos ni se reintroducen
-  GUID/remotes históricos; la activación sigue siendo la ruta nativa del Tool.
-  El extractor independiente `tools/X2DuelsDecompiler.luau` vuelca fuentes,
-  bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
-  `tools/X2DuelsDecompiler.md`.
-- `python3 tools/test_x2duels.py` ejecuta 67 reglas, contratos y un boot real
-  del bundle con cinco tarjetas, keybind de acción sin toggle, CFrame sin
-  botón, ambos caminos nativos del cuchillo, estadísticas deduplicadas,
-  contacto/restauración de pumpkin, podios y granjas amigas/enemigas con
-  PumpCoins invisibles y cleanup. `python3 tools/test_x2duels_decompiler.py`
-  valida el extractor con DataModel simulado. Todo ello es validación offline,
-  no aceptación del servidor ni precisión live.
+**Fuentes:** `XzAngel19/TestingStuff` commit `a849817395`, log
+`2026-10-28T04_16_18Z.log` y `Place_124848751642883_[DUELS] 1v1_27-10-2026_23-21-39.rbxl`.
+El log tiene 1.709 eventos de ~10,5 minutos, todos sin llamadas del executor;
+el RBXL 1v1 contiene fuentes decompiladas útiles. El RBXL 2v2 anterior tiene
+fuentes en su mayoría stubs: no presentar sus mecánicas como verificadas.
+Estas capturas son **evidencia cliente**, no prueba de que el servidor acepte
+daño o recompensas ni de lo que ocurre en todos los executors/places.
+
+- **Identidad:** `124848751642883` (1v1), `92876937625630` y
+  `135856908115931` están en loader/manifest/perfiles; el fingerprint también
+  acepta nombres literales con barras, como
+  `Packages.Networking["RE/Match/SetDead"]`, y conserva fallback de carpetas.
+  Las mismas rutas literales se conectan y se vuelven a conectar si el remoto se
+  reemplaza. No inferir nombres estables para remotos hash bajo `Packages.Net`.
+- **Estado/equipos:** en la captura `Client.Modules.MatchState` consume
+  `ClientGlobals.PlayerMatches` y `RunningGames`: `getGameId`, `getTeamId`,
+  `getMode` e `isDead`. El core carga la API sin bloquear el boot, reintenta y,
+  en los places conocidos, falla cerrado mientras no está lista, no hay GameId,
+  los jugadores están en juegos distintos o el equipo es desconocido.
+  `FFA` con el mismo GameId identifica adversarios sin tratar FFA como equipo.
+  Priorizar esta API sobre atributos de lobby; el cliente puede aún no haber
+  recibido todos los datos. PlayerESP/Chams/Nametags usan providers compartidos.
+- **Función y ubicación:** Silent AIM es la tarjeta de Combat y dueña de
+  targeting Gun/Knife, Auto Shoot y Knife Throw; TriggerBot universal delega al
+  mismo core sin girar cámara/personaje al activar un blanco bajo la mira. Kill
+  Aura conserva sólo melee sin forzar el sender CFrame; Hitbox está en Exploits
+  y restaura tamaño/transparencia/colisión al perder enemigo, morir u OFF. `Tool:Activate()` mantiene el arma nativa; no
+  hay un `FireServer` inventado. Estado maestro OFF por defecto, Team Check y
+  Wall Check activos, sin tarjeta duplicada. El cleanup cancela input pendiente
+  y restaura hooks/propiedades sin desplazar hooks ajenos.
+- **Hooks limitados:** Silent sólo redirige rayos si `getcallingscript` atribuye
+  la llamada a un script descendiente del Tool equipado; `MouseCast` también lo
+  usa `PingsController`, por lo que un rayo genérico no es prueba de arma. La
+  ruta Knife observada emite `FireServer(GUID, CFrame, Vector3)` desde el Tool
+  a un RemoteEvent bajo `Packages.Net`: si el executor expone hookmetamethod,
+  se puede cambiar sólo el Vector3 de esa llamada genuina, conservando GUID,
+  CFrame y remoto. No se fabrican ni repiten paquetes. Si la atribución no es
+  posible —por ejemplo un ModuleScript compartido— se deja la llamada intacta;
+  requiere prueba live y puede no redirigir en determinados executors.
+- **Móvil:** `PlayerGui.Main.MobileKnifeGui.ThrowMode` es el BoolValue que
+  alterna `MobileKnifeLocalScript`; se usa temporalmente y se restaura sin
+  sobreescribir un cambio posterior. Desktop conserva el input derecho nativo.
+  No se encontró el script principal de cuchillo; cómo consume ese BoolValue y
+  la precisión real del throw siguen pendientes en móvil y PC. No usar el
+  supuesto atributo `Tool.ForceThrow` como si estuviera probado.
+- **Auto Win en Utilities es solo status de sesión**, no una automatización:
+  `Killed(killer, victim)` y `DestroyBody(victim, character, killer)` se
+  deduplican por víctima/ronda. `SetDead` marca al jugador muerto, no una derrota
+  del equipo. En `WinNotification`, nil significa ronda ganada y cualquier
+  booleano ronda perdida. `MatchResults(matchId, pages)` trae la resolución
+  **final de partida** en `RoundInfo/InfectionResult.Data.Outcome`; Win/Loss
+  sólo cubren una ronda final no contabilizada, sin sumar otra vez la
+  notificación. Draw/Tie/Forfeit/Cancelled no se convierten en victoria/derrota.
+  Los campos `Wins/Loses` son resultados de ronda observados más ese fallback,
+  NO un total persistente de partidas; inyectar tarde puede perder eventos.
+- **Auto Farm en Utilities:** `EventsController` clona modelos numerados en
+  `Workspace.SpawnablesClient`, luego añade tag `Pumpkin` y conecta
+  `PrimaryPart` invisible `Touch.Touched` al personaje local. Auto Farm espera
+  GameId, escucha el tag, contacta esa PrimaryPart y restaura el CFrame guardado
+  sólo si el personaje/match siguen vigentes. `PumpkinCurrency_*` en `FallDecoration` y
+  lobby es decoración, no moneda. El antiguo camino `Farms/PumpCoins` conserva
+  protección por podium y equipo, pero no se observó en el nuevo log; también
+  necesita prueba live. Ni teletransporte ni `firetouchinterest` prueban saldo
+  o aceptación por el servidor; no usar `Coins collected` como confirmación.
+- `tools/test_x2duels.py` usa remotos con nombres literales, MatchState
+  inicialmente no disponible, equipos/FFA/muerte, tags y Touch invisibles,
+  ThrowMode, WinNotification/MatchResults, Killed, reconexión y hooks ajenos.
+  Incluye un boot por fingerprint de PlaceId desconocido. Estas regresiones
+  demuestran lógica en mocks, **no daño, precisión, física o recompensas**.
+  Para completar la cadena falta capturar el script nativo de Gun/Knife y
+  probar 1v1 + 2v2 en PC/móvil con logs y saldo/vidas observados.
 
 ## 1B. Cómo construir un game sin mezclar responsabilidades
 
@@ -305,7 +321,7 @@ similitud con otro juego.
   hipótesis medible, no una promesa de rewind del servidor.
 - En un throw se conserva la animación y el momento de release cuando forman
   parte de la mecánica. Desktop y móvil pueden tener entradas distintas (por
-  ejemplo, mouse2 frente a un atributo como ForceThrow); ambas deben restaurar
+  ejemplo, mouse2 frente al BoolValue ThrowMode del cliente móvil); ambas deben restaurar
   su estado al cancelar.
 - La evidencia se clasifica como **observado**, **intentado**, **confirmado por
   un evento local** o **desconocido**. Beam, PlaySound, DestroyBody, una
@@ -942,12 +958,12 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v119: comprobar en vivo Gun/Knife, precisión del throw, el ESP universal
-  con TeamRed/TeamBlue y FFA, la keybind Button y Sender CFrame en móvil, y la
-  actualización de Wins/Time Played/Kills/Loses. El harness cubre activaciones,
-  estados, colores, contadores y contactos; no prueba daño, monedas ni
-  aceptación del servidor. La siguiente evidencia debe obtenerse con
-  `tools/X2DuelsDecompiler.luau`.
+- X2 v142: probar en vivo 1v1 y 2v2, Gun/Knife y precisión del throw en PC/móvil,
+  consumo de `ThrowMode`, atribución con `getcallingscript`, Team/Wall Check,
+  FFA, Hitbox, TriggerBot y hooks ajenos. Observar pickup Pumpkin y saldo real,
+  más estadísticas de rondas/resultados tras inyección y reconexión. Capturar
+  el script nativo Gun/Knife y eventos con `tools/X2DuelsDecompiler.luau`;
+  el harness no demuestra daño, monedas ni aceptación del servidor.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -965,7 +981,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-26 · v141, investigación y optimizaciones de
-rendimiento MM2; la aceptación y el perfil de CPU en Roblox siguen pendientes.
+*Última actualización: 2026-10-27 · v142, revisión X2 con log/RBXL 1v1;
+la aceptación live de X2 y el perfil de CPU MM2 siguen pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

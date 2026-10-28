@@ -224,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v141-20261026-mm2-performance"
+local SOURCE_STAMP: string = "v142-20261027-x2duels-evidence"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -315,6 +315,7 @@ local GAME_MODULES: {[number]: string} = {
     [93978595733734] = "VD",
     [92876937625630] = "X2Duels",
     [135856908115931] = "X2Duels",
+    [124848751642883] = "X2Duels",
 }
 
 type GameFingerprint = {
@@ -322,6 +323,24 @@ type GameFingerprint = {
     required: number,
     markers: {(ReplicatedStorage) -> boolean},
 }
+
+-- Networking namespaces are encoded in the RemoteEvent's *name*, not
+-- necessarily represented as folders. The 1v1 capture has e.g.
+-- Packages.Networking["RE/Match/SetDead"]; retain the older nested fallback.
+local function findX2FingerprintRemote(
+    replicated: ReplicatedStorage,
+    namespace: string,
+    remoteName: string
+): Instance?
+    local packages: Instance? = replicated:FindFirstChild("Packages")
+    local networking: Instance? = packages and packages:FindFirstChild("Networking")
+    if not networking then return nil end
+    local flat: Instance? = networking:FindFirstChild("RE/" .. namespace .. "/" .. remoteName)
+    if flat then return flat end
+    local re: Instance? = networking:FindFirstChild("RE")
+    local group: Instance? = re and re:FindFirstChild(namespace)
+    return group and group:FindFirstChild(remoteName) or nil
+end
 
 local GAME_FINGERPRINTS: {GameFingerprint} = {
     {
@@ -401,33 +420,19 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
         required = 3,
         markers = {
             function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local networking: Instance? = packages
-                    and packages:FindFirstChild("Networking")
-                local re: Instance? = networking and networking:FindFirstChild("RE")
-                local match: Instance? = re and re:FindFirstChild("Match")
-                if not match then
-                    return false
-                end
                 local found: number = 0
                 for _, name: string in ipairs({
                     "MatchResults", "WinNotification", "PlayerRespawned", "SetDead",
                 }) do
-                    if match:FindFirstChild(name) then
+                    if findX2FingerprintRemote(replicated, "Match", name) then
                         found += 1
                     end
                 end
                 return found >= 2
             end,
             function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local networking: Instance? = packages
-                    and packages:FindFirstChild("Networking")
-                local re: Instance? = networking and networking:FindFirstChild("RE")
-                local rematch: Instance? = re and re:FindFirstChild("Rematch")
-                return rematch ~= nil
-                    and rematch:FindFirstChild("RematchVote") ~= nil
-                    and rematch:FindFirstChild("RematchTeleport") ~= nil
+                return findX2FingerprintRemote(replicated, "Rematch", "RematchVote") ~= nil
+                    and findX2FingerprintRemote(replicated, "Rematch", "RematchTeleport") ~= nil
             end,
             function(replicated: ReplicatedStorage): boolean
                 local packages: Instance? = replicated:FindFirstChild("Packages")
@@ -454,18 +459,10 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
                     and controllers:FindFirstChild("MatchController") ~= nil
                     and controllers:FindFirstChild("GunCrosshairController") ~= nil
             end,
-            -- Current MVS capture: Packages.Networking RE/Combat plus the
-            -- legacy client controllers. These markers do not depend on the
-            -- hashed knife remote names or on the older X2 rematch schema.
+            -- These markers avoid the session-dependent hashed weapon remotes.
             function(replicated: ReplicatedStorage): boolean
-                local packages: Instance? = replicated:FindFirstChild("Packages")
-                local networking: Instance? = packages
-                    and packages:FindFirstChild("Networking")
-                local re: Instance? = networking and networking:FindFirstChild("RE")
-                local combat: Instance? = re and re:FindFirstChild("Combat")
-                return combat ~= nil
-                    and combat:FindFirstChild("Beam") ~= nil
-                    and combat:FindFirstChild("PlaySound") ~= nil
+                return findX2FingerprintRemote(replicated, "Combat", "Beam") ~= nil
+                    and findX2FingerprintRemote(replicated, "Combat", "PlaySound") ~= nil
             end,
             function(replicated: ReplicatedStorage): boolean
                 local client: Instance? = replicated:FindFirstChild("Client")
@@ -5963,6 +5960,7 @@ local fallbackManifest: any = {
         {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
         {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
         {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
+        {placeId = 124848751642883, module = "X2Duels", displayName = "X2 Duels (1v1)"},
     },
 
     gameModules = {

@@ -432,6 +432,7 @@ function HttpService:GenerateGUID(withBraces)
 end
 CollectionService = newInst("CollectionService")
 local collectionTags: {[string]: {[any]: boolean}} = {}
+local collectionAdded, collectionRemoved = {}, {}
 function CollectionService:GetTags(inst)
     local tags = {}
     for tag, members in pairs(collectionTags) do
@@ -453,23 +454,22 @@ function CollectionService:HasTag(inst, tag)
 end
 function CollectionService:AddTag(inst, tag)
     if not collectionTags[tag] then collectionTags[tag] = {} end
+    if collectionTags[tag][inst] then return end
     collectionTags[tag][inst] = true
+    if collectionAdded[tag] then collectionAdded[tag]:Fire(inst) end
 end
 function CollectionService:RemoveTag(inst, tag)
-    if collectionTags[tag] then collectionTags[tag][inst] = nil end
+    if not collectionTags[tag] or not collectionTags[tag][inst] then return end
+    collectionTags[tag][inst] = nil
+    if collectionRemoved[tag] then collectionRemoved[tag]:Fire(inst) end
 end
 function CollectionService:GetInstanceAddedSignal(tag)
-    if not collectionTags[tag] then collectionTags[tag] = {} end
-    local sig = signal()
-    local mt = collectionTags[tag]
-    local wrapper = setmetatable({}, {
-        __newindex = function(_, k, v) rawset(mt, k, true); sig:Fire(k) end,
-    })
-    -- simple approach: harness tests can Fire these signals directly
-    return sig
+    if not collectionAdded[tag] then collectionAdded[tag] = signal() end
+    return collectionAdded[tag]
 end
 function CollectionService:GetInstanceRemovedSignal(tag)
-    return signal()
+    if not collectionRemoved[tag] then collectionRemoved[tag] = signal() end
+    return collectionRemoved[tag]
 end
 TweenService = newInst("TweenService")
 function TweenService:Create(...)

@@ -21,7 +21,7 @@ local function normalizeToken(value: any): string?
         local trimmed: string = string.match(value, "^%s*(.-)%s*$") or ""
         local lowered: string = string.lower(trimmed)
         if lowered == "" or lowered == "false" or lowered == "none"
-            or lowered == "nil" then
+            or lowered == "__none" or lowered == "nil" then
             return nil
         end
         return lowered
@@ -312,6 +312,26 @@ local LOCAL_WIN_FLAGS: {[string]: boolean} = {
     localwon = true,
 }
 
+-- The 1v1 client consumes MatchResults(matchId, pages) and displays the
+-- local page's Data.Outcome. Draw/Forfeit/Cancelled are not wins or losses.
+local function matchResultOutcome(arguments: {any}): string?
+    local pages: any = arguments[2]
+    if type(arguments[1]) ~= "string" or type(pages) ~= "table" then
+        return nil
+    end
+    for _, page: any in ipairs(pages) do
+        if type(page) == "table"
+            and (page.Page == "RoundInfo" or page.Page == "InfectionResult")
+            and type(page.Data) == "table" then
+            local outcome: any = page.Data.Outcome
+            if outcome == "Win" then return "Win" end
+            if outcome == "Loss" then return "Loss" end
+            return "Neutral"
+        end
+    end
+    return nil
+end
+
 local function recordBelongsToOther(
     record: {[any]: any},
     identity: {[string]: any}
@@ -333,18 +353,22 @@ local function scanResult(
     record: {[any]: any},
     identity: {[string]: any},
     seen: {[any]: boolean},
-    depth: number
+    depth: number,
+    inheritedOther: boolean?
 ): boolean
     if depth > 5 or seen[record] then
         return false
     end
     seen[record] = true
-    local belongsToOther: boolean = recordBelongsToOther(record, identity)
+    -- A nested Data.Outcome remains the other player's result; dropping the
+    -- parent identity used to turn an opponent's victory into a local one.
+    local belongsToOther: boolean = inheritedOther == true
+        or recordBelongsToOther(record, identity)
 
     for key: any, value: any in pairs(record) do
         if type(key) == "string" then
             local normalized: string = compact(key)
-            if WINNER_KEYS[normalized] and matchesIdentity(
+            if not belongsToOther and WINNER_KEYS[normalized] and matchesIdentity(
                 value, identity, true, seen, depth + 1
             ) then
                 return true
@@ -359,7 +383,7 @@ local function scanResult(
             end
         end
         if type(value) == "table" and scanResult(
-            value, identity, seen, depth + 1
+            value, identity, seen, depth + 1, belongsToOther
         ) then
             return true
         end
@@ -410,6 +434,7 @@ Module.isPlayAgainText = isPlayAgainText
 Module.isVictoryText = isVictoryText
 Module.isLocalVictoryLabel = isLocalVictoryLabel
 Module.matchesIdentity = matchesIdentity
+Module.matchResultOutcome = matchResultOutcome
 Module.didLocalWin = didLocalWin
 
 function Module.init(runtime: any): any
