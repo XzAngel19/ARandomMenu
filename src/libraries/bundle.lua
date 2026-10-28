@@ -1,5 +1,5 @@
 return {
-    stamp = "v139.0-20261027-performance-pass",
+    stamp = "v139.1-20261027-spikes-release-version",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -10878,6 +10878,10 @@ type Track = {
     aimPart: BasePart?,
     aimName: string?,
     partsAt: number?,
+    -- v139: recycled sample tables. At 60 Hz x 12 players this was creating
+    -- ~700 tables per second, which is exactly the kind of steady garbage that
+    -- shows up later as a hitch when the collector catches up.
+    spare: {Sample}?,
 }
 
 type Fit = {
@@ -11213,21 +11217,33 @@ function Module.init(runtime: any): any
             -- Respawns, teleports and ownership changes must not seed a fit.
             if delta > 0 and delta < 0.4
                 and (position - last.position).Magnitude > 8 + 120 * delta then
+                local spare: {Sample} = track.spare or {}
+                track.spare = spare
+                for _, dropped: Sample in ipairs(samples) do
+                    if #spare < 8 then
+                        table.insert(spare, dropped)
+                    end
+                end
                 table.clear(samples)
             end
         end
-        table.insert(samples, {
-            at = now,
-            position = position,
-            velocity = velocity,
-            state = stateName,
-            grounded = grounded,
-            aimOffset = aimOffset,
-            aimPart = aimPartName,
-            moveDirection = moveDirection,
-        })
+        local spare: {Sample} = track.spare or {}
+        track.spare = spare
+        local sample: Sample = table.remove(spare) or {} :: Sample
+        sample.at = now
+        sample.position = position
+        sample.velocity = velocity
+        sample.state = stateName
+        sample.grounded = grounded
+        sample.aimOffset = aimOffset
+        sample.aimPart = aimPartName
+        sample.moveDirection = moveDirection
+        table.insert(samples, sample)
         while #samples > 2 and now - samples[1].at > HISTORY_SECONDS do
-            table.remove(samples, 1)
+            local retired: Sample = table.remove(samples, 1)
+            if #spare < 8 then
+                table.insert(spare, retired)
+            end
         end
     end
 
@@ -12231,6 +12247,11 @@ function Module.init(runtime: any): any
         end,
     }
 
+    -- v139: the roster changes a few times per round, not 60 times per second.
+    -- `GetPlayers()` returns a fresh array on every call, so asking for it each
+    -- frame was pure garbage. Reused for a quarter of a second.
+    local roster: {Player} = {}
+    local rosterAt: number = -math.huge
     local function tick(deltaTime: number): ()
         elapsed += math.max(0, deltaTime or 0)
         local interval: number = 1 / SAMPLE_HZ
@@ -12239,7 +12260,11 @@ function Module.init(runtime: any): any
         end
         elapsed = elapsed % interval
         local now: number = os.clock()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
+        if now - rosterAt >= 0.25 or #roster == 0 then
+            rosterAt = now
+            roster = Players:GetPlayers()
+        end
+        for _, player: Player in ipairs(roster) do
             if player ~= LocalPlayer then
                 samplePlayer(player, now)
             end
@@ -34908,13 +34933,16 @@ function Module.init(context: Runtime): any
         end
         if fpsSettings.scenery and host.TaskManager then
             local elapsed, cursor = 0, 1
-            local pending = {}
+            -- v139.1: one long lived array, cleared in place. Rebuilding it
+            -- every second threw away the whole list (thousands of parts on a
+            -- big map) and left it for the collector: a guaranteed hitch.
+            local pending: {BasePart} = {}
             featureConnections.ImproveFPSDistance = host.TaskManager:Connect(function(dt)
                 elapsed += dt
                 if cursor > #pending then
                     if elapsed < 1 then return end
                     elapsed = 0
-                    pending = {}
+                    table.clear(pending)
                     for part in pairs(scenery) do
                         if part.Parent then table.insert(pending, part) else scenery[part] = nil end
                     end
@@ -37699,6 +37727,7 @@ return Module
         ["src/games/universal/Render/Nametags.lua"] = [[
 local Module = {Name = "Nametags", Initialized = false}
 local activeCard, cleanup, roleBinding
+local BLACK = Color3.new(0, 0, 0)
 
 function Module.init(context: any): any
     local host, entity, render = context.host, context.entity, context.render
@@ -37732,18 +37761,24 @@ function Module.init(context: any): any
         if not label then return end
         local key = text .. ":" .. tostring(size) .. ":" .. tostring(viewport.X)
         drawing.textMetrics = drawing.textMetrics or {}
+        -- v139.1: GetTextSize + Size + TextTruncate only when the text or the
+        -- size really changed. Writing Size every frame re-laid out every
+        -- nametag in the scene, which is a visible hitch with many players.
         if not drawing.textMetrics[slot] or drawing.textMetrics[slot].key ~= key then
             local width = #text * size * 0.65 + 8
             pcall(function() width = textService:GetTextSize(text, size, Enum.Font.Arial, Vector2.new(10000,100)).X + 8 end)
             width = math.max(1, math.min(width, viewport.X - 24))
             drawing.textMetrics[slot] = {key = key, width = width}
+            label.AutomaticSize = Enum.AutomaticSize.None
+            label.Size = UDim2.fromOffset(width, size + 7)
+            label.TextTruncate = Enum.TextTruncate.AtEnd
         end
-        label.AutomaticSize = Enum.AutomaticSize.None
-        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 7)
-        label.TextTruncate = Enum.TextTruncate.AtEnd
         -- Clamped to screen independently of target position, not a clipped name.
-        local half = label.Size.X.Offset * 0.5
-        label.Position = UDim2.fromOffset(math.clamp(label.Position.X.Offset, half + 8, math.max(half + 8, viewport.X - half - 8)), label.Position.Y.Offset)
+        local half = drawing.textMetrics[slot].width * 0.5
+        local clampedX = math.clamp(label.Position.X.Offset, half + 8, math.max(half + 8, viewport.X - half - 8))
+        if math.abs(clampedX - label.Position.X.Offset) >= 0.5 then
+            label.Position = UDim2.fromOffset(clampedX, label.Position.Y.Offset)
+        end
     end
     card = context.framework.Categories.Visuals:CreateModule({Name = "Nametags", Category = "Render",
         ConfigKey = "Universal.Nametags", Order = 3,
@@ -37795,10 +37830,22 @@ function Module.init(context: any): any
                             end
                             drawing.flatNametag = true
                         end
-                        label.Font = Enum.Font.Arial
-                        label.BackgroundColor3 = Color3.new(0,0,0)
-                        label.BackgroundTransparency = options.Background.Value and 0.5 or 1
-                        label.TextStrokeTransparency = 1
+                        -- v139.1: these are constant. Re-assigning Font in
+                        -- particular re-shapes the glyphs of every label every
+                        -- single frame.
+                        if label.Font ~= Enum.Font.Arial then
+                            label.Font = Enum.Font.Arial
+                        end
+                        if label.BackgroundColor3 ~= BLACK then
+                            label.BackgroundColor3 = BLACK
+                        end
+                        local plate: number = options.Background.Value and 0.5 or 1
+                        if label.BackgroundTransparency ~= plate then
+                            label.BackgroundTransparency = plate
+                        end
+                        if label.TextStrokeTransparency ~= 1 then
+                            label.TextStrokeTransparency = 1
+                        end
                     end
                     fit(drawing, "Name", shown, size, camera.ViewportSize)
                     drawing:HideLabel("Details")
@@ -41078,7 +41125,7 @@ function Module.init(context: any): any
     }
 
     local productVersion: string = tostring(
-        (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
+        (host.PRODUCT and host.PRODUCT.version) or "0.823 Release"
     )
     local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 15) + 4
     local LOGO_CHIP_HEIGHT: number = 44
@@ -42542,6 +42589,16 @@ function Module.init(context: any): any
                         cost.renderMs
                     ))
                 end
+                -- v139.1: a hitch is not the same as a slow menu. When a
+                -- module is to blame the line names it.
+                if cost and (cost.spikeCount or 0) > 0 then
+                    table.insert(lines, string.format(
+                        "Spikes    %d · %.0f ms%s",
+                        cost.spikeCount,
+                        cost.worstSpikeMs or 0,
+                        cost.spikeTask and (" · " .. tostring(cost.spikeTask)) or ""
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
@@ -43492,6 +43549,9 @@ function Module.init(context: any): any
 
     local hudSignature: string = ""
     local hudElapsed: number = 0
+    -- Which side the HUD is drawn on; a change re-draws every row because the
+    -- text alignment changes with it (v139.1).
+    local hudSide: string = hudOnLeft() and "left" or "right"
 
     local hudAlways: boolean = configData.states["HackList.Show"] == true
         or configData.states["ClickGUI.ShowHackList"] == true
@@ -43562,12 +43622,17 @@ function Module.init(context: any): any
                 entry.name .. "\1" .. tostring(entry.status or "")
             )
         end
+        local onLeft: boolean = hudOnLeft()
         local composed: string = table.concat(signature, "\2")
-            .. (hudOnLeft() and "\3left" or "\3right")
+            .. (onLeft and "\3left" or "\3right")
         if composed == hudSignature then
             return
         end
         hudSignature = composed
+        -- The side decides the text alignment, so moving the HUD redraws all.
+        local side: string = onLeft and "left" or "right"
+        local redrawAll: boolean = side ~= hudSide
+        hudSide = side
 
         local wanted: {[string]: boolean} = {}
         for order: number, entry: any in ipairs(entries) do
@@ -43580,7 +43645,13 @@ function Module.init(context: any): any
             end
             row.container.LayoutOrder = order
             row.order = order
-            drawHudEntry(row, entry.name, entry.status)
+            -- v139.1: only the row that actually changed is re-drawn. One
+            -- module updating its status used to rebuild every HUD entry in
+            -- the same frame (a visible hitch when the list is long).
+            if isNew or redrawAll
+                or row.name ~= entry.name or row.status ~= entry.status then
+                drawHudEntry(row, entry.name, entry.status)
+            end
             if isNew then
                 slideHudRow(row)
             end
@@ -54211,6 +54282,10 @@ function Module.init(context: any): RenderLibrary
                     TextStrokeTransparency = 1,
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
+                    -- v139.1: the height is set once here (and when TextSize
+                    -- changes), never on every frame: a Size write makes the
+                    -- UI re-layout, and this ran for every label of every ESP.
+                    Size = UDim2.fromOffset(0, size + 6),
 
                     TextTruncate = Enum.TextTruncate.None,
                     TextXAlignment = Enum.TextXAlignment.Center,
@@ -54229,10 +54304,20 @@ function Module.init(context: any): RenderLibrary
             resolved.Visible = true
             if resolved.Text ~= text then resolved.Text = text end
             if resolved.TextColor3 ~= colour then resolved.TextColor3 = colour end
-            if resolved.TextSize ~= size then resolved.TextSize = size end
-            resolved.BackgroundTransparency = plate and 0.5 or 1
-            resolved.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
-            resolved.Size = UDim2.fromOffset(0, size + 6)
+            if resolved.TextSize ~= size then
+                resolved.TextSize = size
+                resolved.Size = UDim2.fromOffset(resolved.Size.X.Offset, size + 6)
+            end
+            local plateTransparency: number = plate and 0.5 or 1
+            if resolved.BackgroundTransparency ~= plateTransparency then
+                resolved.BackgroundTransparency = plateTransparency
+            end
+            local x: number = math.round(at.X)
+            local y: number = math.round(at.Y)
+            local position: UDim2 = resolved.Position
+            if position.X.Offset ~= x or position.Y.Offset ~= y then
+                resolved.Position = UDim2.fromOffset(x, y)
+            end
         end
 
         function set:HideLabel(slot: string): ()

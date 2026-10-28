@@ -259,13 +259,16 @@ function Module.init(context: Runtime): any
         end
         if fpsSettings.scenery and host.TaskManager then
             local elapsed, cursor = 0, 1
-            local pending = {}
+            -- v139.1: one long lived array, cleared in place. Rebuilding it
+            -- every second threw away the whole list (thousands of parts on a
+            -- big map) and left it for the collector: a guaranteed hitch.
+            local pending: {BasePart} = {}
             featureConnections.ImproveFPSDistance = host.TaskManager:Connect(function(dt)
                 elapsed += dt
                 if cursor > #pending then
                     if elapsed < 1 then return end
                     elapsed = 0
-                    pending = {}
+                    table.clear(pending)
                     for part in pairs(scenery) do
                         if part.Parent then table.insert(pending, part) else scenery[part] = nil end
                     end

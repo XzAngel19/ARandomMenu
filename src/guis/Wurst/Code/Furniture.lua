@@ -574,6 +574,9 @@ function Module.init(context: any): any
 
     local hudSignature: string = ""
     local hudElapsed: number = 0
+    -- Which side the HUD is drawn on; a change re-draws every row because the
+    -- text alignment changes with it (v139.1).
+    local hudSide: string = hudOnLeft() and "left" or "right"
 
     local hudAlways: boolean = configData.states["HackList.Show"] == true
         or configData.states["ClickGUI.ShowHackList"] == true
@@ -644,12 +647,17 @@ function Module.init(context: any): any
                 entry.name .. "\1" .. tostring(entry.status or "")
             )
         end
+        local onLeft: boolean = hudOnLeft()
         local composed: string = table.concat(signature, "\2")
-            .. (hudOnLeft() and "\3left" or "\3right")
+            .. (onLeft and "\3left" or "\3right")
         if composed == hudSignature then
             return
         end
         hudSignature = composed
+        -- The side decides the text alignment, so moving the HUD redraws all.
+        local side: string = onLeft and "left" or "right"
+        local redrawAll: boolean = side ~= hudSide
+        hudSide = side
 
         local wanted: {[string]: boolean} = {}
         for order: number, entry: any in ipairs(entries) do
@@ -662,7 +670,13 @@ function Module.init(context: any): any
             end
             row.container.LayoutOrder = order
             row.order = order
-            drawHudEntry(row, entry.name, entry.status)
+            -- v139.1: only the row that actually changed is re-drawn. One
+            -- module updating its status used to rebuild every HUD entry in
+            -- the same frame (a visible hitch when the list is long).
+            if isNew or redrawAll
+                or row.name ~= entry.name or row.status ~= entry.status then
+                drawHudEntry(row, entry.name, entry.status)
+            end
             if isNew then
                 slideHudRow(row)
             end

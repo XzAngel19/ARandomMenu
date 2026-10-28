@@ -1176,6 +1176,16 @@ function Module.init(context: any): any
                         cost.renderMs
                     ))
                 end
+                -- v139.1: a hitch is not the same as a slow menu. When a
+                -- module is to blame the line names it.
+                if cost and (cost.spikeCount or 0) > 0 then
+                    table.insert(lines, string.format(
+                        "Spikes    %d · %.0f ms%s",
+                        cost.spikeCount,
+                        cost.worstSpikeMs or 0,
+                        cost.spikeTask and (" · " .. tostring(cost.spikeTask)) or ""
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))

@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
-> **`v139.0-20261027-performance-pass`** (ver la entrada v139.0 más abajo).
+> **`v139.1-20261027-spikes-release-version`** (ver las entradas v139.x abajo).
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -146,6 +146,18 @@
 > nuevo `tools/test_scheduler.py` (8 suites) destapó el bug del swap-remove al
 > autodesconectarse una tarea. Harness: 6 tareas always-on, todas con nombre, y
 > 8 toggles seguidos no dejan conexiones. Evidencia: `docs/FIXES-v139.0.md`.
+>
+> **v139.1 (2026-10-27):** "tengo lag spikes" + versión. `PRODUCT.version` pasa de
+> `0.1 Beta` a **`0.823 Release`**. Se añade detector de hitches en
+> `state.performance` (`spikeCount`, `worstSpikeMs`, `spikeAgo`, `spikeTask`) con
+> aviso `[Wurst:Perf] frame spike X ms (menu Y ms · tarea)` como mucho cada 5 s y
+> línea nueva en `state.perfReport()` y en *Session Info*. Se quitan asignaciones
+> por frame: pool de muestras en `Prediction` (~700 tablas/s menos) + lista de
+> jugadores cacheada 0,25 s; `ImproveFps` reutiliza el array del barrido;
+> `Render:Label` ya no escribe `Size`/`BackgroundTransparency` si no cambian (los
+> ESP completos se benefician); `Nametags` deja de reasignar `Font` y de re-medir
+> texto cada frame; el HUD del menú sólo redibuja la fila que cambió. Evidencia:
+> `docs/FIXES-v139.1.md`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 

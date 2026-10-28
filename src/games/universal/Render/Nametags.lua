@@ -1,5 +1,6 @@
 local Module = {Name = "Nametags", Initialized = false}
 local activeCard, cleanup, roleBinding
+local BLACK = Color3.new(0, 0, 0)
 
 function Module.init(context: any): any
     local host, entity, render = context.host, context.entity, context.render
@@ -33,18 +34,24 @@ function Module.init(context: any): any
         if not label then return end
         local key = text .. ":" .. tostring(size) .. ":" .. tostring(viewport.X)
         drawing.textMetrics = drawing.textMetrics or {}
+        -- v139.1: GetTextSize + Size + TextTruncate only when the text or the
+        -- size really changed. Writing Size every frame re-laid out every
+        -- nametag in the scene, which is a visible hitch with many players.
         if not drawing.textMetrics[slot] or drawing.textMetrics[slot].key ~= key then
             local width = #text * size * 0.65 + 8
             pcall(function() width = textService:GetTextSize(text, size, Enum.Font.Arial, Vector2.new(10000,100)).X + 8 end)
             width = math.max(1, math.min(width, viewport.X - 24))
             drawing.textMetrics[slot] = {key = key, width = width}
+            label.AutomaticSize = Enum.AutomaticSize.None
+            label.Size = UDim2.fromOffset(width, size + 7)
+            label.TextTruncate = Enum.TextTruncate.AtEnd
         end
-        label.AutomaticSize = Enum.AutomaticSize.None
-        label.Size = UDim2.fromOffset(drawing.textMetrics[slot].width, size + 7)
-        label.TextTruncate = Enum.TextTruncate.AtEnd
         -- Clamped to screen independently of target position, not a clipped name.
-        local half = label.Size.X.Offset * 0.5
-        label.Position = UDim2.fromOffset(math.clamp(label.Position.X.Offset, half + 8, math.max(half + 8, viewport.X - half - 8)), label.Position.Y.Offset)
+        local half = drawing.textMetrics[slot].width * 0.5
+        local clampedX = math.clamp(label.Position.X.Offset, half + 8, math.max(half + 8, viewport.X - half - 8))
+        if math.abs(clampedX - label.Position.X.Offset) >= 0.5 then
+            label.Position = UDim2.fromOffset(clampedX, label.Position.Y.Offset)
+        end
     end
     card = context.framework.Categories.Visuals:CreateModule({Name = "Nametags", Category = "Render",
         ConfigKey = "Universal.Nametags", Order = 3,
@@ -96,10 +103,22 @@ function Module.init(context: any): any
                             end
                             drawing.flatNametag = true
                         end
-                        label.Font = Enum.Font.Arial
-                        label.BackgroundColor3 = Color3.new(0,0,0)
-                        label.BackgroundTransparency = options.Background.Value and 0.5 or 1
-                        label.TextStrokeTransparency = 1
+                        -- v139.1: these are constant. Re-assigning Font in
+                        -- particular re-shapes the glyphs of every label every
+                        -- single frame.
+                        if label.Font ~= Enum.Font.Arial then
+                            label.Font = Enum.Font.Arial
+                        end
+                        if label.BackgroundColor3 ~= BLACK then
+                            label.BackgroundColor3 = BLACK
+                        end
+                        local plate: number = options.Background.Value and 0.5 or 1
+                        if label.BackgroundTransparency ~= plate then
+                            label.BackgroundTransparency = plate
+                        end
+                        if label.TextStrokeTransparency ~= 1 then
+                            label.TextStrokeTransparency = 1
+                        end
                     end
                     fit(drawing, "Name", shown, size, camera.ViewportSize)
                     drawing:HideLabel("Details")

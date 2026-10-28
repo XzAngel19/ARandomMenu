@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v139.0-20261027-performance-pass"
+local SOURCE_STAMP: string = "v139.1-20261027-spikes-release-version"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -123,7 +123,7 @@ local PENDING_FINGERPRINT: boolean = false
 
 local PRODUCT = {
     name = "Wurst",
-    version = "0.1 Beta",
+    version = "0.823 Release",
 
     logPrefix = "Wurst",
     guiName = "Wurst",
@@ -3781,6 +3781,15 @@ state.performance = {
     renderCount = 0,
     slowestTask = nil :: (string | nil),
     slowestMs = 0,
+    -- v139.1: lag SPIKES (frames well over budget) are a different problem
+    -- from a steady 3 ms task, so they are measured and reported apart.
+    spikeMs = 0,
+    spikeCount = 0,
+    spikeTask = nil :: (string | nil),
+    spikeAgo = -1,
+    spikeAt = nil :: (number | nil),
+    spikeWarnedAt = nil :: (number | nil),
+    worstSpikeMs = 0,
 }
 
 local function describeTask(callback: any): string
@@ -3912,8 +3921,10 @@ end
 local function runBucket(
     bucket: {ScheduledTask},
     deltaTime: number
-): number
+): (number, string?, number)
     local total: number = 0
+    local worstLabel: string? = nil
+    local worstMs: number = 0
     local index: number = 1
     while index <= #bucket do
         local scheduled: ScheduledTask = bucket[index]
@@ -3924,6 +3935,10 @@ local function runBucket(
         )
         local cost: number = (os.clock() - startedAt) * 1000
         total += cost
+        if cost > worstMs then
+            worstMs = cost
+            worstLabel = scheduled.label
+        end
         scheduled.calls += 1
         -- Fast attack, slow decay: a single spike is visible in the report but
         -- does not fire the warning; a task that is genuinely heavy will.
@@ -3967,7 +3982,7 @@ local function runBucket(
             index += 1
         end
     end
-    return total
+    return total, worstLabel, worstMs
 end
 
 local function publishPerformance(deltaTime: number): ()
@@ -3982,26 +3997,70 @@ local function publishPerformance(deltaTime: number): ()
     performance.renderMs = stats.renderMs
     performance.slowestTask = stats.slowest and stats.slowest.label or nil
     performance.slowestMs = stats.slowest and stats.slowest.ms or 0
+    performance.spikeAgo = if performance.spikeAt
+        then math.max(0, os.clock() - performance.spikeAt)
+        else -1
     performance.updatedAt = os.clock()
 end
 
 local performanceElapsed: number = 0
 
+-- v139.1: a spike is one frame far over budget (a hitch), not a steady cost.
+-- 45 ms is ~2.7 frames at 60 FPS: low enough to catch a real stutter, high
+-- enough that ordinary jitter does not spam the console.
+local SPIKE_MS: number = 45
+local SPIKE_WARN_EVERY: number = 5
+
+TaskManager.frameSlowLabel = nil
+TaskManager.frameSlowMs = 0
+
 TaskManager.connection = RunService.Heartbeat:Connect(function(
     deltaTime: number
 ): ()
-    TaskManager.tasksMs = runBucket(TaskManager.tasks, deltaTime)
+    local total: number, label: string?, worst: number =
+        runBucket(TaskManager.tasks, deltaTime)
+    TaskManager.tasksMs = total
+    TaskManager.frameSlowLabel = label
+    TaskManager.frameSlowMs = worst
     performanceElapsed += deltaTime
     if performanceElapsed >= PERFORMANCE_EVERY then
         performanceElapsed = 0
         publishPerformance(deltaTime)
+    end
+
+    local frameMs: number = math.max(0, deltaTime) * 1000
+    local performance: any = state.performance
+    if frameMs >= SPIKE_MS then
+        performance.spikeCount += 1
+        performance.spikeMs = frameMs
+        performance.spikeTask = label
+        performance.spikeAt = os.clock()
+        if frameMs > performance.worstSpikeMs then
+            performance.worstSpikeMs = frameMs
+        end
+        -- Rate limited: one line every few seconds, naming the module that was
+        -- running when the frame blew up. If the menu cost is tiny the hitch is
+        -- the game or the executor, which is also useful to know.
+        local now: number = os.clock()
+        if now - (performance.spikeWarnedAt or -math.huge) >= SPIKE_WARN_EVERY then
+            performance.spikeWarnedAt = now
+            local menuMs: number = TaskManager.tasksMs + TaskManager.renderMs
+            warn(string.format(
+                "[%s:Perf] frame spike %.0f ms (menu %.2f ms%s)",
+                PRODUCT.name,
+                frameMs,
+                menuMs,
+                label and (" · " .. label) or ""
+            ))
+        end
     end
 end)
 
 TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     deltaTime: number
 ): ()
-    TaskManager.renderMs = runBucket(TaskManager.renderTasks, deltaTime)
+    local total: number = runBucket(TaskManager.renderTasks, deltaTime)
+    TaskManager.renderMs = total
 end)
 
 -- Human readable snapshot for the console: `print(state.perfReport())`.
@@ -4018,6 +4077,17 @@ state.perfReport = function(): string
             stats.renderCount
         ),
     }
+    local performance: any = state.performance
+    if performance.spikeCount > 0 then
+        local ago: number = performance.spikeAgo or -1
+        table.insert(lines, string.format(
+            "spikes %d · worst %.0f ms · last %s%s",
+            performance.spikeCount,
+            performance.worstSpikeMs,
+            ago < 0 and "n/a" or string.format("%.1f s ago", ago),
+            performance.spikeTask and (" · " .. tostring(performance.spikeTask)) or ""
+        ))
+    end
     for index: number, entry: any in ipairs(stats.top) do
         if index > 6 then
             break

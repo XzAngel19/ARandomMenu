@@ -110,7 +110,7 @@ function Module.init(context: any): any
     }
 
     local productVersion: string = tostring(
-        (host.PRODUCT and host.PRODUCT.version) or "0.1 Beta"
+        (host.PRODUCT and host.PRODUCT.version) or "0.823 Release"
     )
     local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 15) + 4
     local LOGO_CHIP_HEIGHT: number = 44

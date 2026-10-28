@@ -921,6 +921,10 @@ do
       assert(type(perf.frameMs) == "number" and perf.frameMs > 0, "frame time must be measured")
       assert(type(perf.tasksMs) == "number", "task cost must be measured")
       assert(type(perf.renderMs) == "number", "render cost must be measured")
+      -- v139.1: hitches are tracked apart from the steady cost.
+      assert(type(perf.spikeCount) == "number", "spike counter must exist")
+      assert(type(perf.worstSpikeMs) == "number", "the worst spike must be tracked")
+      assert(type(perf.spikeAgo) == "number", "the age of the last spike must be tracked")
       local manager = ex.state.taskManager
       assert(type(manager) == "table", "state.taskManager must be exposed")
       local alwaysOn = #manager.tasks

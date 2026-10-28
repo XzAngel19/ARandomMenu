@@ -64,6 +64,10 @@ type Track = {
     aimPart: BasePart?,
     aimName: string?,
     partsAt: number?,
+    -- v139: recycled sample tables. At 60 Hz x 12 players this was creating
+    -- ~700 tables per second, which is exactly the kind of steady garbage that
+    -- shows up later as a hitch when the collector catches up.
+    spare: {Sample}?,
 }
 
 type Fit = {
@@ -399,21 +403,33 @@ function Module.init(runtime: any): any
             -- Respawns, teleports and ownership changes must not seed a fit.
             if delta > 0 and delta < 0.4
                 and (position - last.position).Magnitude > 8 + 120 * delta then
+                local spare: {Sample} = track.spare or {}
+                track.spare = spare
+                for _, dropped: Sample in ipairs(samples) do
+                    if #spare < 8 then
+                        table.insert(spare, dropped)
+                    end
+                end
                 table.clear(samples)
             end
         end
-        table.insert(samples, {
-            at = now,
-            position = position,
-            velocity = velocity,
-            state = stateName,
-            grounded = grounded,
-            aimOffset = aimOffset,
-            aimPart = aimPartName,
-            moveDirection = moveDirection,
-        })
+        local spare: {Sample} = track.spare or {}
+        track.spare = spare
+        local sample: Sample = table.remove(spare) or {} :: Sample
+        sample.at = now
+        sample.position = position
+        sample.velocity = velocity
+        sample.state = stateName
+        sample.grounded = grounded
+        sample.aimOffset = aimOffset
+        sample.aimPart = aimPartName
+        sample.moveDirection = moveDirection
+        table.insert(samples, sample)
         while #samples > 2 and now - samples[1].at > HISTORY_SECONDS do
-            table.remove(samples, 1)
+            local retired: Sample = table.remove(samples, 1)
+            if #spare < 8 then
+                table.insert(spare, retired)
+            end
         end
     end
 
@@ -1417,6 +1433,11 @@ function Module.init(runtime: any): any
         end,
     }
 
+    -- v139: the roster changes a few times per round, not 60 times per second.
+    -- `GetPlayers()` returns a fresh array on every call, so asking for it each
+    -- frame was pure garbage. Reused for a quarter of a second.
+    local roster: {Player} = {}
+    local rosterAt: number = -math.huge
     local function tick(deltaTime: number): ()
         elapsed += math.max(0, deltaTime or 0)
         local interval: number = 1 / SAMPLE_HZ
@@ -1425,7 +1446,11 @@ function Module.init(runtime: any): any
         end
         elapsed = elapsed % interval
         local now: number = os.clock()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
+        if now - rosterAt >= 0.25 or #roster == 0 then
+            rosterAt = now
+            roster = Players:GetPlayers()
+        end
+        for _, player: Player in ipairs(roster) do
             if player ~= LocalPlayer then
                 samplePlayer(player, now)
             end

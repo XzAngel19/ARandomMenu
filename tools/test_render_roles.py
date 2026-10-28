@@ -32,7 +32,14 @@ local objects={}
 local methods={}
 local Instance={}
 function Instance.new(class)
- local obj=setmetatable({props={Name=class,ClassName=class},children={}}, {
+ -- Real GuiObjects always have a Position and a Size; the render code compares
+ -- them before writing, so the mocks must expose them too.
+ local props={Name=class,ClassName=class}
+ if class~='Part' and class~='Workspace' and class~='ScreenGui' then
+  props.Position=UDim2.fromOffset(0,0)
+  props.Size=UDim2.fromOffset(0,0)
+ end
+ local obj=setmetatable({props=props,children={}}, {
   __index=function(o,k) return methods[k] or o.props[k] end,
   __newindex=function(o,k,v)
    if k=='Parent' then
