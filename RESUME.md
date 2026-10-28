@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v148-20261028-x2duels-oth-probe`**.
+> **`v149-20261028-x2duels-shared-oth`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,41 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1S. X2 Duels: Gun Probe Oth pasivo v148
+## 1T. X2 Duels: Gun Probe Oth compartido v149
+
+El usuario confirmó que **BAC-1583 apareció al activar Gun Probe v148**. Eso
+correlaciona la expulsión con ese momento, pero no identifica cuál API/hook lo
+provocó. v148 instalaba tres hooks Oth. v149 elimina los de `__index` y el
+`workspace.Raycast` directo y usa un único Oth sobre `__namecall`, compartido
+con Silent AIM, en ambos órdenes ON/OFF y sin hooks clásicos como fallback.
+No afirmar que esto impide la expulsión: Oth, el cliente/executor y otras APIs
+pueden igualmente ser detectados. Pruebas en cuentas de prueba, no la principal.
+
+- Gun Probe es pasivo: registra con Gun equipada namecalls observados para
+  `Raycast`, `FindPartOnRay` y variantes, `ScreenPointToRay`,
+  `ViewportPointToRay`, `FireServer`/`InvokeServer`, más touch y Activated. Un
+  rayo conserva origen/dirección y `RaycastParams.FilterType` si está disponible.
+  Los remotos solo tienen tipo de argumentos, no sus valores. Nombre del caller
+  puede ser desconocido y eventos pueden pertenecer a otros scripts. No captura
+  lecturas Mouse, `Ray.new` ni llamadas directas que eviten `__namecall`; la
+  ausencia no prueba que el juego no las use. No confirma daño.
+- El JSON v3 registra configuración y cambios de Silent (backend, habilitado,
+  parte, FOV, Wall/Team, rango, compatibilidad) y eventos antes/después de un
+  rayo redirigido. Status muestra presencia de namecall, no prueba que se use.
+  Guarda hasta los 400 eventos más recientes, contando descartes; guarda un
+  snapshot inicial, luego cambios cada 3 s, y al OFF/60 s para mitigar pérdida
+  ante kick. El mismo nombre se sobrescribe; puede perderse lo más reciente y
+  no hay garantía si falla `writefile`. Archivos pueden contener coordenadas y
+  nombres: revisar antes de compartir. `Save gun sources` es opcional, emplea
+  API `decompile` (no Oth), y puede contener datos privados.
+- El bridge queda inerte en OFF/destrucción y se reutiliza; reentrar a Roblox
+  lo quita. Reiniciar Roblox antes de v149 para retirar los nodos v148. Mocks de
+  `tools/test_x2duels.py` prueban un solo hook, ausencia de fallback, Silent y
+  Probe activados en ambos órdenes, compatibilidad, móvil, eventos sin valores
+  de remotes, FIFO de 400, autosave, OFF y expiración. No prueban semántica
+  Oth off-thread ni el anticheat/servidor reales.
+
+## 1S. X2 Duels: Gun Probe Oth pasivo v148 (histórico; reemplazado en v149)
 
 El usuario pidió el grabador para descubrir el método de disparo. v147 lo había
 bloqueado por sus hooks anteriores; v148 reactiva la tarjeta existente **Gun
@@ -1164,7 +1198,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v148, Gun Probe pasivo con Oth;
-comportamiento real en Delta, reconocimiento de arma y daño pendientes.
+*Última actualización: 2026-10-28 · v149, Oth compartido para Gun Probe y Silent;
+BAC-1583, comportamiento real en Delta y daño pendientes de diagnóstico.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

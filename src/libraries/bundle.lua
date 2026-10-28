@@ -1,5 +1,5 @@
 return {
-    stamp = "v148-20261028-x2duels-oth-probe",
+    stamp = "v149-20261028-x2duels-shared-oth",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -26369,12 +26369,14 @@ local function buildX2Duels(runtime: any): ()
         lease.active = false
     end
 
-    -- OTH backend is strictly opt-in through the Silent master. It hooks only
-    -- the namecall Raycast path, matching the user's working Vape method. No
-    -- fallback to hookmetamethod/hookfunction/raw writes if OTH is absent.
-    local function installOthRaycast(): boolean
+    -- One OTH __namecall bridge is shared by Silent and the optional passive
+    -- probe. No __index / direct-function hooks or legacy fallback are added.
+    local function installOthRaycast(forSilent: boolean?): boolean
         local record: any = runtimeState.othRaycast
-        if record then record.active = true; return true end
+        if record then
+            if forSilent ~= false then record.active = true end
+            return true
+        end
         local othApi: any = host.oth
         if type(othApi) ~= "table" or type(othApi.hook) ~= "function"
             or type(host.getrawmetatable) ~= "function" or type(host.getnamecallmethod) ~= "function"
@@ -26382,22 +26384,33 @@ local function buildX2Duels(runtime: any): ()
         local got: boolean, meta: any = pcall(host.getrawmetatable, game)
         if not got or type(meta) ~= "table" or type(meta.__namecall) ~= "function" then return false end
         local predecessor: any = nil
-        record = {active = true, target = meta.__namecall}
+        record = {active = forSilent ~= false, target = meta.__namecall}
         local callback: any = function(object: any, ...: any): any
             if not predecessor then return nil end
-            if not record.active or runtimeState.closed or not settings.silentAim then return predecessor(object, ...) end
+            local observer: any = runtimeState.othProbeObserver
+            if runtimeState.closed or (not record.active and type(observer) ~= "function") then
+                return predecessor(object, ...)
+            end
             local args: any = table.pack(...)
             local methodOk: boolean, method: any = pcall(host.getnamecallmethod)
-            if object ~= currentWorkspace or not methodOk or method ~= "Raycast"
-                or typeof(args[1]) ~= "Vector3" or typeof(args[2]) ~= "Vector3" then
+            local interesting: boolean = method == "Raycast" or method == "FindPartOnRay"
+                or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist"
+                or method == "ScreenPointToRay" or method == "ViewportPointToRay"
+                or method == "FireServer" or method == "InvokeServer"
+            if not methodOk or not interesting or runtimeState.suppressRaycast then
                 return predecessor(object, unpack(args, 1, args.n))
             end
             local callerOk: boolean, executorCaller: any = pcall(host.checkcaller)
             if not callerOk or executorCaller ~= false then return predecessor(object, unpack(args, 1, args.n)) end
-            local ok: boolean, direction: any = pcall(redirectRay, args[1], args[2], true)
-            if ok and typeof(direction) == "Vector3" then
-                args[2] = direction
-                runtimeState.othRedirectSerial = (runtimeState.othRedirectSerial or 0) + 1
+            if type(observer) == "function" then pcall(observer, object, method, args, false) end
+            if record.active and settings.silentAim and object == currentWorkspace and method == "Raycast"
+                and typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" then
+                local ok: boolean, direction: any = pcall(redirectRay, args[1], args[2], true)
+                if ok and typeof(direction) == "Vector3" then
+                    args[2] = direction
+                    runtimeState.othRedirectSerial = (runtimeState.othRedirectSerial or 0) + 1
+                    if type(observer) == "function" then pcall(observer, object, method, args, true) end
+                end
             end
             return predecessor(object, unpack(args, 1, args.n))
         end
@@ -27874,17 +27887,26 @@ local function buildX2Duels(runtime: any): ()
         end
         local function record(kind: string, details: any?): ()
             if not probe.active then return end
-            if #probe.events >= 400 then probe.dropped += 1; return end
+            -- Keep the most recent evidence: camera rays can fill the buffer
+            -- before a later manual shot. Report how many events were evicted.
+            if #probe.events >= 400 then table.remove(probe.events, 1); probe.dropped += 1 end
             table.insert(probe.events, {t = math.floor((os.clock() - probe.started) * 1000) / 1000,
                 event = kind, detail = details})
         end
+        local function aimSnapshot(): {[string]: any}
+            return {backend = settings.silentBackend == "Oth" and "Oth namecall Raycast" or "Legacy",
+                enabled = settings.silentAim, compatibility = settings.raycastCompatibility,
+                wallCheck = settings.wallCheck, teamCheck = settings.teamCheck, targetPart = settings.silentAimPart,
+                range = settings.maxDistance, fov = settings.silentAimFov, fovRadius = settings.silentAimFovRadius}
+        end
         local function save(): boolean
             local output: any = {
-                version = 2, backend = "Oth passive", placeId = game.PlaceId,
+                version = 3, backend = "Oth shared namecall", placeId = game.PlaceId,
                 touch = inputService.TouchEnabled == true, keyboard = inputService.KeyboardEnabled == true,
                 elapsed = math.max(0, (probe.stoppedAt or os.clock()) - (probe.started or os.clock())),
-                indexHook = probe.indexInstalled == true, namecallHook = probe.namecallInstalled == true,
-                directRaycastHook = probe.directRaycastInstalled == true,
+                namecallHook = probe.namecallInstalled == true,
+                limitations = {"Mouse property reads, direct function calls and Ray.new are not intercepted"},
+                aim = aimSnapshot(),
                 checkcaller = type(host.checkcaller) == "function", getcallingscript = type(host.getcallingscript) == "function",
                 decompile = type(host.decompile) == "function", gun = probe.gunInfo,
                 dropped = probe.dropped, events = probe.events, sources = probe.sources or {},
@@ -27898,6 +27920,7 @@ local function buildX2Duels(runtime: any): ()
             if not probe.active then return end
             record("stop", reason)
             probe.active = false
+            runtimeState.othProbeObserver = nil
             probe.stoppedAt = os.clock()
             if probe.lease then probe.lease.active = false end
             if probe.inputLink then pcall(function(): () probe.inputLink:Disconnect() end); probe.inputLink = nil end
@@ -27933,131 +27956,70 @@ local function buildX2Duels(runtime: any): ()
             probe.nextTick = now + 0.1
             local gun: Tool? = findWeapon("Gun")
             bindGun(gun)
+            local aim: any = aimSnapshot()
+            local aimKey: string = table.concat({aim.backend, tostring(aim.enabled), tostring(aim.compatibility),
+                tostring(aim.wallCheck), tostring(aim.teamCheck), aim.targetPart, tostring(aim.range),
+                tostring(aim.fov), tostring(aim.fovRadius)}, "|")
+            if aimKey ~= probe.aimKey then probe.aimKey = aimKey; record("aim_configuration", aim) end
+            if now >= (probe.nextSaveAt or 0) then
+                probe.nextSaveAt = now + 3
+                if #probe.events ~= probe.savedCount or probe.dropped ~= probe.savedDropped then
+                    probe.saveFailed = not save()
+                    if not probe.saveFailed then probe.savedCount, probe.savedDropped = #probe.events, probe.dropped end
+                end
+            end
             report((not gun and "Waiting for gun" or (gun.Parent == localPlayer.Character and "Gun equipped" or "Gun in inventory"))
-                .. " · Oth Mouse " .. (probe.indexInstalled and "OK" or "unavailable")
-                .. " · Oth calls " .. (probe.namecallInstalled and "OK" or "unavailable")
-                .. " · direct ray " .. (probe.directRaycastInstalled and "OK" or "unavailable")
-                .. " · " .. tostring(#probe.events) .. " events")
+                .. " · Oth namecall " .. (probe.namecallInstalled and "OK" or "unavailable")
+                .. " · " .. tostring(#probe.events) .. " events"
+                .. (probe.saveFailed and " · save failed" or ""))
         end
-        local function installHooks(): ()
-            local othApi: any = host.oth
-            if type(othApi) ~= "table" or type(othApi.hook) ~= "function"
-                or type(host.getrawmetatable) ~= "function" or type(host.checkcaller) ~= "function" then return end
-            local got: boolean, meta: any = pcall(host.getrawmetatable, game)
-            if not got or type(meta) ~= "table" then return end
-            local mouseOk: boolean, mouse: any = pcall(function(): any return localPlayer:GetMouse() end)
-            if not probe.indexBridge and mouseOk and mouse and type(meta.__index) == "function" then
-                local predecessor: any = nil
-                local callback: any = function(object: any, key: any): any
-                    if not predecessor then return nil end
-                    if probe.active and not probe.guard and object == mouse
-                        and (key == "Hit" or key == "Target" or key == "UnitRay") then
-                        probe.guard = true
-                        pcall(function(): ()
-                            local gun: Tool? = probe.gun
-                            local ok: boolean, executor: any = pcall(host.checkcaller)
-                            if not gun or gun.Parent ~= localPlayer.Character or not ok or executor ~= false then return end
-                            local caller: any = nil
-                            if type(host.getcallingscript) == "function" then
-                                local success: boolean, script: any = pcall(host.getcallingscript)
-                                if success and typeof(script) == "Instance" then caller = script.Name end
-                            end
-                            record("mouse_read", {property = key, caller = caller or "unknown", silent = settings.silentAim})
-                        end)
-                        probe.guard = false
-                    end
-                    return predecessor(object, key)
+        local function observeCall(object: any, method: string, args: any, redirected: boolean): ()
+            if not probe.active or probe.guard then return end
+            probe.guard = true
+            pcall(function(): ()
+                local gun: Tool? = probe.gun
+                if not gun or gun.Parent ~= localPlayer.Character then return end
+                if method == "Raycast" or method == "FindPartOnRay"
+                    or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist" then
+                    if object ~= currentWorkspace then return end
+                elseif method == "ScreenPointToRay" or method == "ViewportPointToRay" then
+                    if object ~= currentWorkspace.CurrentCamera then return end
+                elseif typeof(object) ~= "Instance" or not (object:IsA("RemoteEvent")
+                    or object:IsA("UnreliableRemoteEvent") or object:IsA("RemoteFunction")) then return end
+                local types: {string} = {}
+                for i: number = 1, math.min(args.n, 12) do table.insert(types, typeof(args[i])) end
+                local caller: any = nil
+                if type(host.getcallingscript) == "function" then
+                    local ok: boolean, script: any = pcall(host.getcallingscript)
+                    if ok and typeof(script) == "Instance" then caller = script.Name end
                 end
-                local ok: boolean, old: any = pcall(othApi.hook, meta.__index, callback)
-                if ok and type(old) == "function" then predecessor = old; probe.indexBridge = callback end
-            end
-            if not probe.namecallBridge and type(meta.__namecall) == "function"
-                and type(host.getnamecallmethod) == "function" then
-                local predecessor: any = nil
-                local callback: any = function(object: any, ...: any): any
-                    if not predecessor then return nil end
-                    if not probe.active or probe.guard then return predecessor(object, ...) end
-                    local args: any = table.pack(...)
-                    -- Read method before any other engine call can overwrite it.
-                    local methodOk: boolean, method: any = pcall(host.getnamecallmethod)
-                    if not methodOk or (method ~= "Raycast" and method ~= "FireServer" and method ~= "InvokeServer") then
-                        return predecessor(object, unpack(args, 1, args.n))
-                    end
-                    probe.guard = true
-                    pcall(function(): ()
-                        local gun: Tool? = probe.gun
-                        local ok: boolean, executor: any = pcall(host.checkcaller)
-                        if not gun or gun.Parent ~= localPlayer.Character or not ok or executor ~= false then return end
-                        if method == "Raycast" then
-                            if object ~= currentWorkspace then return end
-                        elseif typeof(object) ~= "Instance" or not (object:IsA("RemoteEvent")
-                            or object:IsA("UnreliableRemoteEvent") or object:IsA("RemoteFunction")) then return end
-                        local types: {string} = {}
-                        for i: number = 1, math.min(args.n, 12) do table.insert(types, typeof(args[i])) end
-                        local caller: any = nil
-                        if type(host.getcallingscript) == "function" then
-                            local success: boolean, script: any = pcall(host.getcallingscript)
-                            if success and typeof(script) == "Instance" then caller = script.Name end
-                        end
-                        local detail: any = {method = method, object = object.Name, caller = caller or "unknown",
-                            argumentTypes = types, silent = settings.silentAim}
-                        if method == "Raycast" and typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" then
-                            detail.origin = {args[1].X, args[1].Y, args[1].Z}
-                            detail.direction = {args[2].X, args[2].Y, args[2].Z}
-                        end
-                        record("namecall", detail)
-                    end)
-                    probe.guard = false
-                    return predecessor(object, unpack(args, 1, args.n))
+                local detail: any = {method = method, object = object.Name, caller = caller or "unknown",
+                    argumentTypes = types, silent = settings.silentAim, redirected = redirected}
+                local origin: any = args[1]
+                local direction: any = args[2]
+                if method ~= "Raycast" and typeof(args[1]) == "Ray" then
+                    origin, direction = args[1].Origin, args[1].Direction
                 end
-                local ok: boolean, old: any = pcall(othApi.hook, meta.__namecall, callback)
-                if ok and type(old) == "function" then predecessor = old; probe.namecallBridge = callback end
-            end
-            -- Some clients call workspace.Raycast directly instead of via
-            -- __namecall. Hooks can both observe one call; logs are not counts
-            -- of shots and never modify the original arguments or result.
-            if not probe.directRaycastBridge and type(currentWorkspace.Raycast) == "function" then
-                local target: any = currentWorkspace.Raycast
-                local predecessor: any = nil
-                local callback: any = function(object: any, ...: any): any
-                    if not predecessor then return nil end
-                    if not probe.active or probe.guard or object ~= currentWorkspace then return predecessor(object, ...) end
-                    local args: any = table.pack(...)
-                    probe.guard = true
-                    pcall(function(): ()
-                        local gun: Tool? = probe.gun
-                        local ok: boolean, executor: any = pcall(host.checkcaller)
-                        if not gun or gun.Parent ~= localPlayer.Character or not ok or executor ~= false then return end
-                        local caller: any = nil
-                        if type(host.getcallingscript) == "function" then
-                            local success: boolean, script: any = pcall(host.getcallingscript)
-                            if success and typeof(script) == "Instance" then caller = script.Name end
-                        end
-                        local types: {string} = {}
-                        for i: number = 1, math.min(args.n, 12) do table.insert(types, typeof(args[i])) end
-                        local detail: any = {method = "Raycast", caller = caller or "unknown",
-                            argumentTypes = types, silent = settings.silentAim}
-                        if typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" then
-                            detail.origin = {args[1].X, args[1].Y, args[1].Z}
-                            detail.direction = {args[2].X, args[2].Y, args[2].Z}
-                        end
-                        record("direct_raycast", detail)
-                    end)
-                    probe.guard = false
-                    return predecessor(object, unpack(args, 1, args.n))
+                if (method == "Raycast" or string.sub(method, 1, 13) == "FindPartOnRay")
+                    and typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                    detail.origin = {origin.X, origin.Y, origin.Z}
+                    detail.direction = {direction.X, direction.Y, direction.Z}
                 end
-                local ok: boolean, old: any = pcall(othApi.hook, target, callback)
-                if ok and type(old) == "function" then predecessor = old; probe.directRaycastBridge = callback end
-            end
-            probe.indexInstalled = probe.indexBridge ~= nil
-            probe.namecallInstalled = probe.namecallBridge ~= nil
-            probe.directRaycastInstalled = probe.directRaycastBridge ~= nil
+                -- Filter metadata is descriptive; never change the RaycastParams.
+                if method == "Raycast" and typeof(args[3]) == "RaycastParams" then
+                    local ok: boolean, filter: any = pcall(function(): any return args[3].FilterType end)
+                    if ok then detail.filterType = tostring(filter) end
+                end
+                record("namecall", detail)
+            end)
+            probe.guard = false
         end
         local function start(): ()
             if probe.active then return end
             probe.active, probe.guard = true, false
             probe.started, probe.expires, probe.nextTick, probe.stoppedAt = os.clock(), os.clock() + 60, 0, nil
-            probe.events, probe.dropped, probe.gun, probe.gunInfo, probe.sources = {}, 0, nil, nil, {}
+            probe.nextSaveAt, probe.savedCount, probe.savedDropped, probe.saveFailed = 0, -1, -1, false
+            probe.events, probe.dropped, probe.gun, probe.gunInfo, probe.sources, probe.aimKey = {}, 0, nil, nil, {}, nil
             local lease: any = {active = true}
             probe.lease = lease
             record("start", {touch = inputService.TouchEnabled == true, silent = settings.silentAim})
@@ -28071,7 +28033,9 @@ local function buildX2Duels(runtime: any): ()
                 end)
             end)
             if inputOk then probe.inputLink = inputLink end
-            installHooks()
+            runtimeState.othProbeObserver = observeCall
+            probe.namecallInstalled = installOthRaycast(false)
+            if not probe.namecallInstalled then runtimeState.othProbeObserver = nil end
             tick(os.clock())
         end
         local configuration: any = table.clone(parentConfiguration)
@@ -28119,7 +28083,7 @@ local function buildX2Duels(runtime: any): ()
                 report("Gun sources saved: " .. tostring(saved) .. "/" .. tostring(attempted) .. "; review before sharing")
             end)
         end)
-        host.addInformationOption(calibrationCard, "Passive Oth-only probe: enable, equip Gun and shoot normally. Captures touch, Tool activation, Mouse, direct Raycast and namecall metadata; ray origin/direction and script/remote names may be sensitive. Source capture is optional. Saved locally; review before sharing. No API coverage or anti-detection guarantee.")
+        host.addInformationOption(calibrationCard, "Passive shared Oth namecall probe: enable, equip Gun and shoot normally. Mouse property reads and direct function calls are not captured. Ray coordinates and script/remote names may be sensitive; review local files before sharing. Detection remains possible.")
         runtimeState.calibration = {tick = tick, stop = stop}
     end
 
