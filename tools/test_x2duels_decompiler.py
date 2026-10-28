@@ -110,6 +110,9 @@ end
 function getnamecallmethod() return XDG.currentMethod end
 function getcallingscript() return XDG.caller end
 function checkcaller() return false end
+function getrawmetatable() return {} end
+function setreadonly() end
+function isreadonly() return true end
 XDG.caller = XDGoodScript
 
 local xdHttp = game:GetService("HttpService")
@@ -166,6 +169,9 @@ assert(failedWrite and failedWrite.sourceWriteError and not failedWrite.sourceFi
     and failedWrite.bytecodeFile, "failed source write was reported as saved")
 assert(XDG.capabilities and XDG.capabilities.getcallingscript and XDG.capabilities.debugInfo,
     "executor attribution capabilities were not recorded")
+assert(XDG.capabilities.checkcaller and XDG.capabilities.getrawmetatable
+    and XDG.capabilities.setreadonly and XDG.capabilities.isreadonly,
+    "anonymous Mouse/raw metatable capability presence was not recorded")
 
 -- The initial capture was made before this respawn and tool existed. A fresh
 -- snapshot must use the CURRENT character and explicitly decompile the tool.
@@ -266,6 +272,30 @@ def main() -> None:
     if marker not in result.stdout:
         raise AssertionError("decompiler harness marker missing\n" + result.stdout)
     print(marker)
+
+    # A missing mobile API must be reported as false, not inferred from another
+    # executor API. This is a fresh mock, not a live compatibility probe.
+    unavailable = SETUP.replace("function checkcaller() return false end", "checkcaller = nil")
+    unavailable = unavailable.replace("function getrawmetatable() return {} end", "getrawmetatable = nil")
+    unavailable = unavailable.replace("function setreadonly() end", "setreadonly = nil")
+    unavailable = unavailable.replace("function isreadonly() return true end", "isreadonly = nil")
+    negative_probe = r'''
+assert(XDG.capabilities and XDG.capabilities.checkcaller == false
+    and XDG.capabilities.getrawmetatable == false
+    and XDG.capabilities.setreadonly == false
+    and XDG.capabilities.isreadonly == false,
+    "missing executor capabilities were not reported as false")
+getgenv().X2DuelsDecompiler.stop()
+print("[X2DECOMPILER] absent mobile APIs reported: PASS")
+'''
+    OUT.write_text(harness.PRELUDE + unavailable + source + negative_probe, encoding="utf-8")
+    result = subprocess.run(
+        [LUAU, str(OUT)], cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    negative_marker = "[X2DECOMPILER] absent mobile APIs reported: PASS"
+    if result.returncode or negative_marker not in result.stdout:
+        raise SystemExit(result.stdout + result.stderr)
+    print(negative_marker)
 
 
 if __name__ == "__main__":

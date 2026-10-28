@@ -211,6 +211,13 @@ def run_integration_contracts() -> None:
     require(base, 'runService.Heartbeat:Wait()', "post-equip readiness frame")
     require(base, 'local function discoverMouseCast', "optional native MouseCast adapter")
     require(base, 'local function isWeaponCaller', "weapon-only redirect attribution")
+    require(base, 'local function anonymousMouseTarget', "bounded anonymous Mouse fallback")
+    require(base, 'local function observedGunSignature', "captured gun fingerprint")
+    require(base, 'local function replaceRawMouseIndex', "restorable raw metatable fallback")
+    require(base, '"Target Part"', "independent Silent target-part selector")
+    require(base, '"Aim FOV"', "optional screen-space aim filter")
+    require(base, '"Aim FOV Radius"', "screen-space aim radius")
+    require(base, '"Mouse Compatibility"', "explicit continuous Mouse compatibility option")
     require(base, 'offset.Magnitude > direction.Magnitude', "native ray range preservation")
     require(base, 'You can\'t shoot: a wall or another body is blocking the shot.', "visible wall reason")
     require(base, 'TextWrapped = true', "readable mobile status")
@@ -483,6 +490,14 @@ local silentFeature = featuresByName["Silent AIM"]
 assert(not ex.state.valueControls["MVSD.SilentAIM.Mode"],
     "obsolete visible camera-lock mode is still exposed")
 assert(ex.state.toggleControls["MVSD.SilentAIM.WallCheck"], "Silent Wall Check is missing")
+assert(ex.state.toggleControls["MVSD.SilentAIM.MouseCompatibility"]
+    and ex.state.toggleControls["MVSD.SilentAIM.AimFOV"]
+    and ex.state.valueControls["MVSD.SilentAIM.AimFOVRadius"]
+    and ex.state.valueControls["MVSD.SilentAIM.TargetPart"],
+    "Silent mobile compatibility/FOV/target selector missing")
+assert(not ex.state.x2duelsCore.settings.mouseCompatibility
+    and not ex.state.x2duelsCore.settings.silentAimFov,
+    "continuous anonymous compatibility and Aim FOV must default OFF")
 assert(not featuresByName["Auto Shoot"].enabled and not featuresByName["Knife Throw"].enabled,
     "fresh boot unexpectedly enabled combat")
 
@@ -1160,6 +1175,9 @@ do
     otherScript.Name = "PingsController"
     otherScript.Parent = X2Networking
     nativeHumanoid:EquipTool(nativeGun)
+    local fireRemote, beamRemote = Instance.new("RemoteEvent"), Instance.new("RemoteEvent")
+    fireRemote.Name, beamRemote.Name = "fire", "showBeam"
+    fireRemote.Parent, beamRemote.Parent = nativeGun, nativeGun
     local nativeHit = CFrame.new(Vector3.new(-9, 0, 0))
     local originalIndex = function(_object, key)
         return key == "Hit" and nativeHit or "native target"
@@ -1169,6 +1187,9 @@ do
     local currentNamecall = originalNamecall
     local caller = gunScript
     local oldHookMeta, oldCaller, oldMethod = hookmetamethod, getcallingscript, getnamecallmethod
+    local oldDebug, oldCheckCaller = debug, checkcaller
+    local oldRawMeta, oldReadonly, oldIsReadonly = getrawmetatable, setreadonly, isreadonly
+    local originalGunActivate = nativeGun.Activate
     hookmetamethod = function(_game, method, replacement)
         if method == "__index" then
             local previous = currentIndex
@@ -1197,6 +1218,153 @@ do
     assert(currentIndex(nativeMouse, "Hit") == nativeHit
         and currentIndex(otherMouse, "Target") == "native target", "foreign Mouse access was changed")
     caller = gunScript
+
+    -- Target Part belongs to Silent only: other cards keep their own default.
+    local partControl = ex.state.valueControls["MVSD.SilentAIM.TargetPart"]
+    local torso = HarnessHeroGuy.Character:FindFirstChild("UpperTorso")
+    partControl.apply("Body")
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Target") == torso,
+        "Body did not select the R15 torso")
+    assert(core.targetFor(HarnessHeroGuy).part == nativeTarget.part,
+        "Silent Target Part leaked into the shared/default Auto Shoot target")
+    local originalTorsoParent = torso.Parent
+    torso.Parent = nil
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Target") == HarnessHeroGuy.Character:FindFirstChild("Torso"),
+        "Body did not fall back to an R6 torso")
+    torso.Parent = originalTorsoParent
+    partControl.apply("Head")
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Target") == nativeTarget.part,
+        "Head did not restore the head target")
+
+    -- Aim FOV uses screen pixels and nearest cursor, independent of world
+    -- distance and the other cards. Revalidate even between selection ticks.
+    local camera = workspace.CurrentCamera
+    local oldProjection = camera.WorldToScreenPoint
+    local inputService = game:GetService("UserInputService")
+    local oldMouseLocation = inputService.GetMouseLocation
+    local secondPlayer = Instance.new("Player")
+    secondPlayer.Name, secondPlayer.UserId = "FovOpponent", 12345
+    secondPlayer.Parent = game:GetService("Players")
+    local secondCharacter = Instance.new("Model")
+    secondCharacter.Parent = workspace
+    secondPlayer.Character = secondCharacter
+    local secondHumanoid = Instance.new("Humanoid")
+    secondHumanoid.Health, secondHumanoid.Parent = 100, secondCharacter
+    local secondRoot = Instance.new("Part")
+    secondRoot.Name, secondRoot.Position, secondRoot.Parent = "HumanoidRootPart", Vector3.new(30, 3, 0), secondCharacter
+    local secondHead = Instance.new("Part")
+    secondHead.Name, secondHead.Position, secondHead.Parent = "Head", Vector3.new(30, 4.5, 0), secondCharacter
+    HarnessMatchData[secondPlayer] = {gameId = "HarnessMatchOne", team = "Blue", mode = "TeamBased", dead = false}
+    local allOffscreen = false
+    camera.WorldToScreenPoint = function(_self, position)
+        if allOffscreen then return Vector3.new(900, 200, 1), false end
+        if position.X > 20 then return Vector3.new(405, 205, 1), true end
+        return Vector3.new(490, 200, 1), true
+    end
+    inputService.GetMouseLocation = function() return Vector2.new(400, 200) end
+    local fovControl = ex.state.toggleControls["MVSD.SilentAIM.AimFOV"]
+    local radiusControl = ex.state.valueControls["MVSD.SilentAIM.AimFOVRadius"]
+    radiusControl.apply(120)
+    fovControl.setChecked(true)
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Target") == secondHead,
+        "Aim FOV did not prefer the opponent closest to the PC cursor")
+    assert(core.nearestEnemy(1000, true, false, false).player == HarnessHeroGuy,
+        "Silent Aim FOV leaked into independent automatic targeting")
+    allOffscreen = true
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit,
+        "Aim FOV retained a target that went offscreen before the next tick")
+    local shotsBeforeFov = nativeGunShots
+    senderBinding.onPress()
+    assert(nativeGunShots == shotsBeforeFov and string.find(silentFeature.status, "FOV", 1, true),
+        "FOV rejection did not stop and explain the manual action")
+    radiusControl.apply(math.huge)
+    senderBinding.onPress()
+    assert(nativeGunShots == shotsBeforeFov,
+        "an infinite radius incorrectly accepted an offscreen opponent")
+    radiusControl.apply(200)
+    fovControl.setChecked(false)
+    secondPlayer.Parent = nil
+    secondCharacter.Parent = nil
+    HarnessMatchData[secondPlayer] = nil
+    camera.WorldToScreenPoint = oldProjection
+    inputService.GetMouseLocation = oldMouseLocation
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+
+    -- No caller/debug API: the action gets a short, one-gun Mouse lease.
+    -- These are fake hooks/native reads, not evidence of real mobile support.
+    getcallingscript, debug = nil, {}
+    checkcaller = function() return false end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit,
+        "anonymous native read redirected before the action")
+    local anonymousHit = nil
+    local cameraAtAnonymous = nil
+    nativeGun.Activate = function()
+        nativeGunShots += 1
+        cameraAtAnonymous = workspace.CurrentCamera.CFrame
+        anonymousHit = currentIndex(nativeMouse, "Hit")
+    end
+    local anonymousShots = nativeGunShots
+    senderBinding.onPress()
+    assert(nativeGunShots == anonymousShots + 1 and typeof(anonymousHit) == "CFrame"
+        and anonymousHit.Position == nativeTarget.part.Position,
+        "the scoped action did not redirect an anonymous native Mouse.Hit")
+    assert(cameraAtAnonymous == cameraBefore and workspace.CurrentCamera.CFrame == cameraBefore,
+        "anonymous action moved the camera")
+    assert(currentIndex(otherMouse, "Hit") == nativeHit
+        and currentIndex(nativeMouse, "UnitRay") == "native target",
+        "anonymous action touched another Mouse or an unverified ray")
+    nativeNow += 0.21
+    coreTask.callback(0.1)
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit,
+        "anonymous action lease did not expire")
+
+    local compatibility = ex.state.toggleControls["MVSD.SilentAIM.MouseCompatibility"]
+    compatibility.setChecked(true)
+    assert(currentIndex(nativeMouse, "Target") == nativeTarget.part,
+        "explicit compatibility did not permit an anonymous native Mouse.Target")
+    checkcaller = function() return true end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "executor's own Mouse read was redirected")
+    checkcaller = function() error("unsupported") end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "failed checkcaller was trusted")
+    checkcaller = function() return false end
+    getcallingscript = function() return otherScript end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit,
+        "explicit foreign caller bypassed compatibility protection")
+    getcallingscript = nil
+    beamRemote.Parent = nil
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "unrecognized gun signature was redirected")
+    beamRemote.Parent = nativeGun
+    HarnessMatchData[HarnessHeroGuy].team = "Red"
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "compatibility targeted a teammate")
+    HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    HarnessMatchData[HarnessHeroGuy].gameId = "DifferentGame"
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "compatibility targeted another match")
+    HarnessMatchData[HarnessHeroGuy].gameId = "HarnessMatchOne"
+    core.settings.wallCheck = true
+    local savedRaycast = workspace.Raycast
+    local blockingPart = Instance.new("Part")
+    workspace.Raycast = function() return {Instance = blockingPart} end
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "compatibility ignored Wall Check")
+    workspace.Raycast = savedRaycast
+    core.settings.wallCheck = false
+    nativeHumanoid:EquipTool(nativeKnife)
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "compatibility changed a knife read")
+    nativeHumanoid:EquipTool(nativeGun)
+    compatibility.setChecked(false)
+    assert(currentIndex(nativeMouse, "Hit") == nativeHit, "compatibility OFF did not stop anonymous aim")
+    nativeGun.Activate = originalGunActivate
+    debug = oldDebug
+    getcallingscript = function() return caller end
+    caller = gunScript
     local retiredIndex = currentIndex
     local foreignIndex = function(...) return retiredIndex(...) end
     currentIndex = foreignIndex
@@ -1208,7 +1376,63 @@ do
         "retired Mouse hook was resurrected when Silent was re-enabled")
     silentFeature.onToggle(false)
     assert(currentIndex == foreignIndex, "second OFF displaced foreign Mouse hook")
+
+    -- Some mobile executors expose raw metatable APIs instead of a functional
+    -- hookmetamethod. The fallback preserves both read-only states and chains.
+    hookmetamethod, getcallingscript, debug = nil, nil, {}
+    checkcaller = function() return false end
+    local rawMeta = {__index = originalIndex}
+    local rawReadonly = true
+    getrawmetatable = function(object) assert(object == game); return rawMeta end
+    isreadonly = function(meta) assert(meta == rawMeta); return rawReadonly end
+    setreadonly = function(meta, value) assert(meta == rawMeta); rawReadonly = value end
+    compatibility.setChecked(true)
+    silentFeature.onToggle(true)
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(rawMeta.__index ~= originalIndex and rawReadonly,
+        "raw Mouse hook was not installed with read-only state preserved")
+    assert(rawMeta.__index(nativeMouse, "Target") == nativeTarget.part,
+        "raw Mouse fallback did not redirect an anonymous native target")
+    silentFeature.onToggle(false)
+    assert(rawMeta.__index == originalIndex and rawReadonly,
+        "raw Mouse hook did not restore the original function/state")
+    rawReadonly = false
+    hookmetamethod = function() error("synthetic unsupported hookmetamethod") end
+    silentFeature.onToggle(true)
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(not rawReadonly, "raw installation froze a previously writable metatable")
+    local retiredRaw = rawMeta.__index
+    local foreignRaw = function(...) return retiredRaw(...) end
+    rawMeta.__index = foreignRaw
+    silentFeature.onToggle(false)
+    assert(rawMeta.__index == foreignRaw and not rawReadonly
+        and rawMeta.__index(nativeMouse, "Hit") == nativeHit,
+        "raw cleanup displaced a newer hook or left our node active")
+    silentFeature.onToggle(true)
+    assert(retiredRaw(nativeMouse, "Hit") == nativeHit,
+        "retired raw hook resurrected after ON")
+    silentFeature.onToggle(false)
+    assert(rawMeta.__index == foreignRaw and not rawReadonly,
+        "raw second cleanup displaced a newer hook")
+    rawMeta.__index = originalIndex
+    isreadonly = nil
+    silentFeature.onToggle(true)
+    assert(rawMeta.__index == originalIndex,
+        "raw fallback guessed the original read-only state")
+    anonymousShots = nativeGunShots
+    senderBinding.onPress()
+    assert(nativeGunShots == anonymousShots
+        and string.find(silentFeature.status, "unavailable", 1, true),
+        "missing raw capability spent a shot instead of reporting unsupported")
+    silentFeature.onToggle(false)
+    compatibility.setChecked(false)
     hookmetamethod, getcallingscript, getnamecallmethod = oldHookMeta, oldCaller, oldMethod
+    getrawmetatable, setreadonly, isreadonly = oldRawMeta, oldReadonly, oldIsReadonly
+    debug, checkcaller = oldDebug, oldCheckCaller
+    nativeGun.Activate = originalGunActivate
+    fireRemote.Parent, beamRemote.Parent = nil, nil
     nativeLocal.GetMouse = oldGetMouse
     nativeHumanoid:EquipTool(nativeKnife)
 end
@@ -1966,9 +2190,115 @@ for _, work in ipairs(delayed) do
     if work.seconds == 0.35 then work.callback(unpack(work.arguments, 1, work.arguments.n)) end
 end
 assert(string.find(feature.status, "redirected", 1, true), "mobile aim diagnostic was not updated")
+
+-- A phone uses the center of the viewport, not the last finger position.
+local savedProjection = camera.WorldToViewportPoint
+local insideFov = false
+camera.WorldToViewportPoint = function()
+    return insideFov and Vector3.new(650, 365, 1) or Vector3.new(1000, 360, 1), true
+end
+local mobileFov = ex.state.toggleControls["MVSD.SilentAIM.AimFOV"]
+ex.state.valueControls["MVSD.SilentAIM.AimFOVRadius"].apply(100)
+mobileFov.setChecked(true)
+action.button.InputBegan:Fire(touch)
+UserInputService.InputEnded:Fire(touch)
+assert(shots == 1 and string.find(feature.status, "FOV", 1, true),
+    "mobile FOV did not reject a distant screen-space target")
+insideFov = true
+action.button.InputBegan:Fire(touch)
+UserInputService.InputEnded:Fire(touch)
+assert(shots == 2, "mobile FOV did not accept a target near the viewport center")
+mobileFov.setChecked(false)
+camera.WorldToViewportPoint = savedProjection
+
+-- Another touch action simulates an executor with hookmetamethod/checkcaller
+-- but neither getcallingscript nor debug.info, and a gun reading Mouse.Hit.
+-- This remains a fixture: it does not validate Roblox or any named executor.
+feature.activate()
+local oldMouseGetter = localPlayer.GetMouse
+local nativeMouse = Instance.new("Mouse")
+localPlayer.GetMouse = function() return nativeMouse end
+local fire = Instance.new("RemoteEvent")
+fire.Name, fire.Parent = "fire", gun
+local beam = Instance.new("RemoteEvent")
+beam.Name, beam.Parent = "showBeam", gun
+local ordinaryHit = CFrame.new(Vector3.new(-20, 0, 0))
+local originalIndex = function() return ordinaryHit end
+local currentIndex = originalIndex
+local oldHookMeta, oldCaller, oldDebug, oldCheckCaller = hookmetamethod, getcallingscript, debug, checkcaller
+hookmetamethod = function(_game, method, replacement)
+    assert(method == "__index", "unexpected no-caller mobile hook")
+    local previous = currentIndex
+    currentIndex = replacement
+    return previous
+end
+getcallingscript, debug = nil, {}
+checkcaller = function() return false end
+local deferredHit = nil
+gun.Activate = function()
+    shots += 1
+    -- The native handler can read after Activate returns on a later scheduler turn.
+    deferredHit = function() return currentIndex(nativeMouse, "Hit") end
+end
+feature.activate()
+action.button.InputBegan:Fire(touch)
+UserInputService.InputEnded:Fire(touch)
+assert(shots == 3 and deferredHit and deferredHit().Position == target.part.Position,
+    "touch action did not support a deferred anonymous Mouse.Hit read")
+assert(camera.CFrame == cameraBefore, "anonymous mobile action moved the camera")
+for _, work in ipairs(delayed) do
+    if work.seconds == 0.35 then work.callback(unpack(work.arguments, 1, work.arguments.n)) end
+end
+assert(string.find(feature.status, "redirected", 1, true), "anonymous mobile status was not updated")
+feature.activate()
+assert(currentIndex == originalIndex, "mobile OFF did not restore the Mouse hook")
+hookmetamethod, getcallingscript, debug, checkcaller = oldHookMeta, oldCaller, oldDebug, oldCheckCaller
+localPlayer.GetMouse = oldMouseGetter
+
+-- The two existing automatic cards remain independently operable from a touch
+-- menu; these fixture Activates/ThrowMode writes are not proof of server hits.
+local autoShoot, knifeThrow = nil, nil
+for _, candidate in ipairs(ex.allFeatures) do
+    if candidate.sectionName == "MVSD" and candidate.name == "Auto Shoot" then autoShoot = candidate end
+    if candidate.sectionName == "MVSD" and candidate.name == "Knife Throw" then knifeThrow = candidate end
+end
+local mobileCore = ex.state.x2duelsCore
+local scheduledCore = nil
+for _, scheduled in pairs(ex.TaskManager.tasks) do
+    if scheduled.handle == ex.featureConnections.X2DuelsCore then scheduledCore = scheduled end
+end
+assert(autoShoot and knifeThrow and scheduledCore, "mobile automatic cards/core missing")
+mobileCore.settings.autoShootWallCheck = false
+gun.Activate = function() shots += 1 end
+autoShoot.activate()
+scheduledCore.callback(0.1)
+assert(shots == 4 and not feature.enabled and not mobileCore.settings.silentAim,
+    "mobile Auto Shoot did not activate independently of Silent AIM")
+autoShoot.activate()
+local mobileMain = Instance.new("Folder")
+mobileMain.Name, mobileMain.Parent = "Main", localPlayer.PlayerGui
+local mobileKnifeGui = Instance.new("Folder")
+mobileKnifeGui.Name, mobileKnifeGui.Parent = "MobileKnifeGui", mobileMain
+local throwMode = Instance.new("BoolValue")
+throwMode.Name, throwMode.Value, throwMode.Parent = "ThrowMode", false, mobileKnifeGui
+local knife = Instance.new("Tool")
+knife.Name, knife.Enabled, knife.Parent = "Knife", true, backpack
+gun.Parent = backpack
+local throws, sawThrowMode = 0, false
+knife.Activate = function()
+    throws += 1
+    sawThrowMode = throwMode.Value
+end
+mobileCore.settings.knifeWallCheck = false
+knifeThrow.activate()
+scheduledCore.callback(0.1)
+assert(throws == 1 and sawThrowMode and throwMode.Value == false
+    and not feature.enabled and not mobileCore.settings.silentAim,
+    "mobile Knife Throw did not use/restore ThrowMode independently")
+knifeThrow.activate()
 task.delay = oldDelay
 ex.state.destruct()
-print("[X2MOBILE] touch placement and activation, camera-free: PASS")
+print("[X2MOBILE] touch actions, FOV and independent automatic cards: PASS")
 '''
     mobile_path = ROOT / "build" / "x2duels_mobile_boot.luau"
     mobile_path.write_text(mobile_boot, encoding="utf-8")
@@ -1978,7 +2308,7 @@ print("[X2MOBILE] touch placement and activation, camera-free: PASS")
     )
     if mobile_result.returncode:
         raise SystemExit(mobile_result.stdout + mobile_result.stderr)
-    marker = "[X2MOBILE] touch placement and activation, camera-free: PASS"
+    marker = "[X2MOBILE] touch actions, FOV and independent automatic cards: PASS"
     if marker not in mobile_result.stdout:
         raise AssertionError("X2 mobile boot marker missing\n" + mobile_result.stdout)
     print(marker)

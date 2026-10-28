@@ -29,7 +29,7 @@ La carpeta se crea como `X2DuelsDecompiler/<placeId>-<timestamp>/`. Para investi
 - `weapon-sources-<n>.json`: Tools actuales y sus scripts decompilados o bytecode, incluso si aparecieron después de inyectar el recolector. Cada llamada usa un número nuevo.
 - `remote-calls.jsonl`: una línea por llamada entrante/saliente, con método, caller y argumentos serializados.
 - `sources.json` y `sources/`: resultado de `decompile`, bytecode de `getscriptbytecode` y errores de escritura.
-- `capabilities.json`: executor identificado cuando es posible, controles disponibles y APIs detectadas; tener una API no garantiza que funcione con este juego.
+- `capabilities.json`: executor identificado cuando es posible, controles disponibles y APIs detectadas, incluyendo `checkcaller`, `getrawmetatable`, `setreadonly` e `isreadonly` para diagnosticar el fallback Mouse. La presencia de una API no garantiza que funcione con este juego; `hookmetamethod` indica si pudo instalarse el hook de captura `__namecall`, no necesariamente el de `__index`.
 - `status.json`: estado final y restauración de la captura.
 
 Las capturas pueden contener nombres de usuario, identificadores de jugadores/servidor y argumentos de remotes. Revísalas antes de compartirlas y no compartas contraseñas, tokens ni credenciales. `usableSource=false` significa que el texto es un placeholder o una decompilación fallida; no debe tratarse como código recuperado. El `.luauc` se conserva como evidencia alternativa. Sin `appendfile`/`readfile`, el log usa un respaldo en memoria para no sobrescribir llamadas anteriores.

@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v144-20261028-x2duels-mobile`**.
+> **`v145-20261028-x2duels-mouse`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v144: 93 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v145: 93 fuentes,
      64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -68,7 +68,7 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1A. X2Duels (MVS): evidencia 1v1 y contratos v144
+## 1A. X2Duels (MVS): evidencia 1v1 y contratos v145
 
 **Fuentes:** `XzAngel19/TestingStuff` commit `a849817395`, log
 `2026-10-28T04_16_18Z.log` y `Place_124848751642883_[DUELS] 1v1_27-10-2026_23-21-39.rbxl`.
@@ -99,9 +99,9 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   mover la cámara; su tecla/botón también equipa la Gun del Backpack, espera un
   `Heartbeat` si acaba de equiparla, revalida personaje/partida/arma/objetivo y
   llama `Tool:Activate()`. Si no hay adaptador disponible, equipa pero **no
-  gasta un tiro sin redirección**; lo informa. Un adaptador instalado no prueba
-  que esa Gun lo use: después del intento el status distingue lectura redirigida
-  de ausencia de evidencia; ninguno confirma impacto o daño.
+  dispara** y lo informa. Un adaptador instalado no prueba que la Gun lo use
+  ni impide un tiro sin redirección: después del intento el status distingue
+  lectura redirigida de ausencia de evidencia; ninguno confirma impacto o daño.
   `Wall Check` está primero al expandir Silent, Auto Shoot y Knife Throw, con
   estado multilínea y toast en el botón manual para pared/cuerpo, rango, equipo,
   partida, vida, arma, recarga y compatibilidad. Wall Check comprueba también
@@ -129,6 +129,45 @@ daño o recompensas ni de lo que ocurre en todos los executors/places.
   Sigue faltando el LocalScript principal de Gun y su cadena de aim: ningún mock
   verifica compatibilidad real en un executor concreto, `Tool:Activate`, daño
   ni precisión. No sustituir este límite por paquetes MM2 o hashes inventados.
+- **Investigación y alternativas v145:** ScriptBlox mezcla dos juegos: el
+  perfil X2/MVS usa lobby `135856908115931` (universe `7219654364`), 1v1
+  `124848751642883` y 2v2 `92876937625630`; RED21 `12355337193` es otro
+  universe (`4348829796`). No importar sus remotes por el parecido del nombre.
+  Para el juego correcto se inspeccionaron estáticamente
+  [K1ngfcs](https://scriptblox.com/script/DUELS-Murderers-VS-Sheriffs-Silent-aim-201630)
+  y [imshrak](https://delta-scripts.org/scripts/murderers-vs-sheriffs-script-keyless-silent-aim-open-source/):
+  ambos proponen redirigir lecturas de mouse, pero sus anuncios/comentarios no
+  prueban funcionamiento. Las fuentes GitHub respectivas no declaraban licencia;
+  no se copiaron ni ejecutaron. La muestra imshrak además intenta una invitación
+  vía RPC de Discord: esa solicitud tampoco se incorporó. Synergy y Nova
+  entregaban loaders de servicios externos; Synergy declara recopilar datos, así
+  que no se cargaron. Una muestra de Rscripts propone un `kill` directo, sin
+  evidencia vigente suficiente: **no** se envía ni se adivina ese remote.
+- **Fallback Mouse v145:** en un botón/tecla de Silent, si se reconoce la Gun
+  por los RemoteEvents directos `fire` y `showBeam`, se instala una autorización
+  de hasta 0,2 s para lecturas nativas no atribuibles de **ese Mouse** y sólo
+  `Hit`/`Target`; exige `checkcaller() == false`, objetivo de la partida y checks
+  vigentes. Se cancela al apagar, cambiar la partida o expirar. El toggle
+  **Mouse Compatibility**, OFF por defecto en una instalación nueva, permite
+  además esas lecturas fuera de la acción para el disparo normal. Puede afectar
+  otros scripts locales cuyo origen no se pueda identificar; un caller ajeno
+  identificado se deja intacto. El resto de rayos, MouseCast y Knife continúa
+  requiriendo procedencia del arma. Si `hookmetamethod` falla, se puede intentar
+  `getrawmetatable`/`setreadonly`/`isreadonly`, preservando el estado previo y
+  sin desplazar un hook posterior. Esto es **un adaptador**, no prueba de que la
+  Gun real use Mouse.Hit/Target ni de que un tiro cause daño. Si no se observa
+  redirección, el status lo informa; un intento podría haberse disparado sin
+  redirigir antes del diagnóstico. El `capabilities.json` del recolector anota la
+  presencia de `checkcaller` y de las tres APIs raw, no su funcionamiento real.
+- **Opciones propias de Silent v145:** `Target Part` elige Head o Body
+  (UpperTorso/Torso/root), sin cambiar Auto Shoot, Knife Throw automático,
+  TriggerBot ni Auto Win. La intercepción manual de Knife que ya pertenecía a
+  Silent también comparte su selección. `Aim FOV`, OFF por defecto, y
+  `Aim FOV Radius` filtran oponentes en pantalla
+  por píxeles: cursor en PC (`WorldToScreenPoint`) o centro del viewport en
+  móvil, con revalidación antes de redirigir. No cambia el FOV de cámara ni
+  dibuja un círculo; Wall Check, Team Check, alcance y partido siguen activos.
+  Se usan las tarjetas existentes, sin duplicar ESP, Hitbox, Auto Farm ni Rejoin.
 - **Móvil:** `PlayerGui.Main.MobileKnifeGui.ThrowMode` es el BoolValue que
   alterna `MobileKnifeLocalScript`; se usa temporalmente y se restaura sin
   sobreescribir un cambio posterior. Desktop conserva el input derecho nativo.
@@ -977,7 +1016,7 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; v144 pasó las 64 suites,
+Nada de esto está probado en partida real todavía; v145 pasó las 64 suites,
 el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 
 - v141: consumo real al inyectar y en reposo/con funciones activas, Auto Farm y
@@ -993,8 +1032,10 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v144: el usuario reportó que v143 no funcionaba en celular. Probar en vivo
-  1v1 y 2v2 con nombre de executor, botón Silent PC/móvil y disparo nativo;
+- X2 v145: el usuario reportó que v143 no funcionaba en celular. Probar en vivo
+  1v1 y 2v2 con nombre de executor, botón Silent PC/móvil y disparo nativo, con
+  Mouse Compatibility OFF/ON, Head/Body y Aim FOV OFF/ON. Verificar si `fire` y
+  `showBeam` están en la Gun, `checkcaller` y hooks funcionan y qué status aparece;
   comprobar si el arma usa MouseCast/Mouse/rayos y si `getcallingscript` o el
   stack la identifican. Un tiro intentado o lectura redirigida no prueban daño.
   Con el arma ya disponible ejecutar `snapshotWeapons()` del recolector y esperar
@@ -1020,8 +1061,8 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v144, X2 botón móvil sin cámara visible,
-checks/diagnósticos y captura dinámica del arma; la aceptación live de X2 y el
-perfil de CPU MM2 siguen pendientes.
+*Última actualización: 2026-10-28 · v145, X2 fallback de Mouse acotado,
+selector Head/Body y Aim FOV opcional para PC/móvil; la aceptación live de X2 y
+el perfil de CPU MM2 siguen pendientes.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

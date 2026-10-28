@@ -53,6 +53,10 @@ local function buildX2Duels(runtime: any): ()
         teamCheck = true,
         wallCheck = true,
         maxDistance = 1000,
+        silentAimPart = "Head",
+        silentAimFov = false,
+        silentAimFovRadius = 200,
+        mouseCompatibility = false,
         autoShootTeamCheck = true,
         autoShootWallCheck = true,
         autoShootRange = 1000,
@@ -103,6 +107,7 @@ local function buildX2Duels(runtime: any): ()
         gunToken = 0,
         silentAttempt = 0,
         redirectCount = 0,
+        mouseShot = nil,
         mouseCastModule = nil,
         mouseCastApi = nil,
         mouseCastLoading = false,
@@ -133,6 +138,9 @@ local function buildX2Duels(runtime: any): ()
         mouseHookInstalled = false,
         oldMouseIndex = nil,
         mouseIndexWrapper = nil,
+        mouseHookKind = nil,
+        mouseMetatable = nil,
+        mouseReadonly = nil,
     }
 
     local autoWinCard: any = nil
@@ -404,9 +412,18 @@ local function buildX2Duels(runtime: any): ()
         return character.PrimaryPart
     end
 
-    local function targetPartOf(character: Model?): BasePart?
+    local function targetPartOf(character: Model?, preferred: string?): BasePart?
         if not character then
             return nil
+        end
+        if preferred == "Body" then
+            -- Actual R15/R6 body parts are preferable to an invisible root;
+            -- fall back gracefully when a rig has not replicated its torso.
+            for _, name: string in ipairs({"UpperTorso", "Torso"}) do
+                local part: Instance? = character:FindFirstChild(name)
+                if part and part:IsA("BasePart") then return part :: BasePart end
+            end
+            return rootOf(character)
         end
         local head: Instance? = character:FindFirstChild("Head")
         if head and head:IsA("BasePart") then
@@ -415,9 +432,9 @@ local function buildX2Duels(runtime: any): ()
         return rootOf(character)
     end
 
-    local function targetRecord(player: Player): {[string]: any}?
+    local function targetRecord(player: Player, preferred: string?): {[string]: any}?
         local character: Model? = player.Character
-        local part: BasePart? = targetPartOf(character)
+        local part: BasePart? = targetPartOf(character, preferred)
         if not character or not part then
             return nil
         end
@@ -455,9 +472,41 @@ local function buildX2Duels(runtime: any): ()
         return false, "You can't shoot: a wall or another body is blocking the shot."
     end
 
+    -- Aim FOV is a screen-space filter, not the camera's FieldOfView. On a
+    -- phone the viewport center is stable even when a finger is over a button;
+    -- on desktop ScreenPoint and GetMouseLocation share screen coordinates.
+    local function targetScreenDistance(target: {[string]: any}): number?
+        local camera: Camera? = currentWorkspace.CurrentCamera
+        if not camera then return nil end
+        local mobile: boolean = state.isMobile == true
+        local ok: boolean, point: any, visible: any = pcall(function(): (any, any)
+            if mobile then return camera:WorldToViewportPoint(target.part.Position) end
+            return camera:WorldToScreenPoint(target.part.Position)
+        end)
+        if not ok or visible ~= true or not point or type(point.X) ~= "number"
+            or type(point.Y) ~= "number" or (type(point.Z) == "number" and point.Z <= 0) then
+            return nil
+        end
+        local pointer: any
+        if mobile then
+            local viewport: any = camera.ViewportSize
+            if not viewport or type(viewport.X) ~= "number" or type(viewport.Y) ~= "number" then
+                return nil
+            end
+            pointer = Vector2.new(viewport.X / 2, viewport.Y / 2)
+        else
+            local gotPointer: boolean, value: any = pcall(inputService.GetMouseLocation, inputService)
+            if not gotPointer then return nil end
+            pointer = value
+        end
+        if not pointer or type(pointer.X) ~= "number" or type(pointer.Y) ~= "number" then return nil end
+        local dx: number, dy: number = point.X - pointer.X, point.Y - pointer.Y
+        return math.sqrt(dx * dx + dy * dy)
+    end
+
     local function nearestEnemy(
         maxDistance: number, teamCheckOverride: boolean?, wallCheckOverride: boolean?,
-        cacheSelection: boolean?, origin: Vector3?
+        cacheSelection: boolean?, origin: Vector3?, preferredPart: string?, screenRadius: number?
     ): ({[string]: any}?, string?)
         local checkWall: boolean = if wallCheckOverride == nil then settings.wallCheck
             else wallCheckOverride
@@ -471,27 +520,41 @@ local function buildX2Duels(runtime: any): ()
             return nil, "No active duel or match data is still loading."
         end
         local best: {[string]: any}? = nil
-        local bestDistance: number = maxDistance
+        local bestScore: number = screenRadius or maxDistance
         local hasOpponent: boolean = false
         local outOfRange: boolean = false
+        local outOfFov: boolean = false
         local blockedReason: string? = nil
         for _, player: Player in ipairs(players:GetPlayers()) do
             if isEnemy(player, false, teamCheckOverride) then
                 hasOpponent = true
-                local target: {[string]: any}? = targetRecord(player)
+                local target: {[string]: any}? = targetRecord(player, preferredPart)
                 if target then
                     local distance: number =
                         (target.part.Position - localRoot.Position).Magnitude
                     if distance > maxDistance then
                         outOfRange = true
-                    elseif distance <= bestDistance then
-                        local clear: boolean, reason: string? = true, nil
-                        if checkWall then clear, reason = hasLineOfSight(target, origin) end
-                        if not clear then
-                            blockedReason = reason
-                        else
-                            best = target
-                            bestDistance = distance
+                    else
+                        local score: number = distance
+                        local insideFov: boolean = true
+                        if screenRadius ~= nil then
+                            local screenDistance: number? = targetScreenDistance(target)
+                            if screenDistance == nil or screenDistance > screenRadius then
+                                outOfFov = true
+                                insideFov = false
+                            else
+                                score = screenDistance
+                            end
+                        end
+                        if insideFov and score <= bestScore then
+                            local clear: boolean, reason: string? = true, nil
+                            if checkWall then clear, reason = hasLineOfSight(target, origin) end
+                            if not clear then
+                                blockedReason = reason
+                            else
+                                best = target
+                                bestScore = score
+                            end
                         end
                     end
                 end
@@ -500,6 +563,7 @@ local function buildX2Duels(runtime: any): ()
         if cacheSelection ~= false then runtimeState.selected = best end
         if best then return best, nil end
         if blockedReason then return nil, blockedReason end
+        if outOfFov then return nil, "No opponent is inside Aim FOV on screen." end
         if outOfRange then return nil, "The opponent is outside the selected range." end
         if hasOpponent then return nil, "The opponent's character is not ready." end
         return nil, "No eligible opponent (match, team, protection or health)."
@@ -542,6 +606,16 @@ local function buildX2Duels(runtime: any): ()
             "ThrowEvent", "SlashEvent", "MobileKnifeLocalScript", "KnifeKill",
         })
         return rules.classifyTool(tool.Name, gunStructure, knifeStructure)
+    end
+
+    local function observedGunSignature(gun: Tool?): boolean
+        if not gun or toolKind(gun) ~= "Gun" then return false end
+        -- Both names and the direct Tool hierarchy were observed in the 1v1
+        -- capture. A name such as "Gun" alone is not enough for anonymous aim.
+        local fire: Instance? = gun:FindFirstChild("fire")
+        local beam: Instance? = gun:FindFirstChild("showBeam")
+        return fire ~= nil and fire:IsA("RemoteEvent")
+            and beam ~= nil and beam:IsA("RemoteEvent")
     end
 
     local function findWeapon(kind: string): Tool?
@@ -666,9 +740,9 @@ local function buildX2Duels(runtime: any): ()
         return ok
     end
 
-    local function selectedTarget(): {[string]: any}?
-        local target: any = runtimeState.selected
-        if not target or not isAlive(localPlayer) or not isEnemy(target.player) then
+    local function validSilentTarget(target: any): {[string]: any}?
+        if not target or not target.player or not target.part or not target.character
+            or not isAlive(localPlayer) or not isEnemy(target.player) then
             return nil
         end
         if target.player.Character ~= target.character
@@ -680,8 +754,16 @@ local function buildX2Duels(runtime: any): ()
         if not root or (target.part.Position - root.Position).Magnitude > settings.maxDistance then
             return nil
         end
+        if settings.silentAimFov then
+            local screenDistance: number? = targetScreenDistance(target)
+            if screenDistance == nil or screenDistance > settings.silentAimFovRadius then return nil end
+        end
         if settings.wallCheck and not hasLineOfSight(target) then return nil end
         return target
+    end
+
+    local function selectedTarget(): {[string]: any}?
+        return validSilentTarget(runtimeState.selected)
     end
 
     local function gunOrigin(gun: Tool?): Vector3?
@@ -695,6 +777,7 @@ local function buildX2Duels(runtime: any): ()
     end
 
     local function cancelGun(owner: string?): ()
+        if owner == nil or owner == "Silent AIM" then runtimeState.mouseShot = nil end
         local pending: any = runtimeState.gunPending
         if owner ~= nil and (not pending or pending.owner ~= owner) then return end
         runtimeState.gunToken += 1
@@ -898,16 +981,16 @@ local function buildX2Duels(runtime: any): ()
         return true
     end
 
-    local function isWeaponCaller(tool: Tool): boolean
+    local function isWeaponCaller(tool: Tool): (boolean, boolean)
         local getCaller: any = host.getcallingscript
         if type(getCaller) == "function" then
             local ok: boolean, caller: any = pcall(getCaller)
             if ok and typeof(caller) == "Instance" then
-                if caller:IsDescendantOf(tool) then return true end
+                if caller:IsDescendantOf(tool) then return true, false end
                 -- An explicitly identified foreign script wins over an
-                -- incidental weapon-looking stack. MouseCast itself is the
-                -- one shared module for which the stack may supply provenance.
-                if caller ~= runtimeState.mouseCastModule then return false end
+                -- incidental weapon-looking stack or anonymous compatibility.
+                -- MouseCast is the shared module whose stack may identify Gun.
+                if caller ~= runtimeState.mouseCastModule then return false, true end
             end
         end
         -- A shared ModuleScript such as MouseCast can be the immediate caller.
@@ -915,12 +998,12 @@ local function buildX2Duels(runtime: any): ()
         -- one of its LocalScripts; a generic camera ray or ping is not proof.
         local debugApi: any = host.debug
         local info: any = type(debugApi) == "table" and debugApi.info or nil
-        if type(info) ~= "function" then return false end
+        if type(info) ~= "function" then return false, false end
         local scripts: {string} = {}
         for _, child: Instance in ipairs(tool:GetDescendants()) do
             if child:IsA("LocalScript") then table.insert(scripts, child.Name) end
         end
-        if #scripts == 0 then return false end
+        if #scripts == 0 then return false, false end
         for level: number = 2, 18 do
             local ok: boolean, source: any = pcall(info, level, "s")
             if not ok or type(source) ~= "string" then break end
@@ -934,13 +1017,13 @@ local function buildX2Duels(runtime: any): ()
                         local following: string = string.sub(source, first + #suffix, first + #suffix)
                         if (first == 1 or previous == "." or previous == "/" or previous == "@")
                             and (following == "" or following == ":" or following == "]" or following == "\"") then
-                            return true
+                            return true, false
                         end
                     end
                 end
             end
         end
-        return false
+        return false, false
     end
 
     local function redirectRay(origin: Vector3, direction: Vector3): Vector3?
@@ -1152,8 +1235,43 @@ local function buildX2Duels(runtime: any): ()
         end
     end
 
+    -- Published X2 examples commonly intercept the local Mouse's Hit/Target
+    -- without caller attribution. On executors that cannot identify the gun
+    -- script, limit this fallback to the observed Gun signature and a native
+    -- (non-executor) access. By default it is armed only briefly by our own
+    -- action button; continuous native-shot compatibility requires opt-in.
+    local function anonymousMouseTarget(gun: Tool, key: any): {[string]: any}?
+        if (key ~= "Hit" and key ~= "Target") or not observedGunSignature(gun)
+            or type(host.checkcaller) ~= "function" then return nil end
+        local ok: boolean, executorCaller: any = pcall(host.checkcaller)
+        if not ok or executorCaller ~= false then return nil end
+        local shot: any = runtimeState.mouseShot
+        if shot and os.clock() < shot.expires and shot.gun == gun
+            and localPlayer.Character == shot.character
+            and matchToken(localPlayer) == shot.match then
+            return validSilentTarget(shot.target)
+        end
+        if settings.mouseCompatibility then return selectedTarget() end
+        return nil
+    end
+
+    -- Raw metatable fallback for executors without a working hookmetamethod.
+    -- Preserve the original read-only state and never replace a newer wrapper.
+    local function replaceRawMouseIndex(meta: any, expected: any, replacement: any, readonly: boolean): boolean
+        local readable: boolean, current: any = pcall(function(): any return meta.__index end)
+        if not readable or current ~= expected then return false end
+        local opened: boolean = pcall(host.setreadonly, meta, false)
+        if not opened then return false end
+        local changed: boolean = pcall(function(): ()
+            if meta.__index == expected then meta.__index = replacement end
+        end)
+        local restored: boolean = pcall(host.setreadonly, meta, readonly)
+        local checked: boolean, installed: any = pcall(function(): any return meta.__index end)
+        return changed and restored and checked and installed == replacement
+    end
+
     local function installMouseIndexHook(wrap: any): ()
-        if runtimeState.mouseHookInstalled or type(host.hookmetamethod) ~= "function" then return end
+        if runtimeState.mouseHookInstalled then return end
         local mouseOk: boolean, mouse: any = pcall(function(): any return localPlayer:GetMouse() end)
         if not mouseOk or mouse == nil then return end
         local predecessor: any = nil
@@ -1165,8 +1283,11 @@ local function buildX2Duels(runtime: any): ()
                 and settings.silentAim and os.clock() >= runtimeState.nativeAimUntil then
                 local ok: boolean, value: any = pcall(function(): any
                     local gun: Tool? = equippedTool()
-                    if not gun or toolKind(gun) ~= "Gun" or not isWeaponCaller(gun) then return nil end
-                    local target: {[string]: any}? = selectedTarget()
+                    if not gun or toolKind(gun) ~= "Gun" then return nil end
+                    local identified: boolean, foreign: boolean = isWeaponCaller(gun)
+                    if foreign then return nil end
+                    local target: {[string]: any}? = if identified then selectedTarget()
+                        else anonymousMouseTarget(gun, key)
                     if not target or (settings.wallCheck and not hasLineOfSight(target, gunOrigin(gun))) then
                         return nil
                     end
@@ -1188,14 +1309,48 @@ local function buildX2Duels(runtime: any): ()
             end
             return predecessor(object, key)
         end)
-        local ok: boolean, old: any = pcall(host.hookmetamethod, game, "__index", wrapper)
-        if ok and type(old) == "function" then
-            predecessor = old
-            runtimeState.oldMouseIndex = old
-            runtimeState.mouseIndexWrapper = wrapper
-            runtimeState.mouseHookLease = lease
-            runtimeState.mouseHookInstalled = true
+        local hook: any = host.hookmetamethod
+        if type(hook) == "function" then
+            local ok: boolean, old: any = pcall(hook, game, "__index", wrapper)
+            if ok and type(old) == "function" then
+                predecessor = old
+                runtimeState.oldMouseIndex = old
+                runtimeState.mouseIndexWrapper = wrapper
+                runtimeState.mouseHookLease = lease
+                runtimeState.mouseHookKind = "hookmetamethod"
+                runtimeState.mouseHookInstalled = true
+                return
+            end
         end
+        if type(host.getrawmetatable) == "function" and type(host.setreadonly) == "function"
+            and type(host.isreadonly) == "function" then
+            local gotMeta: boolean, meta: any = pcall(host.getrawmetatable, game)
+            local gotReadonly: boolean, readonly: any = false, nil
+            if gotMeta and type(meta) == "table" then
+                gotReadonly, readonly = pcall(host.isreadonly, meta)
+            end
+            local gotOld: boolean, old: any = false, nil
+            if gotReadonly and type(readonly) == "boolean" then
+                gotOld, old = pcall(function(): any return meta.__index end)
+            end
+            if gotOld and type(old) == "function" then
+                predecessor = old
+                if replaceRawMouseIndex(meta, old, wrapper, readonly) then
+                    runtimeState.oldMouseIndex = old
+                    runtimeState.mouseIndexWrapper = wrapper
+                    runtimeState.mouseHookLease = lease
+                    runtimeState.mouseHookKind = "raw"
+                    runtimeState.mouseMetatable = meta
+                    runtimeState.mouseReadonly = readonly
+                    runtimeState.mouseHookInstalled = true
+                    return
+                end
+                -- A partial failure must not leave an active anonymous hook.
+                lease.active = false
+                replaceRawMouseIndex(meta, wrapper, old, readonly)
+            end
+        end
+        lease.active = false
     end
 
     local function installHooks(): boolean
@@ -1203,7 +1358,6 @@ local function buildX2Duels(runtime: any): ()
         local debugApi: any = host.debug
         local canIdentifyCaller: boolean = type(host.getcallingscript) == "function"
             or (type(debugApi) == "table" and type(debugApi.info) == "function")
-        if not canIdentifyCaller then return false end
         local newClosure: any = host.newcclosure
         local function wrap(callback: any): any
             if type(newClosure) == "function" then
@@ -1213,6 +1367,9 @@ local function buildX2Duels(runtime: any): ()
             return callback
         end
         installMouseIndexHook(wrap)
+        -- Shared ray/MouseCast/Knife paths still require provenance; only the
+        -- tightly scoped Mouse fallback can operate without this capability.
+        if not canIdentifyCaller then return runtimeState.mouseHookInstalled end
         installKnifeHook(wrap)
         if type(hookFunction) ~= "function" then return runtimeState.mouseHookInstalled end
 
@@ -1290,7 +1447,12 @@ local function buildX2Duels(runtime: any): ()
             local lease: any = runtimeState[key]
             if lease then lease.active = false end
         end
-        if runtimeState.mouseHookInstalled and type(host.hookmetamethod) == "function" then
+        if runtimeState.mouseHookInstalled and runtimeState.mouseHookKind == "raw"
+            and runtimeState.mouseMetatable and type(host.setreadonly) == "function" then
+            replaceRawMouseIndex(runtimeState.mouseMetatable, runtimeState.mouseIndexWrapper,
+                runtimeState.oldMouseIndex, runtimeState.mouseReadonly)
+        elseif runtimeState.mouseHookInstalled and runtimeState.mouseHookKind == "hookmetamethod"
+            and type(host.hookmetamethod) == "function" then
             local ok: boolean, displaced: any = pcall(
                 host.hookmetamethod, game, "__index", runtimeState.oldMouseIndex
             )
@@ -1354,6 +1516,7 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.rayHookInstalled = false
         runtimeState.raycastHookInstalled = false
         runtimeState.oldMouseIndex, runtimeState.mouseIndexWrapper, runtimeState.mouseHookLease = nil, nil, nil
+        runtimeState.mouseHookKind, runtimeState.mouseMetatable, runtimeState.mouseReadonly = nil, nil, nil
         runtimeState.oldNamecall, runtimeState.knifeWrapper, runtimeState.knifeHookLease = nil, nil, nil
         runtimeState.oldRay, runtimeState.rayWrapper, runtimeState.rayHookLease = nil, nil, nil
         runtimeState.oldRaycast, runtimeState.raycastWrapper, runtimeState.raycastHookLease = nil, nil, nil
@@ -1976,9 +2139,13 @@ local function buildX2Duels(runtime: any): ()
                 setAutoWinStatus(runtimeState.resultsPending and "Waiting for rematch" or "Waiting for round")
             end
         end
+        if runtimeState.mouseShot and now >= runtimeState.mouseShot.expires then
+            runtimeState.mouseShot = nil
+        end
         if settings.silentAim and now >= runtimeState.nextSelectionAt then
             runtimeState.nextSelectionAt = now + 0.06
-            nearestEnemy(settings.maxDistance)
+            nearestEnemy(settings.maxDistance, nil, nil, nil, nil, settings.silentAimPart,
+                settings.silentAimFov and settings.silentAimFovRadius or nil)
         elseif not settings.silentAim then
             runtimeState.selected = nil
         end
@@ -2327,13 +2494,16 @@ local function buildX2Duels(runtime: any): ()
     )
     updateStats()
 
-    local function silentAdapterAvailable(): boolean
+    local function silentAdapterAvailable(gun: Tool?): boolean
         local debugApi: any = host.debug
         local canIdentifyCaller: boolean = type(host.getcallingscript) == "function"
             or (type(debugApi) == "table" and type(debugApi.info) == "function")
-        return canIdentifyCaller and (runtimeState.mouseCastApi ~= nil
+        local attributed: boolean = canIdentifyCaller and (runtimeState.mouseCastApi ~= nil
             or runtimeState.mouseHookInstalled or runtimeState.rayHookInstalled
             or runtimeState.raycastHookInstalled)
+        local buttonFallback: boolean = runtimeState.mouseHookInstalled
+            and type(host.checkcaller) == "function" and observedGunSignature(gun)
+        return attributed or buttonFallback
     end
 
     -- Old profiles may have saved the visible camera-lock mode. Do not silently
@@ -2355,9 +2525,9 @@ local function buildX2Duels(runtime: any): ()
             if enabled then
                 installHooks()
                 discoverMouseCast()
-                setCombatStatus(silentAimCard, "Silent AIM", silentAdapterAvailable()
+                setCombatStatus(silentAimCard, "Silent AIM", silentAdapterAvailable(findWeapon("Gun"))
                     and "Adapter loaded; weapon compatibility unconfirmed."
-                    or "Waiting for a compatible silent aim adapter.")
+                    or "Waiting for a compatible silent aim adapter or gun.")
             else
                 cancelGun("Silent AIM")
                 runtimeState.selected = nil
@@ -2379,6 +2549,28 @@ local function buildX2Duels(runtime: any): ()
         settings.teamCheck = value
         runtimeState.selected = nil
     end)
+    host.addCycleOption(silentAimCard, "Target Part", {"Head", "Body"}, 1, function(value: string): ()
+        settings.silentAimPart = value
+        runtimeState.selected = nil
+        runtimeState.nextSelectionAt = 0
+        runtimeState.mouseShot = nil
+    end, "Body prefers UpperTorso/Torso and falls back to the root if needed.")
+    host.addToggleOption(silentAimCard, "Mouse Compatibility", false, function(value: boolean): ()
+        settings.mouseCompatibility = value
+        if not value then runtimeState.mouseShot = nil end
+    end, "Allow unattributed native Mouse.Hit/Target reads while the observed Gun is equipped. Other unidentifiable game scripts could also be affected.")
+    host.addToggleOption(silentAimCard, "Aim FOV", false, function(value: boolean): ()
+        settings.silentAimFov = value
+        runtimeState.selected = nil
+        runtimeState.nextSelectionAt = 0
+        runtimeState.mouseShot = nil
+    end, "Select only on-screen opponents near the cursor on PC or screen center on mobile; this does not change camera FOV.")
+    host.addNumberOption(silentAimCard, "Aim FOV Radius", 200, 20, 1000, function(value: number): ()
+        settings.silentAimFovRadius = math.max(1, value)
+        runtimeState.selected = nil
+        runtimeState.nextSelectionAt = 0
+        runtimeState.mouseShot = nil
+    end, "Screen-space radius in pixels; used only while Aim FOV is enabled.")
     host.addNumberOption(silentAimCard, "Range", 1000, 50, 1500, function(value: number): ()
         settings.maxDistance = math.max(0, value)
     end)
@@ -2387,7 +2579,7 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "Expand this card for Wall Check. The action equips the native gun, waits for it to be ready and attempts a shot without moving the camera. An adapter is not proof of a hit or of support for every executor/gun."
+        "The action equips the gun and attempts a camera-free shot. If native firing cannot identify the weapon script, Mouse Compatibility permits extra mouse reads and may affect other unidentifiable scripts. It requires checkcaller and the observed gun signature. An adapter or redirected read does not prove a hit."
     )
 
     local function pressSenderButton(): ()
@@ -2437,22 +2629,34 @@ local function buildX2Duels(runtime: any): ()
                     report("The gun is disabled, reloading or not ready."); return
                 end
                 local target: {[string]: any}?, why: string? = nearestEnemy(
-                    settings.maxDistance, settings.teamCheck, settings.wallCheck, true, gunOrigin(gun)
+                    settings.maxDistance, settings.teamCheck, settings.wallCheck, true,
+                    gunOrigin(gun), settings.silentAimPart,
+                    settings.silentAimFov and settings.silentAimFovRadius or nil
                 )
                 if not target then report(why or "No eligible opponent."); return end
                 if settings.wallCheck then
                     local clear: boolean, reason: string? = hasLineOfSight(target)
                     if not clear then report(reason or "Wall Check unavailable."); return end
                 end
-                if not silentAdapterAvailable() then discoverMouseCast() end
-                if not silentAdapterAvailable() then
+                if not silentAdapterAvailable(gun) then discoverMouseCast() end
+                if not silentAdapterAvailable(gun) then
                     report(runtimeState.mouseCastLoading
                         and "Silent aim adapter is still loading; no shot was fired."
-                        or "Silent aim is unavailable on this executor; no shot was fired.")
+                        or "Silent aim is unavailable on this executor or gun; no shot was fired.")
                     return
                 end
                 local before: number = runtimeState.redirectCount
+                if runtimeState.mouseHookInstalled and observedGunSignature(gun)
+                    and type(host.checkcaller) == "function" then
+                    -- Activated handlers may run on a later scheduler turn.
+                    -- This is a bounded aim lease, not a fire-rate cooldown.
+                    runtimeState.mouseShot = {
+                        gun = gun, target = target, character = character,
+                        match = gameToken, expires = os.clock() + 0.2,
+                    }
+                end
                 if not activateNative(gun, target, false) then
+                    runtimeState.mouseShot = nil
                     report("The gun could not be activated."); return
                 end
                 setCombatStatus(silentAimCard, "Silent AIM", "Native shot attempted; aim not yet confirmed.")
