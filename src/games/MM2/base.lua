@@ -289,9 +289,18 @@ local function describeRayBeyond(
             info.player = owner
             break
         end
-        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
-            info.isBody = true
-            break
+        if current:IsA("Model") then
+            local humanoid: Humanoid? = current:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                info.isBody = true
+                -- v139.3: a body without an owner is only dangerous while it is
+                -- ALIVE. A corpse lying behind the murderer used to count as
+                -- "an innocent behind" and refused the shot.
+                pcall(function(): ()
+                    info.health = humanoid.Health
+                end)
+                break
+            end
         end
         if current == workspace then
             break
@@ -4107,7 +4116,10 @@ local function createTrajectoryCalibration(): any
             phase = "blocked",
             serverTime = workspace:GetServerTimeNow(),
             pingMs = getPingMilliseconds(),
-            reason = "wall",
+            -- v139.3: the refusal carries its own reason ("wall", "corridor"),
+            -- so a calibration session can tell a real barrier apart from a
+            -- policy decision that cost a shot.
+            reason = type(blocker.reason) == "string" and blocker.reason or "wall",
             blockedName = type(blocker.name) == "string" and blocker.name or nil,
             blockedTransparency = tonumber(blocker.transparency),
             blockedCanCollide = blocker.canCollide == true,

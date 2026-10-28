@@ -98,15 +98,27 @@ function Module.init(runtime: any): any
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
-    -- v139.2: how far behind the aim the ray is still dangerous. MM2's gun is
-    -- a long hitscan ray, not a bullet that dies at our endpoint; 12 studs of
-    -- overshoot (the old value) is shorter than the gap between two players
-    -- standing in the same room, which is how two of the v139.1 misses ended
-    -- up on another player's HumanoidRootPart.
-    local OVERSHOOT_PROBE_STUDS: number = 200
+    -- v139.3: two different questions, two different reaches. They shared one
+    -- constant in v139.2, and raising it to 200 studs for the corridor also
+    -- widened the silent construction's bystander probe -- which asks a
+    -- PLAYER-ONLY raycast that ignores walls. The v139.2 session then refused
+    -- shots ("Another player blocks the silent shot") with an innocent 100+
+    -- studs behind the murderer and a wall in between.
+    --
+    --  * how far behind the authored segment a body still takes the ray:
+    --    the v139.1 value the silent construction was validated with.
+    local BODY_OVERSHOOT_STUDS: number = 12
+    --  * how far behind the AIM the corridor looks for a body (see
+    --    corridorSafePoint): a long reach, because this probe stops at the
+    --    first thing it meets, so a wall ends the question.
+    local CORRIDOR_PROBE_STUDS: number = 200
     -- A body this close behind the aim is a point-blank innocent hit waiting
     -- to happen: even a 1-stud prediction error walks into it.
     local INNOCENT_DANGER_STUDS: number = 35
+    -- Inside this distance the murderer's body covers the whole line of sight,
+    -- so the lead stops helping and can even invert the shot: 17 studs/s of
+    -- charge times a 0.1 s lead is 1.7 studs, more than the gap itself.
+    local POINT_BLANK_STUDS: number = 6
     local MAX_AUTO_LEAD_SAFE: number = 0.6
 
     -- The Top/fallback origin lift belongs to the target's rig, not to a
@@ -126,8 +138,15 @@ function Module.init(runtime: any): any
     end
 
     -- The server ray is not clipped at our authored endpoint, so the
-    -- bystander check covers the segment plus an overshoot probe: a
-    -- body just behind the target would take the continuing ray.
+    -- bystander check covers the segment plus a short overshoot probe: a body
+    -- just behind the target would take the continuing ray.
+    --
+    -- v139.3: the overshoot probe now stops at the FIRST thing it meets and a
+    -- wall ends it. The old version asked bystanderOnSegment, whose raycast is
+    -- filtered to player characters only, so walls were transparent to it: an
+    -- innocent in the next room sat on the ray and every silent shot was
+    -- refused. "What is behind the aim" is corridorSafePoint's job; this check
+    -- only needs to know whether the continuing ray immediately finds a body.
     local function bystanderBlocks(
         target: Player,
         startPoint: Vector3,
@@ -140,8 +159,27 @@ function Module.init(runtime: any): any
         if segment.Magnitude <= 0.05 then
             return false
         end
+        if type(describeRayBeyond) == "function" then
+            local exclude: {Instance} = {target}
+            local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
+            if ownCharacter then
+                table.insert(exclude, ownCharacter)
+            end
+            local ok: boolean, hit: any = pcall(
+                describeRayBeyond,
+                startPoint,
+                endPoint,
+                BODY_OVERSHOOT_STUDS,
+                exclude
+            )
+            if ok then
+                return type(hit) == "table"
+                    and hit.isBody == true
+                    and hit.player ~= target
+            end
+        end
         local beyond: Vector3 = endPoint
-            + segment.Unit * OVERSHOOT_PROBE_STUDS
+            + segment.Unit * BODY_OVERSHOOT_STUDS
         return bystanderOnSegment(target, endPoint, beyond)
     end
 
@@ -310,13 +348,18 @@ function Module.init(runtime: any): any
             local hit: any = describeRayBeyond(
                 origin,
                 point,
-                OVERSHOOT_PROBE_STUDS,
+                CORRIDOR_PROBE_STUDS,
                 exclude
             )
             if not hit or not hit.isBody then
                 return nil
             end
             if hit.player == target then
+                return nil
+            end
+            -- A rig with no player behind it is only a danger while alive: a
+            -- corpse is not an innocent, and refusing on one costs the shot.
+            if hit.player == nil and (tonumber(hit.health) or 0) <= 0 then
                 return nil
             end
             return hit
@@ -448,6 +491,30 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- v139.3: at arm's length the lead stops helping and starts hurting.
+        -- The murderer charging at the measured 17 studs/s covers 1.7 studs in
+        -- a 0.1 s lead: from 1.5 studs away the predicted point lands BEHIND
+        -- our own muzzle, the authored segment inverts, and the shot is
+        -- refused as "Invalid shot geometry" (reproduced in
+        -- tools/test_gun_pointblank.py). Inside POINT_BLANK_STUDS the body
+        -- covers the whole sight, so aim at it and drop the lead.
+        if origin and info then
+            local root: BasePart? = nil
+            pcall(function(): ()
+                root = targetCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+            end)
+            local aimVector: Vector3 = info.endpoint - origin.Position
+            local toRoot: Vector3 = root and (root.Position - origin.Position) or aimVector
+            local inverted: boolean = aimVector.Magnitude < 0.05
+                or aimVector:Dot(toRoot) <= 0
+            if root and (inverted or aimVector.Magnitude < POINT_BLANK_STUDS) then
+                info.capturedPosition = root.Position
+                info.endpoint = root.Position
+                info.aimPartChosen = "HumanoidRootPart"
+                info.pointBlank = true
+            end
+        end
+
         -- v139.2: choose the aim point by what is BEHIND it. The server ray
         -- does not stop at our endpoint, so a stud of prediction error turns
         -- into a body behind the murderer. Measured in the v139.1 session:
@@ -457,6 +524,19 @@ function Module.init(runtime: any): any
             local chosen: Vector3, safe: boolean, picked: string =
                 corridorSafePoint(target, info, origin.Position, info.endpoint)
             if not safe then
+                -- Recorded like any other refusal, with its own reason, so a
+                -- session can answer "how many shots did this cost me?".
+                if trajectoryCalibration
+                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                    pcall(trajectoryCalibration.noteBlockedShot,
+                        trajectoryCalibration, {
+                            reason = "corridor",
+                            name = "body behind aim",
+                            distance = 0,
+                            skipped = false,
+                            canCollide = false,
+                        })
+                end
                 return reject("An innocent is right behind the murderer.")
             end
             if chosen ~= info.endpoint then
@@ -551,8 +631,23 @@ function Module.init(runtime: any): any
 
             local variant: string = "Through"
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
-                sweep: number, resolvedVariant: string =
-                buildSilentShot(target, info, origin, variant)
+                sweep: number, resolvedVariant: string
+            if info.pointBlank and origin then
+                -- v139.3: at arm's length the "Through" construction pierces
+                -- along the target's own motion, and a murderer charging at us
+                -- makes that direction point at US: the authored segment ended
+                -- on our own muzzle (muzzle 0.5, endpoint 0.5) and every shot
+                -- was refused as "Invalid shot geometry". Point blank needs no
+                -- trick at all -- the muzzle already sees the body.
+                shotOrigin = origin
+                shotEnd = CFrame.new(info.endpoint)
+                offset = 0
+                sweep = 0
+                resolvedVariant = "PointBlank"
+            else
+                shotOrigin, shotEnd, offset, sweep, resolvedVariant =
+                    buildSilentShot(target, info, origin, variant)
+            end
             if not shotOrigin or not shotEnd then
                 if continuous and target.Character then
                     local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")

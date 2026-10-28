@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/76bc3f2f-arandommenu`, build
-> **`v139.2-20261027-corridor-release-version`** (ver las entradas v139.x abajo).
+> **`v139.3-20261028-pointblank-release-version`** (ver las entradas v139.x abajo).
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,7 +20,7 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 69 suites,
+  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 71 suites,
      boot `failures=0`, auditoría de menú 52/51 tarjetas).
   5. Commit + push **normales** a `arena/76bc3f2f-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
@@ -176,6 +176,25 @@
 > `passedThroughBody` en `projectile-observed`. **El lead no se tocó.** Evidencia:
 > `docs/FIXES-v139.2.md`, `tools/test_gun_corridor.py`,
 > `tools/test_mm2_knife_equip.py`.
+
+> **v139.3 (2026-10-28):** "¿está bien que el wallcheck detecte el cuerpo del
+> murderer y no dispare?". **No**, pero el cuerpo del objetivo nunca bloqueaba
+> (está excluido desde v106): lo que bloqueaba eran dos comprobaciones nuestras.
+> **(1)** En Silent, la construcción "Through" perfora a lo largo del movimiento
+> del objetivo; si el asesino **corre hacia ti**, esa dirección apunta a ti y el
+> segmento acababa en el cañón (`muzzle 0,5 · endpoint 0,5`) → `"Invalid shot
+> geometry"`. Dentro de **`POINT_BLANK_STUDS = 6`** el punto de mira pasa a ser el
+> `HumanoidRootPart` sin lead y el disparo se autoriza **desde el cañón real**
+> (`variant = "PointBlank"`). **(2)** `OVERSHOOT_PROBE_STUDS` se había subido a
+> 200 en v139.2 y esa constante la compartía `bystanderBlocks`, cuyo rayo sólo ve
+> personajes: un inocente 108 studs detrás **y detrás de una pared** bloqueaba
+> todos los disparos Silent. Ahora hay **`BODY_OVERSHOOT_STUDS = 12`** (segmento
+> autorizado) y **`CORRIDOR_PROBE_STUDS = 200`** (corredor), y el sondeo de
+> "cuerpo detrás" usa `describeRayBeyond`, que **se detiene en la primera
+> pared**. Un cadáver (cuerpo sin dueño, salud 0) ya no cuenta como inocente. Los
+> rechazos del corredor se registran con `reason = "corridor"`. **El lead no se
+> tocó** (error mediano 12 ms). Evidencia: `docs/FIXES-v139.3.md`,
+> `tools/test_gun_pointblank.py` (25 comprobaciones).
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
@@ -900,6 +919,16 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
   Para saber si un fallo fue balística o geometría, el evento del disparo trae
   `missReason` (`hit` / `other-player` / `geometry` / `no-hit-part`) y el
   resumen de sesión `gunMisses` + `gunMissReasons`.
+- **v139.3 — punto blanco.** El cuerpo del asesino está excluido de todos los
+  rayos; a 0,8 studs el disparo sale. Lo que sí rompía era el **lead**: a 6
+  studs o menos, 17 studs/s × 0,1 s = 1,7 studs, y si viene **hacia ti** el punto
+  predicho cae detrás del cañón → `"Invalid shot geometry"`. Regla: dentro de
+  `POINT_BLANK_STUDS = 6` se apunta al `HumanoidRootPart` **sin lead** y se
+  autoriza desde el cañón real (`PointBlank`). Y ojo con las constantes
+  compartidas: `bystanderBlocks` (sólo personajes, **las paredes no lo frenan**)
+  y `corridorSafePoint` (primera pared y para) son preguntas distintas con
+  alcances distintos: `BODY_OVERSHOOT_STUDS = 12` frente a
+  `CORRIDOR_PROBE_STUDS = 200`. Un cadáver no es un inocente.
 - **El cuchillo va a ~96 studs/s** (`ThrowSpeed`, clamped 24–300): a 30 studs el
   vuelo es 0,31 s y el objetivo recorre 5,2 studs; el lead del cuchillo importa
   3× más que el de la pistola. `throwKnife` **no** dispara hasta que el tool

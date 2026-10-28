@@ -180,7 +180,8 @@ local nearPathClear=true
 local function isWeaponPathClear() return nearPathClear end
 local state={mm2ShotFeedback={queue=function() queues+=1 end,shootActive=true}}
 local trajectoryCalibration={noteAuthoredShot=function(_,info) notes+=1;lastAuthored=info end}
-''' + section(S, '    type FireOptions', '    local shootFeatureActive:') + r'''
+''' + section(S, '    local SILENT_ORIGIN_STUDS', '    local MAX_AUTO_LEAD_SAFE') \
+    + section(S, '    type FireOptions', '    local shootFeatureActive:') + r'''
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==1 and queues==1 and notes==1,'normal shot sends one packet and queues feedback')
 safe=false
