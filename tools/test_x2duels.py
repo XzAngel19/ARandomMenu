@@ -198,10 +198,12 @@ def run_integration_contracts() -> None:
     decompiler = DECOMPILER.read_text(encoding="utf-8")
     wurst = (ROOT / "src" / "Wurst.lua").read_text(encoding="utf-8")
 
-    # Only the captured zero-argument native Rematch vote may be sent; never
-    # fabricate/replay gun, knife, hit or event packets from remote names.
-    if base.count(":FireServer(") != 1:
+    # v154 explicitly experiments with the three observed Gun requests.
+    # Knife packets remain forbidden until their real signature is known.
+    if base.count(":FireServer(") != 4:
         raise AssertionError("unexpected outgoing X2 remote calls")
+    require(base, 'net:FindFirstChild("RE/GunKill")', "observed GunKill remote")
+    require(base, 'local function fireCFrameGun', "CFrame Gun request")
     require(base, 'Packages/Networking/RE/Rematch/RematchVote', "captured rematch vote")
     require(base, '(remote :: any):FireServer()', "zero-argument rematch vote")
     forbid(base, 'queue_again', "rematch is not requeue")
@@ -233,7 +235,7 @@ def run_integration_contracts() -> None:
     require(base, '"Target Part"', "independent Silent target-part selector")
     require(base, '"Aim FOV"', "optional screen-space aim filter")
     require(base, '"Aim FOV Radius"', "screen-space aim radius")
-    require(base, '"Raycast Compatibility"', "explicit OTH broad Raycast option")
+    forbid(base, 'host.addToggleOption(silentAimCard, "Raycast Compatibility"', "irrelevant CFrame Raycast option")
     require(base, 'offset.Magnitude > direction.Magnitude', "native ray range preservation")
     require(base, 'You can\'t shoot: a wall or another body is blocking the shot.', "visible wall reason")
     require(base, 'TextWrapped = true', "readable mobile status")
@@ -507,7 +509,7 @@ local silentFeature = featuresByName["Silent AIM"]
 assert(not ex.state.valueControls["MVSD.SilentAIM.Mode"],
     "obsolete visible camera-lock mode is still exposed")
 assert(ex.state.toggleControls["MVSD.SilentAIM.WallCheck"], "Silent Wall Check is missing")
-assert(ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
+assert(not ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
     and ex.state.toggleControls["MVSD.SilentAIM.AimFOV"]
     and ex.state.valueControls["MVSD.SilentAIM.AimFOVRadius"]
     and ex.state.valueControls["MVSD.SilentAIM.TargetPart"],
@@ -660,7 +662,120 @@ local autoShootFeature = featuresByName["Auto Shoot"]
 local knifeThrowFeature = featuresByName["Knife Throw"]
 local senderBinding = ex.state.shortcutBindings["MVSD.SilentAIM"]
 assert(senderBinding and senderBinding.onPress, "Silent AIM action binding missing")
--- OTH default: no detected legacy hook fallback; broad mode is opt-in.
+-- Production defaults to CFrame; this block tests the historical OTH path.
+assert(core.settings.silentBackend == "CFrame" and core.settings.autoShootBackend == "CFrame",
+    "X2 CFrame defaults missing")
+-- Captured X2 Gun protocol fixture: direct requests, not a real hit or
+-- evidence of server acceptance. No Oth, metahook or MouseCast wrappers.
+do
+    local oldHookMeta, oldOth, oldLook = hookmetamethod, oth, CFrame.lookAt
+    local hooks = 0
+    hookmetamethod = function() hooks += 1; error("unexpected metahook") end
+    oth = {hook = function() hooks += 1; error("unexpected Oth") end}
+    CFrame.lookAt = function(a, b)
+        local cf = CFrame.new(a)
+        cf.LookVector = (b - a).Unit
+        return cf
+    end
+    local calls = {}
+    local fire = Instance.new("RemoteEvent")
+    fire.Name, fire.Parent = "fire", nativeGun
+    fire.FireServer = function(_, ...) table.insert(calls, {name = "fire", args = table.pack(...)}) end
+    local beam = Instance.new("RemoteEvent")
+    beam.Name, beam.Parent = "showBeam", nativeGun
+    beam.FireServer = function(_, ...) table.insert(calls, {name = "beam", args = table.pack(...)}) end
+    local kill = Instance.new("RemoteEvent")
+    kill.Name = "RE/GunKill"
+    kill.FireServer = function(_, ...) table.insert(calls, {name = "kill", args = table.pack(...)}) end
+    local handle = Instance.new("Part")
+    handle.Name, handle.Position, handle.Parent = "Handle", Vector3.new(5, 3, 0), nativeGun
+    local oldWall, oldAutoWall = core.settings.wallCheck, core.settings.autoShootWallCheck
+    core.settings.wallCheck, core.settings.autoShootWallCheck = false, false
+    local cameraBefore = workspace.CurrentCamera.CFrame
+    local oldMouseCast = HarnessMouseCast.Exclude
+    local beforeNative = nativeGunShots
+    nativeGun.Parent = nativeBackpack
+    silentFeature.onToggle(true)
+    nativeNow += 3
+    coreTask.callback(0.1)
+    assert(HarnessMouseCast.Exclude == oldMouseCast and hooks == 0, "CFrame activated a MouseCast or Oth hook")
+    senderBinding.onPress()
+    assert(#calls == 0 and string.find(silentFeature.status, "unavailable", 1, true),
+        "missing GunKill remote did not fail closed")
+    kill.Parent = X2Net
+    senderBinding.onPress()
+    assert(#calls == 3 and calls[1].name == "fire" and calls[1].args.n == 0
+        and calls[2].name == "beam" and calls[2].args.n == 3
+        and calls[3].name == "kill" and calls[3].args.n == 5,
+        "CFrame button did not send captured Gun call order")
+    assert(calls[3].args[1] == "72376a93-74c0-4fc7-b968-b3def980891c"
+        and calls[3].args[2] == HarnessHeroGuy
+        and calls[3].args[4] == nativeLocal.Character:FindFirstChild("HumanoidRootPart").Position
+        and calls[3].args[5] == nativeTarget.part.Position
+        and calls[2].args[3] == handle and nativeGunShots == beforeNative
+        and workspace.CurrentCamera.CFrame == cameraBefore and hooks == 0
+        and string.find(silentFeature.status, "hit not confirmed", 1, true),
+        "CFrame packet shape, camera, hook or status incorrect")
+    local expectedDirection = (nativeTarget.part.Position - handle.Position).Unit
+    assert(math.abs(calls[3].args[3].X - expectedDirection.X) < 0.001
+        and math.abs(calls[3].args[3].Z - expectedDirection.Z) < 0.001,
+        "CFrame direction was not based on handle and target")
+    senderBinding.onPress()
+    assert(#calls == 3 and string.find(silentFeature.status, "cooldown", 1, true), "CFrame cooldown ignored")
+    nativeNow += 2.6
+    HarnessMatchData[HarnessHeroGuy].team = "Red"
+    senderBinding.onPress()
+    assert(#calls == 3, "CFrame button attacked teammate")
+    HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    local oldRay = workspace.Raycast
+    local wall = Instance.new("Part")
+    workspace.Raycast = function() return {Instance = wall} end
+    core.settings.wallCheck = true
+    senderBinding.onPress()
+    assert(#calls == 3 and string.find(silentFeature.status, "wall", 1, true), "CFrame ignored Wall Check")
+    workspace.Raycast = oldRay
+    core.settings.wallCheck = false
+    nativeGun.Enabled = false
+    senderBinding.onPress()
+    assert(#calls == 3 and string.find(silentFeature.status, "disabled", 1, true), "CFrame fired disabled gun")
+    nativeGun.Enabled = true
+    silentFeature.onToggle(false)
+    senderBinding.onPress()
+    assert(#calls == 3, "CFrame button fired while OFF")
+    -- Independent Auto Shoot uses the same gun protocol with Silent OFF.
+    nativeGun.Parent = nativeBackpack
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(#calls == 6 and not core.settings.silentAim and nativeGunShots == beforeNative
+        and workspace.CurrentCamera.CFrame == cameraBefore and hooks == 0,
+        "CFrame Auto Shoot was not independent/camera-free")
+    nativeNow += 0.5
+    coreTask.callback(0.1)
+    assert(#calls == 6, "CFrame Auto Shoot ignored 2.5s interval")
+    nativeNow += 2.1
+    coreTask.callback(0.1)
+    assert(#calls == 9, "CFrame Auto Shoot did not resume")
+    autoShootFeature.onToggle(false)
+    nativeNow += 3
+    coreTask.callback(0.1)
+    assert(#calls == 9, "CFrame Auto Shoot fired after OFF")
+    -- A failed GunKill after the native fire call is reported as partial,
+    -- never as a hit, and still consumes the local conservative cooldown.
+    kill.FireServer = function() error("simulated server send failure") end
+    silentFeature.onToggle(true)
+    senderBinding.onPress()
+    assert(#calls == 11 and string.find(silentFeature.status, "failed after fire", 1, true),
+        "CFrame concealed a failed GunKill after partial fire")
+    senderBinding.onPress()
+    assert(#calls == 11 and string.find(silentFeature.status, "cooldown", 1, true),
+        "partial fire failed to respect cooldown")
+    silentFeature.onToggle(false)
+    fire.Parent, beam.Parent, kill.Parent, handle.Parent = nil, nil, nil, nil
+    core.settings.wallCheck, core.settings.autoShootWallCheck = oldWall, oldAutoWall
+    hookmetamethod, oth, CFrame.lookAt = oldHookMeta, oldOth, oldLook
+end
+core.settings.silentBackend, core.settings.autoShootBackend = "Oth", "Oth"
 do
     assert(core.settings.silentBackend == "Oth" and not core.settings.raycastCompatibility,
         "OTH and conservative Raycast compatibility defaults changed")
@@ -740,6 +855,21 @@ do
         and files["X2Duels-calibration.json"] == "previous report"
         and hookInstalls == 0 and string.find(probeCard.status, "1/1", 1, true),
         "offline gun source capture installed a hook, failed, or overwrote calibration")
+    local saveKnifeSources = ex.state.shortcutBindings[probeCard.configKey .. "Save knife sources"]
+    assert(saveKnifeSources and saveKnifeSources.onPress, "knife source action missing")
+    local knifeSource = Instance.new("LocalScript")
+    knifeSource.Name, knifeSource.Parent = "LocalScript", nativeKnife
+    GENV.decompile = function(script) assert(script == knifeSource); return "return 29" end
+    nestedCalls = 0
+    saveKnifeSources.onPress()
+    local knifeSaved = false
+    for path, data in pairs(files) do
+        if string.sub(path, 1, #"X2Duels-knife-source-") == "X2Duels-knife-source-" and data == "return 29" then knifeSaved = true end
+    end
+    assert(knifeSaved and files["X2Duels-knife-sources.json"] == "{}" and files[sourceFile] == "return 17"
+        and files["X2Duels-calibration.json"] == "previous report" and hookInstalls == 0,
+        "knife capture installed a hook or overwrote gun/calibration")
+    knifeSource.Parent = nil
     nestedCalls = 0
     GENV.decompile = function() error("simulated decompile error") end
     saveSources.onPress()
@@ -826,8 +956,8 @@ do
         "attributed observed-signature Raycast lost range or filter")
     getcallingscript = nil
     gunLocalScript.Parent = nil
-    local compatibility = ex.state.toggleControls["MVSD.SilentAIM.RaycastCompatibility"]
-    assert(compatibility, "OTH compatibility option missing")
+    -- Legacy Oth remains tested internally, but has no CFrame UI controls.
+    local compatibility = {setChecked = function(value) core.settings.raycastCompatibility = value end}
     compatibility.setChecked(true)
     installed(workspace, origin, direction, nil)
     assert(captured[2] == direction, "anonymous compatibility changed an unknown camera caller")
@@ -866,8 +996,8 @@ do
     local baselineKnifeRay = captured[2]
     local oldHeroVelocity = heroRoot.AssemblyLinearVelocity
     heroRoot.AssemblyLinearVelocity = Vector3.new(0, 0, 20)
-    local knifePrediction = ex.state.toggleControls["MVSD.SilentAIM.KnifePrediction"]
-    assert(knifePrediction and not core.settings.knifePrediction, "independent Silent Knife Prediction missing")
+    local knifePrediction = {setChecked = function(value) core.settings.silentKnifePrediction = value end}
+    assert(not core.settings.knifePrediction, "independent Silent Knife Prediction missing")
     knifePrediction.setChecked(true)
     installed(workspace, origin, direction)
     assert(math.abs(captured[2].Z - baselineKnifeRay.Z) > 0.01 and not core.settings.knifePrediction,
@@ -2706,6 +2836,7 @@ for _, candidate in ipairs(ex.allFeatures) do
 end
 assert(feature and feature.shortcutButton, "mobile Silent action slot missing")
 ex.state.x2duelsCore.settings.silentBackend = "Legacy" -- historical touch fixture
+ex.state.x2duelsCore.settings.autoShootBackend = "Oth"
 local localPlayer = game:GetService("Players").LocalPlayer
 local backpack = localPlayer:FindFirstChildOfClass("Backpack")
 local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -2839,6 +2970,38 @@ feature.activate()
 assert(currentIndex == originalIndex, "mobile OFF did not restore the Mouse hook")
 hookmetamethod, getcallingscript, debug, checkcaller = oldHookMeta, oldCaller, oldDebug, oldCheckCaller
 localPlayer.GetMouse = oldMouseGetter
+
+-- Production CFrame mode through the actual placed touch button. This is a
+-- packet fixture, not evidence the server accepted the request.
+do
+    local mobileCore = ex.state.x2duelsCore
+    mobileCore.settings.silentBackend, mobileCore.settings.autoShootBackend = "CFrame", "CFrame"
+    mobileCore.settings.wallCheck = false
+    local handle = Instance.new("Part")
+    handle.Name, handle.Position, handle.Parent = "Handle", Vector3.new(5, 3, 0), gun
+    local kill = Instance.new("RemoteEvent")
+    kill.Name, kill.Parent = "RE/GunKill", X2Net
+    local packets = {}
+    fire.FireServer = function(_, ...) table.insert(packets, {name = "fire", args = table.pack(...)}) end
+    beam.FireServer = function(_, ...) table.insert(packets, {name = "beam", args = table.pack(...)}) end
+    kill.FireServer = function(_, ...) table.insert(packets, {name = "kill", args = table.pack(...)}) end
+    local oldOth, oldMeta, oldMouseCast = oth, hookmetamethod, HarnessMouseCast.Exclude
+    local hooks = 0
+    oth = {hook = function() hooks += 1; error("unexpected Oth") end}
+    hookmetamethod = function() hooks += 1; error("unexpected hookmetamethod") end
+    feature.activate()
+    action.button.InputBegan:Fire(touch)
+    UserInputService.InputEnded:Fire(touch)
+    assert(#packets == 3 and packets[3].args[2] == HarnessHeroGuy
+        and camera.CFrame == cameraBefore and shots == 3 and hooks == 0
+        and HarnessMouseCast.Exclude == oldMouseCast
+        and string.find(feature.status, "hit not confirmed", 1, true),
+        "CFrame touch button did not send observed Gun request without hooks/camera")
+    feature.activate()
+    handle.Parent, kill.Parent = nil, nil
+    oth, hookmetamethod = oldOth, oldMeta
+    mobileCore.settings.silentBackend, mobileCore.settings.autoShootBackend = "Legacy", "Oth"
+end
 
 -- Mobile without Oth/caller must fail closed; Knife Throw remains independent.
 -- The fixture ThrowMode write does not prove a server hit.

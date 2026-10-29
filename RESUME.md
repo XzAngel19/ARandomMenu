@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v153-20261029-x2duels-camera-safe`**.
+> **`v154-20261029-x2duels-cframe-button`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,45 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1X. X2: cámara y Auto Shoot v153 — experimento no validado en vivo
+## 1Y. X2 v154 — CFrame con botón solicitado; Gun experimental, Knife pendiente
+
+El usuario reportó que nada de Raycast/Oth le sirve en su celular y pidió CFrame
+como MM2 para Silent con botón, Auto Shoot y Knife. MM2 CFrame **no gira cámara**:
+construye dos CFrame y llama `Gun.Shoot` o `KnifeThrown`, cuyos protocolos no
+son intercambiables con X2. Se investigó la Gun real que el usuario adjuntó.
+
+- En X2 Silent AIM ahora es **solo botón CFrame** (no redirige disparos normales)
+  y Auto Shoot usa la misma ruta independientemente, sin Oth ni hookmetamethod
+  ni wrappers MouseCast, y sin escribir cámara. Mantienen sus filtros de equipo,
+  vida, partida, alcance, opciones y Wall Check; este último usa un raycast normal
+  desde HRP para consultar visibilidad, no un hook. Sin Wall Check no se consulta.
+- El LocalScript de `MimicGlare` usa `fire:FireServer()`,
+  `showBeam:FireServer(hitPosition, HRP.Position, Handle)` y después
+  `Packages.Net["RE/GunKill"]:FireServer(guid, targetPlayer,
+  CFrame.lookAt(Handle.Position, hitPosition).LookVector, HRP.Position,
+  hitPosition)`. El RBXL 1v1 confirma la ubicación `Packages.Net.RE/GunKill`.
+  La nueva ruta envía ese formato observado y usa el centro de la parte objetivo
+  como hitPosition, **no un RaycastResult de impacto**. Servidor desconocido: puede
+  rechazar el paquete o sancionarlo. Status solo dice request sent, no hit. Si
+  falta cualquier RemoteEvent/Handle, no envía; Cooldown conservador 2,5 s
+  compartido entre botón/Auto Shoot/Auto Win, inferido de MimicGlare, no medido
+  para todas las skins. No promete eficacia ni seguridad anticheat.
+- En la fuente de Knife disponible solo hay `MobileKnifeLocalScript` (GUI) y
+  efectos visuales; el RBXL contiene `Packages.Net.RE/ThrowEvent`, pero NO se
+  conoce la firma ni GUID de la petición de lanzamiento. No se inventó un
+  protocolo ni se afirmó implementado Knife CFrame. Su implementación nativa
+  anterior aún puede mover la cámara y se pausa con Silent. Para completarlo,
+  Gun Probe ofrece acción **Save knife sources** sin activar Probe ni hooks;
+  guarda `X2Duels-knife-sources.json` y `X2Duels-knife-source-*.luau` sin
+  sobrescribir los de Gun. Decompile puede fallar o ser detectado.
+- Tests X2 ejercitan el botón táctil real simulado, orden/forma de tres paquetes,
+  sin cámara/hook, falta de remoto, equipo, OFF, cooldown y Auto Shoot separado;
+  captura Knife independiente. Las pruebas mock no son Roblox/Delta/servidor.
+  Reiniciar Roblox para quitar nodos Oth antiguos, probar en cuenta controlada
+  con Gun Probe y Safe Place apagados, reportar Status y resultado real; pedir
+  archivos Knife con la acción sin activar Probe.
+
+## 1X. X2: cámara y Auto Shoot v153 — histórico, sustituido en v154
 
 El usuario reportó que Auto Shoot y Silent AIM no funcionan y que la cámara se
 sale del personaje. La captura móvil `X2Duels-calibration.json` (SHA256
@@ -1373,7 +1411,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-29 · v153, Auto Shoot experimental sin giro de cámara;
-Silent y Auto Shoot en Delta móvil, BAC y daño real siguen sin validar.
+*Última actualización: 2026-10-29 · v154, Gun CFrame experimental sin hooks;
+Knife CFrame pendiente de fuente, Delta móvil, BAC y daño real siguen sin validar.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

@@ -1,5 +1,5 @@
 return {
-    stamp = "v153-20261029-x2duels-camera-safe",
+    stamp = "v154-20261029-x2duels-cframe-button",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -25046,7 +25046,8 @@ return Module
 --
 -- The supplied Cobalt log captures DefaultGun/DefaultKnife native calls,
 -- including fire/showBeam and the respawn/death events. Combat still goes
--- through the game's own Tool:Activate() path; no remote arguments are guessed.
+-- v154 offers a direct, explicitly experimental Gun CFrame request based on
+-- the captured Gun LocalScript. Knife still uses the native activation path.
 
 local Module = {
     Name = "X2Duels",
@@ -25101,7 +25102,8 @@ local function buildX2Duels(runtime: any): ()
         silentAimFov = false,
         silentAimFovRadius = 200,
         mouseCompatibility = false,
-        silentBackend = "Oth",
+        silentBackend = "CFrame",
+        autoShootBackend = "CFrame",
         raycastCompatibility = false,
         silentKnifePrediction = false,
         silentKnifeSpeed = 100,
@@ -25852,6 +25854,51 @@ local function buildX2Duels(runtime: any): ()
         return root and root.Position or nil
     end
 
+    -- X2 is not MM2: its captured Gun uses Net.RE/GunKill, not Gun.Shoot.
+    -- This reproduces only the observed client argument shape, not server
+    -- acceptance. In particular the selected part centre is not a ray hit.
+    local function fireCFrameGun(gun: Tool, target: any, teamCheck: boolean): (boolean, string?)
+        local character: Model? = localPlayer.Character
+        local root: BasePart? = rootOf(character)
+        if not root or gun.Parent ~= character or not isAlive(localPlayer)
+            or not target or not target.player or not isEnemy(target.player, false, teamCheck)
+            or target.player.Character ~= target.character or not target.part or not target.part.Parent
+            or not target.part:IsDescendantOf(target.character) then
+            return false, "Shot canceled: character, match or target changed."
+        end
+        local enabledOk: boolean, enabled: any = pcall(function(): any return gun.Enabled end)
+        if not enabledOk or enabled == false then return false, "The gun is disabled or not ready." end
+        if os.clock() < (runtimeState.nextCFrameGunAt or 0) then
+            return false, "Gun cooldown (2.5s conservative)."
+        end
+        local handle: Instance? = gun:FindFirstChild("Handle")
+        local fire: Instance? = gun:FindFirstChild("fire")
+        local beam: Instance? = gun:FindFirstChild("showBeam")
+        local packages: Instance? = replicated:FindFirstChild("Packages")
+        local net: Instance? = packages and packages:FindFirstChild("Net")
+        local kill: Instance? = net and net:FindFirstChild("RE/GunKill")
+        if not handle or not handle:IsA("BasePart") or not fire or not fire:IsA("RemoteEvent")
+            or not beam or not beam:IsA("RemoteEvent") or not kill or not kill:IsA("RemoteEvent") then
+            return false, "CFrame gun unavailable: observed Gun remotes or Handle missing."
+        end
+        local impact: Vector3 = target.part.Position
+        local start: Vector3 = root.Position
+        local muzzle: Vector3 = (handle :: BasePart).Position
+        if (impact - muzzle).Magnitude < 0.05 then return false, "Target is too close to the gun." end
+        local direction: Vector3 = CFrame.lookAt(muzzle, impact).LookVector
+        -- Fire and beam are the native client's order; sending them is NOT a
+        -- confirmation that the server accepted the subsequent GunKill call.
+        local okFire: boolean = pcall(function(): () (fire :: RemoteEvent):FireServer() end)
+        if not okFire then return false, "Gun fire request failed." end
+        runtimeState.nextCFrameGunAt = os.clock() + 2.5
+        local okBeam: boolean = pcall(function(): () (beam :: RemoteEvent):FireServer(impact, start, handle) end)
+        local okKill: boolean = pcall(function(): ()
+            (kill :: RemoteEvent):FireServer("72376a93-74c0-4fc7-b968-b3def980891c", target.player, direction, start, impact)
+        end)
+        if not okKill then return false, "Gun request failed after fire; hit not confirmed." end
+        return true, okBeam and "CFrame request sent; hit not confirmed." or "Gun request sent; beam failed; hit not confirmed."
+    end
+
     local ensureAutoOth: () -> boolean = function(): boolean return false end
     local function cancelGun(owner: string?): ()
         if owner == nil or owner == "Silent AIM" then runtimeState.mouseShot = nil end
@@ -25885,14 +25932,23 @@ local function buildX2Duels(runtime: any): ()
             -- TriggerBot deliberately uses the crosshair, not the independent
             -- Silent target, even when both modules are enabled.
             if noAim == true then runtimeState.nativeAimUntil = os.clock() + 0.1
-            elseif not currentWorkspace.CurrentCamera then return false, "Camera unavailable: cannot aim." end
+            elseif not currentWorkspace.CurrentCamera and settings.autoShootBackend ~= "CFrame" then return false, "Camera unavailable: cannot aim." end
             if opts.wallCheck == true then
                 -- The native gun may use a camera ray, while a muzzle may be
                 -- obstructed independently. Check both without hooking either.
-                local clear: boolean, why: string? = hasLineOfSight(target, gunOrigin(gun))
+                local shotRoot: BasePart? = rootOf(character)
+                local from: Vector3? = settings.autoShootBackend == "CFrame" and shotRoot
+                    and shotRoot.Position or gunOrigin(gun)
+                local clear: boolean, why: string? = hasLineOfSight(target, from)
                 if not clear then return false, why end
-                clear, why = hasLineOfSight(target)
-                if not clear then return false, why end
+                if settings.autoShootBackend ~= "CFrame" then
+                    clear, why = hasLineOfSight(target)
+                    if not clear then return false, why end
+                end
+            end
+            if (opts.owner == "Auto Shoot" or opts.owner == "Auto Win")
+                and settings.autoShootBackend == "CFrame" and noAim ~= true then
+                return fireCFrameGun(gun, target, opts.teamCheck ~= false)
             end
             if (opts.owner == "Auto Shoot" or (opts.owner == "Auto Win"
                 and (settings.autoShoot or settings.silentAim))) and noAim ~= true then
@@ -25966,7 +26022,7 @@ local function buildX2Duels(runtime: any): ()
                     local fired: boolean, reason: string? = activate()
                     if opts.owner == "Auto Shoot" and settings.autoShoot then
                         setCombatStatus(autoShootCard, "Auto Shoot", fired
-                            and "Native activation attempted; hit not confirmed."
+                            and (reason or "Native activation attempted; hit not confirmed.")
                             or (reason or "The gun is not ready."))
                     end
                 elseif active and opts.owner == "Auto Shoot" and settings.autoShoot then
@@ -26302,7 +26358,7 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.mouseCastModule = candidate
             runtimeState.mouseCastLoading = false
         end
-        if not settings.silentAim or settings.silentBackend == "Oth" or not candidate or runtimeState.mouseCastApi
+        if not settings.silentAim or settings.silentBackend ~= "Legacy" or not candidate or runtimeState.mouseCastApi
             or runtimeState.mouseCastLoading then return end
         runtimeState.mouseCastLoading = true
         local generation: number = runtimeState.mouseCastGeneration
@@ -27286,8 +27342,11 @@ local function buildX2Duels(runtime: any): ()
             local nativeInterval: number = owner == "Auto Shoot" and gun and gun.Name == "MimicGlare" and 2.5 or 0
             runtimeState.nextGunAt = os.clock() + math.max(0, cooldown, nativeInterval)
         end
+        local localRoot: BasePart? = rootOf(localPlayer.Character)
+        local origin: Vector3? = settings.autoShootBackend == "CFrame" and localRoot
+            and localRoot.Position or gunOrigin(findWeapon("Gun"))
         local target: {[string]: any}?, why: string? = nearestEnemy(
-            maxDistance, teamCheck, wallCheck, false, gunOrigin(findWeapon("Gun"))
+            maxDistance, teamCheck, wallCheck, false, origin
         )
         if not target then return false, findWeapon("Gun") ~= nil, why end
         local fired: boolean, hasGun: boolean, reason: string? = fireGun(target, false, {
@@ -27445,7 +27504,7 @@ local function buildX2Duels(runtime: any): ()
         if runtimeState.mouseShot and now >= runtimeState.mouseShot.expires then
             runtimeState.mouseShot = nil
         end
-        if settings.silentAim and now >= runtimeState.nextSelectionAt then
+        if settings.silentAim and settings.silentBackend ~= "CFrame" and now >= runtimeState.nextSelectionAt then
             runtimeState.nextSelectionAt = now + 0.06
             nearestEnemy(settings.maxDistance, nil, nil, nil, nil, settings.silentAimPart,
                 settings.silentAimFov and settings.silentAimFovRadius or nil)
@@ -27474,7 +27533,7 @@ local function buildX2Duels(runtime: any): ()
                     )
                     usedGun = fired
                     if reason ~= "A gun action is already pending." then
-                        setCombatStatus(autoShootCard, "Auto Shoot", fired and (runtimeState.autoShootOutcome or "Shot attempted / queued")
+                        setCombatStatus(autoShootCard, "Auto Shoot", fired and (reason or runtimeState.autoShootOutcome or "Shot attempted / queued")
                             or (reason or "Gun not ready."))
                     end
                 end
@@ -27833,7 +27892,7 @@ local function buildX2Duels(runtime: any): ()
 
     silentAimCard = card(
         "Silent AIM",
-        "Redirect native gun aim without moving the camera; use the action button or key to equip and fire",
+        "CFrame button equips the gun and sends an experimental aim request without camera movement",
         3,
         function(enabled: boolean): ()
             settings.silentAim = enabled
@@ -27843,11 +27902,15 @@ local function buildX2Duels(runtime: any): ()
                 if runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
                 cancelGun("Auto Win") -- cancel a queued camera-aim action before Silent starts
                 cancelKnifeThrow() -- native automatic throws otherwise rotate the camera
+                if settings.silentBackend == "CFrame" then
+                    setCombatStatus(silentAimCard, "Silent AIM", "CFrame button ready; gun request is experimental.")
+                else
                 installHooks()
                 discoverMouseCast()
                 setCombatStatus(silentAimCard, "Silent AIM", silentAdapterAvailable(findWeapon("Gun"))
                     and (settings.silentBackend == "Oth" and "Oth Raycast installed; weapon compatibility unconfirmed." or "Adapter loaded; weapon compatibility unconfirmed.")
                     or (settings.silentBackend == "Oth" and "Oth Raycast unavailable: requires oth.hook, getrawmetatable, getnamecallmethod and checkcaller." or "Waiting for a compatible silent aim adapter or gun."))
+                end
             else
                 cancelGun("Silent AIM")
                 runtimeState.selected = nil
@@ -27875,18 +27938,6 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.nextSelectionAt = 0
         runtimeState.mouseShot = nil
     end, "Body prefers UpperTorso/Torso and falls back to the root if needed.")
-    host.addToggleOption(silentAimCard, "Raycast Compatibility", false, function(value: boolean): ()
-        settings.raycastCompatibility = value
-    end, "Vape-like broad Raycast scope while a weapon is equipped, including origins away from the camera. Excludes identified camera/ping scripts; other game calls may be affected.")
-    host.addToggleOption(silentAimCard, "Knife Prediction", false, function(value: boolean): ()
-        settings.silentKnifePrediction = value
-    end, "Experimental velocity/drop lead for Knife Raycasts only; not proof that the native throw uses Raycast.")
-    host.addNumberOption(silentAimCard, "Knife Speed", 100, 1, 1000, function(value: number): ()
-        settings.silentKnifeSpeed = math.clamp(value, 1, 10000)
-    end, "Estimated studs per second; native Knife speed is not measured.")
-    host.addNumberOption(silentAimCard, "Knife Gravity", 0, 0, 200, function(value: number): ()
-        settings.silentKnifeGravity = math.clamp(value, 0, 10000)
-    end, "Estimated projectile gravity in studs per second squared.")
     host.addToggleOption(silentAimCard, "Aim FOV", false, function(value: boolean): ()
         settings.silentAimFov = value
         runtimeState.selected = nil
@@ -27907,7 +27958,7 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "Oth Raycast mode only; no legacy hook fallback. Compatibility can affect unrelated scripts but skips unknown, camera and ping callers. Automatic Knife Throw pauses to protect the camera. Hook installation or redirected rays do not prove a hit or prevent detection."
+        "CFrame button only: direct observed X2 Gun requests, no aim hook or camera rotation. This is not automatic redirection of native taps. Server acceptance and anticheat safety are unverified. Knife Throw pauses while active."
     )
 
     local function pressSenderButton(): ()
@@ -27956,15 +28007,24 @@ local function buildX2Duels(runtime: any): ()
                 if not enabledOk or enabled == false then
                     report("The gun is disabled, reloading or not ready."); return
                 end
+                local localRoot: BasePart? = rootOf(character)
+                local shotOrigin: Vector3? = settings.silentBackend == "CFrame" and localRoot
+                    and localRoot.Position or gunOrigin(gun)
                 local target: {[string]: any}?, why: string? = nearestEnemy(
                     settings.maxDistance, settings.teamCheck, settings.wallCheck, true,
-                    gunOrigin(gun), settings.silentAimPart,
+                    shotOrigin, settings.silentAimPart,
                     settings.silentAimFov and settings.silentAimFovRadius or nil
                 )
                 if not target then report(why or "No eligible opponent."); return end
-                if settings.wallCheck then
+                if settings.wallCheck and settings.silentBackend ~= "CFrame" then
                     local clear: boolean, reason: string? = hasLineOfSight(target)
                     if not clear then report(reason or "Wall Check unavailable."); return end
+                end
+                if settings.silentBackend == "CFrame" then
+                    local sent: boolean, why: string? = fireCFrameGun(gun, target, settings.teamCheck)
+                    if not sent then report(why or "CFrame request failed."); return end
+                    setCombatStatus(silentAimCard, "Silent AIM", why or "CFrame request sent; hit not confirmed.")
+                    return
                 end
                 if not silentAdapterAvailable(gun) then discoverMouseCast() end
                 if not silentAdapterAvailable(gun) then
@@ -28010,7 +28070,7 @@ local function buildX2Duels(runtime: any): ()
     end
 
     autoShootCard = card(
-        "Auto Shoot", "Attempt native gun shots without moving the camera; uses its own scoped Oth raycast", 4,
+        "Auto Shoot", "Automatically send experimental CFrame gun requests without moving the camera", 4,
         function(enabled: boolean): ()
             settings.autoShoot = enabled
             runtimeState.autoShootOutcome = nil
@@ -28040,7 +28100,7 @@ local function buildX2Duels(runtime: any): ()
         autoShootCard, "Status", combatStatuses["Auto Shoot"] or "Off"
     )
     host.addInformationOption(autoShootCard,
-        "Independent of Silent AIM. Uses Oth and an identified native Gun LocalScript; no camera rotation or legacy-hook fallback. Missing APIs prevent firing; an ineffective hook may still activate the gun without redirecting. Server hits are not confirmed.")
+        "Independent of Silent AIM. Sends the observed X2 Gun request with CFrame direction, without hooks or camera rotation. Conservative 2.5s interval; server hits and anticheat safety are not confirmed.")
 
     knifeThrowCard = card(
         "Knife Throw", "Automatically attempt native knife throws independently of Silent AIM", 5,
@@ -28365,15 +28425,15 @@ local function buildX2Duels(runtime: any): ()
             local saved: boolean, message: string = writeWorkspace(path, "ARandomMenu workspace test\n")
             report(saved and ("workspace/" .. path .. " · " .. message) or ("workspace test failed: " .. message))
         end, "Test executor workspace without enabling Gun Probe or installing hooks.")
-        host.addActionOption(calibrationCard, "Save gun sources", function(): ()
+        local function saveWeaponSources(kind: string): ()
             -- No Probe or hook is required. The gun can be equipped or in the
             -- Backpack. Decompile is executor-provided and may fail or be detected.
-            local gun: Tool? = findWeapon("Gun")
-            if not gun then report("No gun found in inventory or equipped"); return end
+            local weapon: Tool? = findWeapon(kind)
+            if not weapon then report("No " .. string.lower(kind) .. " found in inventory or equipped"); return end
             local decompile: any = executorFunction("decompile")
-            if not decompile then report("Gun sources: decompile unavailable"); return end
-            if not executorFunction("writefile") then report("Gun sources: writefile unavailable"); return end
-            report("Saving gun sources without Probe; please wait...")
+            if not decompile then report(kind .. " sources: decompile unavailable"); return end
+            if not executorFunction("writefile") then report(kind .. " sources: writefile unavailable"); return end
+            report("Saving " .. string.lower(kind) .. " sources without Probe; please wait...")
             probe.sourceGeneration = (probe.sourceGeneration or 0) + 1
             local generation: number = probe.sourceGeneration
             local captureId: string = tostring(os.time()) .. "-" .. tostring(generation)
@@ -28383,7 +28443,7 @@ local function buildX2Duels(runtime: any): ()
                 local attempted: number = 0
                 local lastIssue: string? = nil
                 local files: {any} = {}
-                for _, item: Instance in ipairs(gun:GetDescendants()) do
+                for _, item: Instance in ipairs(weapon:GetDescendants()) do
                     if runtimeState.closed or generation ~= probe.sourceGeneration then return end
                     if item:IsA("LocalScript") or item:IsA("ModuleScript") then
                         attempted += 1
@@ -28392,7 +28452,7 @@ local function buildX2Duels(runtime: any): ()
                         if ok and type(source) == "string" and #source > 0 then
                             -- Distinct capture names prevent a failed new run
                             -- from masquerading as a previous successful one.
-                            local filename: string = "X2Duels-gun-source-" .. captureId .. "-" .. tostring(attempted) .. ".luau"
+                            local filename: string = "X2Duels-" .. string.lower(kind) .. "-source-" .. captureId .. "-" .. tostring(attempted) .. ".luau"
                             local written: boolean, writeMessage: string = writeWorkspace(filename, source)
                             if written then
                                 saved += 1
@@ -28407,7 +28467,7 @@ local function buildX2Duels(runtime: any): ()
                     end
                 end
                 if runtimeState.closed or generation ~= probe.sourceGeneration then return end
-                local manifest: any = {version = 1, captureId = captureId, weapon = gun.Name, attempted = attempted, saved = saved,
+                local manifest: any = {version = 1, captureId = captureId, weapon = weapon.Name, attempted = attempted, saved = saved,
                     sources = files, note = "Review sources for private data before sharing. No hooks installed by this action."}
                 local encodedOk: boolean, encoded: any = pcall(function(): string
                     return game:GetService("HttpService"):JSONEncode(manifest)
@@ -28415,7 +28475,7 @@ local function buildX2Duels(runtime: any): ()
                 local manifestOk: boolean = false
                 local manifestMessage: string = "JSONEncode unavailable"
                 if encodedOk and type(encoded) == "string" then
-                    manifestOk, manifestMessage = writeWorkspace("X2Duels-gun-sources.json", encoded)
+                    manifestOk, manifestMessage = writeWorkspace("X2Duels-" .. string.lower(kind) .. "-sources.json", encoded)
                 end
                 if runtimeState.closed or generation ~= probe.sourceGeneration then return end
                 if session and session.active and probe.active and session == probe.lease then
@@ -28425,9 +28485,13 @@ local function buildX2Duels(runtime: any): ()
                 local detail: string = if manifestOk then "manifest saved" else "manifest failed: " .. manifestMessage
                 local problem: string = if attempted == 0 then " · no LocalScript/ModuleScript found"
                     elseif lastIssue then " · " .. lastIssue else ""
-                report("Gun sources " .. tostring(saved) .. "/" .. tostring(attempted) .. " · " .. detail .. problem .. "; review before sharing")
+                report(kind .. " sources " .. tostring(saved) .. "/" .. tostring(attempted) .. " · " .. detail .. problem .. "; review before sharing")
             end)
-        end, "Save local Gun scripts without enabling Probe; decompile availability and safety vary by executor.")
+        end
+        host.addActionOption(calibrationCard, "Save gun sources", function(): () saveWeaponSources("Gun") end,
+            "Save local Gun scripts without enabling Probe; decompile availability and safety vary by executor.")
+        host.addActionOption(calibrationCard, "Save knife sources", function(): () saveWeaponSources("Knife") end,
+            "Save local Knife scripts without enabling Probe; review the files before sharing.")
         host.addInformationOption(calibrationCard, "Passive shared Oth namecall probe: enable, equip Gun and shoot normally. Mouse property reads and direct function calls are not captured. Ray coordinates and script/remote names may be sensitive; review local files before sharing. Detection remains possible.")
         runtimeState.calibration = {tick = tick, stop = stop}
     end
