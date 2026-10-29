@@ -58,9 +58,16 @@ type Track = {
     character: Model,
     humanoid: Humanoid,
     root: BasePart,
-    aimPart: BasePart?,
-    aimPartName: string?,
     samples: {Sample},
+    -- v139 cache: reused for PART_REFRESH_SECONDS instead of re-searched on
+    -- every 60 Hz sample.
+    aimPart: BasePart?,
+    aimName: string?,
+    partsAt: number?,
+    -- v139: recycled sample tables. At 60 Hz x 12 players this was creating
+    -- ~700 tables per second, which is exactly the kind of steady garbage that
+    -- shows up later as a hitch when the collector catches up.
+    spare: {Sample}?,
 }
 
 type Fit = {
@@ -249,9 +256,9 @@ local function finiteVector(value: any): boolean
 end
 
 local function humanoidStateName(humanoid: Humanoid): string
-    local ok: boolean, state: any = pcall(function(): any
-        return humanoid:GetState()
-    end)
+    -- pcall(method, self) instead of pcall(closure): the old form allocated a
+    -- closure per sample, 60 times a second per player.
+    local ok: boolean, state: any = pcall(humanoid.GetState, humanoid)
     if not ok or state == nil then
         return ""
     end
@@ -299,46 +306,66 @@ function Module.init(runtime: any): any
     local echoTimes: {number} = {}
     local elapsed: number = 0
 
-    local function ensureTrack(player: Player): Track?
-        local character: Model? = player.Character
-        if not character then
-            tracks[player] = nil
-            return nil
-        end
-        local track: Track? = tracks[player]
-        -- Keep the same 60 Hz samples and prediction math, but avoid two
-        -- instance searches per player per frame while the rig is unchanged.
-        if track and track.character == character
-            and track.humanoid.Parent == character and track.humanoid.Health > 0
-            and track.root.Parent == character and track.root.Name == "HumanoidRootPart" then
-            return track
+    -- v139: the sampler runs 60 times a second for COLOUR every other player, so
+    -- the descendant lookups are cached per track and refreshed at 2 Hz (or at
+    -- once when the character/part disappears). Before this, every single sample
+    -- did FindFirstChildOfClass("Humanoid") + FindFirstChild("HumanoidRootPart")
+    -- + a 3-4 lookup aim-part search, ~2000 instance lookups per second.
+    local PART_REFRESH_SECONDS: number = 0.5
+
+    local function refreshTrackParts(
+        track: Track,
+        character: Model,
+        now: number
+    ): boolean
+        local refresh: boolean = now - (track.partsAt or -math.huge) >= PART_REFRESH_SECONDS
+            or track.root == nil
+            or track.humanoid == nil
+        if not refresh then
+            return true
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
             :: BasePart?
         if not humanoid or not root or humanoid.Health <= 0 then
-            tracks[player] = nil
-            return nil
-        end
-        if not track or track.character ~= character then
-            track = {
-                character = character,
-                humanoid = humanoid,
-                root = root,
-                aimPart = nil,
-                aimPartName = nil,
-                samples = {},
-            }
-            tracks[player] = track
+            return false
         end
         track.humanoid = humanoid
         track.root = root
+        local aimPart: BasePart?, aimName: string = findAimPart(character)
+        track.aimPart = aimPart
+        track.aimName = aimName
+        track.partsAt = now
+        return true
+    end
+
+    local function ensureTrack(player: Player, now: number): Track?
+        local character: Model? = player.Character
+        if not character then
+            tracks[player] = nil
+            return nil
+        end
+        local track: Track? = tracks[player]
+        if not track or track.character ~= character then
+            track = {
+                character = character,
+                humanoid = nil,
+                root = nil,
+                samples = {},
+                partsAt = -math.huge,
+            }
+            tracks[player] = track
+        end
+        if not refreshTrackParts(track, character, now) then
+            tracks[player] = nil
+            return nil
+        end
         return track
     end
 
     local function samplePlayer(player: Player, now: number): ()
-        local track: Track? = ensureTrack(player)
+        local track: Track? = ensureTrack(player, now)
         if not track then
             return
         end
@@ -353,24 +380,18 @@ function Module.init(runtime: any): any
         -- on flat ground. The humanoid state is the reliable signal.
         local grounded: boolean = stateName ~= "Jumping"
             and stateName ~= "Freefall"
-        local moveDirection: Vector3 = Vector3.zero
-        pcall(function(): ()
-            local move: any = track.humanoid.MoveDirection
-            if typeof(move) == "Vector3" and finiteVector(move) then
-                moveDirection = move
-            end
-        end)
+        -- Reading MoveDirection off a live Humanoid cannot throw: no pcall, no
+        -- closure. A nil humanoid was already rejected by ensureTrack.
+        local move: any = track.humanoid.MoveDirection
+        local moveDirection: Vector3 = if typeof(move) == "Vector3"
+            and finiteVector(move)
+            then move
+            else Vector3.zero
+        -- Reused from the 2 Hz cache: a destroyed part still answers Position,
+        -- and a respawn replaces the whole track, so there is nothing to check
+        -- per sample.
         local aimPart: BasePart? = track.aimPart
-        local aimPartName: string = track.aimPartName or ""
-        -- UpperTorso is the highest-priority aim part. Cache only that case;
-        -- for lower-priority parts keep searching so a streamed-in torso is
-        -- adopted immediately, exactly as before.
-        if not aimPart or aimPart.Parent ~= track.character
-            or aimPartName ~= "UpperTorso" or aimPart.Name ~= "UpperTorso" then
-            aimPart, aimPartName = findAimPart(track.character)
-            track.aimPart = aimPart
-            track.aimPartName = aimPartName
-        end
+        local aimPartName: string = track.aimName or ""
         local aimOffset: Vector3 = aimPart
             and (aimPart.Position - position)
             or Vector3.zero
@@ -382,21 +403,33 @@ function Module.init(runtime: any): any
             -- Respawns, teleports and ownership changes must not seed a fit.
             if delta > 0 and delta < 0.4
                 and (position - last.position).Magnitude > 8 + 120 * delta then
+                local spare: {Sample} = track.spare or {}
+                track.spare = spare
+                for _, dropped: Sample in ipairs(samples) do
+                    if #spare < 8 then
+                        table.insert(spare, dropped)
+                    end
+                end
                 table.clear(samples)
             end
         end
-        table.insert(samples, {
-            at = now,
-            position = position,
-            velocity = velocity,
-            state = stateName,
-            grounded = grounded,
-            aimOffset = aimOffset,
-            aimPart = aimPartName,
-            moveDirection = moveDirection,
-        })
+        local spare: {Sample} = track.spare or {}
+        track.spare = spare
+        local sample: Sample = table.remove(spare) or {} :: Sample
+        sample.at = now
+        sample.position = position
+        sample.velocity = velocity
+        sample.state = stateName
+        sample.grounded = grounded
+        sample.aimOffset = aimOffset
+        sample.aimPart = aimPartName
+        sample.moveDirection = moveDirection
+        table.insert(samples, sample)
         while #samples > 2 and now - samples[1].at > HISTORY_SECONDS do
-            table.remove(samples, 1)
+            local retired: Sample = table.remove(samples, 1)
+            if #spare < 8 then
+                table.insert(spare, retired)
+            end
         end
     end
 
@@ -1356,6 +1389,13 @@ function Module.init(runtime: any): any
                         state = sample.state,
                         grounded = sample.grounded,
                         moveDirection = sample.moveDirection,
+                        -- v139.4: the offset from the root to the part the aim
+                        -- falls on. base.lua reads it for every history point
+                        -- and it was never sent, so `endpointErrorStuds` scored
+                        -- a ROOT position against an aim that used the torso
+                        -- offset: a systematic vertical error on every sample.
+                        aimOffset = sample.aimOffset,
+                        aimPart = sample.aimPart,
                     })
                 end
             end
@@ -1400,6 +1440,11 @@ function Module.init(runtime: any): any
         end,
     }
 
+    -- v139: the roster changes a few times per round, not 60 times per second.
+    -- `GetPlayers()` returns a fresh array on every call, so asking for it each
+    -- frame was pure garbage. Reused for a quarter of a second.
+    local roster: {Player} = {}
+    local rosterAt: number = -math.huge
     local function tick(deltaTime: number): ()
         elapsed += math.max(0, deltaTime or 0)
         local interval: number = 1 / SAMPLE_HZ
@@ -1408,7 +1453,11 @@ function Module.init(runtime: any): any
         end
         elapsed = elapsed % interval
         local now: number = os.clock()
-        for _, player: Player in ipairs(Players:GetPlayers()) do
+        if now - rosterAt >= 0.25 or #roster == 0 then
+            rosterAt = now
+            roster = Players:GetPlayers()
+        end
+        for _, player: Player in ipairs(roster) do
             if player ~= LocalPlayer then
                 samplePlayer(player, now)
             end
@@ -1416,7 +1465,8 @@ function Module.init(runtime: any): any
     end
 
     state.mm2Prediction = controller
-    featureConnections.MM2PredictionSampler = TaskManager:Connect(tick)
+    featureConnections.MM2PredictionSampler =
+        TaskManager:Connect(tick, nil, "Prediction sampler")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("MM2PredictionSampler")

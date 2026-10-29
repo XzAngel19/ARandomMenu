@@ -249,6 +249,10 @@ function Module.init(context: any): RenderLibrary
                     TextStrokeTransparency = 1,
                     TextColor3 = Color3.fromRGB(236, 236, 240),
                     TextSize = size,
+                    -- v139.1: the height is set once here (and when TextSize
+                    -- changes), never on every frame: a Size write makes the
+                    -- UI re-layout, and this ran for every label of every ESP.
+                    Size = UDim2.fromOffset(0, size + 6),
 
                     TextTruncate = Enum.TextTruncate.None,
                     TextXAlignment = Enum.TextXAlignment.Center,
@@ -267,10 +271,20 @@ function Module.init(context: any): RenderLibrary
             resolved.Visible = true
             if resolved.Text ~= text then resolved.Text = text end
             if resolved.TextColor3 ~= colour then resolved.TextColor3 = colour end
-            if resolved.TextSize ~= size then resolved.TextSize = size end
-            resolved.BackgroundTransparency = plate and 0.5 or 1
-            resolved.Position = UDim2.fromOffset(math.round(at.X), math.round(at.Y))
-            resolved.Size = UDim2.fromOffset(0, size + 6)
+            if resolved.TextSize ~= size then
+                resolved.TextSize = size
+                resolved.Size = UDim2.fromOffset(resolved.Size.X.Offset, size + 6)
+            end
+            local plateTransparency: number = plate and 0.5 or 1
+            if resolved.BackgroundTransparency ~= plateTransparency then
+                resolved.BackgroundTransparency = plateTransparency
+            end
+            local x: number = math.round(at.X)
+            local y: number = math.round(at.Y)
+            local position: UDim2 = resolved.Position
+            if position.X.Offset ~= x or position.Y.Offset ~= y then
+                resolved.Position = UDim2.fromOffset(x, y)
+            end
         end
 
         function set:HideLabel(slot: string): ()

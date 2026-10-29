@@ -173,8 +173,7 @@ function Module.init(runtime: any): any
         targetRoot: BasePart,
         character: Model,
         localRoot: BasePart,
-        gun: Tool,
-        checkWalls: boolean?
+        gun: Tool
     ): boolean
         local shootRemote: Instance? = gun:FindFirstChild("Shoot")
         if not (shootRemote and shootRemote:IsA("RemoteEvent")) then
@@ -194,17 +193,6 @@ function Module.init(runtime: any): any
             targetRoot,
             originCF.Position
         )
-        if checkWalls == true and type(isWeaponPathClear) == "function" then
-            local okClear: boolean, clear: any = pcall(
-                isWeaponPathClear,
-                originCF.Position,
-                endpoint,
-                target.Character
-            )
-            if not okClear or clear ~= true then
-                return false
-            end
-        end
         local capturedPos: Vector3 = targetRoot.Position
         local chordFlat: Vector3 = Vector3.new(
             endpoint.X - capturedPos.X,
@@ -236,13 +224,43 @@ function Module.init(runtime: any): any
         local shotEnd: CFrame = CFrame.new(endPoint)
         local firedSilent: boolean = false
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target)
+            -- v139.4: our own WallCheck has to travel with the request. The
+            -- shared constructor used to be called with the target only and
+            -- hardcoded continuous=true, so this mode fired with no geometry
+            -- check and then, when it was refused, fell back to its own CFrame
+            -- -- also unchecked.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, target, {
+                continuous = true,
+                quiet = true,
+                wallCheck = settings.wallCheck,
+            })
             firedSilent = okSilent and res == true
         end
         if not firedSilent then
-            pcall(function(): ()
-                (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
-            end)
+            -- Never fire past a wall: the hand-rolled CFrame is only a
+            -- transport fallback, not a bypass.
+            local clear: boolean = false
+            if settings.wallCheck and type(isWeaponPathClear) == "function" then
+                local okClear: boolean, allowed: any = pcall(
+                    isWeaponPathClear,
+                    originCF.Position,
+                    endpoint,
+                    target.Character,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                clear = okClear and allowed == true
+            else
+                clear = true
+            end
+            if clear then
+                pcall(function(): ()
+                    (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
+                end)
+            else
+                lastShotSentAt = 0
+                return false
+            end
         end
         lastShotSentAt = os.clock()
         return true
@@ -355,8 +373,29 @@ function Module.init(runtime: any): any
         local isCFrame: boolean = settings.mode == "CFrame"
             or settings.mode == "Cframe"
             or settings.mode == "Silent AIM"
-        if isCFrame then
-            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun, settings.wallCheck == true)
+        if settings.mode == "Experimental" then
+            -- Share Gun Aimbot's selector and safety path, but use this card's
+            -- own WallCheck/Proximity. Never send both on an uncertain result.
+            local mode: string = "Bullet"
+            if type(state.mm2ChooseExperimentalAim) == "function" then
+                local origin: CFrame = (type(getGunOriginCFrame) == "function"
+                    and getGunOriginCFrame(character, gun)) or localRoot.CFrame
+                local okMode: boolean, chosen: any = pcall(state.mm2ChooseExperimentalAim, target, origin.Position)
+                if okMode and chosen == "CFrame" then mode = "CFrame" end
+            end
+            local sent: boolean = false
+            if type(state.mm2FireGunShot) == "function" then
+                local ok: boolean, result: any = pcall(state.mm2FireGunShot, target, {
+                    silent = mode == "CFrame", wallCheck = settings.wallCheck,
+                    continuous = true, quiet = true,
+                })
+                sent = ok and result == true
+            end
+            if sent then lastShotSentAt = os.clock() end
+            if AutoShootFeature then AutoShootFeature:SetStatus("Experimental · " .. mode
+                .. (sent and " · request sent" or " · not sent")) end
+        elseif isCFrame then
+            fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
         else
             fireBulletShotImmediate(target, targetRoot, character, localRoot, gun)
         end
@@ -422,16 +461,27 @@ function Module.init(runtime: any): any
         end
     end
 
+    -- v139: this card and the MM2 "Shoot" card both used the key MM2AutoShoot,
+    -- so enabling both lost one handle and left a ghost task firing every frame
+    -- after the card was switched off. Each card owns its own key now, and the
+    -- connection is dropped before a new one is made.
+    local CONNECTION_KEY: string = "MM2AutoShootCard"
+
     local function toggleAutoShoot(enabled: boolean): ()
         autoShootActive = enabled == true
         if enabled then
             updateStatus()
             setupInstantGunWatchers()
-            featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+            disconnectFeatureConnection(CONNECTION_KEY)
+            featureConnections[CONNECTION_KEY] = TaskManager:Connect(
+                autoShootTick,
+                nil,
+                "Auto Shoot"
+            )
             autoShootTick()
         else
             clearToolConnections()
-            disconnectFeatureConnection("MM2AutoShoot")
+            disconnectFeatureConnection(CONNECTION_KEY)
             if AutoShootFeature then
                 AutoShootFeature:SetStatus(nil)
             end
@@ -452,132 +502,77 @@ function Module.init(runtime: any): any
     state.mm2AutoShootFeature = AutoShootFeature
 
     local auraSlider: GuiObject? = nil
-    local modeConfigs: {[string]: {wallCheck: boolean, proximity: boolean, aura: number}} = {
-        Bullet = {
-            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.WallCheck"] ~= nil
-                then configData.states["MM2.AutoShoot.Bullet.WallCheck"] == true
-                else true,
-            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.Bullet.Proximity"] ~= nil
-                then configData.states["MM2.AutoShoot.Bullet.Proximity"] == true
-                else false,
-            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.Bullet.Aura"]) == "number"
-                then configData.values["MM2.AutoShoot.Bullet.Aura"]
-                else 25,
-        },
-        CFrame = {
-            wallCheck = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.WallCheck"] ~= nil
-                then configData.states["MM2.AutoShoot.CFrame.WallCheck"] == true
-                else false,
-            proximity = if type(configData) == "table" and configData.states["MM2.AutoShoot.CFrame.Proximity"] ~= nil
-                then configData.states["MM2.AutoShoot.CFrame.Proximity"] == true
-                else false,
-            aura = if type(configData) == "table" and type(configData.values["MM2.AutoShoot.CFrame.Aura"]) == "number"
-                then configData.values["MM2.AutoShoot.CFrame.Aura"]
-                else 25,
-        },
-    }
-    local switchingMode: boolean = false
-
+    local states: any = type(configData) == "table" and configData.states or {}
+    local values: any = type(configData) == "table" and configData.values or {}
+    local initialMode: string = values["MM2.AutoShoot.Mode"] or "Bullet"
+    if initialMode ~= "CFrame" and initialMode ~= "Experimental" then initialMode = "Bullet" end
+    local function modeConfig(mode: string): any
+        local prefix: string = "MM2.AutoShoot." .. mode .. "."
+        local legacy: boolean = mode == initialMode
+        local wall: any = states[prefix .. "WallCheck"]
+        local proximity: any = states[prefix .. "Proximity"]
+        local aura: any = values[prefix .. "Aura"]
+        if wall == nil and legacy then wall = states["MM2.AutoShoot.WallCheck"] end
+        if proximity == nil and legacy then proximity = states["MM2.AutoShoot.Proximity"] end
+        if aura == nil and legacy then aura = values["MM2.AutoShoot.Aura"] end
+        return {wallCheck = wall == nil or wall == true, proximity = proximity == true,
+            aura = type(aura) == "number" and aura or 25}
+    end
+    local modeConfigs: any = {Bullet = modeConfig("Bullet"), CFrame = modeConfig("CFrame"),
+        Experimental = modeConfig("Experimental")}
+    local switching: boolean = false
+    local optionsReady: boolean = false
     local function refreshProximityOption(): ()
         if auraSlider and type(setOptionVisible) == "function" then
-            setOptionVisible(
-                AutoShootFeature,
-                auraSlider.Parent :: GuiObject,
-                settings.proximity == true
-            )
+            setOptionVisible(AutoShootFeature, auraSlider.Parent :: GuiObject, settings.proximity == true)
         end
         updateStatus()
     end
-
-    local function syncAutoShootModeControls(): ()
-        local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
-        local cfg = modeConfigs[modeKey] or modeConfigs.Bullet
-        switchingMode = true
-        settings.wallCheck = cfg.wallCheck == true
-        settings.proximity = cfg.proximity == true
-        settings.aura = cfg.aura or 25
+    local function syncMode(): ()
+        local cfg: any = modeConfigs[settings.mode] or modeConfigs.Bullet
+        switching = true
+        settings.wallCheck, settings.proximity, settings.aura = cfg.wallCheck, cfg.proximity, cfg.aura
         if state and type(state.toggleControls) == "table" then
-            local wc = state.toggleControls["MM2.AutoShoot.WallCheck"]
-            if wc and type(wc.setChecked) == "function" then
-                pcall(wc.setChecked, cfg.wallCheck == true)
-            end
-            local px = state.toggleControls["MM2.AutoShoot.Proximity"]
-            if px and type(px.setChecked) == "function" then
-                pcall(px.setChecked, cfg.proximity == true)
-            end
+            local wc: any = state.toggleControls["MM2.AutoShoot.WallCheck"]
+            local px: any = state.toggleControls["MM2.AutoShoot.Proximity"]
+            if wc and wc.setChecked then pcall(wc.setChecked, cfg.wallCheck) end
+            if px and px.setChecked then pcall(px.setChecked, cfg.proximity) end
         end
         if state and type(state.valueControls) == "table" then
-            local au = state.valueControls["MM2.AutoShoot.Aura"]
-            if au and type(au.apply) == "function" then
-                pcall(au.apply, cfg.aura or 25)
-            end
+            local au: any = state.valueControls["MM2.AutoShoot.Aura"]
+            if au and au.apply then pcall(au.apply, cfg.aura) end
         end
-        switchingMode = false
+        switching = false
         refreshProximityOption()
     end
-
-    addCycleOption(AutoShootFeature, "Mode", {"Bullet", "CFrame"}, 1,
-        function(value: string): ()
-            settings.mode = value
-            syncAutoShootModeControls()
-        end,
-        "Bullet: shoots continuously while respecting WallCheck. CFrame: shoots immediately with Silent AIM CFrame upon receiving the gun. Each mode keeps independent options.")
-
-    addToggleOption(AutoShootFeature, "WallCheck", true,
-        function(value: boolean): ()
-            local on: boolean = value == true
-            settings.wallCheck = on
-            if not switchingMode then
-                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
-                local cfg = modeConfigs[modeKey]
-                if cfg then
-                    cfg.wallCheck = on
-                end
-                if type(configData) == "table" and type(configData.states) == "table" then
-                    configData.states["MM2.AutoShoot." .. modeKey .. ".WallCheck"] = on
-                end
-            end
-        end,
-        "Only shoot when there is a clear line of sight to the Murderer (independent per mode).")
-
-    addToggleOption(AutoShootFeature, "Proximity", false,
-        function(value: boolean): ()
-            local on: boolean = value == true
-            settings.proximity = on
-            if not switchingMode then
-                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
-                local cfg = modeConfigs[modeKey]
-                if cfg then
-                    cfg.proximity = on
-                end
-                if type(configData) == "table" and type(configData.states) == "table" then
-                    configData.states["MM2.AutoShoot." .. modeKey .. ".Proximity"] = on
-                end
-            end
-            refreshProximityOption()
-        end,
-        "When enabled, only shoot when the Murderer enters the configured radius (independent per mode).")
-
-    auraSlider = addNumberOption(AutoShootFeature, "Aura", 25, 5, 150,
-        function(value: number): ()
-            settings.aura = value
-            if not switchingMode then
-                local modeKey: string = (settings.mode == "CFrame") and "CFrame" or "Bullet"
-                local cfg = modeConfigs[modeKey]
-                if cfg then
-                    cfg.aura = value
-                end
-                if type(configData) == "table" and type(configData.values) == "table" then
-                    configData.values["MM2.AutoShoot." .. modeKey .. ".Aura"] = value
-                end
-            end
-            if AutoShootFeature.enabled then
-                AutoShootFeature:SetStatus(tostring(value) .. " studs")
-            end
-        end,
-        "Maximum distance in studs to automatically shoot at the Murderer while Proximity is ON.", 1)
-
-    syncAutoShootModeControls()
+    addCycleOption(AutoShootFeature, "Mode", {"Bullet", "CFrame", "Experimental"}, 1,
+        function(value: string): () settings.mode = value; syncMode() end,
+        "Experimental selects one path based on range and movement; the heuristic does not guarantee hits. Options are independent per mode.")
+    addToggleOption(AutoShootFeature, "WallCheck", true, function(value: boolean): ()
+        settings.wallCheck = value == true
+        if optionsReady and not switching then
+            modeConfigs[settings.mode].wallCheck = settings.wallCheck
+            states["MM2.AutoShoot." .. settings.mode .. ".WallCheck"] = settings.wallCheck
+        end
+    end, "Check for walls; saved independently per mode.")
+    addToggleOption(AutoShootFeature, "Proximity", false, function(value: boolean): ()
+        settings.proximity = value == true
+        if optionsReady and not switching then
+            modeConfigs[settings.mode].proximity = settings.proximity
+            states["MM2.AutoShoot." .. settings.mode .. ".Proximity"] = settings.proximity
+        end
+        refreshProximityOption()
+    end, "Only shoot inside Aura radius; saved independently per mode.")
+    auraSlider = addNumberOption(AutoShootFeature, "Aura", 25, 5, 150, function(value: number): ()
+        settings.aura = value
+        if optionsReady and not switching then
+            modeConfigs[settings.mode].aura = value
+            values["MM2.AutoShoot." .. settings.mode .. ".Aura"] = value
+        end
+        if AutoShootFeature.enabled then AutoShootFeature:SetStatus(tostring(value) .. " studs") end
+    end, "Maximum distance with Proximity enabled, saved per mode.", 1)
+    optionsReady = true
+    syncMode()
 
     activeCleanup = function(): ()
         toggleAutoShoot(false)

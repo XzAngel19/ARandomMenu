@@ -1,82 +1,251 @@
 #!/usr/bin/env python3
-"""Exercise real Anti Void / Anti fling: false positives, contact impulses and rescue ownership."""
-import os, subprocess, tempfile
+"""Execute the real Anti Void (invisible platform) and Anti Fling modules.
+
+Anti Void: one local anchored part, `Distance` studs under the character, kept in
+place while falling so the fall lands on it, ignoring every raycast and touch.
+Anti Fling: every frame removes fling-sized planar speed, rise, fall and spin
+while keeping the player's own input, and never fights our own flings.
+"""
+import os
+import subprocess
+import tempfile
 from pathlib import Path
-from test_mm2_precision import PRELUDE
-ROOT=Path(__file__).resolve().parents[1]
-script=PRELUDE+r'''
-local RaycastParams={new=function() return {} end}
-local timers={};local task={delay=function(_,fn) table.insert(timers,fn) end}
-local created={}
-local Instance={new=function()
- local p={Destroy=function(self) self.destroyed=true end};table.insert(created,p);return p
+
+ROOT = Path(__file__).resolve().parents[1]
+ANTIVOID = (ROOT / "src/games/universal/Movement/AntiVoid.lua").read_text()
+ANTIFLING = (ROOT / "src/games/universal/Movement/AntiFling.lua").read_text()
+
+PRELUDE = r'''
+local Vector3 = {}
+local mt = {}
+function Vector3.new(x,y,z) return setmetatable({X=x,Y=y,Z=z},mt) end
+Vector3.zero = Vector3.new(0,0,0)
+mt.__add=function(a,b) return Vector3.new(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end
+mt.__sub=function(a,b) return Vector3.new(a.X-b.X,a.Y-b.Y,a.Z-b.Z) end
+mt.__mul=function(a,b)
+    if type(a)=="number" then a,b=b,a end
+    return Vector3.new(a.X*b,a.Y*b,a.Z*b)
+end
+mt.__index=function(a,k)
+    if k=="Magnitude" then return math.sqrt(a.X*a.X+a.Y*a.Y+a.Z*a.Z) end
+    if k=="Unit" then return a/a.Magnitude end
+end
+mt.__div=function(a,b) return a*(1/b) end
+local CFrame = {new=function(x, y, z)
+    if type(x) == "table" then return {Position=x} end
+    return {Position=Vector3.new(x or 0, y or 0, z or 0)}
 end}
-local tick,feature
-local h={Health=100,WalkSpeed=16,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Ground',JumpPower=50}
-local props={Position=Vector3.new(0,250,0),CFrame='never roll back',AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
-local root=setmetatable({}, {__index=props,__newindex=function(_,k,v) assert(k~='CFrame','anti modules must not teleport');props[k]=v end})
-local character={}
-local near=true;local floor;local casts=0
-local world={FallenPartsDestroyHeight=-500,Raycast=function(_,origin,direction,params)
- casts+=1;assert(params.RespectCanCollide and params.FilterDescendantsInstances[1]==character)
- return floor and {Position=Vector3.new(0,floor,0)} or nil
+local Enum = {SurfaceType={Smooth="Smooth"},Material={Air="Air"},HumanoidStateType={Seated="Seated"}}
+
+local objects = {}
+local Instance = {new=function(class)
+    local object = {ClassName=class, Name=class, Parent=nil, destroyed=false}
+    function object:Destroy() self.destroyed = true; self.Parent = nil end
+    table.insert(objects, object)
+    return object
 end}
-local flags={}
-local speed={Enabled=false,Options={Speed={Value=5000}}}
-local fly={Enabled=false}
-local host={workspace=world,featureConnections={},getCharacterParts=function() return character,h,root end,
- Players={GetPlayers=function() return near and {{Character={FindFirstChild=function() return {Position=root.Position+Vector3.new(1,0,0)} end}}} or {} end}}
-function host.disconnectFeatureConnection(key) local c=host.featureConnections[key];if c then c:Disconnect();host.featureConnections[key]=nil end end
-host.TaskManager={Connect=function(_,fn) tick=fn;return {Disconnect=function() tick=nil end} end}
-host.createUniversalFeature=function(_,_,_,fn) feature={toggle=fn,options={}};return feature end
-host.addToggleOption=function(_,n,_,fn) feature.options[n]=fn end
-host.addNumberOption=function(_,n,_,_,_,fn) feature.options[n]=fn;return {} end
-host.addFeatureTooltip=function() end
-local context={host=host,services={activity={isActive=function(n) return flags[n] end}},framework={GetModule=function(_,n) return n=='Speed' and speed or n=='Fly' and fly or nil end}}
-'''+ '\nlocal Module=(function()\n'+(ROOT/'src/games/universal/Movement/AntiVoid.lua').read_text()+'\nend)()\n'+r'''
-Module.init(context);feature.toggle(true);feature.options['Anti fling'](true);tick(.02)
-assert(feature.options['Velocity limit']==nil,'no user-tuned velocity limit to get wrong')
--- A strong bounce under the character's own limits and a very long fall are never flings.
-h.FloorMaterial='Air';root.AssemblyLinearVelocity=Vector3.new(10,110,0);tick(.02);near(root.AssemblyLinearVelocity.Y,110)
-root.AssemblyLinearVelocity=Vector3.new(10,-1000,0);tick(.02);near(root.AssemblyLinearVelocity.Y,-1000);assert(#created==0 and casts==0)
--- Even near the void, a lower collidable floor makes this a legitimate drop.
-root.Position=Vector3.new(0,-450,0);floor=-480;tick(.02);assert(#created==0);near(root.AssemblyLinearVelocity.Y,-1000)
--- Contact fling: remove the side/spin impulse, preserve falling and player input.
-root.AssemblyLinearVelocity=Vector3.new(999,-200,0);root.AssemblyAngularVelocity=Vector3.new(0,999,0);tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,-200);near(root.AssemblyAngularVelocity.Magnitude,0)
--- A vertical launch no jump can produce is damped to a jump, not left flying.
-root.AssemblyLinearVelocity=Vector3.new(0,400,0);root.AssemblyAngularVelocity=Vector3.zero;tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyLinearVelocity.Y,50)
--- A single-frame planar shove is caught on the first tick, no tuning needed.
-root.AssemblyLinearVelocity=Vector3.new(200,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
--- A distant sender is not excused: the old 10-stud proximity gate is gone.
-near=false;root.AssemblyLinearVelocity=Vector3.new(900,-200,0);root.AssemblyAngularVelocity=Vector3.new(0,900,0);tick(.02)
-near(root.AssemblyLinearVelocity.X,16);near(root.AssemblyAngularVelocity.Magnitude,0)
--- Intentional large Speed stays, because the threshold follows the character.
-near=true;speed.Enabled=true;root.AssemblyLinearVelocity=Vector3.new(5000,-200,0);root.AssemblyAngularVelocity=Vector3.zero;tick(.02)
-near(root.AssemblyLinearVelocity.X,5000);speed.Enabled=false
--- Explicit actions and vehicles/anchored roots are not fought.
-for _,name in ipairs({'ghost','teleport','fling'}) do flags[name]=true;root.AssemblyLinearVelocity=Vector3.new(10000,0,0);tick(.02);near(root.AssemblyLinearVelocity.X,10000);flags[name]=nil end
-h.Sit=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);h.Sit=false
-root.Anchored=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);root.Anchored=false
-fly.Enabled=true;tick(.02);near(root.AssemblyLinearVelocity.X,10000);fly.Enabled=false
--- Only an imminent unsupported descent gets a platform, once.
-feature.options['Anti fling'](false);floor=nil;root.AssemblyLinearVelocity=Vector3.new(3,-200,4);root.AssemblyAngularVelocity=Vector3.zero
-root.Position=Vector3.new(0,-470,0);tick(.02);assert(#created==1 and created[1].CanCollide and created[1].Anchored)
-near(root.AssemblyLinearVelocity.Y,0);near(root.AssemblyLinearVelocity.X,3)
-root.AssemblyLinearVelocity=Vector3.new(3,-50,4);tick(.02);assert(#created==1,'no platform per-frame churn')
-character={};root.Position=Vector3.new(0,250,0);tick(.02);assert(created[1].destroyed,'respawn removes owned rescue')
-root.Position=Vector3.new(0,-470,0);root.AssemblyLinearVelocity=Vector3.new(0,-200,0);tick(.02);assert(#created==2)
-timers[1]();assert(not created[2].destroyed,'an old timer cannot destroy the new rescue')
--- Anti fling stands on its own: Anti Void off still damps, and builds nothing.
-feature.options['Anti fling'](true);feature.toggle(false);assert(tick,'anti fling keeps its own connection with Anti Void off')
-root.AssemblyLinearVelocity=Vector3.new(900,-200,0);tick(.02);near(root.AssemblyLinearVelocity.X,16)
-assert(#created==2,'Anti Void off must not build a platform')
-feature.options['Anti fling'](false);assert(not tick and created[2].destroyed)
-Module.destroy()
-pass('actual Anti Void/Anti fling: strong bounce, long fall and lower floor untouched, contact/vertical/spike/distant damping on the first tick, no slider, intended Speed, action/seat/anchor exclusions, imminent void, batching, respawn/timer ownership, independence from Anti Void and cleanup')
+
+local tick, feature, options
+local humanoid = {Health=100, WalkSpeed=16, JumpPower=50, MoveDirection=Vector3.zero, FloorMaterial="Ground"}
+local rootProps = {Position=Vector3.new(0, 100, 0), Parent=true,
+    AssemblyLinearVelocity=Vector3.zero, AssemblyAngularVelocity=Vector3.zero, Anchored=false}
+local root = setmetatable({}, {__index=rootProps, __newindex=function(_, key, value) rootProps[key] = value end})
+local character = {Parent=true}
+local world = {FallenPartsDestroyHeight=-500}
+local host = {
+    workspace=world,
+    getCharacterParts=function() return character, humanoid, root end,
+    featureConnections={},
+    TaskManager={Connect=function(_, fn)
+        tick = fn
+        return {Disconnect=function() tick = nil end}
+    end},
+    createUniversalFeature=function(name, description, order, onToggle, configuration)
+        feature = {name=name, description=description, order=order, toggle=onToggle,
+            configuration=configuration, options={}}
+        return feature
+    end,
+    addToggleOption=function(_feature, name, default, callback) options[name] = callback end,
+    addNumberOption=function(_feature, name, default, minimum, maximum, callback)
+        options[name] = callback
+        options["__default_" .. name] = default
+    end,
+    addFeatureTooltip=function(_feature, text) feature.tooltip = text end,
+}
+host.disconnectFeatureConnection = function(key)
+    local connection = host.featureConnections[key]
+    if connection then connection:Disconnect(); host.featureConnections[key] = nil end
+end
+local activityFlags = {}
+local context = {
+    host=host,
+    framework={GetModule=function() return nil end},
+    services={activity={
+        isActive=function(name) return activityFlags[name] == true end,
+        set=function(name, value) activityFlags[name] = value end,
+    }},
+}
+local passed = 0
+local function pass(name) passed += 1; print("PASS", name) end
+local function near(a, b, epsilon)
+    assert(math.abs(a - b) <= (epsilon or 1e-6), tostring(a) .. " != " .. tostring(b))
+end
 '''
-# Rename the fixture proximity flag so the numeric assertion helper remains callable.
-script=script.replace('local near=true','local nearby=true').replace('return near and','return nearby and').replace('near=false','nearby=false').replace('near=true','nearby=true')
+
+SCRIPT = PRELUDE + "\nlocal AntiVoid = (function()\n" + ANTIVOID + "\nend)()\n" + r'''
+-- Anti Void: the invisible platform -----------------------------------------
+options = {}
+AntiVoid.init(context)
+assert(feature.name == "Anti Void", "the card is Anti Void")
+assert(feature.configuration.categoryName == "Utilities", "Anti Void lives in Utilities")
+assert(feature.options["Anti fling"] == nil, "Anti Fling is not a sub-option any more")
+assert(options["Distance"] ~= nil, "Distance is configurable")
+
+tick = nil
+feature.toggle(true)
+assert(type(tick) == "function", "Anti Void owns its frame step")
+
+local platform = nil
+for _, object in ipairs(objects) do
+    if object.ClassName == "Part" and object.Name == "Wurst_AntiVoidPlatform" then platform = object end
+end
+assert(platform ~= nil, "the platform must exist after enabling")
+assert(platform.Anchored == true, "the platform is anchored")
+assert(platform.CanCollide == true, "the platform stops the fall")
+assert(platform.CanQuery == false and platform.CanTouch == false, "it never enters raycasts or touches")
+assert(platform.Transparency == 1, "it is invisible by default")
+near(platform.CFrame.Position.X, 0)
+near(platform.CFrame.Position.Y, 96)     -- 100 - 4
+pass("Anti Void builds one invisible local platform under the character")
+
+-- Walking keeps it under the feet.
+rootProps.Position = Vector3.new(30, 120, -12)
+tick(0.016)
+near(platform.CFrame.Position.X, 30)
+near(platform.CFrame.Position.Y, 116)
+near(platform.CFrame.Position.Z, -12)
+pass("the platform follows the character")
+
+-- Falling: the platform holds its height so the fall actually lands.
+local landingY = platform.CFrame.Position.Y
+rootProps.Position = Vector3.new(30, 100, -12)
+rootProps.AssemblyLinearVelocity = Vector3.new(0, -250, 0)
+tick(0.016)
+near(platform.CFrame.Position.Y, landingY)
+pass("the platform does not descend with a falling character")
+
+-- Standing on it, then jumping: it goes back under the feet.
+rootProps.Position = Vector3.new(30, landingY + 4, -12)
+rootProps.AssemblyLinearVelocity = Vector3.zero
+tick(0.016)
+rootProps.Position = Vector3.new(30, landingY + 30, -12)
+tick(0.016)
+near(platform.CFrame.Position.Y, landingY + 26)
+pass("the platform rises again after a jump")
+
+-- It never sinks under the destroy layer.
+world.FallenPartsDestroyHeight = -100
+rootProps.Position = Vector3.new(0, -40, 0)
+tick(0.016)
+assert(platform.CFrame.Position.Y >= -92, "the platform stops above the void layer")
+world.FallenPartsDestroyHeight = -500
+pass("the platform is clamped above the destroy layer")
+
+-- Show platform only changes transparency.
+options["Show platform"](true)
+tick(0.016)
+near(platform.Transparency, 0.4)
+options["Show platform"](false)
+tick(0.016)
+near(platform.Transparency, 1)
+pass("Show platform is cosmetic only")
+
+feature.toggle(false)
+assert(platform.destroyed == true, "disabling destroys the platform")
+assert(tick == nil, "disabling releases the frame step")
+AntiVoid.destroy()
+pass("Anti Void tears down cleanly")
+'''
+
+SCRIPT_ANTIFLING = PRELUDE + "\nlocal AntiFling = (function()\n" + ANTIFLING + "\nend)()\n" + r'''
+-- Anti Fling: the clamp -----------------------------------------------------
+options = {}
+AntiFling.init(context)
+assert(feature.name == "Anti Fling", "the card is Anti Fling")
+-- v138.8: Anti Fling has NO options; the thresholds scale with the character.
+assert(next(options) == nil,
+    "Anti Fling must be a plain ON/OFF card, got option(s): " .. tostring(next(options)))
+assert(feature.configuration and feature.configuration.noOptions == true,
+    "the card must declare noOptions")
+
+feature.toggle(true)
+assert(type(tick) == "function", "Anti Fling owns its own frame step")
+
+-- A fling-sized impulse is removed and the input direction survives.
+humanoid.MoveDirection = Vector3.new(1, 0, 0)
+rootProps.AssemblyLinearVelocity = Vector3.new(9000, 40, 0)
+rootProps.AssemblyAngularVelocity = Vector3.new(0, 500, 0)
+tick(0.016)
+assert(rootProps.AssemblyLinearVelocity.Magnitude < 100, "the planar impulse must be cancelled")
+assert(rootProps.AssemblyLinearVelocity.X > 0, "the player's input direction is kept")
+near(rootProps.AssemblyLinearVelocity.Y, 40)
+near(rootProps.AssemblyAngularVelocity.Magnitude, 0)
+pass("Anti Fling cancels planar impulses and spins, keeping the input")
+
+-- A normal walk and a normal jump are untouched.
+rootProps.AssemblyLinearVelocity = Vector3.new(16, 0, 0)
+rootProps.AssemblyAngularVelocity = Vector3.zero
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.X, 16)
+rootProps.AssemblyLinearVelocity = Vector3.new(0, 45, 0)
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.Y, 45)
+pass("walking and jumping are never touched")
+
+-- An upward launch beyond three jump powers is clipped.
+rootProps.AssemblyLinearVelocity = Vector3.new(0, 9000, 0)
+tick(0.016)
+assert(rootProps.AssemblyLinearVelocity.Y <= 150, "a launch must be clipped to the jump limit")
+pass("vertical launches are clipped instead of killing the character")
+
+-- Its own flings are never cancelled.
+activityFlags["fling"] = true
+rootProps.AssemblyLinearVelocity = Vector3.new(9000, 0, 0)
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.X, 9000)
+activityFlags["fling"] = nil
+activityFlags["walkfling"] = true
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.X, 9000)
+activityFlags["walkfling"] = nil
+pass("Anti Fling never fights our own Fling or Walk Fling")
+
+-- The limit scales with the character, with nothing to tune: 2.5x WalkSpeed
+-- clamps 150 studs/s at WalkSpeed 16 but allows it at WalkSpeed 80.
+humanoid.MoveDirection = Vector3.zero
+local savedWalkSpeed = humanoid.WalkSpeed
+humanoid.WalkSpeed = 16
+rootProps.AssemblyLinearVelocity = Vector3.new(150, 0, 0)
+tick(0.016)
+assert(rootProps.AssemblyLinearVelocity.X < 100, "16 WalkSpeed must clamp 150 studs/s")
+humanoid.WalkSpeed = 80
+rootProps.AssemblyLinearVelocity = Vector3.new(150, 0, 0)
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.X, 150)
+humanoid.WalkSpeed = savedWalkSpeed
+pass("Anti Fling thresholds scale with WalkSpeed, no options to tune")
+
+feature.toggle(false)
+assert(tick == nil, "disabling releases the frame step")
+AntiFling.destroy()
+pass("Anti Fling tears down cleanly")
+print("PASS " .. passed .. " Anti Void / Anti Fling suites")
+'''
+
 with tempfile.TemporaryDirectory() as tmp:
- p=Path(tmp)/'anti.luau';p.write_text(script);subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)
+    first = Path(tmp) / "antivoid.luau"
+    first.write_text(SCRIPT)
+    subprocess.run([os.environ.get("LUAU", "luau"), str(first)], check=True)
+    second = Path(tmp) / "antifling.luau"
+    second.write_text(SCRIPT_ANTIFLING)
+    subprocess.run([os.environ.get("LUAU", "luau"), str(second)], check=True)

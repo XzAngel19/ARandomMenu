@@ -53,6 +53,9 @@ function Module.init(context: any): any
             }) :: Frame
         end
 
+    -- v138.9: the cards inside each window are ALPHABETICAL. The random rank of
+    -- v138.6-v138.8 made a module hard to find again; ClickGui.sortCategoryRows
+    -- reads FeatureSortName (set below) and orders every window by it.
     local function createUniversalFeature(
         name: string,
         description: string,
@@ -61,6 +64,8 @@ function Module.init(context: any): any
         configuration: any?
     ): any
         configuration = configuration or {}
+        -- No curated slot table any more (v138.9): the window sorts by name, so
+        -- the per-card LayoutOrder is only the creation fallback.
         local registry: any = configuration.registry or universalFeatures
         local sectionName: string = configuration.section
             or (registry == mm2Features and "MM2")
@@ -145,6 +150,7 @@ function Module.init(context: any): any
         feature.row = row
 
         row:SetAttribute("FeatureCategory", categoryName)
+        -- Alphabetical key for ClickGui.sortCategoryRows.
         row:SetAttribute("FeatureSortName", string.lower(name))
 
         local bitmapText: any = state.bitmapText
@@ -159,7 +165,7 @@ function Module.init(context: any): any
                 end
                 bitmapText.draw(row, {
                     {
-                        text = feature.name or name,
+                        text = name,
                         color = feature.titleColor or Theme.text,
                     },
                 }, {
@@ -186,22 +192,6 @@ function Module.init(context: any): any
                 and Theme.text
                 or Theme.text
             feature.title = label
-        end
-
-        function feature:SetTitle(newName: string): ()
-            if type(newName) ~= "string" or newName == "" then
-                return
-            end
-            feature.name = newName
-            row:SetAttribute("FeatureSortName", string.lower(newName))
-            if type(feature.drawTitle) == "function" then
-                feature.drawTitle(feature.titleColor, feature.titleTransparency)
-            elseif feature.title then
-                feature.title.Text = newName
-            end
-            if state.clickGui and type(state.clickGui.resort) == "function" then
-                pcall(state.clickGui.resort, categoryName)
-            end
         end
 
         local arrow: TextButton? = nil

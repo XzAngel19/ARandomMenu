@@ -63,8 +63,6 @@ unbox = read("src/games/MM2/Other/AutoUnbox.lua")
 assert '"Delay between boxes"' in unbox  # user-owned pacing
 
 # User-configured rates are not hidden delays: the user sets them.
-trigger = read("src/games/universal/Combat/TriggerBot.lua")
-assert 'options["Delay"].Value' in trigger
 kill_aura = read("src/games/universal/Combat/KillAura.lua")
 assert '"Swings per second"' in kill_aura
 

@@ -1,4 +1,4 @@
--- Tagged event spawnables and round-team PumpCoins farming for X2 Duels.
+-- Halloween PumpkinCurrency and round-team PumpCoins farming for X2 Duels.
 -- This is intentionally independent from Auto Win and its combat logic.
 
 local Module = {
@@ -15,7 +15,6 @@ local function buildAutoFarm(runtime: any): ()
     local host: any = getfenv()
     local state: any = runtime.State or host.state
     local players: Players = game:GetService("Players")
-    local collection: CollectionService = game:GetService("CollectionService")
     local localPlayer: Player = players.LocalPlayer
     local currentWorkspace: Workspace = host.workspace or workspace
     local core: any = state.x2duelsCore
@@ -38,7 +37,6 @@ local function buildAutoFarm(runtime: any): ()
     local savedRoot: BasePart? = nil
     local savedCharacter: Model? = nil
     local savedCFrame: CFrame? = nil
-    local savedMatch: string? = nil
     local farmCard: any = nil
     local roundTeam: string? = nil
     local roundStarted: boolean = false
@@ -345,35 +343,22 @@ local function buildAutoFarm(runtime: any): ()
         return root and root:IsA("BasePart") and root :: BasePart or nil
     end
 
-    local function currentMatch(): string?
-        if core and type(core.matchIdOf) == "function" then
-            local ok: boolean, value: any = pcall(core.matchIdOf, localPlayer)
-            if ok and type(value) == "string" then return value end
-        end
-        return nil
-    end
-
     local function rememberPosition(root: BasePart): ()
-        local match: string? = currentMatch()
-        if savedRoot == root and savedCFrame ~= nil and savedMatch == match then return end
+        if savedRoot == root and savedCFrame ~= nil then return end
         savedRoot = root
         savedCharacter = localPlayer.Character
         savedCFrame = root.CFrame
-        savedMatch = match
     end
 
     local function restoreSavedPosition(): ()
         local root: BasePart? = savedRoot
         local character: Model? = savedCharacter
         local cframe: CFrame? = savedCFrame
-        local match: string? = savedMatch
         savedRoot = nil
         savedCharacter = nil
         savedCFrame = nil
-        savedMatch = nil
         if not root or not character or not cframe or not root.Parent
-            or localPlayer.Character ~= character
-            or match == nil or currentMatch() ~= match then
+            or localPlayer.Character ~= character then
             return
         end
         pcall(function(): ()
@@ -383,31 +368,35 @@ local function buildAutoFarm(runtime: any): ()
         end)
     end
 
-    local function isEventSpawnable(model: Model): boolean
-        -- EventsController clones the event's Pumpkin into SpawnablesClient,
-        -- gives it a numeric name, and tags the MODEL "Pumpkin". Static
-        -- PumpkinCurrency_* in FallDecoration are merely scenery.
-        local folder: Instance? = currentWorkspace:FindFirstChild("SpawnablesClient")
-        if not folder or not model:IsDescendantOf(folder) then return false end
-        local ok: boolean, tagged: any = pcall(collection.HasTag, collection, model, "Pumpkin")
-        return ok and tagged == true
+    local function addCoin(instance: Instance): ()
+        if not instance:IsA("Model")
+            or not string.match(instance.Name, "^PumpkinCurrency_%d+$") then
+            return
+        end
+        local pumpkin: Instance? = instance:FindFirstChild("Pumpkin", true)
+        if pumpkin and pumpkin:IsA("BasePart") then
+            coins[instance :: Model] = pumpkin :: BasePart
+        end
     end
 
-    local function addCoin(instance: Instance): ()
-        if not instance:IsA("Model") or not isEventSpawnable(instance :: Model) then return end
-        -- The actual Touched listener is on the invisible PrimaryPart "Touch",
-        -- not the decorative visible Pumpkin mesh (which has CanTouch=false).
-        local primary: BasePart? = (instance :: Model).PrimaryPart
-        if primary and primary:IsA("BasePart") and primary:IsDescendantOf(instance) then
-            coins[instance :: Model] = primary
+    local function addCoinFromDescendant(instance: Instance): ()
+        local current: Instance? = instance
+        local depth: number = 0
+        while current and current ~= currentWorkspace and depth < 6 do
+            if current:IsA("Model")
+                and string.match(current.Name, "^PumpkinCurrency_%d+$") then
+                addCoin(current)
+                return
+            end
+            current = current.Parent
+            depth += 1
         end
     end
 
     local function refreshCoins(): ()
         table.clear(coins)
-        local ok: boolean, tagged: any = pcall(collection.GetTagged, collection, "Pumpkin")
-        if ok and type(tagged) == "table" then
-            for _, instance: Instance in ipairs(tagged) do addCoin(instance) end
+        for _, descendant: Instance in ipairs(currentWorkspace:GetDescendants()) do
+            if descendant:IsA("Model") then addCoin(descendant) end
         end
         for key: Instance, _time: number in pairs(retryAt) do
             if not key.Parent then retryAt[key] = nil end
@@ -415,8 +404,11 @@ local function buildAutoFarm(runtime: any): ()
     end
 
     local function isAvailable(model: Model, part: BasePart): boolean
-        if not model.Parent or not part.Parent or model.PrimaryPart ~= part
-            or not part:IsDescendantOf(model) or not isEventSpawnable(model) then return false end
+        -- The editor stores these spawnables with CanTouch=false. A live
+        -- event controller may enable them, so do not discard them permanently.
+        if not model.Parent or not part.Parent or part.Transparency >= 0.95 then
+            return false
+        end
         return model:GetAttribute("Collected") ~= true
             and part:GetAttribute("Collected") ~= true
     end
@@ -579,11 +571,6 @@ local function buildAutoFarm(runtime: any): ()
 
     local function update(_deltaTime: number): ()
         if not settings.enabled then return end
-        if not currentMatch() then
-            setStatus("Waiting for match")
-            nextFarmAt = 0
-            return
-        end
         local now: number = os.clock()
         if now >= nextRefreshAt then
             nextRefreshAt = now + 10
@@ -647,7 +634,7 @@ local function buildAutoFarm(runtime: any): ()
 
     farmCard = host.createUniversalFeature(
         "Auto Farm",
-        "Farm real tagged event spawnables and friendly PumpCoins through native contact",
+        "Farm friendly PumpCoins and Halloween PumpkinCurrency through native contact",
         1,
         function(enabled: boolean): ()
             settings.enabled = enabled
@@ -659,7 +646,6 @@ local function buildAutoFarm(runtime: any): ()
                 savedRoot = nil
                 savedCharacter = nil
                 savedCFrame = nil
-                savedMatch = nil
                 setStatus("Scanning currency")
             else
                 restoreSavedPosition()
@@ -677,54 +663,22 @@ local function buildAutoFarm(runtime: any): ()
     end)
     host.addInformationOption(
         farmCard,
-        "Event pickups use the tagged model's invisible Touch part, not lobby decoration. PumpCoins require team evidence. Attempts are not confirmed currency."
+        "PumpCoins use podium player/team evidence; nearby enemy models are rejected. Attempts are not confirmed currency."
     )
 
-    local function affectsFarmStructures(instance: Instance): boolean
-        local current: Instance? = instance
-        local depth: number = 0
-        while current and current ~= currentWorkspace and depth < 8 do
-            local name: string = string.lower(current.Name)
-            if name == "farms" or name == "teammembers" or name == "pumpcoins"
-                or name == "pumpcoin" or name == "pumpkincoins" then return true end
-            current = current.Parent
-            depth += 1
-        end
-        return false
-    end
-
     table.insert(connections, currentWorkspace.DescendantAdded:Connect(function(instance: Instance): ()
-        if settings.enabled and affectsFarmStructures(instance) then nextStructureAt = 0 end
-        if settings.enabled then
-            local folder: Instance? = currentWorkspace:FindFirstChild("SpawnablesClient")
-            local current: Instance? = instance
-            while folder and current and current ~= folder and current ~= currentWorkspace do
-                if current:IsA("Model") then addCoin(current) end
-                current = current.Parent
-            end
-        end
+        nextStructureAt = 0
+        if settings.enabled then addCoinFromDescendant(instance) end
     end))
     table.insert(connections, currentWorkspace.DescendantRemoving:Connect(function(instance: Instance): ()
-        if settings.enabled and affectsFarmStructures(instance) then nextStructureAt = 0 end
+        nextStructureAt = 0
         if instance:IsA("Model") then coins[instance :: Model] = nil end
         retryAt[instance] = nil
-    end))
-    -- The controller adds the tag *after* parenting the clone, so listening
-    -- only to DescendantAdded misses new pickups until the next full refresh.
-    table.insert(connections, collection:GetInstanceAddedSignal("Pumpkin"):Connect(function(instance: Instance): ()
-        if settings.enabled then
-            addCoin(instance)
-            nextFarmAt = 0
-        end
-    end))
-    table.insert(connections, collection:GetInstanceRemovedSignal("Pumpkin"):Connect(function(instance: Instance): ()
-        if instance:IsA("Model") then coins[instance :: Model] = nil end
     end))
     table.insert(connections, localPlayer.CharacterAdded:Connect(function(): ()
         savedRoot = nil
         savedCharacter = nil
         savedCFrame = nil
-        savedMatch = nil
         nextRefreshAt = 0
         nextStructureAt = 0
         nextFarmAt = 0

@@ -13,26 +13,35 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/games/MM2/Other/AutoFarm.lua').read_text()
-WURST = (ROOT / 'src/Wurst.lua').read_text()
+CATALOG = (ROOT / 'src/libraries/Manifest.lua').read_text()
 
-# Registered in the MM2 module load list.
-assert '"src/games/MM2/Other/AutoFarm.lua"' in WURST
+# Registered in the MM2 module load list (v138.9: the catalog, not Wurst.lua).
+assert '"src/games/MM2/Other/AutoFarm.lua"' in CATALOG
 
 # Feature + Farm Speed slider + the five requested options.
 assert '"Auto Farm"' in SOURCE
 assert '"Farm Speed", 16, 5, 60' in SOURCE, "user-tunable speed slider, slow default"
 for option, default in (
     ("Reset When Full Coin Bag", "true"),
-    ("Fling Murder after reset", "false"),
-    ("Fling Sheriff after reset", "false"),
+    ("Fling Murder after full bag", "false"),
+    ("Fling Sheriff after full bag", "false"),
     ("Auto Grab gun and Shoot", "false"),
     ("Auto Kill All When full coin bag", "false"),
 ):
     needle = f'"{option}", {default}'
     assert needle in SOURCE, f"missing option: {option}"
 
-# Movement is physics velocity, never per-tick CFrame teleports.
-assert "root.AssemblyLinearVelocity = delta.Unit * speed" in SOURCE
+# Movement is physics velocity, never per-tick CFrame teleports, and the Below
+# flight is driven on RunService.Stepped (BEFORE physics) by an altitude
+# controller: writing it only from the Heartbeat tick let gravity accumulate
+# between writes, which is what made the farm sink out of the map.
+assert "applyBelowControl" in SOURCE
+assert "RunService.Stepped:Connect" in SOURCE
+assert "hoverActive" in SOURCE and "hoverTarget" in SOURCE
+assert "root.AssemblyLinearVelocity = Vector3.new(velocityX, velocityY, velocityZ)" in SOURCE
+assert "clampBelowTarget" in SOURCE and "floorBudgetY" in SOURCE
+assert "MAX_BELOW_DEPTH" in SOURCE and "VOID_RECOVER_DEPTH" in SOURCE
+assert "recoverFromVoid" in SOURCE
 assert "Invalid position" in SOURCE  # documented in the module
 assert "settings.speed" in SOURCE
 
@@ -49,6 +58,10 @@ assert '"Below (Hitbox)"' in SOURCE
 assert "local BELOW_OFFSET: number = 3.0" in SOURCE
 assert "Vector3.new(4, 8, 4)" in SOURCE
 assert "root.Size = HITBOX_SIZE" in SOURCE
+# The depth reference must never be derived from a body that is already below the
+# map: that fed on itself and walked the hold target down into the void.
+assert "not hiddenUnderMap and bodyOnMap" in SOURCE
+assert "local bodyOnMap: boolean = homeCFrame ~= nil" in SOURCE
 assert "savedRootSize" in SOURCE  # hitbox restored on OFF
 # The face-down tilt is gone for good (that fight glitched the camera).
 assert "math.rad(90)" not in SOURCE
@@ -67,8 +80,9 @@ assert "restoreCharacter(false)" in SOURCE
 assert "isCharacterInActiveRound" in SOURCE
 assert '"Auto Farm: waiting in lobby"' in SOURCE
 assert "waiting for coin" in SOURCE
-assert "holdHiddenUnderMap" in SOURCE
-assert "getHiddenUnderMapPosition" in SOURCE
+# The under-map hold helpers are gone: everything they did is handled by the
+# altitude controller (hold position when idle, recover when something drops you).
+assert "recoverFromVoid" in SOURCE
 assert "bagAmount >= 50 or not enabled" in SOURCE
 assert "restoreCharacter(true)" in SOURCE
 assert "recovered from the void" in SOURCE
@@ -146,8 +160,33 @@ assert 'GetAttribute("Collected")' in SOURCE
 # Parked collections also pulse the touch directly (physics Touched
 # is not guaranteed for a fully NoClipped body).
 assert "state.fireTouchInterest" in SOURCE
+# v138.8: "Stay Under When Round starts" is back and applies to BOTH modes; it is
+# only the round-start hold, and leaving it puts the body back on the surface.
 assert '"Stay Under When Round starts"' in SOURCE
-assert "settings.stayUnderOnStart" in SOURCE
+assert "stayUnderOnStart" in SOURCE
+assert "holdUnderMap" in SOURCE
+assert "settings.stayUnderOnStart and not engaged" in SOURCE
+assert "hiddenUnderMap and homeCFrame" in SOURCE, \
+    "leaving the hold must use the surface start point, not a raycast from underground"
+assert "walkBodyReady" in SOURCE          # body normalised once per engagement
+assert "walkCarryUntil" in SOURCE         # velocity carry when Move is ignored
+assert "walkCarryDirection" in SOURCE
+
+# v138.8: back to approach-and-collect, but at full Farm Speed and without the
+# ~1 s park: a short dwell, an immediate first touch, then the next coin, with a
+# retry list and a blacklist after three failed touches.
+assert "math.min(speed, flatDistance" not in SOURCE, "the taper made the flight look slow"
+assert "velocityX = direction.X * speed" in SOURCE
+assert "DWELL_SECONDS: number = 0.3" in SOURCE
+assert "RETRY_SECONDS" in SOURCE and "RETRY_LIMIT" in SOURCE
+assert "retryAt" in SOURCE and "attempts" in SOURCE
+assert "lastTouchPulse = 0" in SOURCE, "the first touch on a new coin must not wait"
+assert "direction * 26" not in SOURCE, "the fly-through overfly point must be gone"
+assert "PASS_SKIP_SECONDS" not in SOURCE
+assert "passThrough" not in SOURCE
+assert "BEHIND_PENALTY" not in SOURCE
+# The renamed toggles carry saved values over instead of resetting them.
+assert "FlingMurderafterreset" in SOURCE and "FlingMurderafterfullbag" in SOURCE
 assert "resolveSafeAboveGroundPosition" in SOURCE
 
 print("PASS MM2 Auto Farm: Walk (ground locomotion, slider WalkSpeed, "

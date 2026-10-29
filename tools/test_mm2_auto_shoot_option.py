@@ -15,7 +15,7 @@ assert 'categoryName = "Combat"' in auto_shoot
 
 # Check Auto Shoot has the required options
 assert '"Mode"' in auto_shoot
-assert '"Bullet"' in auto_shoot and '"CFrame"' in auto_shoot
+assert '"Bullet"' in auto_shoot and '"CFrame"' in auto_shoot and '"Experimental"' in auto_shoot
 assert '"WallCheck"' in auto_shoot
 assert '"Proximity"' in auto_shoot
 assert '"Aura"' in auto_shoot
@@ -36,25 +36,22 @@ assert 'categoryName = "Combat"' in knife_throw
 assert '"WallCheck"' in knife_throw
 assert '"Delay"' in knife_throw
 
-# Gun Aimbot Buttons (formerly Gun Aimbot) should have Bullet/CFrame modes and independent per-mode options
-assert '"Gun Aimbot Buttons"' in S
-assert '"Bullet"' in S and '"CFrame"' in S
+# Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and WallCheck as the single gate
+assert '"Gun Aimbot"' in S
+assert '"Bullet"' in S and '"CFrame"' in S and '"Experimental"' in S
 for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
-    assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot Buttons'
+    assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
 
-# Silent AIM must exist as an independent Combat module supporting PC & Mobile (WeaponService + Shoot:FireServer)
-silent_aim = (ROOT / 'src/games/MM2/Combat/SilentAim.lua').read_text()
-assert '"Silent AIM"' in silent_aim
-assert 'GetMouseTargetCFrame' in silent_aim and 'GetTargetPosition' in silent_aim
-for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
-    assert f'"{retained}"' in silent_aim, f'{retained} must be in Silent AIM'
-
-touch_fling = (ROOT / 'src/games/universal/Blatant/TouchFling.lua').read_text()
-assert '"Touch Fling"' in touch_fling
-assert not (ROOT / 'src/games/universal/Combat/TargetStrafe.lua').exists(), 'StrafeBot must be removed'
-
-fling = (ROOT / 'src/games/MM2/Blatant/Fling.lua').read_text()
-assert '"Auto Fling Selected Target"' in fling, 'Fling must expose Auto Fling Selected Target'
+fling = (ROOT / 'src/games/universal/Blatant/Fling.lua').read_text()
+assert '\n        "Auto Fling Selected Target",\n' not in fling, 'Auto Fling must stay deleted'
+assert 'configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil' in fling, \
+    'the stale Auto Fling key must be dropped at boot'
+assert '"Touch Fling"' not in fling, 'Walk Fling is its own card now, not an option here'
+assert 'FLING_VELOCITY' in fling and '9e7' in fling, 'Fling must use the SkidFling velocity'
+walkfling = (ROOT / 'src/games/universal/Blatant/WalkFling.lua').read_text()
+assert '"Walk Fling"' in walkfling, 'Walk Fling must be its own module'
+assert 'configData.states["Universal.WalkFling"] = false' in walkfling, \
+    'Walk Fling must never be restored from the saved config'
 assert 'MAP_FLING_WARMUP_SECONDS' in auto_win, 'Auto Win must wait for map load before Fling Sheriff'
 
 print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')

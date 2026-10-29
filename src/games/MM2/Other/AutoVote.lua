@@ -798,7 +798,7 @@ function Module.init(runtime: any): any
         end
         lastBgSyncAt = now
         refreshMapChoices(false)
-    end)
+    end, nil, "Auto Vote sync")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("MM2AutoVoteMapSync")

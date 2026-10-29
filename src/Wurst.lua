@@ -1,10 +1,13 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
 local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/9492e6b6-arandommenu/src/Wurst.lua"
+    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/76bc3f2f-arandommenu/src/Wurst.lua"
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
+-- v138.9: the window order, the aliases and the card -> window map are read from
+-- Manifest.lua ("categories" and "cards") right after the catalog is fetched.
+-- These are only the loader's last-resort defaults, not a second catalog.
 local OFFICIAL_CATEGORIES: {string} = {
     "Combat",
     "Exploits",
@@ -15,121 +18,9 @@ local OFFICIAL_CATEGORIES: {string} = {
     "Items",
 }
 
-local CATEGORY_ALIASES: {[string]: string} = {
-    ["Blatant"] = "Exploits",
-    ["Movement"] = "World",
-    ["Other"] = "Utilities",
-    ["Visuals"] = "Render",
-    ["Protection"] = "Utilities",
-    ["Utility"] = "Utilities",
-    ["Spoof"] = "Utilities",
-    ["Fun"] = "Utilities",
-    ["General"] = "Utilities",
-    ["Player"] = "World",
-}
+local CATEGORY_ALIASES: {[string]: string} = {}
 
-local function normalizeFeatureCategory(name: any): string
-    local resolved: string = tostring(name or DEFAULT_FEATURE_CATEGORY)
-    if table.find(OFFICIAL_CATEGORIES, resolved) ~= nil then
-        return resolved
-    end
-    return CATEGORY_ALIASES[resolved] or DEFAULT_FEATURE_CATEGORY
-end
-
-local FEATURE_CATEGORIES: {[string]: string} = {
-    ["Anti AFK"] = "World",
-    ["Ghost"] = "Utilities",
-    ["Anti Fling"] = "Utilities",
-    ["KillAura"] = "Combat",
-    ["Aim Assist"] = "Combat",
-
-    ["Fly"] = "Exploits",
-    ["Jump"] = "Exploits",
-    ["Noclip"] = "Exploits",
-    ["Speed"] = "Exploits",
-    ["Spider"] = "Exploits",
-    ["Walk Speed"] = "World",
-    ["Invisible"] = "Exploits",
-
-
-    ["Teleport"] = "Utilities",
-    ["Freeze Movements"] = "Utilities",
-    ["Anti-Fling"] = "Movement",
-    ["Anti-Void"] = "Movement",
-    ["Safe Walk"] = "World",
-    ["SafeWalk"] = "Movement",
-    ["Gravity"] = "World",
-
-
-    ["FOV"] = "Render",
-    ["Fullbright"] = "Render",
-    ["Time Changer"] = "Render",
-    ["Player ESP"] = "Render",
-    ["X-Ray"] = "Render",
-    ["Zoom Unlocker"] = "Render",
-
-    ["Anti-AFK"] = "Other",
-    ["AntiAFK"] = "Other",
-    ["Disguise"] = "World",
-    ["Fling"] = "Exploits",
-    ["Improve FPS"] = "World",
-    ["Interact Extender"] = "Exploits",
-    ["Lag Switch"] = "Exploits",
-    ["Rejoin Server"] = "Other",
-    ["Remote Logger"] = "Other",
-
-    ["Blurt Roles"] = "World",
-    ["SilentAIM"] = "Combat",
-    ["Silent AIM"] = "Combat",
-    ["Gun Aimbot"] = "Combat",
-    ["Gun Aimbot Buttons"] = "Combat",
-    ["Knife Combat"] = "Combat",
-    ["Touch Fling"] = "Exploits",
-    ["Trajectory Calibration"] = "Other",
-
-    ["Auto Tackle"] = "Combat",
-    ["Auto Dribble"] = "Combat",
-    ["Auto Pickup"] = "Other",
-    ["Pass Assist"] = "Combat",
-    ["Shoot Assist"] = "Combat",
-    ["Power Shot"] = "Combat",
-    ["Large Shoot"] = "Combat",
-    ["Best Goal Visual"] = "Render",
-    ["Ball Trajectory"] = "Render",
-    ["Goalkeeper Assist"] = "Combat",
-    ["Auto Header"] = "Combat",
-
-    ["Auto Generator"] = "Other",
-    ["Auto Parry / Auto Block"] = "Movement",
-    ["Killer Hit Aura"] = "Combat",
-    ["Fast Vault Optimizer"] = "Movement",
-    ["Cooldown Modifier"] = "Exploits",
-    ["Damage Boost"] = "Exploits",
-    ["Noclip (Vaults & Pallets)"] = "Exploits",
-    ["WalkSpeed Hack"] = "Exploits",
-    ["Silent Steps / Anti-Sound"] = "Movement",
-    ["Killer Proximity Visualizer"] = "Render",
-    ["Line of Sight ESP"] = "Render",
-    ["Locker & Hideout Detector"] = "Render",
-    ["Killer Power Cooldowns"] = "Render",
-    ["VD Field of View"] = "Render",
-    ["Optimize Blind / Flash Protection"] = "Movement",
-    ["VD Fullbright"] = "Render",
-
-    ["Silent Aim"] = "Combat",
-    ["TriggerBot"] = "Combat",
-
-    ["Round Info"] = "Render",
-    ["Auto Swing"] = "Combat",
-    ["Bed Nuker"] = "Combat",
-    ["Scaffold"] = "Movement",
-    ["Anti Void"] = "Utilities",
-    ["Server Aura"] = "Combat",
-    ["Server Scaffold"] = "Movement",
-    ["Server Miner"] = "Other",
-    ["Auto Buy"] = "Other",
-    ["Quick Actions"] = "Other",
-}
+local FEATURE_CATEGORIES: {[string]: string} = {}
 
 local UI_RADIUS: {[string]: number} = {
     shell = 8,
@@ -224,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v155-20261029-x2duels-cframe-knife"
+local SOURCE_STAMP: string = "v156-20261029-mm2-experimental"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -232,7 +123,7 @@ local PENDING_FINGERPRINT: boolean = false
 
 local PRODUCT = {
     name = "Wurst",
-    version = "0.1 Beta",
+    version = "0.823 Release",
 
     logPrefix = "Wurst",
     guiName = "Wurst",
@@ -315,7 +206,6 @@ local GAME_MODULES: {[number]: string} = {
     [93978595733734] = "VD",
     [92876937625630] = "X2Duels",
     [135856908115931] = "X2Duels",
-    [124848751642883] = "X2Duels",
 }
 
 type GameFingerprint = {
@@ -323,24 +213,6 @@ type GameFingerprint = {
     required: number,
     markers: {(ReplicatedStorage) -> boolean},
 }
-
--- Networking namespaces are encoded in the RemoteEvent's *name*, not
--- necessarily represented as folders. The 1v1 capture has e.g.
--- Packages.Networking["RE/Match/SetDead"]; retain the older nested fallback.
-local function findX2FingerprintRemote(
-    replicated: ReplicatedStorage,
-    namespace: string,
-    remoteName: string
-): Instance?
-    local packages: Instance? = replicated:FindFirstChild("Packages")
-    local networking: Instance? = packages and packages:FindFirstChild("Networking")
-    if not networking then return nil end
-    local flat: Instance? = networking:FindFirstChild("RE/" .. namespace .. "/" .. remoteName)
-    if flat then return flat end
-    local re: Instance? = networking:FindFirstChild("RE")
-    local group: Instance? = re and re:FindFirstChild(namespace)
-    return group and group:FindFirstChild(remoteName) or nil
-end
 
 local GAME_FINGERPRINTS: {GameFingerprint} = {
     {
@@ -420,19 +292,33 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
         required = 3,
         markers = {
             function(replicated: ReplicatedStorage): boolean
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local match: Instance? = re and re:FindFirstChild("Match")
+                if not match then
+                    return false
+                end
                 local found: number = 0
                 for _, name: string in ipairs({
                     "MatchResults", "WinNotification", "PlayerRespawned", "SetDead",
                 }) do
-                    if findX2FingerprintRemote(replicated, "Match", name) then
+                    if match:FindFirstChild(name) then
                         found += 1
                     end
                 end
                 return found >= 2
             end,
             function(replicated: ReplicatedStorage): boolean
-                return findX2FingerprintRemote(replicated, "Rematch", "RematchVote") ~= nil
-                    and findX2FingerprintRemote(replicated, "Rematch", "RematchTeleport") ~= nil
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local rematch: Instance? = re and re:FindFirstChild("Rematch")
+                return rematch ~= nil
+                    and rematch:FindFirstChild("RematchVote") ~= nil
+                    and rematch:FindFirstChild("RematchTeleport") ~= nil
             end,
             function(replicated: ReplicatedStorage): boolean
                 local packages: Instance? = replicated:FindFirstChild("Packages")
@@ -459,10 +345,18 @@ local GAME_FINGERPRINTS: {GameFingerprint} = {
                     and controllers:FindFirstChild("MatchController") ~= nil
                     and controllers:FindFirstChild("GunCrosshairController") ~= nil
             end,
-            -- These markers avoid the session-dependent hashed weapon remotes.
+            -- Current MVS capture: Packages.Networking RE/Combat plus the
+            -- legacy client controllers. These markers do not depend on the
+            -- hashed knife remote names or on the older X2 rematch schema.
             function(replicated: ReplicatedStorage): boolean
-                return findX2FingerprintRemote(replicated, "Combat", "Beam") ~= nil
-                    and findX2FingerprintRemote(replicated, "Combat", "PlaySound") ~= nil
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local networking: Instance? = packages
+                    and packages:FindFirstChild("Networking")
+                local re: Instance? = networking and networking:FindFirstChild("RE")
+                local combat: Instance? = re and re:FindFirstChild("Combat")
+                return combat ~= nil
+                    and combat:FindFirstChild("Beam") ~= nil
+                    and combat:FindFirstChild("PlaySound") ~= nil
             end,
             function(replicated: ReplicatedStorage): boolean
                 local client: Instance? = replicated:FindFirstChild("Client")
@@ -2095,6 +1989,19 @@ function SectionManager.initializeAllAsync(): ()
                     "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
                         .. tostring(failures)
                 )
+                -- The GUI is fully built from here on: this is what releases the
+                -- launcher (it stays hidden through the whole load).
+                local finish = function(): ()
+                    state.menuReady = true
+                    if type(state.refreshLauncher) == "function" then
+                        pcall(state.refreshLauncher)
+                    end
+                end
+                if type(task) == "table" and type(task.defer) == "function" then
+                    task.defer(finish)
+                else
+                    finish()
+                end
             end
         end)
     end
@@ -3670,7 +3577,9 @@ local MobileMenuButton = create("TextButton", {
     Text = "≡",
     TextColor3 = Theme.text,
     TextSize = 20,
-    Visible = state.isMobile,
+    -- Hidden until the whole menu has finished loading: showing it at injection
+    -- flashed the old circular launcher for a few seconds before the GUI existed.
+    Visible = false,
     ZIndex = 190,
 }) :: TextButton
 create("UICorner", {
@@ -3814,8 +3723,10 @@ do
 end
 
 local function refreshLauncherVisibility(): ()
-
-    MobileMenuButton.Visible = (state.isMobile or state.toggleKey == Enum.KeyCode.Unknown)
+    -- Only once every section has initialized (state.menuReady) and one frame has
+    -- passed, so the launcher can never appear before the menu it opens.
+    MobileMenuButton.Visible = state.menuReady == true
+        and (state.isMobile or state.toggleKey == Enum.KeyCode.Unknown)
         and state.pill == nil
         and not state.visible
 end
@@ -3829,59 +3740,174 @@ end)
 type TaskHandle = {
     Connected: boolean,
     Disconnect: (self: TaskHandle) -> (),
+    label: string,
 }
 
 type ScheduledTask = {
     callback: (...any) -> (),
     handle: TaskHandle,
     failures: number,
+    label: string,
+    costMs: number,
+    calls: number,
+    warned: boolean,
 }
 
-local TaskManager = {
-    tasks = {} :: {[number]: ScheduledTask},
-    renderTasks = {} :: {[number]: ScheduledTask},
+-- v139: the scheduler measures itself. Every task keeps an exponential average
+-- of how long it takes, so "the menu is lagging" can be answered with a name
+-- instead of a guess (state.perfReport()). The cost of measuring is two
+-- os.clock() calls per task per frame (~0.2 us), far below anything visible.
+local TASK_WARN_MS: number = 3
+local PERFORMANCE_EVERY: number = 0.5
+
+local TaskManager: any = {
+    tasks = {} :: {ScheduledTask},
+    renderTasks = {} :: {ScheduledTask},
+    taskCount = 0,
+    renderCount = 0,
     nextId = 0,
     connection = nil :: RBXScriptConnection?,
     renderConnection = nil :: RBXScriptConnection?,
+    tasksMs = 0,
+    renderMs = 0,
 }
+
+state.performance = {
+    fps = 60,
+    frameMs = 1 / 60,
+    tasksMs = 0,
+    renderMs = 0,
+    taskCount = 0,
+    renderCount = 0,
+    slowestTask = nil :: (string | nil),
+    slowestMs = 0,
+    -- v139.1: lag SPIKES (frames well over budget) are a different problem
+    -- from a steady 3 ms task, so they are measured and reported apart.
+    spikeMs = 0,
+    spikeCount = 0,
+    spikeTask = nil :: (string | nil),
+    spikeAgo = -1,
+    spikeAt = nil :: (number | nil),
+    spikeWarnedAt = nil :: (number | nil),
+    worstSpikeMs = 0,
+}
+
+local function describeTask(callback: any): string
+    -- "n" is the inferred function name (usually present for a named local
+    -- function), "s" is the chunk/source. A chunk path ("something/file.rs:12")
+    -- is not a module name, so those are skipped instead of filling the
+    -- performance report with noise.
+    for _, kind: string in ipairs({"n", "s"}) do
+        local ok: boolean, info: any = pcall(debug.info, callback, kind)
+        if ok and type(info) == "string" and info ~= "" then
+            local name: string = tostring(info)
+            if not string.find(name, "/", 1, true)
+                and not string.find(name, "@", 1, true)
+                and string.find(name, ".rs:", 1, true) == nil then
+                if #name > 64 then
+                    name = string.sub(name, 1, 64)
+                end
+                return name
+            end
+        end
+    end
+    return "task"
+end
+
+-- Swap-remove keeps the buckets as dense arrays, so the per-frame loop is an
+-- ipairs over contiguous memory instead of pairs over a hash with holes.
+local function removeFromBucket(bucket: {ScheduledTask}, index: number): ()
+    local last: number = #bucket
+    if index ~= last then
+        bucket[index] = bucket[last]
+        bucket[last].handle.index = index
+    end
+    bucket[last] = nil
+end
 
 function TaskManager:Connect(
     callback: (...any) -> (),
-    phase: string?
+    phase: string?,
+    label: string?
 ): TaskHandle
     self.nextId += 1
-    local taskId: number = self.nextId
-    local bucket: {[number]: ScheduledTask} = phase == "render"
+    local bucket: {ScheduledTask} = phase == "render"
         and self.renderTasks
         or self.tasks
     local handle: TaskHandle
     handle = {
         Connected = true,
-        Disconnect = function(selfHandle: TaskHandle): ()
+        label = label or describeTask(callback),
+        index = 0,
+        Disconnect = function(selfHandle: any): ()
             if not selfHandle.Connected then
                 return
             end
             selfHandle.Connected = false
-            bucket[taskId] = nil
+            local current: {ScheduledTask} = selfHandle.bucket
+            local index: number = selfHandle.index
+            if current and index >= 1 and index <= #current
+                and current[index] ~= nil and current[index].handle == selfHandle then
+                removeFromBucket(current, index)
+            end
         end,
-    }
-    bucket[taskId] = {
+    } :: any
+    handle.bucket = bucket
+    handle.index = #bucket + 1
+    bucket[handle.index] = {
         callback = callback,
         handle = handle,
         failures = 0,
+        label = handle.label,
+        costMs = 0,
+        calls = 0,
+        warned = false,
     }
+    if phase == "render" then
+        self.renderCount = #self.renderTasks
+    else
+        self.taskCount = #self.tasks
+    end
     return handle
 end
 
-function TaskManager:Destroy(): ()
-    for _, bucket: {[number]: ScheduledTask} in
-        ipairs({self.tasks, self.renderTasks})
-    do
-        for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
-            scheduled.handle.Connected = false
-            bucket[taskId] = nil
+function TaskManager:Stats(): any
+    local slowest: any = nil
+    local list: {any} = {}
+    for _, bucket: {ScheduledTask} in ipairs({self.tasks, self.renderTasks}) do
+        for _, scheduled: ScheduledTask in ipairs(bucket) do
+            table.insert(list, {
+                label = scheduled.label,
+                ms = scheduled.costMs,
+                calls = scheduled.calls,
+            })
+            if not slowest or scheduled.costMs > slowest.ms then
+                slowest = {label = scheduled.label, ms = scheduled.costMs}
+            end
         end
     end
+    table.sort(list, function(left: any, right: any): boolean
+        return left.ms > right.ms
+    end)
+    return {
+        taskCount = #self.tasks,
+        renderCount = #self.renderTasks,
+        tasksMs = self.tasksMs,
+        renderMs = self.renderMs,
+        slowest = slowest,
+        top = list,
+    }
+end
+
+function TaskManager:Destroy(): ()
+    for _, bucket: {ScheduledTask} in ipairs({self.tasks, self.renderTasks}) do
+        for _, scheduled: ScheduledTask in ipairs(bucket) do
+            scheduled.handle.Connected = false
+        end
+        table.clear(bucket)
+    end
+    self.taskCount = 0
+    self.renderCount = 0
     if self.connection then
         self.connection:Disconnect()
         self.connection = nil
@@ -3893,45 +3919,188 @@ function TaskManager:Destroy(): ()
 end
 
 local function runBucket(
-    bucket: {[number]: ScheduledTask},
+    bucket: {ScheduledTask},
     deltaTime: number
-): ()
-    for taskId: number, scheduled: ScheduledTask in pairs(bucket) do
-        if scheduled.handle.Connected then
-            local success: boolean, message: any = pcall(
-                scheduled.callback,
-                deltaTime
+): (number, string?, number)
+    local total: number = 0
+    local worstLabel: string? = nil
+    local worstMs: number = 0
+    local index: number = 1
+    while index <= #bucket do
+        local scheduled: ScheduledTask = bucket[index]
+        local startedAt: number = os.clock()
+        local success: boolean, message: any = pcall(
+            scheduled.callback,
+            deltaTime
+        )
+        local cost: number = (os.clock() - startedAt) * 1000
+        total += cost
+        if cost > worstMs then
+            worstMs = cost
+            worstLabel = scheduled.label
+        end
+        scheduled.calls += 1
+        -- Fast attack, slow decay: a single spike is visible in the report but
+        -- does not fire the warning; a task that is genuinely heavy will.
+        if cost > scheduled.costMs then
+            scheduled.costMs = cost
+        else
+            scheduled.costMs += (cost - scheduled.costMs) * 0.05
+        end
+        if not success then
+            scheduled.failures += 1
+            warn(
+                "[" .. PRODUCT.name .. "] scheduled task "
+                    .. scheduled.label
+                    .. " failed: "
+                    .. tostring(message)
             )
-            if success then
-                scheduled.failures = 0
-            else
-                scheduled.failures += 1
-                warn(
-                    "[" .. PRODUCT.name .. "] scheduled task "
-                        .. tostring(taskId)
-                        .. " failed: "
-                        .. tostring(message)
-                )
-
-                if scheduled.failures >= 3 then
-                    scheduled.handle:Disconnect()
-                end
+            if scheduled.failures >= 3 then
+                scheduled.handle.Connected = false
             end
         end
+        if not scheduled.warned and scheduled.costMs >= TASK_WARN_MS then
+            scheduled.warned = true
+            warn(
+                "[" .. PRODUCT.name .. ":Perf] "
+                    .. scheduled.label
+                    .. string.format(" is taking %.2f ms per frame", scheduled.costMs)
+                    .. " — that is what is dropping your FPS. Turn that module off or lower its range."
+            )
+        end
+        if not scheduled.handle.Connected then
+            -- Disabled by its third failure (a real Disconnect already took it
+            -- out of the bucket). Drop it now and let the task that the
+            -- swap-remove moved into this slot run in this same frame.
+            if bucket[index] == scheduled then
+                removeFromBucket(bucket, index)
+            end
+        else
+            -- It ran from this slot; the next task is index + 1. If it is no
+            -- longer here, another task's disconnect swapped our slot and it
+            -- already ran, so advancing is still correct.
+            index += 1
+        end
     end
+    return total, worstLabel, worstMs
 end
+
+local function publishPerformance(deltaTime: number): ()
+    local performance: any = state.performance
+    local frameMs: number = math.max(deltaTime, 1 / 1000) * 1000
+    performance.frameMs += (frameMs - performance.frameMs) * 0.1
+    performance.fps = 1000 / math.max(performance.frameMs, 1 / 1000)
+    local stats: any = TaskManager:Stats()
+    performance.taskCount = stats.taskCount
+    performance.renderCount = stats.renderCount
+    performance.tasksMs = stats.tasksMs
+    performance.renderMs = stats.renderMs
+    performance.slowestTask = stats.slowest and stats.slowest.label or nil
+    performance.slowestMs = stats.slowest and stats.slowest.ms or 0
+    performance.spikeAgo = if performance.spikeAt
+        then math.max(0, os.clock() - performance.spikeAt)
+        else -1
+    performance.updatedAt = os.clock()
+end
+
+local performanceElapsed: number = 0
+
+-- v139.1: a spike is one frame far over budget (a hitch), not a steady cost.
+-- 45 ms is ~2.7 frames at 60 FPS: low enough to catch a real stutter, high
+-- enough that ordinary jitter does not spam the console.
+local SPIKE_MS: number = 45
+local SPIKE_WARN_EVERY: number = 5
+
+TaskManager.frameSlowLabel = nil
+TaskManager.frameSlowMs = 0
 
 TaskManager.connection = RunService.Heartbeat:Connect(function(
     deltaTime: number
 ): ()
-    runBucket(TaskManager.tasks, deltaTime)
+    local total: number, label: string?, worst: number =
+        runBucket(TaskManager.tasks, deltaTime)
+    TaskManager.tasksMs = total
+    TaskManager.frameSlowLabel = label
+    TaskManager.frameSlowMs = worst
+    performanceElapsed += deltaTime
+    if performanceElapsed >= PERFORMANCE_EVERY then
+        performanceElapsed = 0
+        publishPerformance(deltaTime)
+    end
+
+    local frameMs: number = math.max(0, deltaTime) * 1000
+    local performance: any = state.performance
+    if frameMs >= SPIKE_MS then
+        performance.spikeCount += 1
+        performance.spikeMs = frameMs
+        performance.spikeTask = label
+        performance.spikeAt = os.clock()
+        if frameMs > performance.worstSpikeMs then
+            performance.worstSpikeMs = frameMs
+        end
+        -- Rate limited: one line every few seconds, naming the module that was
+        -- running when the frame blew up. If the menu cost is tiny the hitch is
+        -- the game or the executor, which is also useful to know.
+        local now: number = os.clock()
+        if now - (performance.spikeWarnedAt or -math.huge) >= SPIKE_WARN_EVERY then
+            performance.spikeWarnedAt = now
+            local menuMs: number = TaskManager.tasksMs + TaskManager.renderMs
+            warn(string.format(
+                "[%s:Perf] frame spike %.0f ms (menu %.2f ms%s)",
+                PRODUCT.name,
+                frameMs,
+                menuMs,
+                label and (" · " .. label) or ""
+            ))
+        end
+    end
 end)
 
 TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     deltaTime: number
 ): ()
-    runBucket(TaskManager.renderTasks, deltaTime)
+    local total: number = runBucket(TaskManager.renderTasks, deltaTime)
+    TaskManager.renderMs = total
 end)
+
+-- Human readable snapshot for the console: `print(state.perfReport())`.
+state.perfReport = function(): string
+    local stats: any = TaskManager:Stats()
+    local lines: {string} = {
+        string.format(
+            "FPS %.0f (%.1f ms) · tasks %.2f ms (%d) · render %.2f ms (%d)",
+            state.performance.fps,
+            state.performance.frameMs,
+            stats.tasksMs,
+            stats.taskCount,
+            stats.renderMs,
+            stats.renderCount
+        ),
+    }
+    local performance: any = state.performance
+    if performance.spikeCount > 0 then
+        local ago: number = performance.spikeAgo or -1
+        table.insert(lines, string.format(
+            "spikes %d · worst %.0f ms · last %s%s",
+            performance.spikeCount,
+            performance.worstSpikeMs,
+            ago < 0 and "n/a" or string.format("%.1f s ago", ago),
+            performance.spikeTask and (" · " .. tostring(performance.spikeTask)) or ""
+        ))
+    end
+    for index: number, entry: any in ipairs(stats.top) do
+        if index > 6 then
+            break
+        end
+        table.insert(
+            lines,
+            string.format("  %-40s %.2f ms", tostring(entry.label), entry.ms)
+        )
+    end
+    return table.concat(lines, "\n")
+end
+
+state.taskManager = TaskManager
 
 local function disconnectFeatureConnection(name)
     local connection = featureConnections[name]
@@ -5038,6 +5207,11 @@ local function createGameModuleEnvironment(
         initialViewport = initialViewport,
 
         FEATURE_CATEGORIES = FEATURE_CATEGORIES,
+        categories = {
+            order = OFFICIAL_CATEGORIES,
+            aliases = CATEGORY_ALIASES,
+            default = DEFAULT_FEATURE_CATEGORY,
+        },
         DEFAULT_FEATURE_CATEGORY = DEFAULT_FEATURE_CATEGORY,
 
         OFFICIAL_CATEGORIES = OFFICIAL_CATEGORIES,
@@ -5413,66 +5587,27 @@ state.httpGetPath = function(path: string): (string?, string?)
     return nil, tostring(body)
 end
 
-state.ensureSourceFolders = function(path: string): ()
-    local environment: any = getfenv()
-    if type(environment.makefolder) ~= "function" then
-        return
+state.fetchRepositorySource = function(path: string): (string?, string?)
+    local bundled: any = state.boot.bundle and state.boot.bundle[path]
+    if type(bundled) == "string" then
+        return bundled, nil
     end
-    pcall(environment.makefolder, "Wurst")
-    local cursor: string = "Wurst"
-    for segment: string in string.gmatch(path, "([^/]+)/") do
-        cursor = cursor .. "/" .. segment
-        pcall(environment.makefolder, cursor)
+    local remembered: string? = state.boot.sources[path]
+    if remembered then
+        return remembered, nil
     end
+    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
+    if downloaded then
+        state.boot.sources[path] = downloaded
+        return downloaded, nil
+    end
+    return nil, downloadError or ("Download failed: " .. path)
 end
 
-state.readCachedSource = function(path: string): string?
-    local environment: any = getfenv()
-    local readFile: any = environment.readfile
-    local isFile: any = environment.isfile
-    if type(readFile) ~= "function" then
-        return nil
-    end
-    local stampFile: string = "Wurst/.stamp"
-    if type(isFile) == "function" then
-        local stampOk: boolean, stampExists: any = pcall(isFile, stampFile)
-        if not stampOk or not stampExists then
-            return nil
-        end
-    end
-    local stampOk: boolean, stampBody: any = pcall(readFile, stampFile)
-    if not stampOk or stampBody ~= SOURCE_STAMP then
-        return nil
-    end
-    local localPath: string = "Wurst/" .. path
-    if type(isFile) == "function" then
-        local fileOk: boolean, exists: any = pcall(isFile, localPath)
-        if not fileOk or not exists then
-            return nil
-        end
-    end
-    local readOk: boolean, source: any = pcall(readFile, localPath)
-    if readOk and state.sourceLooksValid(source, 32) then
-        return source :: string
-    end
-    return nil
-end
-
-state.writeCachedSource = function(path: string, source: string): ()
-    if path == "src/libraries/bundle.lua" then
-        return
-    end
-    local environment: any = getfenv()
-    local writeFile: any = environment.writefile
-    if type(writeFile) ~= "function" then
-        return
-    end
-    state.ensureSourceFolders(path)
-    pcall(writeFile, "Wurst/" .. path, source)
-    pcall(writeFile, "Wurst/.stamp", SOURCE_STAMP)
-end
-
-state.sweepStaleSources = function(): number
+-- Old builds wrote one file per source plus a stamp into the executor folder.
+-- Nothing reads that any more; clear it once, in the background, so it neither
+-- slows the boot nor keeps several hundred KB on the device.
+state.purgeLegacySourceCache = function(): number
     local environment: any = getfenv()
     local listFiles: any = environment.listfiles
     local deleteFile: any = environment.delfile
@@ -5480,79 +5615,31 @@ state.sweepStaleSources = function(): number
     if type(listFiles) ~= "function" or type(deleteFile) ~= "function" then
         return 0
     end
-    local bundle: any = state.boot.bundle
-    if type(bundle) ~= "table" or next(bundle) == nil then
-        return 0
-    end
     local removed: number = 0
-    local function sweep(folder: string): ()
+    local function purge(folder: string): ()
         local listed: boolean, entries: any = pcall(listFiles, folder)
         if not listed or type(entries) ~= "table" then
             return
         end
-        for _, path: any in ipairs(entries) do
-            local entry: string = tostring(path)
-            local isDirectory: boolean = false
+        for _, raw: any in ipairs(entries) do
+            local entry: string = tostring(raw)
+            local directory: boolean = false
             if type(isFolder) == "function" then
                 local checked: boolean, verdict: any = pcall(isFolder, entry)
-                isDirectory = checked and verdict == true
+                directory = checked and verdict == true
             end
-            if isDirectory then
-                sweep(entry)
+            if directory then
+                purge(entry)
             else
-                local relative: string = entry:gsub("\\", "/")
-                    :gsub("^.-Wurst/", "")
-
-                if relative ~= ".stamp"
-                    and string.sub(relative, 1, 4) == "src/"
-                    and bundle[relative] == nil then
-                    if pcall(deleteFile, entry) then
-                        removed += 1
-                    end
+                if pcall(deleteFile, entry) then
+                    removed += 1
                 end
             end
         end
     end
-    sweep("Wurst")
+    purge("Wurst/src")
+    pcall(deleteFile, "Wurst/.stamp")
     return removed
-end
-
-state.fetchRepositorySource = function(path: string): (string?, string?)
-    local bundled: any = state.boot.bundle and state.boot.bundle[path]
-    if type(bundled) == "string" then
-        state.boot.sources[path] = bundled
-        return bundled, nil
-    end
-    local remembered: string? = state.boot.sources[path]
-    if remembered then
-        return remembered, nil
-    end
-    local cached: string? = state.readCachedSource(path)
-    if cached then
-        state.boot.sources[path] = cached
-        return cached, nil
-    end
-    local downloaded: string?, downloadError: string? = state.httpGetPath(path)
-    if downloaded then
-        state.boot.sources[path] = downloaded
-        state.writeCachedSource(path, downloaded)
-        return downloaded, nil
-    end
-    local environment: any = getfenv()
-    local readFile: any = environment.readfile
-    local isFile: any = environment.isfile
-    local localPath: string = "Wurst/" .. path
-    local stampOk: boolean, stampBody: any = pcall(readFile, "Wurst/.stamp")
-    if stampOk and stampBody == SOURCE_STAMP
-        and type(readFile) == "function"
-        and (type(isFile) ~= "function" or isFile(localPath)) then
-        local readOk: boolean, localSource: any = pcall(readFile, localPath)
-        if readOk and state.sourceLooksValid(localSource, 32) then
-            state.boot.sources[path] = localSource
-            return localSource :: string, nil
-        end
-    end
-    return nil, downloadError or ("Download failed: " .. path)
 end
 
 state.compileRepositorySource = function(path: string, source: string): (any, string?)
@@ -5634,6 +5721,7 @@ end
 do
 (function(): ()
 local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
+do local __g = getgenv() if type(__g) == "table" then __g.__expose = {ThemeEngine = ThemeEngine, Theme = Theme, state = state, configData = configData, TaskManager = TaskManager, featureConnections = featureConnections, allFeatures = allFeatures} end end
 state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
 
 type OwnershipService = {
@@ -5893,119 +5981,6 @@ local moduleServices: ModuleServices = {
 state.frameworkEnvironment.services = moduleServices
 state.moduleServices = moduleServices
 
-local fallbackManifest: any = {
-    version = 1,
-    widgets = "src/guis/Wurst/Code/Widgets.lua",
-    core = {"src/libraries/Framework.lua"},
-    libraries = {
-        "src/libraries/Entity.lua",
-        "src/libraries/Targeting.lua",
-        "src/libraries/Weapons.lua",
-        "src/libraries/Render.lua",
-        "src/libraries/GameRoles.lua",
-        "src/libraries/CameraAccess.lua",
-        "src/guis/Wurst/Code/Cards.lua",
-        "src/guis/Wurst/Code/WindowManager.lua",
-        "src/guis/Wurst/Code/ClickGui.lua",
-        "src/guis/Wurst/Code/FloatingWindows.lua",
-        "src/guis/Wurst/Code/SettingsPage.lua",
-        "src/guis/Wurst/Code/MobileActions.lua",
-        "src/guis/Wurst/Code/Furniture.lua",
-    },
-    modules = {
-        {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
-        {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
-        {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
-        {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
-        {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
-        {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
-        {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
-        {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
-        {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
-        {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
-        {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
-        {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
-        {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
-        {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
-        {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
-        {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
-        {path = "src/games/universal/Combat/TriggerBot.lua", name = "TriggerBot", category = "Combat"},
-        {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
-        {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
-        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
-        {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
-        {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
-        {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
-        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
-        {path = "src/games/universal/Blatant/TouchFling.lua", name = "Touch Fling", category = "Exploits"},
-        {path = "src/games/universal/Movement/AntiVoid.lua", name = "Anti Void", category = "Utilities"},
-        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
-        {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
-        {path = "src/games/universal/Movement/SafeWalk.lua", name = "Safe Walk", category = "World"},
-        {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
-        {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
-        {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
-        {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
-        {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
-    },
-
-    gamePlaces = {
-        {placeId = 71480482338212, module = "BedFight", displayName = "Bed Fight"},
-        {placeId = 142823291, module = "MM2", displayName = "Murder Mystery 2"},
-        {placeId = 14315258385, module = "TRS", displayName = "The Regular Show"},
-        {placeId = 93978595733734, module = "VD", displayName = "Virtual Dealer"},
-        {placeId = 92876937625630, module = "X2Duels", displayName = "X2 Duels (Legacy)"},
-        {placeId = 135856908115931, module = "X2Duels", displayName = "X2 Duels"},
-        {placeId = 124848751642883, module = "X2Duels", displayName = "X2 Duels (1v1)"},
-    },
-
-    gameModules = {
-        MM2 = {
-            "src/games/MM2/base.lua",
-            "src/games/MM2/Prediction.lua",
-            "src/games/MM2/Blatant/Shoot.lua",
-            "src/games/MM2/Combat/SilentAim.lua",
-            "src/games/MM2/Blatant/KnifeAura.lua",
-            "src/games/MM2/Combat/AutoShoot.lua",
-            "src/games/MM2/Combat/KnifeThrow.lua",
-            "src/games/MM2/Render/RoundEsp.lua",
-            "src/games/MM2/Render/CoinEsp.lua",
-            "src/games/MM2/Movement/Sprint.lua",
-            "src/games/MM2/Blatant/Fling.lua",
-            "src/games/MM2/Movement/Teleport.lua",
-            "src/games/MM2/Fun/BlurtRoles.lua",
-            "src/games/MM2/Other/AutoUnbox.lua",
-            "src/games/MM2/Other/AutoFarm.lua",
-            "src/games/MM2/Other/AutoVote.lua",
-            "src/games/MM2/Other/CoinsAura.lua",
-            "src/games/MM2/Other/GunAura.lua",
-            "src/games/MM2/Other/AutoWin.lua",
-            "src/games/MM2/Other/GetAllEmotes.lua",
-            "src/games/MM2/Other/TrajectoryCalibration.lua",
-            "src/games/MM2/Other/CalibrationTrails.lua",
-        },
-        VD = {
-            "src/games/VD/base.lua",
-        },
-        BedFight = {
-            "src/games/BedFight/base.lua",
-            "src/games/BedFight/Combat/AutoSwing.lua",
-            "src/games/BedFight/Render/RoundInfo.lua",
-        },
-        X2Duels = {
-            "src/games/X2Duels/Rules.lua",
-            "src/games/X2Duels/base.lua",
-            "src/games/X2Duels/Other/AutoFarm.lua",
-        },
-        TRS = {
-            "src/games/TRS/base.lua",
-        },
-    },
-}
 
 local bundleAt: number = os.clock()
 local packed: any, packedError: string? = state.fetchRepositoryChunk("src/libraries/bundle.lua")
@@ -6015,12 +5990,14 @@ if type(packed) == "table"
     state.boot.bundle = packed.files
     state.logBootstrap("Bundle accepted · stamp=" .. SOURCE_STAMP)
 
+    -- Off the boot path: drop the legacy per-source cache folder, and sweep
+    -- stale assets. Neither blocks the menu.
     task.spawn(function(): ()
-        local staleSources: number = state.sweepStaleSources()
+        local purgedSources: number = state.purgeLegacySourceCache()
         local staleAssets: number = state.sweepStaleAssets()
-        if staleSources + staleAssets > 0 then
-            print("[" .. PRODUCT.logPrefix .. ":Cache] swept "
-                .. tostring(staleSources) .. " stale source(s), "
+        if purgedSources + staleAssets > 0 then
+            print("[" .. PRODUCT.logPrefix .. ":Cache] purged "
+                .. tostring(purgedSources) .. " legacy source file(s), "
                 .. tostring(staleAssets) .. " stale asset(s)")
         end
     end)
@@ -6043,11 +6020,37 @@ local manifestAt: number = os.clock()
 local manifest: any, manifestError: string? =
     state.fetchRepositoryChunk("src/libraries/Manifest.lua")
 if type(manifest) ~= "table" or type(manifest.modules) ~= "table" then
+    -- v138.9: there is no second catalog any more. The old duplicated copy in
+    -- this file silently booted a DIFFERENT menu whenever the fetch hiccuped; a
+    -- missing catalog is now a loud, single failure.
     if manifestError then
         state.logBootstrapError("Manifest: " .. manifestError)
     end
-    manifest = fallbackManifest
+    state.logBootstrapError(
+        "Manifest: src/libraries/Manifest.lua did not load; the menu cannot boot"
+    )
+    if type(state.notify) == "function" then
+        pcall(state.notify, "Wurst: the module catalog could not be loaded")
+    end
+    return
 end
+local catalogCategories: any = manifest.categories
+if type(catalogCategories) == "table" then
+    if type(catalogCategories.order) == "table" and #catalogCategories.order > 0 then
+        OFFICIAL_CATEGORIES = catalogCategories.order
+    end
+    if type(catalogCategories.aliases) == "table" then
+        CATEGORY_ALIASES = catalogCategories.aliases
+    end
+end
+if type(manifest.cards) == "table" then
+    FEATURE_CATEGORIES = manifest.cards
+end
+state.categories = {
+    order = OFFICIAL_CATEGORIES,
+    aliases = CATEGORY_ALIASES,
+    default = DEFAULT_FEATURE_CATEGORY,
+}
 state.markBoot("manifest", manifestAt)
 
 -- Derive game module paths and place IDs from the manifest so nothing is

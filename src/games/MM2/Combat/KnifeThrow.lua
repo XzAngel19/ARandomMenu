@@ -34,37 +34,19 @@ function Module.init(runtime: any): any
     }
 
     local lastThrowAttempt: number = 0
+    local KnifeThrowFeature: any = nil
+    local lastKnifeStatus: string? = nil
+    local function setKnifeStatus(message: string?): ()
+        if KnifeThrowFeature and lastKnifeStatus ~= message then
+            lastKnifeStatus = message
+            KnifeThrowFeature:SetStatus(message)
+        end
+    end
     local tracerPart: BasePart? = nil
     local targetDotPart: BasePart? = nil
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
-    local installedGetMouseTargetCFrame: any = nil
-    local installedGetTargetPosition: any = nil
-    if type(state.mm2WeaponRedirectChain) ~= "table" then
-        state.mm2WeaponRedirectChain = setmetatable({}, {__mode = "k"})
-    end
-    local weaponRedirectChain: any = state.mm2WeaponRedirectChain
-    local function rememberWeaponRedirect(wrapper: any, previous: any): ()
-        weaponRedirectChain[wrapper] = {previous = previous, active = true}
-    end
-    local function retireWeaponRedirect(current: any, wrapper: any, previous: any): any
-        local own: any = weaponRedirectChain[wrapper]
-        if own then
-            own.active = false
-        end
-        if current ~= wrapper then
-            return current
-        end
-        weaponRedirectChain[wrapper] = nil
-        local restored: any = previous
-        while weaponRedirectChain[restored] and not weaponRedirectChain[restored].active do
-            local inactive: any = weaponRedirectChain[restored]
-            weaponRedirectChain[restored] = nil
-            restored = inactive.previous
-        end
-        return restored
-    end
 
     local function destroyTracerVisuals(): ()
         if tracerPart then
@@ -226,10 +208,18 @@ function Module.init(runtime: any): any
         end
 
         local predicted: Vector3? = nil
+        local aimInfo: any = nil
         if type(prediction) == "table" and type(prediction.knifeAim) == "function" then
-            local okPred: boolean, aimPoint: any = pcall(prediction.knifeAim, target, originPos)
+            -- v139.4: the blade speed HAS to reach the predictor. It was read
+            -- from the tool above and then only used by the local fallback, so
+            -- every knife that is not the default 96 studs/s was solved with
+            -- the wrong flight time even though the correct number was in
+            -- hand.
+            local okPred: boolean, aimPoint: any, info: any =
+                pcall(prediction.knifeAim, target, originPos, speed)
             if okPred and typeof(aimPoint) == "Vector3" then
                 predicted = aimPoint :: Vector3
+                aimInfo = info
             end
         end
 
@@ -287,7 +277,18 @@ function Module.init(runtime: any): any
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
+        --
+        -- v139.4: only the TIME part of the predictor's displacement may be
+        -- reused on another body part. `predicted - root.Position` is lead
+        -- PLUS the torso/head offset the predictor itself sampled
+        -- (`capturedPosition = last.position + aimOffset`), so adding it to
+        -- UpperTorso or Head counted the torso height twice and aimed 2-4
+        -- studs above the part it named. Using the predictor's own reference
+        -- point keeps the lead and drops the duplicated height.
         local leadOffset: Vector3 = predicted - root.Position
+        if aimInfo and typeof(aimInfo.capturedPosition) == "Vector3" then
+            leadOffset = predicted - (aimInfo.capturedPosition :: Vector3)
+        end
         local candidateNames: {string} = {
             "UpperTorso", "Torso", "HumanoidRootPart", "Head",
             "RightUpperArm", "LeftUpperArm", "Right Arm", "Left Arm",
@@ -353,6 +354,104 @@ function Module.init(runtime: any): any
         return bestTarget
     end
 
+    -- Experimental pre-fire points are guesses, not targets or confirmed hits.
+    -- Prefer a walkable, visible lane near the closest hidden eligible player;
+    -- if nobody is found, try open lanes ahead/around the character. Never aim
+    -- through geometry, and do not speculate while a protected player exists.
+    local speculativeAt: number = -math.huge
+    local speculativePoint: Vector3? = nil
+    local speculativeOrigin: Vector3? = nil
+    local speculativeSequence: number = 0
+    local function resolveSpeculativeAim(originPos: Vector3): Vector3?
+        if type(isPlayerAlive) == "function" and not isPlayerAlive(LocalPlayer) then return nil end
+        if type(getPlayerRole) == "function" and getPlayerRole(LocalPlayer) ~= "Murderer" then return nil end
+        local currentCore: any = state and state.mm2Core
+        if currentCore and type(currentCore.isRoundLifecycleActive) == "function" then
+            local ok: boolean, active: any = pcall(currentCore.isRoundLifecycleActive)
+            if ok and active == false then return nil end
+        end
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        local localRoot: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not localRoot then return nil end
+        local players: {Player} = Players:GetPlayers()
+        for _, player: Player in ipairs(players) do
+            if player ~= LocalPlayer and type(isProtectedTarget) == "function" and isProtectedTarget(player) then
+                speculativePoint = nil
+                return nil
+            end
+        end
+        -- Speculative points must remain in an unobstructed lane even when
+        -- ordinary WallCheck is disabled; they are not a wall-penetration aim.
+        local function speculativePathClear(point: Vector3): boolean
+            local ok: boolean, clear: any = pcall(function(): boolean
+                local params: RaycastParams = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = {character}
+                params.RespectCanCollide = true
+                params.IgnoreWater = true
+                return workspace:Raycast(originPos, point - originPos, params) == nil
+            end)
+            return ok and clear == true
+        end
+        local now: number = os.clock()
+        if now - speculativeAt < 0.4 and speculativeOrigin
+            and (originPos - speculativeOrigin).Magnitude < 4 then
+            if not speculativePoint then return nil end
+            if speculativePathClear(speculativePoint) then return speculativePoint end
+        end
+        speculativeAt, speculativeOrigin, speculativePoint = now, originPos, nil
+        local hidden: BasePart? = nil
+        local bestDistance: number = 250
+        for _, player: Player in ipairs(players) do
+            if isValidTarget(player) then
+                local root: BasePart? = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if root then
+                    local dist: number = (root.Position - originPos).Magnitude
+                    if dist < bestDistance then bestDistance, hidden = dist, root end
+                end
+            end
+        end
+        local ignore: {Instance} = {}
+        if character then table.insert(ignore, character) end
+        for _, player: Player in ipairs(players) do
+            if player.Character and player.Character ~= character then table.insert(ignore, player.Character) end
+        end
+        local function usable(candidate: Vector3): Vector3?
+            local ok: boolean, ground: any = pcall(function(): any
+                local params: RaycastParams = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = ignore
+                params.RespectCanCollide = true
+                params.IgnoreWater = true
+                return workspace:Raycast(candidate + Vector3.new(0, 8, 0), Vector3.new(0, -18, 0), params)
+            end)
+            if not ok or not ground or typeof(ground.Position) ~= "Vector3" then return nil end
+            local point: Vector3 = ground.Position + Vector3.new(0, 2.5, 0)
+            local distance: number = (point - originPos).Magnitude
+            if distance < 3 or distance > 250 then return nil end
+            return speculativePathClear(point) and point or nil
+        end
+        local direction: Vector3 = Vector3.new(0, 0, -1)
+        pcall(function(): ()
+            local look: Vector3 = localRoot.CFrame.LookVector
+            local flat: Vector3 = Vector3.new(look.X, 0, look.Z)
+            if flat.Magnitude > 0.05 then direction = flat.Unit end
+        end)
+        local startAngle: number = math.atan2(direction.Z, direction.X)
+        local centre: Vector3 = hidden and hidden.Position or originPos
+        local radii: {number} = hidden and {4, 9, 16} or {24, 45, 70}
+        -- Rotate starting direction between throws rather than spamming one lane.
+        for _, radius: number in ipairs(radii) do
+            for i: number = 0, 7 do
+                local angle: number = startAngle + ((i + speculativeSequence) % 8) * math.pi / 4
+                local candidate: Vector3 = centre + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+                local point: Vector3? = usable(candidate)
+                if point then speculativePoint = point; return point end
+            end
+        end
+        return nil
+    end
+
     local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
         if not settings.enabled or not settings.knifeTracer or not originPos or not aimPos then
             destroyTracerVisuals()
@@ -404,22 +503,54 @@ function Module.init(runtime: any): any
     end
 
     -- Throw knife at predicted target using MM2's Knife.Events.KnifeThrown remote
-    local function throwKnife(target: Player, knife: Tool): boolean
+    -- v139.2: the equip is a round trip, the throw is not. Firing the remote
+    -- in the same frame as EquipTool sends a throw from a tool the server still
+    -- believes is in the backpack: in the saved session 13 auto throws produced
+    -- 9 observed blades (4 vanished) and the 4 that did fire used the RightHand
+    -- fallback origin instead of the knife handle. So: equip once, wait for the
+    -- tool to actually be in the character, and only then throw.
+    local equipRequestedAt: number = -math.huge
+    local equipRequestedTool: Tool? = nil
+
+    local function ensureEquipped(knife: Tool, humanoid: Humanoid): boolean
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then
+            return false
+        end
+        if knife.Parent == character then
+            equipRequestedAt = -math.huge
+            equipRequestedTool = nil
+            return true
+        end
+        local now: number = os.clock()
+        -- Re-ask every 0.25 s at most; EquipTool while the previous request is
+        -- still travelling just stacks another equip request.
+        if equipRequestedTool ~= knife or now - equipRequestedAt >= 0.25 then
+            equipRequestedAt = now
+            equipRequestedTool = knife
+            pcall(function(): ()
+                humanoid:EquipTool(knife)
+            end)
+        end
+        return false
+    end
+
+    local function throwKnife(target: Player?, knife: Tool): boolean
         local character: Model? = LocalPlayer and LocalPlayer.Character
         if not character then
             return false
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if knife.Parent ~= character and humanoid then
-            pcall(function(): ()
-                humanoid:EquipTool(knife)
-            end)
+        if not humanoid or humanoid.Health <= 0 or not ensureEquipped(knife, humanoid) then
+            return false
         end
         local originCF: CFrame? = getThrowOriginCFrame(knife)
         if not originCF then
             return false
         end
-        local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+        if target and not isValidTarget(target) then return false end
+        local aimPos: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
+            or resolveSpeculativeAim(originCF.Position)
         if not aimPos then
             return false
         end
@@ -476,61 +607,41 @@ function Module.init(runtime: any): any
             hookedWeaponService = wsTable
 
             if type(origGetMouseTargetCFrame) == "function" then
-                local previous: any = origGetMouseTargetCFrame
-                installedGetMouseTargetCFrame = function(self: any, ...: any): any
+                wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
                         if knife and character and knife.Parent == character then
                             local originCF: CFrame? = getThrowOriginCFrame(knife)
                             local target: Player? = findTarget()
-                            if originCF and target then
-                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
-                                if aim then
-                                    return CFrame.new(aim)
-                                end
+                            if originCF then
+                                local aim: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
+                                    or resolveSpeculativeAim(originCF.Position)
+                                if aim then return CFrame.new(aim) end
                             end
                         end
                     end
-                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
-                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
-                        if okSA and typeof(saCF) == "CFrame" then
-                            return saCF
-                        end
-                    end
-                    return previous(self, ...)
+                    return origGetMouseTargetCFrame(self, ...)
                 end
-                rememberWeaponRedirect(installedGetMouseTargetCFrame, previous)
-                wsTable.GetMouseTargetCFrame = installedGetMouseTargetCFrame
             end
 
             if type(origGetTargetPosition) == "function" then
-                local previous: any = origGetTargetPosition
-                installedGetTargetPosition = function(self: any, ...: any): any
+                wsTable.GetTargetPosition = function(self: any, ...: any): any
                     if settings.enabled then
                         local knife: Tool? = getKnife()
                         local character: Model? = LocalPlayer and LocalPlayer.Character
                         if knife and character and knife.Parent == character then
                             local originCF: CFrame? = getThrowOriginCFrame(knife)
                             local target: Player? = findTarget()
-                            if originCF and target then
-                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
-                                if aim then
-                                    return CFrame.new(aim)
-                                end
+                            if originCF then
+                                local aim: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
+                                    or resolveSpeculativeAim(originCF.Position)
+                                if aim then return aim end
                             end
                         end
                     end
-                    if type(state.mm2SilentAimRedirectCFrame) == "function" then
-                        local okSA: boolean, saCF: any = pcall(state.mm2SilentAimRedirectCFrame, self, ...)
-                        if okSA and typeof(saCF) == "CFrame" then
-                            return saCF
-                        end
-                    end
-                    return previous(self, ...)
+                    return origGetTargetPosition(self, ...)
                 end
-                rememberWeaponRedirect(installedGetTargetPosition, previous)
-                wsTable.GetTargetPosition = installedGetTargetPosition
             end
         end)
     end
@@ -540,48 +651,89 @@ function Module.init(runtime: any): any
             return
         end
         pcall(function(): ()
-            -- Preserve Silent AIM or any other wrapper installed after us.
-            if installedGetMouseTargetCFrame then
-                hookedWeaponService.GetMouseTargetCFrame = retireWeaponRedirect(
-                    hookedWeaponService.GetMouseTargetCFrame,
-                    installedGetMouseTargetCFrame, origGetMouseTargetCFrame
-                )
+            if origGetMouseTargetCFrame then
+                hookedWeaponService.GetMouseTargetCFrame = origGetMouseTargetCFrame
             end
-            if installedGetTargetPosition then
-                hookedWeaponService.GetTargetPosition = retireWeaponRedirect(
-                    hookedWeaponService.GetTargetPosition,
-                    installedGetTargetPosition, origGetTargetPosition
-                )
+            if origGetTargetPosition then
+                hookedWeaponService.GetTargetPosition = origGetTargetPosition
             end
         end)
         hookedWeaponService = nil
         origGetMouseTargetCFrame = nil
         origGetTargetPosition = nil
-        installedGetMouseTargetCFrame = nil
-        installedGetTargetPosition = nil
+    end
+
+    -- v139.2: this loop used to run every frame and, for EVERY player in the
+    -- lobby, ran the aim solver -- and the aim solver casts line-of-sight rays
+    -- against the map, then up to 8 more per body part when the first one is
+    -- blocked. Ten players meant dozens of raycasts per frame for a number
+    -- that only changes a few times per second. The solve is now cached for
+    -- 1/15 s, and the throw itself always re-solves so the blade leaves in the
+    -- direction the target is actually at right now.
+    local AIM_CACHE_SECONDS: number = 1 / 15
+    local cachedTarget: Player? = nil
+    local cachedAim: Vector3? = nil
+    local cachedOrigin: CFrame? = nil
+    local cachedAt: number = -math.huge
+
+    local function solveAim(knife: Tool): (Player?, Vector3?, CFrame?)
+        local now: number = os.clock()
+        if now - cachedAt >= AIM_CACHE_SECONDS then
+            cachedAt = now
+            cachedTarget = findTarget()
+            cachedAim = nil
+            cachedOrigin = getThrowOriginCFrame(knife)
+            if cachedOrigin then
+                cachedAim = cachedTarget and resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
+                    or resolveSpeculativeAim(cachedOrigin.Position)
+            end
+        elseif cachedOrigin then
+            -- Origin only: the target's predicted point stays cached, but the
+            -- handle moves with the character and the tracer must follow it.
+            cachedOrigin = getThrowOriginCFrame(knife) or cachedOrigin
+        end
+        return cachedTarget, cachedAim, cachedOrigin
+    end
+
+    local function invalidateAim(): ()
+        cachedAt = -math.huge
+        cachedTarget = nil
+        cachedAim = nil
+        cachedOrigin = nil
     end
 
     -- Main loop for Knife Tracer and Auto Knife Throw
     local function knifeThrowLoop(): ()
         if not settings.enabled then
+            setKnifeStatus(nil)
             destroyTracerVisuals()
+            invalidateAim()
             return
         end
 
         local knife: Tool? = getKnife()
         if not knife then
+            setKnifeStatus("Waiting for knife")
             destroyTracerVisuals()
+            invalidateAim()
             return
         end
 
-        local target: Player? = findTarget()
-        if not target then
+        local now: number = os.clock()
+        local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
+        local wantThrow: boolean = settings.autoThrow
+            and now - lastThrowAttempt >= cooldown
+
+        -- The cached pick is at most 1/15 s old, which only decides WHO gets
+        -- the blade. throwKnife re-solves the aim from the live handle, so the
+        -- direction is always current even when this list is stale.
+        local target, aimPos, originCF = solveAim(knife)
+        if not aimPos then
+            setKnifeStatus("No clear target or lane")
             destroyTracerVisuals()
             return
         end
-
-        local originCF: CFrame? = getThrowOriginCFrame(knife)
-        local aimPos: Vector3? = originCF and resolveKnifeAim(target, originCF.Position, knife) or nil
+        setKnifeStatus(target and "Predicted target" or "Speculative lane · no visible target")
 
         if settings.knifeTracer and originCF and aimPos then
             updateTracerVisual(originCF.Position, aimPos)
@@ -589,13 +741,17 @@ function Module.init(runtime: any): any
             destroyTracerVisuals()
         end
 
-        if settings.autoThrow then
-            local now: number = os.clock()
-            local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
-            if now - lastThrowAttempt >= cooldown then
-                if throwKnife(target, knife) then
-                    lastThrowAttempt = now
+        if wantThrow then
+            if throwKnife(target, knife) then
+                setKnifeStatus(target and "Throw sent · hit unconfirmed" or "Speculative throw sent · hit unconfirmed")
+                lastThrowAttempt = now
+                if not target then
+                    speculativeSequence += 1
+                    speculativeAt, speculativePoint = -math.huge, nil
                 end
+                -- A throw consumes the aim: the next frame re-solves instead of
+                -- reusing a point measured before the blade left.
+                invalidateAim()
             end
         end
     end
@@ -607,7 +763,10 @@ function Module.init(runtime: any): any
 
         if not enabled then
             uninstallWeaponServiceRedirect()
+            setKnifeStatus(nil)
             destroyTracerVisuals()
+            invalidateAim()
+            speculativeAt, speculativePoint, speculativeOrigin = -math.huge, nil, nil
             return
         end
 
@@ -616,7 +775,7 @@ function Module.init(runtime: any): any
     end
 
     -- Create the feature in Combat category
-    local KnifeThrowFeature: any = createUniversalFeature(
+    KnifeThrowFeature = createUniversalFeature(
         "Knife Throw",
         "Redirects PC & Mobile knife throws to the Knife Predictor's aim point, with optional Auto Knife Throw and Knife Tracer.",
         15,
@@ -635,7 +794,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.wallCheck = value
         end,
-        "Checks line of sight before redirecting or throwing the knife."
+        "Checks line of sight; when nobody is visible, a clear speculative lane may be used instead."
     )
 
     addToggleOption(
@@ -645,7 +804,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.autoThrow = value == true
         end,
-        "Continuously fires the knife throw remote at the predicted target."
+        "Throws toward predicted targets or speculative visible lanes when none is visible. A lane is not a confirmed target or hit."
     )
 
     addNumberOption(

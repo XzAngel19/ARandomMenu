@@ -1107,7 +1107,23 @@ function Module.init(context: any): any
 
     local lastTextGuiText: string = ""
     table.insert(ownedTasks, TaskManager:Connect(function(deltaTime: number): ()
-        sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
+        -- v139: the FPS average is computed once, in the scheduler
+        -- (state.performance), so this overlay no longer duplicates the work.
+        local performance: any = state.performance
+        if performance and type(performance.fps) == "number" then
+            sessionFps = performance.fps
+        else
+            sessionFps += ((1 / math.max(deltaTime, 1 / 240)) - sessionFps) * 0.12
+        end
+        -- v139: nothing to draw when every overlay is off. This used to keep
+        -- rebuilding the session lines and the radar 8 times a second forever.
+        if not (FloatingUi.overlays.SessionInfo.enabled
+            or FloatingUi.overlays.TextGUI.enabled
+            or FloatingUi.overlays.TargetInfo.enabled
+            or FloatingUi.overlays.Radar.enabled) then
+            overlayElapsed = 0
+            return
+        end
         overlayElapsed += deltaTime
         if overlayElapsed < 0.12 then
             return
@@ -1150,6 +1166,26 @@ function Module.init(context: any): any
                 local ping: number? = getSessionPing()
                 table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
                 table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
+                -- v139: what the menu itself costs each frame. If this is high,
+                -- the module named in the console warning is the culprit.
+                local cost: any = state.performance
+                if cost and type(cost.tasksMs) == "number" then
+                    table.insert(lines, string.format(
+                        "Menu      %.2f+%.2f ms",
+                        cost.tasksMs,
+                        cost.renderMs
+                    ))
+                end
+                -- v139.1: a hitch is not the same as a slow menu. When a
+                -- module is to blame the line names it.
+                if cost and (cost.spikeCount or 0) > 0 then
+                    table.insert(lines, string.format(
+                        "Spikes    %d · %.0f ms%s",
+                        cost.spikeCount,
+                        cost.worstSpikeMs or 0,
+                        cost.spikeTask and (" · " .. tostring(cost.spikeTask)) or ""
+                    ))
+                end
             end
             if sessionSettings.showServer then
                 table.insert(lines, string.format("Players   %d/%d", #Players:GetPlayers(), Players.MaxPlayers))
@@ -1488,7 +1524,7 @@ function Module.init(context: any): any
                 end
             end
         end
-    end))
+    end, nil, "Floating overlays"))
 
     FavoritesWindow.root.Visible = configData.ui.favoritesWindowOpen == true
     OverlayMenu.root.Visible = configData.ui.overlayMenuOpen == true

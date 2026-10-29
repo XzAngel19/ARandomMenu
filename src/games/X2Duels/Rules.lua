@@ -21,7 +21,7 @@ local function normalizeToken(value: any): string?
         local trimmed: string = string.match(value, "^%s*(.-)%s*$") or ""
         local lowered: string = string.lower(trimmed)
         if lowered == "" or lowered == "false" or lowered == "none"
-            or lowered == "__none" or lowered == "nil" then
+            or lowered == "nil" then
             return nil
         end
         return lowered
@@ -312,26 +312,6 @@ local LOCAL_WIN_FLAGS: {[string]: boolean} = {
     localwon = true,
 }
 
--- The 1v1 client consumes MatchResults(matchId, pages) and displays the
--- local page's Data.Outcome. Draw/Forfeit/Cancelled are not wins or losses.
-local function matchResultOutcome(arguments: {any}): string?
-    local pages: any = arguments[2]
-    if type(arguments[1]) ~= "string" or arguments[1] == "" or type(pages) ~= "table" then
-        return nil
-    end
-    for _, page: any in ipairs(pages) do
-        if type(page) == "table"
-            and (page.Page == "RoundInfo" or page.Page == "InfectionResult")
-            and type(page.Data) == "table" then
-            local outcome: any = page.Data.Outcome
-            if outcome == "Win" then return "Win" end
-            if outcome == "Loss" then return "Loss" end
-            return "Neutral"
-        end
-    end
-    return nil
-end
-
 local function recordBelongsToOther(
     record: {[any]: any},
     identity: {[string]: any}
@@ -353,22 +333,18 @@ local function scanResult(
     record: {[any]: any},
     identity: {[string]: any},
     seen: {[any]: boolean},
-    depth: number,
-    inheritedOther: boolean?
+    depth: number
 ): boolean
     if depth > 5 or seen[record] then
         return false
     end
     seen[record] = true
-    -- A nested Data.Outcome remains the other player's result; dropping the
-    -- parent identity used to turn an opponent's victory into a local one.
-    local belongsToOther: boolean = inheritedOther == true
-        or recordBelongsToOther(record, identity)
+    local belongsToOther: boolean = recordBelongsToOther(record, identity)
 
     for key: any, value: any in pairs(record) do
         if type(key) == "string" then
             local normalized: string = compact(key)
-            if not belongsToOther and WINNER_KEYS[normalized] and matchesIdentity(
+            if WINNER_KEYS[normalized] and matchesIdentity(
                 value, identity, true, seen, depth + 1
             ) then
                 return true
@@ -383,7 +359,7 @@ local function scanResult(
             end
         end
         if type(value) == "table" and scanResult(
-            value, identity, seen, depth + 1, belongsToOther
+            value, identity, seen, depth + 1
         ) then
             return true
         end
@@ -423,47 +399,6 @@ local function didLocalWin(
     return false
 end
 
--- Solve a constant-speed projectile interception with optional downward
--- projectile gravity. The caller supplies calibrated values; this does not
--- assert that the native weapon is ballistic or that the server accepts it.
-local function projectileInterceptTime(origin: any, target: any, velocity: any,
-    speed: number, gravity: number, maxTime: number?): number?
-    if type(speed) ~= "number" or speed ~= speed or speed <= 0 or speed > 100000
-        or type(gravity) ~= "number" or gravity ~= gravity or gravity < 0 or gravity > 10000 then return nil end
-    local function component(v: any, key: string): number?
-        local ok: boolean, n: any = pcall(function(): any return v[key] end)
-        if not ok or type(n) ~= "number" or n ~= n or math.abs(n) > 1000000 then return nil end
-        return n
-    end
-    local ox, oy, oz = component(origin, "X"), component(origin, "Y"), component(origin, "Z")
-    local tx, ty, tz = component(target, "X"), component(target, "Y"), component(target, "Z")
-    local vx, vy, vz = component(velocity, "X"), component(velocity, "Y"), component(velocity, "Z")
-    if not ox or not oy or not oz or not tx or not ty or not tz or not vx or not vy or not vz then return nil end
-    local horizon: number = if type(maxTime) == "number" and maxTime == maxTime
-        then math.clamp(maxTime, 0.05, 10) else 5
-    local dx, dy, dz = tx - ox, ty - oy, tz - oz
-    local function equation(t: number): number
-        local x, y, z = dx + vx * t, dy + vy * t + 0.5 * gravity * t * t, dz + vz * t
-        return x*x + y*y + z*z - speed*speed*t*t
-    end
-    if equation(0) < 0.0025 then return nil end
-    local previous: number = 0
-    for step: number = 1, 200 do
-        local t: number = horizon * step / 200
-        if equation(t) <= 0 then
-            local low, high = previous, t
-            for _ = 1, 24 do
-                local mid: number = (low + high) / 2
-                if equation(mid) > 0 then low = mid else high = mid end
-            end
-            return (low + high) / 2
-        end
-        previous = t
-    end
-    return nil
-end
-
-Module.projectileInterceptTime = projectileInterceptTime
 Module.compact = compact
 Module.normalizeToken = normalizeToken
 Module.normalizeTeamToken = normalizeTeamToken
@@ -475,7 +410,6 @@ Module.isPlayAgainText = isPlayAgainText
 Module.isVictoryText = isVictoryText
 Module.isLocalVictoryLabel = isLocalVictoryLabel
 Module.matchesIdentity = matchesIdentity
-Module.matchResultOutcome = matchResultOutcome
 Module.didLocalWin = didLocalWin
 
 function Module.init(runtime: any): any

@@ -432,7 +432,6 @@ function HttpService:GenerateGUID(withBraces)
 end
 CollectionService = newInst("CollectionService")
 local collectionTags: {[string]: {[any]: boolean}} = {}
-local collectionAdded, collectionRemoved = {}, {}
 function CollectionService:GetTags(inst)
     local tags = {}
     for tag, members in pairs(collectionTags) do
@@ -454,22 +453,23 @@ function CollectionService:HasTag(inst, tag)
 end
 function CollectionService:AddTag(inst, tag)
     if not collectionTags[tag] then collectionTags[tag] = {} end
-    if collectionTags[tag][inst] then return end
     collectionTags[tag][inst] = true
-    if collectionAdded[tag] then collectionAdded[tag]:Fire(inst) end
 end
 function CollectionService:RemoveTag(inst, tag)
-    if not collectionTags[tag] or not collectionTags[tag][inst] then return end
-    collectionTags[tag][inst] = nil
-    if collectionRemoved[tag] then collectionRemoved[tag]:Fire(inst) end
+    if collectionTags[tag] then collectionTags[tag][inst] = nil end
 end
 function CollectionService:GetInstanceAddedSignal(tag)
-    if not collectionAdded[tag] then collectionAdded[tag] = signal() end
-    return collectionAdded[tag]
+    if not collectionTags[tag] then collectionTags[tag] = {} end
+    local sig = signal()
+    local mt = collectionTags[tag]
+    local wrapper = setmetatable({}, {
+        __newindex = function(_, k, v) rawset(mt, k, true); sig:Fire(k) end,
+    })
+    -- simple approach: harness tests can Fire these signals directly
+    return sig
 end
 function CollectionService:GetInstanceRemovedSignal(tag)
-    if not collectionRemoved[tag] then collectionRemoved[tag] = signal() end
-    return collectionRemoved[tag]
+    return signal()
 end
 TweenService = newInst("TweenService")
 function TweenService:Create(...)
@@ -856,7 +856,18 @@ do
     local autoFarm = findFeature("Auto Farm")
     assert(autoFarm and autoFarm.options:FindFirstChild("Option_CoinsCollected"), "Auto Farm must expose Coins Collected overlay")
     assert(autoFarm.options:FindFirstChild("Option_Time"), "Auto Farm must expose Time overlay")
-    assert(autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Auto Farm must expose Stay Under When Round starts option")
+    assert(autoFarm.options:FindFirstChild("Option_FlingMurderafterfullbag"), "Auto Farm must expose Fling Murder after full bag")
+    assert(autoFarm.options:FindFirstChild("Option_FlingSheriffafterfullbag"), "Auto Farm must expose Fling Sheriff after full bag")
+    assert(not autoFarm.options:FindFirstChild("Option_FlingMurderafterreset"), "the old 'after reset' label must be gone")
+    assert(autoFarm.options:FindFirstChild("Option_StayUnderWhenRoundstarts"), "Stay Under When Round starts must be back (both modes)")
+    -- The launcher must stay hidden until the whole menu has loaded.
+    assert(ex.state.menuReady == true, "boot completion must set state.menuReady")
+    assert(type(ex.state.refreshLauncher) == "function", "the launcher must re-evaluate on its own")
+    -- UI Settings no longer carries the random-order switch or the rainbow.
+    local settingsUi = nil
+    for _, record in pairs((ex.state.clickGui or {}).categories or {}) do
+      if record.name == "Settings" then settingsUi = record end
+    end
     assert(autoFarm.options:FindFirstChild("Option_SafeZone"), "Auto Farm must expose Safe Zone option")
     local knifeThrow = findFeature("Knife Throw")
     assert(knifeThrow and knifeThrow.categoryName == "Combat", "Knife Throw module must exist in Combat")
@@ -872,58 +883,187 @@ do
     assert(okEmOn, "Get All Emotes ON must not error: " .. tostring(errEmOn))
     local okEmOff, errEmOff = pcall(getAllEmotes.onToggle, false)
     assert(okEmOff, "Get All Emotes OFF must not error: " .. tostring(errEmOff))
-    assert( not findFeature("StrafeBot") and not findFeature("Target Strafe"), "StrafeBot must be removed")
-    local touchFling = findFeature("Touch Fling")
-    assert(touchFling and touchFling.categoryName == "Exploits", "Touch Fling module must exist in Exploits")
-    assert(not touchFling.enabled, "Touch Fling must not auto-enable on startup")
-    local gunAimbotButtons = findFeature("Gun Aimbot Buttons")
-    assert(gunAimbotButtons and gunAimbotButtons.categoryName == "Combat", "Gun Aimbot Buttons must exist in Combat")
-    local silentAimMod = findFeature("Silent AIM")
-    assert(silentAimMod and silentAimMod.categoryName == "Combat", "Silent AIM must exist in Combat")
-    -- Verify per-mode independent options on Silent AIM and Gun Aimbot Buttons
-    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("CFrame")
-    ex.state.toggleControls["MM2.SilentAIM.WallCheck"].setChecked(true)
-    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("Bullet")
-    ex.state.toggleControls["MM2.SilentAIM.WallCheck"].setChecked(false)
-    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("CFrame")
-    assert(ex.configData.states["MM2.SilentAIM.WallCheck"] == true, "CFrame mode must keep its independent WallCheck=true when switching back from Bullet")
-    ex.state.valueControls["MM2.SilentAIM.Aimmethod"].apply("Bullet")
-    assert(ex.configData.states["MM2.SilentAIM.WallCheck"] == false, "Bullet mode must keep its independent WallCheck=false when switching back from CFrame")
+    assert(not findFeature("StrafeBot") and not findFeature("Target Strafe")
+      and not findFeature("Safe Walk") and not findFeature("TriggerBot"), "removed cards must not load")
+    -- Switching three gun methods must restore each card's own saved options;
+    -- setting one mode must never silently overwrite the other modes.
+    do
+      local values, toggles, cfg = ex.state.valueControls, ex.state.toggleControls, ex.configData
+      local aim = values["MM2.Shoot.Aimmethod"]
+      local gunWall, gunMacro, gunAvoid = toggles["MM2.Shoot.WallCheck"], toggles["MM2.Shoot.Macro"], toggles["MM2.Shoot.Avoidinnocents"]
+      local target, targetName = values["MM2.Shoot.Target"], values["MM2.Shoot.Targetplayer"]
+      assert(aim and gunWall and gunMacro and gunAvoid and target and targetName, "Gun Aimbot controls missing")
+      aim.apply("Bullet")
+      gunWall.setChecked(false); gunMacro.setChecked(true); gunAvoid.setChecked(false)
+      target.apply("Custom"); targetName.apply("TestPlayer")
+      local nameBox = findFeature("Gun Aimbot").options:FindFirstChild("Option_Targetplayer"):FindFirstChildOfClass("TextBox")
+      nameBox:GetPropertyChangedSignal("Text"):Fire() -- the mock does not auto-fire property signals
+      aim.apply("CFrame")
+      assert(ex.state.mm2Core.mm2Settings.shootWallCheck == true and ex.state.mm2Core.mm2Settings.avoidInnocents == true
+        and ex.state.mm2Core.mm2Settings.shootMode == "Murder", "CFrame inherited Bullet settings")
+      gunMacro.setChecked(true); gunWall.setChecked(false)
+      aim.apply("Experimental")
+      assert(ex.state.mm2Core.mm2Settings.experimentalAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true
+        and ex.state.mm2Core.mm2Settings.avoidInnocents == true, "Experimental inherited Gun settings")
+      gunAvoid.setChecked(false)
+      aim.apply("Bullet")
+      assert(ex.state.mm2Core.mm2Settings.shootWallCheck == false and ex.state.mm2Core.mm2Settings.avoidInnocents == false
+        and ex.state.mm2Core.mm2Settings.shootMode == "Custom" and ex.state.mm2Core.mm2Settings.shootTarget == "TestPlayer"
+        and cfg.states["MM2.Shoot.Bullet.Macro"] == true, "Bullet Gun settings were not restored")
+      aim.apply("Experimental")
+      assert(ex.state.mm2Core.mm2Settings.avoidInnocents == false and cfg.states["MM2.Shoot.Experimental.AvoidInnocents"] == false,
+        "Experimental Gun options were not retained")
+      -- Reset test changes to avoid contaminating later boot assertions.
+      gunAvoid.setChecked(true); aim.apply("Bullet"); gunWall.setChecked(true); gunMacro.setChecked(false)
+      gunAvoid.setChecked(true); target.apply("Murder"); targetName.apply("")
+      aim.apply("CFrame"); gunWall.setChecked(true); gunMacro.setChecked(false); aim.apply("Bullet")
+
+      local mode = values["MM2.AutoShoot.Mode"]
+      local wall, prox, aura = toggles["MM2.AutoShoot.WallCheck"], toggles["MM2.AutoShoot.Proximity"], values["MM2.AutoShoot.Aura"]
+      assert(mode and wall and prox and aura, "Auto Shoot controls missing")
+      mode.apply("Bullet"); wall.setChecked(false); prox.setChecked(true); aura.apply(42)
+      mode.apply("CFrame")
+      assert(cfg.states["MM2.AutoShoot.WallCheck"] == true and cfg.states["MM2.AutoShoot.Proximity"] == false
+        and cfg.values["MM2.AutoShoot.Aura"] == 25, "CFrame inherited Bullet Auto Shoot options")
+      aura.apply(51)
+      mode.apply("Experimental")
+      assert(cfg.values["MM2.AutoShoot.Aura"] == 25, "Experimental inherited Auto Shoot options")
+      wall.setChecked(false); aura.apply(66)
+      mode.apply("Bullet")
+      assert(cfg.states["MM2.AutoShoot.WallCheck"] == false and cfg.states["MM2.AutoShoot.Proximity"] == true
+        and cfg.values["MM2.AutoShoot.Aura"] == 42, "Bullet Auto Shoot options were not restored")
+      mode.apply("Experimental")
+      assert(cfg.states["MM2.AutoShoot.WallCheck"] == false and cfg.values["MM2.AutoShoot.Aura"] == 66,
+        "Experimental Auto Shoot options were not restored")
+      wall.setChecked(true); aura.apply(25); mode.apply("CFrame"); aura.apply(25)
+      mode.apply("Bullet"); wall.setChecked(true); prox.setChecked(false); aura.apply(25)
+      print("[HARNESS] MM2 PER-MODE OPTIONS INDEPENDENT")
+    end
     local killAuraModule = ex.state.framework:GetModule("KillAura")
     assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
-      "KillAura/Knife Combat must expose Kill All button and Kill Player living-Innocent selector")
-    local knifeCombat = findFeature("Knife Combat")
-    assert(knifeCombat and knifeCombat.categoryName == "Combat", "MM2 Knife Combat card must exist in Combat")
-    local expectedCategories = {
-      Render = {"Arrows", "Chams", "Coin ESP", "FOV", "Fullbright", "HP", "ItemESP", "Markers", "Nametags", "NPCESP", "PlayerESP", "X-Ray", "Zoom"},
-      Combat = {"Aim Assist", "Auto Shoot", "Gun Aimbot Buttons", "Knife Combat", "Knife Throw", "Silent AIM", "TriggerBot"},
-      Exploits = {"AirWalk", "Fling", "Fly", "Infinite Jump", "Interact Extender", "Jesus", "Jump", "Noclip", "Speed", "Spider", "Swim", "Touch Fling"},
-      Utilities = {"Anti Void", "Auto Farm", "Auto Unbox", "Auto Vote", "Auto Win", "Coins Aura", "Freeze Movements", "Get All Emotes", "Ghost", "Gun Aura", "Teleport"},
-      World = {"Anti AFK", "Blurt Roles", "Disguise", "FreeCam", "Gravity", "Improve FPS", "Safe Walk"},
+      "KillAura must expose Kill All button and Kill Player living-Innocent selector")
+    local expected = {
+      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
+      Combat = {"Aim Assist", "KillAura", "Gun Aimbot"},
+      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling", "Walk Fling"},
+      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
+      World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
-    for category, names in pairs(expectedCategories) do
+    for category, names in pairs(expected) do
+      local ranks = {}
       for _, name in ipairs(names) do
         local feature = findFeature(name)
         assert(feature, "Missing requested menu module: " .. name)
         assert(feature.categoryName == category, name .. " in wrong window: " .. tostring(feature.categoryName))
+        local rank = feature.row.LayoutOrder
+        assert(type(rank) == "number" and rank >= 1, name .. " has no display slot")
+        assert(ranks[rank] == nil, name .. " reuses display slot " .. tostring(rank))
+        ranks[rank] = true
+        assert(feature.row:GetAttribute("FeatureSortName") == string.lower(name),
+          name .. " has no alphabetical ordering key")
       end
     end
-    for catName, catRecord in pairs(ex.state.clickGui.categories) do
-      local orderedRows = {}
-      for _, child in ipairs(catRecord.window.body:GetChildren()) do
-        local sortKey = child:GetAttribute("FeatureSortName")
-        if type(sortKey) == "string" then
-          table.insert(orderedRows, child)
+    -- v139 performance budget: the scheduler measures every task and publishes
+    -- the numbers, and toggling a module must never leave its per-frame
+    -- connection behind (that is what "the menu gets slower the longer it runs"
+    -- looks like in the field).
+    do
+      local perf = ex.state.performance
+      assert(type(perf) == "table", "state.performance must exist")
+      assert(type(perf.fps) == "number" and perf.fps > 0, "FPS must be measured")
+      assert(type(perf.frameMs) == "number" and perf.frameMs > 0, "frame time must be measured")
+      assert(type(perf.tasksMs) == "number", "task cost must be measured")
+      assert(type(perf.renderMs) == "number", "render cost must be measured")
+      -- v139.1: hitches are tracked apart from the steady cost.
+      assert(type(perf.spikeCount) == "number", "spike counter must exist")
+      assert(type(perf.worstSpikeMs) == "number", "the worst spike must be tracked")
+      assert(type(perf.spikeAgo) == "number", "the age of the last spike must be tracked")
+      local manager = ex.state.taskManager
+      assert(type(manager) == "table", "state.taskManager must be exposed")
+      local alwaysOn = #manager.tasks
+      assert(alwaysOn > 0, "the always-on scheduler must have tasks")
+      assert(alwaysOn <= 26, "too many always-on per-frame tasks: " .. tostring(alwaysOn))
+      local report = ex.state.perfReport()
+      assert(type(report) == "string" and string.find(report, "FPS") ~= nil,
+        "state.perfReport() must return a readable summary")
+      assert(string.find(report, "tasks") ~= nil, "the report must list the task bucket")
+
+      -- Leak check: an ESP registers a render connection on enable and the
+      -- framework must take it away on disable, every single time.
+      local renderBaseline = #manager.renderTasks
+      local esp = findFeature("PlayerESP")
+      assert(esp, "PlayerESP must exist for the leak check")
+      for _ = 1, 8 do
+        local okOn = pcall(esp.onToggle, true)
+        assert(okOn, "PlayerESP ON must not error")
+        local okOff = pcall(esp.onToggle, false)
+        assert(okOff, "PlayerESP OFF must not error")
+      end
+      assert(#manager.renderTasks == renderBaseline,
+        "toggling PlayerESP 8 times left " .. tostring(#manager.renderTasks - renderBaseline)
+          .. " render connection(s) behind")
+      local taskBaseline = #manager.tasks
+      local aura = findFeature("Coins Aura")
+      if aura then
+        for _ = 1, 8 do
+          pcall(aura.onToggle, true)
+          pcall(aura.onToggle, false)
+        end
+        assert(#manager.tasks == taskBaseline,
+          "toggling Coins Aura left " .. tostring(#manager.tasks - taskBaseline)
+            .. " per-frame task(s) behind")
+      end
+      print("[HARNESS] PERF: " .. tostring(alwaysOn) .. " always-on tasks, no toggle leak")
+      -- The report must name the modules, not "task"/"generated chunk": a frame
+      -- warning is only useful if it points at a card.
+      -- Every always-on task must name its module: a frame warning that says
+      -- "task" or "some/chunk/path:12" is useless to whoever reads it.
+      local labels = {}
+      for _, task in ipairs(manager.tasks) do
+        local label = tostring(task.label)
+        assert(label ~= "" and label ~= "task",
+          "always-on task without a module label: " .. label)
+        assert(string.find(label, "/", 1, true) == nil
+          and string.find(label, ".rs:", 1, true) == nil,
+          "task label looks like a source path: " .. label)
+        table.insert(labels, label)
+      end
+      print("[HARNESS] PERF labels: " .. table.concat(labels, " | "))
+    end
+    -- v138.9 ordering: every window is ALPHABETICAL by display name. The check
+    -- reads the REAL window bodies (not the feature registry), so it covers cards
+    -- the harness registry does not see, like the debug Calibration card.
+    do
+      local windows = ex.state.clickGui and ex.state.clickGui.categories or {}
+      local checked = 0
+      for category, record in pairs(windows) do
+        local rows = {}
+        for _, child in ipairs(record.window.body:GetChildren()) do
+          if child:IsA("GuiObject") and type(child:GetAttribute("FeatureSortName")) == "string" then
+            table.insert(rows, child)
+          end
+        end
+        table.sort(rows, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+        local previousKey = nil
+        for index, row in ipairs(rows) do
+          local key = row:GetAttribute("FeatureSortName")
+          assert(row.LayoutOrder == index,
+            category .. ": " .. tostring(row.Name) .. " is in slot "
+              .. tostring(row.LayoutOrder) .. ", expected " .. tostring(index))
+          assert(row:GetAttribute("FeatureSortRank") == nil,
+            category .. ": " .. tostring(row.Name) .. " still carries the old random rank")
+          if previousKey then
+            assert(previousKey <= key,
+              category .. ": " .. tostring(row.Name) .. " (" .. tostring(key)
+                .. ") is placed after " .. tostring(previousKey))
+          end
+          previousKey = key
+          checked += 1
         end
       end
-      table.sort(orderedRows, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
-      for i = 2, #orderedRows do
-        local prevKey = tostring(orderedRows[i - 1]:GetAttribute("FeatureSortName") or "")
-        local currKey = tostring(orderedRows[i]:GetAttribute("FeatureSortName") or "")
-        assert(prevKey <= currKey, "Window " .. tostring(catName) .. " not sorted alphabetically: " .. prevKey .. " before " .. currKey)
-      end
+      assert(checked >= 45, "expected at least 45 ordered cards, checked " .. tostring(checked))
     end
-    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot", "StrafeBot"}) do
+    for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
     -- Auto Shoot is now an independent Combat module, not in Blatant/SilentAIM
@@ -931,10 +1071,34 @@ do
     if autoShoot then
       assert(autoShoot.categoryName == "Combat", "Auto Shoot must be in Combat category, not Blatant")
     end
-    assert(not findFeature("Time Changer") and not findFeature("Anti Fling"))
+    assert(not findFeature("Time Changer"))
+    -- v138.2: Anti Fling is its own card and Anti Void is the invisible platform,
+    -- so neither the old fold-in nor the old "Anti fling" sub-option may return.
+    assert(not findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
     local fling = findFeature("Fling")
-    assert(fling and fling.configKey == "MM2.Fling", "only MM2 owns role Fling")
-    assert(findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
+    assert(fling and fling.configKey == "Universal.Fling", "Fling is a universal card since v138.3")
+    assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
+    assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
+    assert(fling.options:FindFirstChild("Option_Fling"))
+    assert(not fling.options:FindFirstChild("Option_SelectTarget"), "the Select Target dropdown is gone")
+    -- Auto Win and Auto Farm still drive flings through these exports; the card
+    -- moved to Universal, so they must be published from there.
+    assert(type(ex.state.mm2PerformFling) == "function", "mm2PerformFling must exist after boot")
+    assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
+    local walkFling = findFeature("Walk Fling")
+    assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
+    assert(walkFling.hasOptions() == false, "Walk Fling is a plain toggle with no options")
+    assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
+    assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
+    -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.
+    do
+      local antiFling = findFeature("Anti Fling")
+      assert(antiFling, "Anti Fling must exist")
+      assert(antiFling.hasOptions() == false,
+        "Anti Fling must not expose any option row")
+      assert(antiFling.options:FindFirstChild("Option_Sensitivity") == nil,
+        "the Sensitivity row must be gone")
+    end
     local fullbright=ex.state.framework:GetModule("Fullbright")
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)
@@ -1028,7 +1192,7 @@ do
     
     -- GUI visibility and section tests wrapped in pcall due to mock limitations
     pcall(function()
-    local shoot = findFeature("Gun Aimbot Buttons") or findFeature("Gun Aimbot") or findFeature("SilentAIM")
+    local shoot = findFeature("Gun Aimbot") or findFeature("SilentAIM")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(aimMethod, "Gun method must be configurable")
     aimMethod.apply("CFrame")
@@ -1037,7 +1201,7 @@ do
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
     assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")
-    local knife = findFeature("Knife Combat") or findFeature("KillAura")
+    local knife = findFeature("KillAura")
     for _, name in ipairs({"Mode", "ThrowRange", "Firedelay", "Spawnoffset", "WallCheck", "Throwanimation", "ThrowHz", "Thrownow"}) do
       assert(not knife.options:FindFirstChild("Option_" .. name), "redundant Knife setting: " .. name)
     end

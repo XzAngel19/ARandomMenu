@@ -2039,63 +2039,6 @@ function Module.init(context: any): any
         warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
 
-    local rainbowConnection: any = nil
-    local rainbowElapsed: number = 0
-    local rainbowSince: number = 0
-    addToggleOption(uiPanel, "Rainbow", false, function(value: boolean): ()
-        uiSettingsValues["Rainbow"] = value
-        if rainbowConnection then
-            rainbowConnection:Disconnect()
-            rainbowConnection = nil
-        end
-        if not ThemeEngine or type(ThemeEngine.Set) ~= "function" then
-            return
-        end
-        if not value then
-            local accent: any = uiSettingsValues["Accent"] or Theme.accent
-            local enabledColor: any = uiSettingsValues["Enabled"] or Theme.enabled
-            paintPalette("Accent", accent)
-            paintPalette("Enabled", enabledColor)
-            if type(ThemeEngine.SetMany) == "function" then
-                ThemeEngine.SetMany({
-                    accent = accent,
-                    outline = accent,
-                    enabled = enabledColor,
-                })
-            else
-                ThemeEngine.Set("accent", accent)
-                ThemeEngine.Set("outline", accent)
-                ThemeEngine.Set("enabled", enabledColor)
-            end
-            return
-        end
-        rainbowConnection = trackUiConnection(RunService.Heartbeat:Connect(function(step: number): ()
-            rainbowElapsed += step
-            rainbowSince += step
-            if rainbowSince < 0.05 then
-                return
-            end
-            rainbowSince %= 0.05
-            -- The ClickGUI is hidden: do not repaint thousands of menu
-            -- pixels. The independent HUD rainbow has its own controller.
-            if not state.visible then return end
-            local color: Color3 = Color3.fromHSV(rainbowElapsed * 0.25 % 1, 0.85, 1)
-            paintPalette("Accent", color)
-            paintPalette("Enabled", color)
-            if type(ThemeEngine.SetMany) == "function" then
-                ThemeEngine.SetMany({
-                    accent = color,
-                    outline = color,
-                    enabled = color,
-                })
-            else
-                ThemeEngine.Set("accent", color)
-                ThemeEngine.Set("outline", color)
-                ThemeEngine.Set("enabled", color)
-            end
-        end))
-    end)
-
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
         uiSettingsValues["Opacity"] = value
         windows.SetOpacity(value)

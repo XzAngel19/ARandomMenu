@@ -4,8 +4,9 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v155-20261029-x2duels-cframe-knife`**.
+> **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
+> **`v156-20261029-mm2-experimental`**, con árbol base de
+> `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -20,602 +21,302 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v145: 93 fuentes,
-     64 suites, boot `failures=0`, auditoría de menú 51/50 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 73 suites,
+     boot `failures=0`, auditoría de menú 52/51 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## 1P. Rendimiento MM2 v141 — evidencia y límites
+## v156 — migración completa y experimentos MM2 (2026-10-29)
 
-- La queja era CPU alta y carga lenta. Sin MicroProfiler/F9 del dispositivo no
-  se conoce la causa exacta ni hay porcentaje de mejora en Roblox. El boot mock
-  y los conteos siguientes no son tiempos, consumo real ni aceptación del juego.
-- `Prediction.lua` conserva los **60 Hz**, el historial y la calibración pasiva
-  con todo apagado; no bajar la frecuencia para ahorrar CPU sin probar la
-  precisión inmediata. Ahora cachea Humanoid, root y UpperTorso mientras sigan
-  válidos y vuelve a buscar ante reemplazo/respawn. Mismo mock y 60 ticks por un
-  jugador R15: v140 hizo 60+60+60 búsquedas, v141 hizo 1+1+1.
-- `base.lua` comparte un cache de lobby y referencia para core/Auto Farm/Auto Win,
-  con invalidación por llegada/remoción/streaming y 0,25 s de retry en ausencia.
-  El core mantiene su clasificación de lobby directo; farm/win mantienen además
-  el fallback estacional anidado. En un mock con lobby estable, 120 consultas de
-  Auto Farm pasaron de 120 `GetChildren` y 240 búsquedas recursivas a 1 y 2.
-  La caché no debe retrasar detección del mapa en countdown ni activar farm en
-  lobby. Las señales se desconectan al descargar.
-- Auto Farm ya no retrocede `scanAt` si no encuentra objetivo: con lista vacía
-  consulta cada ~0,1 s en vez de cada frame, y con lista no vacía cada ~0,25 s.
-  En el mismo mock de 120 frames vacíos pasó de 119 consultas a 18; una moneda
-  nueva aparece en la siguiente ventana. Coin ESP conserva los tres mecanismos
-  reales de detección y su escaneo, no reintroducir el cheap-scan v84.
-- Silent AIM instala el hook global `__namecall` solo al habilitarlo y lo
-  desmonta si sigue siendo el hook superior. Si otro script lo envuelve, deja
-  un bridge inerte y reutilizable sin desplazar ese hook. La versión v140 ya
-  inyectada puede haber dejado su hook anterior, que no se puede retirar de modo
-  fiable: para comparar v141 se debe reiniciar Roblox o volver a entrar. Los
-  wrappers PC/móvil de WeaponService de Silent AIM y Knife Throw se retiran por
-  identidad, conservan scripts ajenos y se desenrollan en ambos órdenes.
-- El JSON de calibración aportado mide 4.917.941 bytes y 648 eventos: se lee,
-  respalda byte a byte y decodifica al inyectar; con cambios se guarda cada 10 s.
-  Puede aportar demora/picos, no demuestra por sí solo CPU al 100 %. No diferir
-  lectura/backup ni borrar datos sin resolver sincronización, reset y fallos;
-  `tools/test_mm2_v16.py` exige respaldo exacto y persistencia bloqueada si falla.
-- `tools/test_mm2_performance.py` comprueba conteos, invalidación de rigs y
-  lobby, countdown y monedas; `tools/test_mm2_hook_lifecycle.py` prueba OFF/ON,
-  config restaurada, reinyección, hooks ajenos y PC/móvil + Knife en ambos
-  órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
-  51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
-  PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
+El usuario eligió expresamente usar **todo** el árbol de la rama
+`arena/76bc3f2f-arandommenu` commit `9395998` como base, no solo MM2. Se
+mantuvo la rama fija de esta sesión `arena/9492e6b6-arandommenu` y el loader
+apunta a ella. Esto revierte también X2 y funciones universales al estado de la
+rama elegida; las versiones anteriores de esta sesión quedan en su historia
+hasta `f968cee`, no se debe afirmar que X2 v155 sigue instalado. Documentación
+v138.x/v139.x de abajo es histórica de la rama elegida.
 
-## 1Z. X2 v155 — Knife CFrame experimental a partir de fuentes capturadas
+- Eliminados del catálogo, disco y boot `Safe Walk`, `StrafeBot` y `TriggerBot`.
+  Se retiraron o adaptaron solo pruebas que exigían módulos eliminados; los
+  demás juegos conservan la implementación de la rama migrada.
+- `Gun Aimbot > Aim method` y `Auto Shoot > Mode` tienen `Experimental` como
+  tercer modo, solicitado en **ambas** tarjetas. Política compartida: con
+  distancia >= 30 studs y velocidad horizontal >= 8 studs/s selecciona CFrame;
+  en otro caso Bullet. Es una heurística inicial, no hay datos que demuestren
+  que sea la mejor opción. Envía solo una ruta por intento, respeta WallCheck y
+  Proximity propios de cada tarjeta y no dispara una segunda ruta tras un
+  rechazo incierto. Status distingue envío de impacto. Los controles y otros modos
+  siguen independientes; no gira la cámara. WallCheck, Macro, destino y
+  seguridad en Gun Aimbot, y WallCheck/Proximity/Aura en Auto Shoot, se guardan
+  por separado para Bullet, CFrame y Experimental, con migración del estado
+  legado al modo activo.
+- `Knife Throw` intenta primero el predictor existente. Si no encuentra una
+  trayectoria visible, busca hasta tres radios en torno al enemigo elegible más
+  cercano; sin ninguno busca caminos a 24/45/70 studs alrededor del personaje.
+  Exige suelo y un raycast despejado, incluso con WallCheck apagado; son carriles
+  especulativos, no detección de jugadores ni una prueba de hit. No especula si
+  hay jugadores protegidos, si no es Murderer, está muerto o se conoce el fin de
+  ronda; conserva el Delay y el equip con espera antes del remote. Cachea el
+  análisis 0,4 s, revalida el raycast al usarlo y rota la dirección tras cada
+  envío especulativo. Sirve tanto al redirect de WeaponService como a Auto Knife
+  Throw, que puede gastar lanzamientos aun con nadie visible. Status lo indica.
+- `tools/test_mm2_experimental.py`, `test_gun_pointblank.py` y
+  `test_mm2_knife_equip.py` prueban selector, un solo envío, opciones, paredes,
+  protegido, ronda, suelo, equip, OFF, delay, carriles sin objetivo y redirect
+  en mocks. `test_mm2_mode_persistence.py` comprueba restauración entre arranques
+  y el boot verifica cambios entre modos. No prueban Roblox, Delta, anticheat, aceptación del servidor ni
+  aciertos. Faltan pruebas en vivo para ajustar heurística y tasa de acierto.
+- `tools/validate.sh`: 74 suites, boot y auditorías de menú; los resultados de
+  versiones anteriores no equivalen a prueba en juego.
 
-El usuario adjuntó cinco fuentes de `DefaultKnife` y su manifiesto 5/5. El
-LocalScript principal muestra `Packages.Net["RE/ThrowEvent"]:FireServer(
-"959d5e90-231d-4f6e-8861-050e2c22b938", CFrame.new(hitPosition), origin)`.
-El origen depende del AB test `NormalKnifeThrow`: posición de Handle o
-RightHand.RightGripAttachment (fallback Handle). Inmediatamente después el
-juego fabrica un proyectil con `MakeLocalFlyingHandle`, inicializa `VelocityV`
-y `VelocityVClient`, clona `ThrowingKinfeHandlerScript` con `creator`, lo
-parenta en `RenderedObjects`/workspace y emite `ActivateThrowing:Fire`, con
-Debris de 7 s. El handler nativo realiza colisiones y decide enviar `KnifeKill`;
-**no se fabrica ni envía directamente ese remoto**. El servidor no está en la
-captura y ninguna prueba confirma que acepte esto o produzca daño en vivo.
+> **v138.1 (2026-10-27):** esta rama sirve v138 con un parche encima. Se borró
+> **Auto Fling Selected Target** (se restauraba del guardado al inyectar y
+> flingeaba la partida sola) y el pulso de Infinite Yield `walkfling` —el que
+> limpia `CanCollide` y el usuario lee como noclip— pasó a ser la opción
+> **Touch Fling**: solo corre mientras esa opción está encendida, y al apagarse
+> devuelve las colisiones. La tarjeta `Fling` es un grupo y ya no lanza nada.
+> Evidencia: `docs/FIXES-v138.1.md`.
+>
+> **v138.2 (2026-10-27):** Walk Fling es su propia tarjeta universal
+> (`src/games/universal/Blatant/WalkFling.lua`, Exploits, orden 8) y el Fling de
+> MM2 usa **SkidFling** (copia de la implementación pública de zqyDSUWX:
+> CFrame sobre la víctima + `9e7`/`9e8` + BodyVelocity de anclaje +
+> `FallenPartsDestroyHeight = 0/0` restaurado). **Anti Void** es ahora una
+> plataforma local invisible (`Wurst_AntiVoidPlatform`, `CanQuery=false`,
+> `CanTouch=false`, `Transparency=1`, `Distance` 1–40) que no baja al caer.
+> **Anti Fling** es tarjeta propia (`src/games/universal/Movement/AntiFling.lua`,
+> Utilities, orden 5) que recorta impulso planar/subida/caída/giro cada frame y
+> respeta `fling`/`walkfling`. Evidencia: `docs/FIXES-v138.2.md`,
+> `tools/test_walkfling.py`, `tools/test_fling_skid.py`, `tools/test_antivoid50.py`.
+>
+> **v138.3 (2026-10-27):** **Fling** dejó de ser tarjeta de MM2 y es un módulo
+> universal (`src/games/universal/Blatant/Fling.lua`, Exploits, orden 7,
+> `configKey = Universal.Fling`). Solo tiene **Target player** como lista (se
+> borraron `Select Target`, `targetChoices` y las conexiones PlayerAdded/Removing
+> que lo alimentaban); el texto se resuelve exacto → prefijo → subcadena. Los
+> botones de rol resuelven `state.mm2Core` en el clic y avisan fuera de MM2.
+> `state.mm2PerformFling` / `state.mm2FlingStep` los publica este módulo y el
+> harness los verifica tras el arranque. **Walk Fling** ya no tiene slider
+> (`POWER = 10000`, `noOptions = true`). Evidencia: `docs/FIXES-v138.3.md`.
+>
+> **v138.4 (2026-10-27):** la mecánica de **Fling** se reescribió copiando
+> `SkidFling` de YARHM tal cual. El bug era el pin: nuestro `BodyVelocity` iba con
+> `Velocity = 0` (ancla) y escrituras de `AssemblyLinearVelocity` /
+> `CustomPhysicalProperties` por frame (el "círculo" y el personaje que
+> "desaparece"). Ahora es `BodyVelocity` `"EpixVel"` con `Velocity = (9e8, 9e8, 9e8)`
+> y `MaxForce = (1/0, 1/0, 1/0)`, poses `RootPart.CFrame` +
+> `SetPrimaryPartCFrame` + `RootPart.Velocity = (9e7, 9e7*10, 9e7)` +
+> `RotVelocity = 9e8` con `task.wait()` entre pose y pose, y volver a casa con
+> `OldPos * CFrame.new(0, .5, 0)`. `state.mm2FlingStep` (Auto Win) usa el mismo
+> golpe y limpia su pin a los 0.5 s. Evidencia: `docs/FIXES-v138.4.md`,
+> `tools/test_fling_skid.py` (6 suites).
+>
+> **v138.5 (2026-10-27):** el Fling "terminaba" en medio segundo porque el `until`
+> comparaba `targetPlayer.Parent ~= Players` con el **cloneref** del servicio (otra
+> referencia ⇒ siempre distinto) y cortaba tras 6 poses sin contacto útil. También
+> `type(velocity) == "table"` era falso con un `Vector3` real (userdata), así que la
+> velocidad se leía 0 y nunca se detectaba el éxito. Ahora: `playerStillHere()` por
+> `FindFirstChild`, `partSpeed()` por `pcall`+`Magnitude`, `nowSeconds()` (`tick()` →
+> `os.clock()`) con tope de 600 poses, `guardedRun()` que nunca deja `flingRunning`
+> pegado, pin con reintento a `1e9` si `math.huge` falla, rescate de 2 frames si la
+> víctima no se movió, y notificación con poses/velocidad reales +
+> `state.mm2LastFling`. Evidencia: `docs/FIXES-v138.5.md`,
+> `tools/test_fling_skid.py` (7 suites).
+>
+> **v138.6 (2026-10-27):** **Auto Farm** dejó de caerse al vacío: el vuelo de
+> Below lo hace `applyBelowControl` en `RunService.Stepped` (antes de física) con
+> control de altitud proporcional que cancela la gravedad; antes se escribía solo
+> desde el Heartbeat y la gravedad se acumulaba entre escrituras. El "rebase" de
+> `homeCFrame` ya no se calcula desde un cuerpo que está debajo del mapa (eso bajaba
+> el objetivo 7 studs por tick hasta el fondo). `clampBelowTarget`/`floorBudgetY`
+> limitan la profundidad y `recoverFromVoid` devuelve el cuerpo dentro del mapa.
+> **Walk** funciona: "Stay Under" ya solo aplica a Below (antes enterraba el cuerpo
+> de Walk), `engage()` normaliza PlatformStand/NoClip/hitbox una vez por sesión, no
+> se re-ejecuta `restoreCharacter` cada tick y hay carry por velocidad si
+> `Humanoid:Move` no mueve. **Menú**: el orden de las tarjetas dentro de cada
+> ventana es **aleatorio por sesión** (LCG + atributo `FeatureSortRank`), no
+> alfabético, con toggle *Settings → Random Card Order*. Evidencia:
+> `docs/FIXES-v138.6.md`, `tools/test_autofarm_motion.py` (4 suites, con gravedad
+> simulada y tick congelado), `tools/test_mm2_auto_farm.py`,
+> `tools/gen_full_boot_harness.py` (prueba de orden no alfabético).
+>
+> **v138.7 (2026-10-27):** Auto Farm vuela **a través** de las monedas (sin la
+> parada corta): pulso de touch al acercarse, objetivo 26 studs más allá al pasar,
+> moneda barrida saltada 2.5 s y compromiso de rumbo 1.2 s para no ping-ponguear;
+> `holdAltitude` mantiene la altura cuando no hay objetivo. `Fling Murder/Sheriff
+> after reset` pasan a **after full bag** con migración de la clave guardada. Se
+> eliminan `Stay Under When Round starts` (y su estado muerto) y, en UI Settings,
+> `Random Card Order` y `Rainbow`. El **loader** ya no cachea fuentes en disco:
+> bundle → memoria → un GET, y purga `Wurst/src` en segundo plano. El antiguo
+> abridor circular (círculo + `≡`) se crea oculto y solo aparece cuando
+> `state.menuReady` (fin de todas las secciones). Evidencia: `docs/FIXES-v138.7.md`,
+> `tools/test_autofarm_motion.py`, `tools/test_loader_launcher.py`.
+>
+> **v138.8 (2026-10-27):** se revierte el **fly-through** del Auto Farm (velocidad
+> proporcional, punto 26 studs pasado la moneda y compromiso de rumbo: "se movía
+> flojo" y "hacia ninguna trayectoria") y vuelve el ir-y-cobrar, pero **sin la espera
+> de ~1 s**: velocidad plena, primer touch en el mismo frame de llegada
+> (`lastTouchPulse = 0`), `DWELL_SECONDS = 0.3` con `RETRY_SECONDS = 1.5` /
+> `RETRY_LIMIT = 3` y cambio de objetivo inmediato al desaparecer la moneda.
+> **Stay Under When Round starts** vuelve y aplica a **ambos** modos; al salir del
+> escondite el cuerpo va a la superficie en `homeCFrame` (antes raycast desde debajo
+> del suelo, que era lo que dejaba el cuerpo enterrado en Walk). **Anti Fling** queda
+> sin opciones (`noOptions = true`, umbrales 2.5× WalkSpeed). Evidencia:
+> `docs/FIXES-v138.8.md`, `tools/test_autofarm_motion.py` (7 suites).
+>
+> **v138.9 (2026-10-27):** las tarjetas vuelven al **orden alfabético** (fuera
+> `nextRandomRank`, `FeatureSortRank` y el mapa curado `ordered`); se elimina el
+> `fallbackManifest` de `Wurst.lua` (un solo catálogo: `Manifest.lua`) y las copias
+> de categorías/alias de `ClickGui.lua` (`categories` + `cards` viven en el
+> catálogo). Nuevo `tools/card.py` (`list` / `add --stub` / `remove` / `window` /
+> `check`) para dar de alta o borrar módulos y ventanas en un comando; `check` corre
+> en `validate.sh`. **Fling**: opciones Power (3 = YARHM exacto), Duration,
+> Prediction y Retries, adelanto por `ping/2` en cada pose, re-resolución de las
+> partes del rival, mínimo de 12 poses y segunda pasada con boost ×1.5. Evidencia:
+> `docs/FIXES-v138.9.md`, `tools/test_fling_skid.py` (10 suites).
+>
+> **v139.0 (2026-10-27):** pase de rendimiento ("tengo lag"). El `TaskManager` se
+> mide a sí mismo (`state.performance`, `state.taskManager:Stats()`,
+> `state.perfReport()`, aviso `[Wurst:Perf]` a partir de 3 ms por frame) y cada
+> tarea lleva el nombre del módulo. Arreglado: `Prediction` cachea partes y pierde
+> la closure por jugador; `MM2/base.lua` cachea lobby/mapa y el cooldown de fallo
+> escribe `Text`/`Size` a ~12 Hz y sólo si cambió; Coin ESP reconcilia adornos a
+> 2 Hz; Auto Farm sin `pcall` por moneda; **Noclip** pasa a evento + barrido a 5 Hz
+> (adiós `GetDescendants()` a 60 Hz); HUD sólo anima si hay rainbow/pulso y
+> reutiliza la tabla de color; los overlays flotantes no hacen nada si están
+> apagados; clave duplicada `MM2AutoShoot` (disparo fantasma) renombrada. El test
+> nuevo `tools/test_scheduler.py` (8 suites) destapó el bug del swap-remove al
+> autodesconectarse una tarea. Harness: 6 tareas always-on, todas con nombre, y
+> 8 toggles seguidos no dejan conexiones. Evidencia: `docs/FIXES-v139.0.md`.
+>
+> **v139.1 (2026-10-27):** "tengo lag spikes" + versión. `PRODUCT.version` pasa de
+> `0.1 Beta` a **`0.823 Release`**. Se añade detector de hitches en
+> `state.performance` (`spikeCount`, `worstSpikeMs`, `spikeAgo`, `spikeTask`) con
+> aviso `[Wurst:Perf] frame spike X ms (menu Y ms · tarea)` como mucho cada 5 s y
+> línea nueva en `state.perfReport()` y en *Session Info*. Se quitan asignaciones
+> por frame: pool de muestras en `Prediction` (~700 tablas/s menos) + lista de
+> jugadores cacheada 0,25 s; `ImproveFps` reutiliza el array del barrido;
+> `Render:Label` ya no escribe `Size`/`BackgroundTransparency` si no cambian (los
+> ESP completos se benefician); `Nametags` deja de reasignar `Font` y de re-medir
+> texto cada frame; el HUD del menú sólo redibuja la fila que cambió. Evidencia:
+> `docs/FIXES-v139.1.md`.
 
-- `Knife Throw` ahora tiene acción de botón/tecla y `Auto Throw` independiente
-  (por defecto ON para conservar el automático anterior; OFF para solo botón).
-  En móvil se coloca tocando el pequeño cuadro de acceso de la tarjeta. El modo
-  CFrame funciona con Silent activo o apagado sin hooks ni escribir cámara, y
-  comparte el arbitraje de arma con Gun/Auto Win. El antiguo camino nativo aún
-  existe para otras llamadas como TriggerBot, que no debe confundirse con esta
-  ruta CFrame. Wall Check, equipo, vida, partida, protección, ronda terminada,
-  infección zombi cuando el API la informa y distancia se vuelven a comprobar;
-  se cancela si cambia objetivo/equipo, match, vida, estado o se apaga. La fuente
-  de Knife dice `RoundStarted == false`, en conflicto con otras fuentes: no se
-  reinterpreta ese campo sin evidencia de funcionamiento real.
-- Falla sin enviar si falta ThrowEvent, Handle, BindableEvent, módulos del
-  proyectil o ABTests, o el handler/creator; requiere estos componentes y el
-  listener original ya iniciado al equipar. Usa el valor `Debounce - 0.3` con
-  mínimo conservador más el Delay del usuario, sin afirmar reproducir el timing
-  completo de ThrowCharge/animación. Predicción opcional usa 78 studs/s por la
-  trayectoria local de ~1,3 studs por 1/60 s, no un dato de física del servidor.
-  Status distingue petición enviada y fallo local, nunca confirma impacto.
-- `tools/test_x2duels.py` simula forma y orden, handler sin/ con choque simulado,
-  origen AB verdadero/falso, módulo o remoto ausente, OFF durante equip y maker
-  que cede, limpieza, equipo/pared/ronda/cooldown y acceso táctil colocado real.
-  Son fixtures, no ejecutan el LocalScript real ni prueban Delta/servidor/BAC.
-  Validación v155: `tools/validate.sh` PASS, 64 suites, boot `failures=0` y
-  auditorías; `git diff --check` PASS.
-- El manifiesto Gun nuevo es `DefaultGun`, pero solo se adjuntó su archivo Maid
-  2/2; el LocalScript principal disponible sigue siendo `MimicGlare`. La firma
-  Gun de v154 **no está corroborada para DefaultGun ni todas las skins**. No
-  pedir activar Gun Probe: el usuario reportó BAC-1583 e interferencia. Para
-  completar ese dato se necesita el archivo Gun 1/2 o una captura de fuentes sin
-  activar Probe. Probar en vivo con cuenta controlada, indicar Status exacto y si
-  hubo impacto real; no afirmar seguridad anticheat ni compatibilidad Delta.
+> **v139.2 (2026-10-27):** "¿Shoot y Auto Throw son lo mejor?". Estudio físico del
+> personaje (17 studs/s de mediana, `moveDirection` <0,08 en el 8 % de las
+> muestras ⇒ el error del predictor es irreducible) y dos arreglos medidos:
+> **(1) pistola** — el rayo del servidor no muere en nuestro endpoint; 2 de 10
+> tiros de v139.1 acabaron en el `HumanoidRootPart` de un inocente. El punto de
+> mira pasa a elegirse por lo que hay **detrás** (`describeRayBeyond`, sondeo
+> 12 → **200** studs, `INNOCENT_DANGER_STUDS = 35`): si ningún punto del cuerpo
+> deja una línea limpia, el disparo se **salta** con motivo visible. Opción
+> nueva `Avoid innocents` (ON). **(2) cuchillo** — `throwKnife` ya no dispara
+> desde la mochila (`ensureEquipped`: espera a que el tool cuelgue del
+> personaje; de 13 activaciones sólo 9 produjeron cuchillo y los 4 perdidos
+> salían del `RightHand` de respaldo) y el bucle cachea la puntería 1/15 s
+> (13 resoluciones/s a 60 FPS en vez de 61). Telemetría nueva: `missReason` +
+> `gunMisses`/`gunMissReasons` en el resumen y `closestApproachStuds` /
+> `passedThroughBody` en `projectile-observed`. **El lead no se tocó.** Evidencia:
+> `docs/FIXES-v139.2.md`, `tools/test_gun_corridor.py`,
+> `tools/test_mm2_knife_equip.py`.
 
-## 1Y. X2 v154 — histórico, Knife pendiente en ese momento (v155 lo sustituye)
+> **v139.3 (2026-10-28):** "¿está bien que el wallcheck detecte el cuerpo del
+> murderer y no dispare?". **No**, pero el cuerpo del objetivo nunca bloqueaba
+> (está excluido desde v106): lo que bloqueaba eran dos comprobaciones nuestras.
+> **(1)** En Silent, la construcción "Through" perfora a lo largo del movimiento
+> del objetivo; si el asesino **corre hacia ti**, esa dirección apunta a ti y el
+> segmento acababa en el cañón (`muzzle 0,5 · endpoint 0,5`) → `"Invalid shot
+> geometry"`. Dentro de **`POINT_BLANK_STUDS = 6`** el punto de mira pasa a ser el
+> `HumanoidRootPart` sin lead y el disparo se autoriza **desde el cañón real**
+> (`variant = "PointBlank"`). **(2)** `OVERSHOOT_PROBE_STUDS` se había subido a
+> 200 en v139.2 y esa constante la compartía `bystanderBlocks`, cuyo rayo sólo ve
+> personajes: un inocente 108 studs detrás **y detrás de una pared** bloqueaba
+> todos los disparos Silent. Ahora hay **`BODY_OVERSHOOT_STUDS = 12`** (segmento
+> autorizado) y **`CORRIDOR_PROBE_STUDS = 200`** (corredor), y el sondeo de
+> "cuerpo detrás" usa `describeRayBeyond`, que **se detiene en la primera
+> pared**. Un cadáver (cuerpo sin dueño, salud 0) ya no cuenta como inocente. Los
+> rechazos del corredor se registran con `reason = "corridor"`. **El lead no se
+> tocó** (error mediano 12 ms). Evidencia: `docs/FIXES-v139.3.md`,
+> `tools/test_gun_pointblank.py` (25 comprobaciones).
 
-El usuario reportó que nada de Raycast/Oth le sirve en su celular y pidió CFrame
-como MM2 para Silent con botón, Auto Shoot y Knife. MM2 CFrame **no gira cámara**:
-construye dos CFrame y llama `Gun.Shoot` o `KnifeThrown`, cuyos protocolos no
-son intercambiables con X2. Se investigó la Gun real que el usuario adjuntó.
+> **v139.4 (2026-10-28):** cuatro puntos de revisión, los cuatro reales.
+> **(1) Pistola:** `state.mm2FireSilentShot` se llamaba sin opciones (el
+> WallCheck propio de Auto Shoot se perdía) y forzaba `continuous = true`, que
+> hacía `useRaw = true` → `safeToSend` **no comprobaba nada**: sólo existía el
+> guardián de origen cercano, desde ~1 stud del objetivo, nunca desde la pistola.
+> Ahora raw sólo salta el guardián del origen cercano y **siempre** valida la
+> línea del cañón; los fallbacks de AutoShoot/AutoWin/AutoFarm ya no son un
+> bypass (misma regla de geometría); `silentSpawn` se usa de verdad en vez de un
+> `"Through"` fijo. **(2) Cuchillo:** `ThrowSpeed` ahora se pasa a
+> `prediction.knifeAim(target, origin, speed)` (antes solo lo usaba el respaldo
+> local). **(3) Cuchillo:** el barrido de partes sumaba dos veces el desplazamiento
+> del torso (`predicted - root.Position` ya contenía `aimOffset`); ahora usa
+> `aimInfo.capturedPosition`. **(4) Telemetría:** `Prediction.getHistory` no
+> devolvía `aimOffset` (el error se medía root-vs-torso: sesgo falso de 1,5 studs)
+> y el tope de 36 puntos cortaba por el lado viejo, perdiendo **las muestras
+> nuevas**; ahora se decima conservando el span y la última. Ese error alimenta
+> `leadUncertainty` → barrido adaptativo de Silent. Evidencia:
+> `docs/FIXES-v139.4.md`, `tools/test_gun_silent_constructor.py`,
+> `tools/test_mm2_knife_aim.py`, `tools/test_telemetry_aim_offset.py`.
 
-- En X2 Silent AIM ahora es **solo botón CFrame** (no redirige disparos normales)
-  y Auto Shoot usa la misma ruta independientemente, sin Oth ni hookmetamethod
-  ni wrappers MouseCast, y sin escribir cámara. Mantienen sus filtros de equipo,
-  vida, partida, alcance, opciones y Wall Check; este último usa un raycast normal
-  desde HRP para consultar visibilidad, no un hook. Sin Wall Check no se consulta.
-- El LocalScript de `MimicGlare` usa `fire:FireServer()`,
-  `showBeam:FireServer(hitPosition, HRP.Position, Handle)` y después
-  `Packages.Net["RE/GunKill"]:FireServer(guid, targetPlayer,
-  CFrame.lookAt(Handle.Position, hitPosition).LookVector, HRP.Position,
-  hitPosition)`. El RBXL 1v1 confirma la ubicación `Packages.Net.RE/GunKill`.
-  La nueva ruta envía ese formato observado y usa el centro de la parte objetivo
-  como hitPosition, **no un RaycastResult de impacto**. Servidor desconocido: puede
-  rechazar el paquete o sancionarlo. Status solo dice request sent, no hit. Si
-  falta cualquier RemoteEvent/Handle, no envía; Cooldown conservador 2,5 s
-  compartido entre botón/Auto Shoot/Auto Win, inferido de MimicGlare, no medido
-  para todas las skins. No promete eficacia ni seguridad anticheat.
-- En v154 la fuente de Knife disponible solo tenía `MobileKnifeLocalScript` (GUI) y
-  efectos visuales; el RBXL contenía `Packages.Net.RE/ThrowEvent`, pero NO se
-  conocían la firma ni GUID de la petición de lanzamiento en ese momento. No se inventó un
-  protocolo ni se afirmó implementado Knife CFrame. Su implementación nativa
-  anterior podía mover la cámara y se pausaba con Silent. Para completarlo,
-  Gun Probe ofrece acción **Save knife sources** sin activar Probe ni hooks;
-  guarda `X2Duels-knife-sources.json` y `X2Duels-knife-source-*.luau` sin
-  sobrescribir los de Gun. Decompile puede fallar o ser detectado.
-- Tests X2 ejercitan el botón táctil real simulado, orden/forma de tres paquetes,
-  sin cámara/hook, falta de remoto, equipo, OFF, cooldown y Auto Shoot separado;
-  captura Knife independiente. Las pruebas mock no son Roblox/Delta/servidor.
-  Reiniciar Roblox para quitar nodos Oth antiguos, probar en cuenta controlada
-  con Gun Probe y Safe Place apagados, reportar Status y resultado real; en ese
-  momento se pidieron archivos Knife con la acción sin activar Probe.
+## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
-## 1X. X2: cámara y Auto Shoot v153 — histórico, sustituido en v154
-
-El usuario reportó que Auto Shoot y Silent AIM no funcionan y que la cámara se
-sale del personaje. La captura móvil `X2Duels-calibration.json` (SHA256
-`a54a8d525ef7c4eed9b5d409c03d62cb84289697c6ccae2a00ac098bc396d220`)
-retuvo 400 eventos, descartó 470 y tenía `silent=false` en todos los eventos
-conservados: **no permite atribuir el giro a Silent**. Tenía Probe activo, 58
-activaciones y ocho rayos Gun de 10.000 studs; las ráfagas de activación y tres
-rayos separados ~2,6 s son compatibles con el debounce Gun de 2,5 s, no prueban
-hits ni soporte de Oth. El LocalScript real de MimicGlare recuperado usa
-Mouse.Hit cacheado al toque y Raycast de HRP; Tool:Activate no crea Button1Down.
-
-- Auto Shoot ya no llama al giro de cámara de v152. Instala/reutiliza Oth sin
-  hookmetamethod y arma una ventana de 0,35 s, de un rayo, para un LocalScript
-  descendiente de ESA Gun, origen próximo al HRP, RaycastParams Exclude y longitud
-  ~10.000, con controles de personaje/partida/equipo/vida/rango y Wall Check en
-  selección y raycast. Conserva longitud y parámetros. Si falta Oth o la API de
-  caller, no activa Gun y avisa. Si el hook parece instalado pero no intercepta
-  el rayo, puede haber activación sin redirección: Status lo informa, no equivale
-  a daño; no garantiza impedir un disparo mal dirigido. Las APIs y semántica de
-  checkcaller/Activated en Delta siguen SIN probarse.
-- Una sola activación queda pendiente hasta su diagnóstico, evitando solapes.
-  Solo para la skin MimicGlare se limita a 2,5 s según el código observado; no se
-  extrapola a todas las armas. Auto Win usa esa misma ruta sin cámara si Silent
-  o Auto Shoot están activos; Auto Win por sí solo y Knife Throw nativo aún
-  pueden rotar la cámara. Los lanzamientos automáticos Knife se cancelan/pausan
-  mientras Silent está activo para no hacer aim lock. Safe Place puede mover el
-  personaje: desactivarlo al aislar cámara. Los ajustes propios siguen separados.
-- Se ignoran CameraModule y descendientes, y pings; compatibilidad amplia no
-  redirige si el caller es desconocido. Una identidad ausente no permite probar
-  que sea Gun, por lo que este modo ahora falla cerrado y puede dejar de funcionar
-  en executors que la ocultan. No promete interceptar otros diseños de Gun.
-- Gun Probe NO funciona simultáneamente con Silent, Auto Shoot, Auto Win, Knife
-  Throw ni Kill Aura: se detiene al activar combate y se rechaza su arranque
-  mientras esos módulos estén activos. `Save gun sources` sigue independiente.
-  El usuario reportó BAC-1583 y disparos bloqueados con Probe; **no pedir que lo
-  active para probar esto** ni garantizar seguridad anticheat.
-- `tools/test_x2duels.py` simula Gun/cámara/ping, Caller/Oth ausentes, args y
-  longitud, equipo, pared tardía, OFF/expiración, simultaneidad, cooldown y
-  pausa Knife; mocks no prueban Roblox ni servidor. Prueba sugerida en sesión
-  limpia: Gun Probe, Knife Throw, Auto Win y Safe Place OFF; probar Silent solo
-  con disparo normal, luego OFF y Auto Shoot solo; anotar Status y si cámara,
-  rayo y daño funcionan. Reiniciar Roblox para retirar posibles hooks viejos.
-
-## 1W. X2: fuente Gun, Vape CameraModule y Auto Shoot nativo v152 (histórico)
-
-El usuario aclaró que su Vape móvil no presenta Oth y que en Delta Silent AIM
-solo acciona botones; no inferir que alguna versión o executor soporte Oth/Silent
-sin prueba. Pidió investigar cómo dispara la pistola y mejorar Auto Shoot móvil.
-La experiencia reportada corrige cualquier afirmación anterior de compatibilidad
-móvil; usar una cuenta de prueba y no prometer que no haya kick ni impacto.
-
-- Fuente Vape universal commit `5d951c27f9677cc1d4a658c44a42c120356b9f58`,
-  `src/games/universal - base/Combat/SilentAim.lua`, blob
-  `051dc5b17d6a4d5c2c16df737fd5168a72d83996`: `Ignored Scripts` tiene por
-  defecto `CameraModule`, compara nombre vía `getcallingscript` y deriva a
-  original; si no identifica caller no puede excluirlo. El archivo expone el
-  toggle Oth y fallback hookmetamethod, pero no demuestra que esté disponible
-  ni funcione en el Vape/Delta móvil del usuario. Vape AutoFire depende de
-  `mouse1press/release`, no se asume que funcione en touch.
-- Volvimos a leer el RBXL 1v1 TestingStuff blob `8968d4dc5906b3f52fe93b59d8ce4f8e9f9d918c`
-  SHA256 `4abae6cae221a32bbddabdea6f54ec0ac559537b93ada74c38f9daaa7bb0816d`:
-  928 LuaSourceContainer, 8 Tools y **ningún Tool con nombre Gun/revolver/pistol**.
-  El `DefaultGun` vivo y LocalScript principal no aparecen. `GunCrosshairController`
-  solo contiene `return {}`. `Client.Modules.MouseCast` convierte posición de
-  pantalla a `ViewportPointToRay`, luego llama Raycast 500 studs con filtros;
-  no hay evidencia de que Gun use MouseCast, pues otros módulos como pings lo
-  consumen. `CreateBeam` dibuja el efecto, no comprueba daño ni velocidad real.
-  `DualWieldGun` reconoce `CollectionService:HasTag(tool, "Gun")`: toolKind de
-  v152 ahora reconoce ese tag además de nombre/hijos, para skins desconocidas.
-- El JSON adjuntado (touch=false, keyboard=true) registró a ~31,301 s un
-  Raycast Exclude de 10.000 studs y remoto `fire` sin argumentos, caller nombre
-  `LocalScript`, tras Activated; no ofrece ruta completa ni prueba entrega a
-  servidor. Visto junto con `MouseCast` de 500, **no son intercambiables**.
-  No afirmar método de puntería móvil ni inventar remotos/validación servidor.
-- `Save gun sources` es ahora acción independiente: con Gun en Backpack o
-  equipada y **Gun Probe desactivado**, usa únicamente `decompile`/`writefile`,
-  sin instalar hooks ni tocar el informe previo. Genera en workspace raíz
-  `X2Duels-gun-source-<timestamp>-<generación>-<n>.luau` y manifiesto
-  `X2Duels-gun-sources.json` (se sobrescribe cada intento). Indica éxito/error y
-  no elimina fuentes anteriores. `decompile` depende del executor, puede fallar
-  o ser detectado, y las fuentes pueden contener información privada; el usuario
-  debe revisarlas antes de compartir. El action en Probe activo actualiza además
-  el JSON de esa sesión sin reinstalar hooks. No es prueba de datos del servidor.
-- Auto Shoot no depende de Silent ni instala hooks: usa selección propia, equipa,
-  aguarda Heartbeat si venía de Backpack, apunta con cámara brevemente y activa
-  Tool nativo. No es Silent, puede mover cámara; no se ha validado cómo Gun
-  interpreta el cursor/touch. Ahora reconoce Gun-tagged skin, verifica pared
-  tanto desde origen del arma como de cámara, no activa si cámara falta y reporta
-  cancelación o arma deshabilitada tras equipar. Cooldown y checks siguen
-  independientes de Silent; nada garantiza disparo o impacto real. La fuente de
-  Gun es necesaria antes de proponer una solución fiable para Delta touch.
-- Tests mock: captura sin Probe ni hooks, decompile desde getgenv y fallo,
-  conservación JSON previo, Tool Gun etiquetado, pared cámara/muzzle, cámara
-  ausente, cancelación/dehabilitado tras Heartbeat, Auto Shoot móvil con Oth,
-  hookmetamethod y hookfunction ausentes. No son prueba Roblox/Delta/servidor.
-
-## 1V. X2 Duels: Raycast inspirado en Vape y predicción Knife v151
-
-El usuario indica que Vape V4 Silent AIM Raycast le funciona y pidió adaptarlo,
-predecir Knife y comprobar si el anticheat excluye hitboxes. No se dispone de la
-implementación completa del anticheat ni código de servidor: en las 1.847
-fuentes 1v1/2v2 extraídas solo aparece `BAC = {}` en ProfileTemplate entre
-`anti.?cheat`, `hitbox` y `BAC`; 2v2 tiene numerosas decompilaciones fallidas,
-y Net está ofuscado. No se encontró ninguna exclusión demostrable. **No llamar
-indetectable a Hitbox**: la tarjeta existente expande localmente HumanoidRootPart,
-el servidor puede ignorar/rechazarlo y el cambio o el hook pueden detectarse.
-No se agregó un bypass de anticheat ni se prometen impactos.
-
-- Referencia Vape (commit `5d951c27f9677cc1d4a658c44a42c120356b9f58`):
-  `src/games/universal - base/Combat/SilentAim.lua` usa Oth en `__namecall` y
-  cambia la dirección a objetivo conservando longitud, pasando parámetros;
-  su selección amplia y hooks opcionales directos no son idénticos a este menú.
-  Su Projectile se aplica a métodos PointToRay/Ray, no a su hook Raycast.
-- Nuestra ruta Oth mantiene longitud/parámetros, respeta equipo, objetivo,
-  checks y alcance. `Raycast Compatibility` OFF por defecto limita atribución;
-  ON aproxima el alcance amplio de Vape, acepta orígenes distantes, excluye
-  callers Camera/Ping identificados pero puede redirigir llamadas ajenas.
-  ON no significa que un servidor acepte impactos. El bridge manda namecalls no
-  Raycast directamente al predecesor si Probe está OFF, preservando nils/retornos;
-  Probe usa llamadas IsA directas para evitar namecalls anidados de ese filtro.
-  El usuario reportó Probe interrumpía disparos: esto no prueba su causa ni que
-  se haya resuelto; Delta/PC live y seguridad de Oth no verificadas.
-- Archivo del usuario: JSON con Gun y touch=false/keyboard=true; una activación,
-  seguida a ~8 ms por Raycast 10.000 studs, Exclude, caller nombre genérico
-  LocalScript y `fire:FireServer()` sin args. Registro es antes de reenviar y
-  solo muestra nombre de caller/remoto; conexión con Gun probable, no probada.
-  11.537 eventos descartados y últimos 400 retenidos. Silent estaba OFF: no
-  confirma redirección ni impacto. El test txt confirmó escritura para esa prueba.
-- `Knife Prediction` bajo Silent AIM es OFF por defecto y solo predice el punto
-  de Knife para Raycasts capturados. No sabemos si lanzamiento nativo usa esa
-  ruta. `Projectile Prediction` bajo Knife Throw automático es OFF e independiente
-  de Silent y de Auto Win; predice su aim en la secuencia nativa desktop/touch,
-  que usa cámara. Cada modo tiene su propio Speed/Gravity estimados; 100 studs/s
-  y gravedad 0 son valores iniciales sin calibrar. Predicción balística numérica
-  limitada a 5 s, velocidad objetivo medida de raíz, fallback sin lead cuando
-  no hay solución; Wall Check comprueba línea recta, no trayectoria curva. No
-  inyecta ni fabrica remotos, no garantiza servidor, hit rate ni ausencia de kick.
-- `tools/test_x2duels.py` cubre solución estacionaria/móvil/gravedad/imposible,
-  Oth 10k atribuido, preservación de args/longitud, modo amplio, excepción
-  Camera/Ping, passthrough de no-ray, predicción Silent vs Knife Throw separadas,
-  además del harness móvil. Mocks no prueban físicas ni executors reales.
-
-## 1U. X2 Duels: guardado en workspace universal v150
-
-El usuario indicó que el JSON no apareció en workspace y pidió que funcione en
-Delta y PC. No se conoce la causa ni se ha validado ninguno de esos executors en
-vivo. `Gun Probe` usa un **nombre relativo plano** `X2Duels-calibration.json`:
-por contrato de `writefile`, apunta a la raíz del workspace del executor, sin
-carpetas ni rutas OS hardcodeadas. La ubicación física, visibilidad externa y
-permisos dependen del executor/dispositivo; no hay API universal para forzar el
-mismo directorio físico ni garantizar éxito. No se envía información por red.
-
-- Busca APIs de filesystem en el entorno del módulo y, si faltan, en `getgenv`.
-  Distingue fallos de JSON, `writefile` ausente/error/false, archivo no visible
-  a `isfile`, y contenido distinto en `readfile`. El status diferencia contenido
-  verificado, solo existencia, y escritura sin verificar. Un resultado sin error
-  **no prueba** que el usuario pueda acceder al directorio desde el dispositivo.
-- `Test workspace` crea únicamente `X2Duels-workspace-test.txt` en raíz y verifica
-  si puede; no requiere activar Gun Probe, instalar hooks ni borrar el JSON previo.
-  Reutilizar el nombre sobrescribe el test. No confundir ese archivo con el JSON.
-- Al activar Probe se intenta guardar snapshot mínimo **antes de instalar Oth**;
-  luego se guarda de nuevo al arrancar, por cambios ~3 s, manual y al detener.
-  Esto sobrescribe el informe anterior al empezar; copiarlo antes. Un kick
-  inmediato puede perder el contenido restante, no guardar o truncar escritura.
-  `Save gun sources` opcional usa la misma raíz/resolución/chequeo, y decompile.
-- El usuario también reportó que Gun Probe impide disparar. El puente Oth puede
-  interferir con las llamadas originales (hay llamadas anidadas en el observador),
-  pero no hay diagnóstico probado en Delta ni se ha corregido en esta versión.
-  **No instruir a reactivar Gun Probe** hasta investigarlo; `Test workspace` puede
-  utilizarse con el módulo apagado. Oth no garantiza evitar BAC-1583.
-- Mocks prueban ruta relativa, entorno `getgenv`, test sin hook/sin sobrescribir
-  JSON, contenido/existencia/sin verificación, errores false/ausencia/JSON,
-  snapshot previo al hook y ciclos Oth. No prueban directorios o disparos reales.
-
-## 1T. X2 Duels: Gun Probe Oth compartido v149
-
-El usuario confirmó que **BAC-1583 apareció al activar Gun Probe v148**. Eso
-correlaciona la expulsión con ese momento, pero no identifica cuál API/hook lo
-provocó. v148 instalaba tres hooks Oth. v149 elimina los de `__index` y el
-`workspace.Raycast` directo y usa un único Oth sobre `__namecall`, compartido
-con Silent AIM, en ambos órdenes ON/OFF y sin hooks clásicos como fallback.
-No afirmar que esto impide la expulsión: Oth, el cliente/executor y otras APIs
-pueden igualmente ser detectados. Pruebas en cuentas de prueba, no la principal.
-
-- Gun Probe es pasivo: registra con Gun equipada namecalls observados para
-  `Raycast`, `FindPartOnRay` y variantes, `ScreenPointToRay`,
-  `ViewportPointToRay`, `FireServer`/`InvokeServer`, más touch y Activated. Un
-  rayo conserva origen/dirección y `RaycastParams.FilterType` si está disponible.
-  Los remotos solo tienen tipo de argumentos, no sus valores. Nombre del caller
-  puede ser desconocido y eventos pueden pertenecer a otros scripts. No captura
-  lecturas Mouse, `Ray.new` ni llamadas directas que eviten `__namecall`; la
-  ausencia no prueba que el juego no las use. No confirma daño.
-- El JSON v3 registra configuración y cambios de Silent (backend, habilitado,
-  parte, FOV, Wall/Team, rango, compatibilidad) y eventos antes/después de un
-  rayo redirigido. Status muestra presencia de namecall, no prueba que se use.
-  Guarda hasta los 400 eventos más recientes, contando descartes; guarda un
-  snapshot inicial, luego cambios cada 3 s, y al OFF/60 s para mitigar pérdida
-  ante kick. El mismo nombre se sobrescribe; puede perderse lo más reciente y
-  no hay garantía si falla `writefile`. Archivos pueden contener coordenadas y
-  nombres: revisar antes de compartir. `Save gun sources` es opcional, emplea
-  API `decompile` (no Oth), y puede contener datos privados.
-- El bridge queda inerte en OFF/destrucción y se reutiliza; reentrar a Roblox
-  lo quita. Reiniciar Roblox antes de v149 para retirar los nodos v148. Mocks de
-  `tools/test_x2duels.py` prueban un solo hook, ausencia de fallback, Silent y
-  Probe activados en ambos órdenes, compatibilidad, móvil, eventos sin valores
-  de remotes, FIFO de 400, autosave, OFF y expiración. No prueban semántica
-  Oth off-thread ni el anticheat/servidor reales.
-
-## 1S. X2 Duels: Gun Probe Oth pasivo v148 (histórico; reemplazado en v149)
-
-El usuario pidió el grabador para descubrir el método de disparo. v147 lo había
-bloqueado por sus hooks anteriores; v148 reactiva la tarjeta existente **Gun
-Probe** en Combat con un recolector pasivo basado exclusivamente en `oth.hook`.
-Sin `oth.hook` / `getrawmetatable` / `checkcaller` no usa fallback clásico;
-Status indica qué hooks se instalaron o no. Se puede activar independientemente
-con Silent OFF para una captura base y repetir con Silent ON para comparación.
-
-- Busca Gun en mochila/personaje, `Equip gun` la equipa, captura hasta 60 s y
-  máximo 400 eventos; guarda localmente al OFF/vencimiento o con `Save report`
-  en `X2Duels-calibration.json`, sobrescribiendo el informe anterior. Turn OFF
-  después de vencer antes de reiniciar. En Delta, ubicación exacta de archivos
-  depende de versión/plataforma; si falta `writefile`, Status informa fracaso.
-- Señales: Touch/MouseButton1, `Tool.Activated`, Mouse Hit/Target/UnitRay vía
-  `__index`, `Raycast` directo y `__namecall`, y `FireServer`/`InvokeServer`
-  observados con Gun equipada. Los eventos registran tiempos, tipo de argumentos,
-  nombre de script/remoto y vectores del rayo; **no** valores de remotes.
-  Pueden incluir scripts ajenos, repetirse entre hooks o faltar por executor;
-  no inferir que sean disparos ni que el servidor haya aceptado daño. No ejecuta
-  Tool:Activate ni modifica args/resultados. `Save gun sources` es manual y
-  usa decompile/writefile (hasta 20 scripts del arma); revisar datos sensibles.
-- Nodos Oth inactivos y reutilizables al OFF/destrucción, sin unhook riesgoso;
-  una reinyección puede dejar nodos inertes, reentrar los elimina. Posibles
-  incompatibilidades entre hooks/caller off-thread, ni Delta ni prevención de
-  expulsiones están probados. El colector externo `X2DuelsDecompiler.luau`
-  sigue usando hookmetamethod: no proponerlo como alternativa segura en este juego.
-- `tools/test_x2duels.py` cubre Oth ausente sin fallback, pasividad (argumentos,
-  nils/retornos), Input/Activated/Mouse/Raycast directo/namecall, privacidad de
-  remotes, 400 eventos, timeout, OFF/ON, teléfono simulado y módulos previos.
-
-## 1R. X2 Duels: Silent AIM Oth Raycast v147 (Gun Probe actualizado en v148)
-
-El usuario probó Vape en Delta: reporta kick con hook habitual, sin kick en esa
-prueba con Oth; solo Raycast parece funcionar y Projectile quizás reconoce el
-cuchillo. Es una observación real del usuario, no prueba de inmunidad futura,
-daño, ni velocidad/gravedad del arma. Vape universal usa `oth.hook` sobre
-`__namecall`; no se copia código ni se usa `oth` como garantía anticheat.
-
-- Reutilizar la tarjeta **Silent AIM** existente en Combat. El backend por
-  defecto es Oth Raycast (`oth.hook`, `getrawmetatable`, `getnamecallmethod`,
-  `checkcaller`): si falta/falla, muestra estado unavailable y **no** recurre a
-  `hookmetamethod`, `hookfunction`, fallback raw ni MouseCast. No se restaura el
-  master al inyectar; el usuario lo activa explícitamente. El master con Gun o
-  Knife equipados intenta redirigir solo Raycast nativo, conserva longitud,
-  argumentos y Wall/Team/partida/rango/FOV; no gira cámara ni inventa remotos.
-- `Raycast Compatibility` OFF por defecto permite aceptar rayos sin procedencia
-  fiable o ajenos con arma equipada; excluye callers Camera/Ping identificados,
-  pero puede afectar otros scripts. OFF restringe a caller atribuible al arma.
-  `Mouse Compatibility` se quitó de la UI pues el backend Oth no la usa; el código
-  legado existe únicamente para fixtures de regresión, sin selector productivo.
-- La acción táctil equipa Gun y activa la Tool nativa; el estado distingue hook
-  instalado, redirección observada y daño desconocido. También redirige rayos de
-  Knife dentro de Silent, sin subordinar la tarjeta independiente Knife Throw.
-  No se añadió Projectile: ninguna captura acredita velocidad/gravedad ni que
-  esa ruta inflija daño. Auto Shoot/Knife Throw conservan opciones independientes.
-- OFF/destrucción desactiva el callback Oth sin borrar hooks ajenos; se conserva
-  un nodo inerte reutilizable porque `oth.unhook` tiene semánticas distintas por
-  executor y puede quitar hooks posteriores. Reentrar a Roblox lo elimina;
-  reinyecciones sin reentrar pueden acumular nodos inertes. Gun Probe v146 queda
-  **bloqueado** en Oth por usar hooks anteriores; no genera captura nueva.
-- Los mocks prueban ausencia de fallback, provenance/opción amplia, camera/ping,
-  checkcaller, alcance, equipar Knife, equipo, OFF/ON sin nodo nuevo y botón
-  táctil. No prueban semántica OTH off-thread de Delta, reconocimiento de caller,
-  ni impactos/detección en Roblox. Solicitar versión Delta, modo 1v1/2v2 y Status;
-  usar cuenta de prueba, no la principal.
-
-## 1Q. X2 Duels: Gun Probe temporal v146 (histórico; bloqueado en v147)
-
-El usuario usa Delta en celular y pidió un módulo temporal para diagnosticar
-su disparo. **Gun Probe** es una tarjeta Combat separada y no se restaura al
-inyectar. Al habilitarla durante 60 s busca la Gun en Backpack/Character;
-`Equip gun` intenta equiparla. Desactivar, vencer el tiempo o descargar detiene
-los hooks; si el contador vence la tarjeta permanece visualmente encendida y
-hay que apagarla antes de reiniciar. La captura no dispara automáticamente.
-
-- Prueba deliberadamente amplia y de riesgo: con Gun equipada y `checkcaller`
-  funcional, intenta redirigir lecturas nativas de Mouse `Hit`, `Target` y
-  `UnitRay`, incluso de scripts ajenos. Emplea objetivo, partido, equipo,
-  distancia y Wall Check, sin mover cámara. Puede interferir con otros controles.
-  No forzar `checkcaller` ni prometer que esas lecturas sean usadas en celular.
-  Este módulo no instala el fallback raw de Silent y no intercepta todas las APIs.
-- Registra hasta 400 eventos con tiempo relativo: toque/clic y processed,
-  Tool.Activated, lecturas Mouse/redirecciones, y llamadas observadas via
-  `__namecall` FireServer/InvokeServer/Raycast mientras la Gun está equipada.
-  Guarda nombre de remoto/script y tipos de argumentos, no valores, y estructura
-  de descendientes de Gun. Puede recoger eventos no relacionados; no se debe
-  interpretar correlación como causalidad. APIs presentes/hooks instalados no
-  prueban que capturen todo, ni `Activated`/lectura/remote prueban daño.
-- `Save report` o fin de sesión escribe `X2Duels-calibration.json` en la carpeta
-  de archivos del executor, sobrescribiendo la captura previa. `Save gun sources`
-  decompila hasta 20 LocalScript/ModuleScript de la Gun a archivos locales
-  `X2Duels-gun-source-<n>.luau` si Delta expone decompile/writefile. Puede
-  tardar o no estar disponible. Revisar contenido sensible antes de compartir;
-  ninguno se envía por red. El recolector externo sigue siendo útil para scripts
-  de disparo fuera de Gun o capturas más amplias.
-- Hooks propios tienen lease por sesión y preservan hooks posteriores; captura
-  limitada y cierre automático. `tools/test_x2duels.py` cubre en mocks reads
-  ajenos y del executor, tipos sin valores, toque, hook encadenado, expiración y
-  reinicio; no prueba Delta/Roblox en vivo. Si no hay lectura Mouse observada,
-  no concluir que solo funciona PC: el cliente puede usar otra ruta o el hook
-  puede no funcionar. Pedir informe, fuentes disponibles y Status.
-
-## 1A. X2Duels (MVS): evidencia 1v1 y contratos v145
-
-**Fuentes:** `XzAngel19/TestingStuff` commit `a849817395`, log
-`2026-10-28T04_16_18Z.log` y `Place_124848751642883_[DUELS] 1v1_27-10-2026_23-21-39.rbxl`.
-El log tiene 1.709 eventos de ~10,5 minutos, todos sin llamadas del executor;
-el RBXL 1v1 contiene fuentes decompiladas útiles. El RBXL 2v2 anterior tiene
-fuentes en su mayoría stubs: no presentar sus mecánicas como verificadas.
-Estas capturas son **evidencia cliente**, no prueba de que el servidor acepte
-daño o recompensas ni de lo que ocurre en todos los executors/places.
-
-- **Identidad:** `124848751642883` (1v1), `92876937625630` y
-  `135856908115931` están en loader/manifest/perfiles; el fingerprint también
-  acepta nombres literales con barras, como
-  `Packages.Networking["RE/Match/SetDead"]`, y conserva fallback de carpetas.
-  Las mismas rutas literales se conectan y se vuelven a conectar si el remoto se
-  reemplaza. No inferir nombres estables para remotos hash bajo `Packages.Net`.
-- **Estado/equipos:** en la captura `Client.Modules.MatchState` consume
-  `ClientGlobals.PlayerMatches` y `RunningGames`: `getGameId`, `getTeamId`,
-  `getMode` e `isDead`. El core carga la API sin bloquear el boot, reintenta y,
-  en los places conocidos, falla cerrado mientras no está lista, no hay GameId,
-  los jugadores están en juegos distintos o el equipo es desconocido.
-  `FFA` con el mismo GameId identifica adversarios sin tratar FFA como equipo.
-  Priorizar esta API sobre atributos de lobby; el cliente puede aún no haber
-  recibido todos los datos. PlayerESP/Chams/Nametags usan providers compartidos.
-- **Función y ubicación:** X2 tiene tarjetas **Silent AIM**, **Auto Shoot** y
-  **Knife Throw** independientes en Combat. Tras el reporte de fallo móvil,
-  v144 elimina el modo `Legit` que giraba la cámara y descarta ese valor de los
-  perfiles guardados. Silent intenta redirigir lecturas nativas de puntería sin
-  mover la cámara; su tecla/botón también equipa la Gun del Backpack, espera un
-  `Heartbeat` si acaba de equiparla, revalida personaje/partida/arma/objetivo y
-  llama `Tool:Activate()`. Si no hay adaptador disponible, equipa pero **no
-  dispara** y lo informa. Un adaptador instalado no prueba que la Gun lo use
-  ni impide un tiro sin redirección: después del intento el status distingue
-  lectura redirigida de ausencia de evidencia; ninguno confirma impacto o daño.
-  `Wall Check` está primero al expandir Silent, Auto Shoot y Knife Throw, con
-  estado multilínea y toast en el botón manual para pared/cuerpo, rango, equipo,
-  partida, vida, arma, recarga y compatibilidad. Wall Check comprueba también
-  desde Handle/root y cámara; no afirma atravesar paredes cuando se desactiva.
-  Auto Shoot y Knife Throw conservan checks/rango/cooldown propios, por defecto
-  0 s extra; funcionan sin Silent. Kill Aura tiene checks propios. La cola de
-  Gun espera un Heartbeat al equipar y cancela OFF/respawn/cambio de partida o
-  equipo; el arbiter no interrumpe el windup de Knife. Auto Shoot/Auto Win aún
-  usan la cámara temporal visible del v143: no confundirlos con Silent. TriggerBot
-  conserva `noAim`. Hitbox restaura propiedades, pero el servidor puede rechazar
-  impactos fuera del tamaño real. Masters OFF en executor nuevo; migración v143
-  mantiene apagados los nuevos automáticos en perfiles antiguos. No se inventan
-  ni repiten paquetes de combate.
-- **Adaptadores restringidos y límites:** el RBXL decompilado contiene
-  `Client.Modules.MouseCast`, que devuelve `RaycastResult` real y endpoint de 500
-  studs y también usa `PingsController`. v144 envuelve sus cinco funciones sin
-  alterar filtros ni ampliar el alcance, **sólo** con procedencia del arma:
-  `getcallingscript` descendiente del Tool o, cuando corresponde, un stack
-  `debug.info` que identifica jugador/Tool/LocalScript reales. Un caller ajeno
-  explícito siempre se deja intacto. También intenta `Mouse.Hit/Target/UnitRay`
-  y hooks de rayo si el executor los admite; esos accesos son alternativas, no
-  evidencia de que el script de Gun los use. Los wrappers desactivados quedan
-  inertes si otro script los encadena, incluso tras OFF/ON. La ruta Knife
-  observada conserva el remoto y GUID/CFrame genuinos al cambiar sólo el Vector3.
-  Sigue faltando el LocalScript principal de Gun y su cadena de aim: ningún mock
-  verifica compatibilidad real en un executor concreto, `Tool:Activate`, daño
-  ni precisión. No sustituir este límite por paquetes MM2 o hashes inventados.
-- **Investigación y alternativas v145:** ScriptBlox mezcla dos juegos: el
-  perfil X2/MVS usa lobby `135856908115931` (universe `7219654364`), 1v1
-  `124848751642883` y 2v2 `92876937625630`; RED21 `12355337193` es otro
-  universe (`4348829796`). No importar sus remotes por el parecido del nombre.
-  Para el juego correcto se inspeccionaron estáticamente
-  [K1ngfcs](https://scriptblox.com/script/DUELS-Murderers-VS-Sheriffs-Silent-aim-201630)
-  y [imshrak](https://delta-scripts.org/scripts/murderers-vs-sheriffs-script-keyless-silent-aim-open-source/):
-  ambos proponen redirigir lecturas de mouse, pero sus anuncios/comentarios no
-  prueban funcionamiento. Las fuentes GitHub respectivas no declaraban licencia;
-  no se copiaron ni ejecutaron. La muestra imshrak además intenta una invitación
-  vía RPC de Discord: esa solicitud tampoco se incorporó. Synergy y Nova
-  entregaban loaders de servicios externos; Synergy declara recopilar datos, así
-  que no se cargaron. Una muestra de Rscripts propone un `kill` directo, sin
-  evidencia vigente suficiente: **no** se envía ni se adivina ese remote.
-- **Fallback Mouse v145:** en un botón/tecla de Silent, si se reconoce la Gun
-  por los RemoteEvents directos `fire` y `showBeam`, se instala una autorización
-  de hasta 0,2 s para lecturas nativas no atribuibles de **ese Mouse** y sólo
-  `Hit`/`Target`; exige `checkcaller() == false`, objetivo de la partida y checks
-  vigentes. Se cancela al apagar, cambiar la partida o expirar. El toggle
-  **Mouse Compatibility**, OFF por defecto en una instalación nueva, permite
-  además esas lecturas fuera de la acción para el disparo normal. Puede afectar
-  otros scripts locales cuyo origen no se pueda identificar; un caller ajeno
-  identificado se deja intacto. El resto de rayos, MouseCast y Knife continúa
-  requiriendo procedencia del arma. Si `hookmetamethod` falla, se puede intentar
-  `getrawmetatable`/`setreadonly`/`isreadonly`, preservando el estado previo y
-  sin desplazar un hook posterior. Esto es **un adaptador**, no prueba de que la
-  Gun real use Mouse.Hit/Target ni de que un tiro cause daño. Si no se observa
-  redirección, el status lo informa; un intento podría haberse disparado sin
-  redirigir antes del diagnóstico. El `capabilities.json` del recolector anota la
-  presencia de `checkcaller` y de las tres APIs raw, no su funcionamiento real.
-- **Opciones propias de Silent v145:** `Target Part` elige Head o Body
-  (UpperTorso/Torso/root), sin cambiar Auto Shoot, Knife Throw automático,
-  TriggerBot ni Auto Win. La intercepción manual de Knife que ya pertenecía a
-  Silent también comparte su selección. `Aim FOV`, OFF por defecto, y
-  `Aim FOV Radius` filtran oponentes en pantalla
-  por píxeles: cursor en PC (`WorldToScreenPoint`) o centro del viewport en
-  móvil, con revalidación antes de redirigir. No cambia el FOV de cámara ni
-  dibuja un círculo; Wall Check, Team Check, alcance y partido siguen activos.
-  Se usan las tarjetas existentes, sin duplicar ESP, Hitbox, Auto Farm ni Rejoin.
-- **Móvil:** `PlayerGui.Main.MobileKnifeGui.ThrowMode` es el BoolValue que
-  alterna `MobileKnifeLocalScript`; se usa temporalmente y se restaura sin
-  sobreescribir un cambio posterior. Desktop conserva el input derecho nativo.
-  No se encontró el script principal de cuchillo; cómo consume ese BoolValue y
-  la precisión real del throw siguen pendientes en móvil y PC. No usar el
-  supuesto atributo `Tool.ForceThrow` como si estuviera probado.
-- **Auto Win en Utilities (v143):** intenta combate automáticamente con la
-  Gun o el Knife nativos sólo durante un juego activo con `Phase == "InGame"`,
-  `RoundStarted == true` y `CurrentRoundEnded ~= true`. No garantiza victoria;
-  el servidor decide daño y resultado. Las filas `Time Spent` miden sólo tiempo
-  activo de este Auto Win, `Duels Won` cuenta sólo `MatchResults` finales con
-  `Outcome == "Win"` mientras está encendido y deduplica por ID incluso si un
-  evento repetido llega más tarde, y `Current Game mode` usa FFA o PlaceId 1v1/
-  2v2 cuando hay GameId (en otro caso `Lobby / unknown`). Las cifras son de esta
-  sesión cliente, no son un total persistente del servidor. Se conservan los
-  contadores antiguos del core por compatibilidad: `WinNotification` mide
-  **rondas**, `SetDead` no es derrota de equipo, `Killed` y `DestroyBody` se
-  deduplican, y Draw/Tie/Forfeit/Cancelled no cuentan como victoria final.
-- **Safe Place:** toggle opcional bajo Auto Win; requiere GameId, MatchId,
-  `Phase == "InGame"`, personaje vivo y `Workspace.ActiveMaps[MatchId]`. Calcula
-  el techo desde las partes cercanas, rechaza alturas excesivas y usa un
-  `BodyPosition` temporal en vez de una plataforma que intercepte raycasts.
-  Limpia en OFF, muerte, respawn, fin y cambio de match/mapa; sólo restaura el
-  CFrame si siguen siendo el mismo personaje, GameId, MatchId y mapa activo.
-  Es una sujeción local: física del servidor/anticheat, streaming y techos pueden
-  impedirla o bloquear el tiro. Revisar el status; no presentarla como invulnerabilidad.
-- **Revancha:** toggle opcional; `ClientGlobals.GameValues:TryIndex({"Rematch"})`
-  alimenta el mismo estado nativo que el botón del juego. Sólo si `active` es
-  true, no está cancelada y no se ha votado, envía una vez el remoto observado
-  `RE/Rematch/RematchVote:FireServer()` sin argumentos. Se rearma al terminar el
-  estado activo; los demás jugadores deben votar. No usa `RematchTeleport` ni
-  `queue_again`. Status distingue espera, cancelación, voto enviado y falta de
-  estado/remoto; una llamada saliente no demuestra que el servidor aceptó.
-- **Auto Farm en Utilities:** `EventsController` clona modelos numerados en
-  `Workspace.SpawnablesClient`, luego añade tag `Pumpkin` y conecta
-  `PrimaryPart` invisible `Touch.Touched` al personaje local. Auto Farm espera
-  GameId, escucha el tag, contacta esa PrimaryPart y restaura el CFrame guardado
-  sólo si el personaje/match siguen vigentes. `PumpkinCurrency_*` en `FallDecoration` y
-  lobby es decoración, no moneda. El antiguo camino `Farms/PumpCoins` conserva
-  protección por podium y equipo, pero no se observó en el nuevo log; también
-  necesita prueba live. Ni teletransporte ni `firetouchinterest` prueban saldo
-  o aceptación por el servidor; no usar `Coins collected` como confirmación.
-- `tools/test_x2duels.py` cubre MatchState/equipos/resultados, módulos separados,
-  arbitraje y cancelación tras `Heartbeat`, mensajes Wall/rango/arma, migración
-  del antiguo Legit, filtros y límites de MouseCast, pings ajenos, hooks ajenos
-  OFF/ON y un boot táctil que coloca el botón y lo pulsa con `InputBegan/Ended`.
-  Conserva Safe Place, Rematch, Hitbox, ThrowMode, farm y fingerprint. El
-  recolector `tools/X2DuelsDecompiler.luau` tiene ahora `snapshotWeapons()` para
-  decompilar Tools presentes *después* de inyección/respawn; sus capturas y APIs
-  tienen prueba simulada en `tools/test_x2duels_decompiler.py`. Son mocks: **no
-  prueban daño, precisión, física, votos aceptados ni recompensas**. Falta
-  capturar el Gun/Knife completo y probar 1v1 + 2v2 en PC/móvil.
+- PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
+  Fuentes activas: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y sus dos
+  perfiles. La sección de menú existente se llama `MVSD`; `Render/TeamESP.lua`
+  fue eliminado y no debe volver como módulo independiente.
+- Hay exactamente cinco tarjetas X2: **Auto Farm** y **Auto Win** en
+  **Utilities**, **Silent AIM**, **Kill Aura** en Combat y **Hitbox** en
+  Exploits. El único TriggerBot es el universal, adaptado al core X2 para
+  Gun/Knife; no se debe crear otra tarjeta.
+- Silent AIM contiene las secciones Gun y Knife. Auto Shoot sigue el master y
+  muestra Legit/Silent. Knife Throw es una subopción de Silent AIM: intenta la
+  activación nativa en cada tick, sin slider ni temporizador de intervalo;
+  solo espera el windup de la propia animación. Desktop usa mouse2 + Activate;
+  touch usa y restaura ForceThrow. No se inventan argumentos de ThrowEvent.
+- La keybind de Silent AIM se registra con `state.bindFeatureActivationKey` y
+  ejecuta la acción nativa solamente con `Sender = Button`; nunca cambia el
+  toggle maestro. Con `Sender = CFrame`, Auto Shoot/native activation funciona
+  sin esperar ese botón. La activación comparte ancestry del objetivo, Team
+  Check, Wall Check y raycast antes de disparar.
+- Auto Win es únicamente una tarjeta de estado de sesión: `Wins`, `Time Played`,
+  `Kills` y `Loses`. No tiene ráfagas, selección automática de combate, límite
+  de cinco victorias, Play Again, clicks GUI ni `RematchTeleport`. Las wins
+  provienen de resultados/notificaciones locales explícitos; kills usan el
+  tercer Player observado en `Combat/DestroyBody`; las muertes locales se
+  deduplican por ronda para Loses. Son contadores cliente observados, no una
+  garantía de autoridad del servidor.
+- Auto Farm busca monedas Halloween `PumpkinCurrency_*` y `Farms/PumpCoins`
+  dinámicos por contacto nativo. Los podios resuelven `StringValue`/`ObjectValue`
+  contra jugadores y equipos; sin una entrada enemiga no se farmean granjas y
+  ningún modelo cercano se considera propio por proximidad. El teleport usa el
+  CFrame de la moneda invisible con TouchTransmitter, no el root del dueño.
+  Reintenta y restaura el CFrame al apagarse. Un intento no se cuenta como
+  moneda confirmada. El RBXL guarda algunas partes con `CanTouch=false`; la
+  recolección real sigue pendiente y no se inventan argumentos para
+  `CollectEventSpawnable`.
+- Team Check falla cerrado: usa los atributos MVS `Team`/`Game`, rechaza FFA,
+  lobby y lados desconocidos como objetivos y no cae al `Team` común de Roblox.
+  El mismo resolver alimenta combate y RoleColors del ESP universal
+  (PlayerESP/Chams/Nametags): enemigo rojo, aliado verde y desconocido ámbar.
+  Unknown sigue fail-closed para combate con Team Check activo; desactivarlo
+  debe ser explícito. No convertir una pantalla ambigua en una victoria.
+- El log `2026-10-24T16_49_55Z.log` de TestingStuff capturó `DefaultGun` (`fire`
+  sin argumentos y `showBeam` con dos Vector3 + Handle), llamadas nativas de
+  `DefaultKnife`, `PlayerRespawned` y `SetDead`. La réplica de Beam/PlaySound no
+  demuestra daño ni kills. No se inventan argumentos ni se reintroducen
+  GUID/remotes históricos; la activación sigue siendo la ruta nativa del Tool.
+  El extractor independiente `tools/X2DuelsDecompiler.luau` vuelca fuentes,
+  bytecode, inventario con parents y argumentos entrantes/salientes; su guía es
+  `tools/X2DuelsDecompiler.md`.
+- `python3 tools/test_x2duels.py` ejecuta 67 reglas, contratos y un boot real
+  del bundle con cinco tarjetas, keybind de acción sin toggle, CFrame sin
+  botón, ambos caminos nativos del cuchillo, estadísticas deduplicadas,
+  contacto/restauración de pumpkin, podios y granjas amigas/enemigas con
+  PumpCoins invisibles y cleanup. `python3 tools/test_x2duels_decompiler.py`
+  valida el extractor con DataModel simulado. Todo ello es validación offline,
+  no aceptación del servidor ni precisión live.
 
 ## 1B. Cómo construir un game sin mezclar responsabilidades
 
@@ -632,17 +333,17 @@ necesita y qué puede restaurar al apagarse**.
 | **Silent AIM** | Seleccionar un objetivo y dirigir/activar ataques a distancia o proyectiles. | Shoot, Gun, Knife Throw, flechas, cohetes, lanzamientos y otras variantes de proyectil. | Swings cuerpo a cuerpo, un segundo selector de equipos, una tarjeta independiente por cada skin. |
 | **Kill Aura** | Ataques melee de corto alcance contra objetivos válidos. | Knife, machete, sword, bat, axe y cualquier arma cuyo ataque sea un swing/contacto cercano. | Redirección de proyectiles, Silent Ray, predicción de una trayectoria o un ThrowEvent inventado. |
 | **TriggerBot** | Reaccionar a una condición ya visible/validada y activar la acción correspondiente. | Disparar cuando el objetivo está bajo el crosshair, usando el adaptador nativo compartido. | Otro Silent AIM, otro bucle de selección o una copia del módulo de cada juego. |
-| **Utilities** | Automatizaciones y datos útiles; el usuario puede pedir una secuencia de combate coordinada. | Auto Farm, Auto Win (también combate automático en X2/MM2), Auto Get Gun, Auto Unbox. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
+| **Utilities** | Automatizaciones y datos útiles que no son el control directo de un ataque o del cuerpo. | Auto Farm, Auto Win de solo estado, Auto Get Gun, Auto Unbox y ayudas de farmeo. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
 | **Exploits** | Cambiar una propiedad o aprovechar directamente una mecánica explotable del juego. | Hitbox y manipulaciones equivalentes que tengan una razón técnica clara. | Auto Farm/Auto Win por costumbre, o cualquier tarjeta que no se pueda explicar técnicamente. |
 | **Render** | Mostrar información sin decidir el combate. | PlayerESP, Chams, Nametags, HP, Arrows, Coin ESP. | Un TeamESP paralelo con otra resolución de equipos. |
 | **Movement/Blatant** | Movimiento, desplazamiento o acciones físicas directas. | Speed, Fly, Teleport, Fling cuando corresponda al juego. | Estadísticas de farm o lógica de proyectiles. |
 
 La distinción importante es **proyectil/distancia frente a melee**, no el nombre
-del arma. En X2 el usuario pidió expresamente que Knife Throw y Auto Shoot sean
-tarjetas independientes de Silent AIM; comparten el adaptador y un arbiter de
-armas, pero no sus checks ni su toggle. El swing cercano sigue en Kill Aura.
-En otros juegos no se impone esa excepción sin revisar sus requisitos. No se
-crean loops que equipen armas distintas simultáneamente.
+del arma. Un cuchillo que se lanza pertenece a Silent AIM; el mismo cuchillo
+cuando hace un swing cercano pertenece a Kill Aura. Si una herramienta tiene
+ambos ataques, comparte el descubrimiento/equipado del Tool, pero separa las
+dos rutas y sus opciones. No se duplican tarjetas ni se crean dos loops que
+equipan y activan el mismo arma a la vez.
 
 **Kill Aura no es un cajón para cualquier ataque automático.** Su alcance,
 animación, swing, hit window y recovery pertenecen a la mecánica melee del
@@ -751,10 +452,10 @@ La API común es `createUniversalFeature` con `parent`, `registry` y
 actualizable; no sustituye una explicación de seguridad ni un contador que no
 existe.
 
-- Por defecto una familia de ataques puede tener **una tarjeta principal** y
-  secciones por arma o mecánica. La petición explícita del usuario prevalece:
-  en X2 `Auto Shoot` y `Knife Throw` son tarjetas independientes de Silent AIM
-  con un adaptador y arbitraje compartidos (§1A).
+- Una familia de ataques tiene **una tarjeta principal** y secciones por arma o
+  mecánica. Por ejemplo, Silent AIM puede contener `Gun` y `Knife`; no hace
+  falta una tarjeta `Knife Throw` separada si ambas comparten objetivo y
+  sender.
 - Las opciones dependen del mecanismo real. Un arma con carga puede necesitar
   `Charge`; una con timing de impacto puede necesitar `Hit Time`; una con
   críticos puede exponer `Critical` y sus ventanas `Miss/Bad/Okay` **solo si
@@ -768,9 +469,10 @@ existe.
   vez. Para una acción como Shoot se usa `state.bindFeatureActivationKey` y se
   asigna el callback de disparar; el callback no debe llamar al toggle maestro.
   El valor `Unknown` deja la tecla sin asignar hasta que el usuario la capture.
-- Si un módulo ofrece senders `Button`/`CFrame`, sus nombres deben corresponder
-  al comportamiento y probarse en desktop/touch. X2 v143 ya no expone ese sender:
-  su tecla de acción dispara en ambos modos, sin toggle adicional.
+- Un sender `Button` espera la acción del botón/tecla. Un sender `CFrame` debe
+  poder trabajar por su ruta automática sin esperar ese botón. Esta diferencia
+  se prueba tanto en desktop como en touch, sin inyectar clicks para simular
+  combate si existe una activación nativa.
 - El estado de una opción hija no debe encender accidentalmente otra tarjeta.
   Si una subopción requiere el master, se documenta y se comprueba el gate; al
   apagar el master se cancela la acción pendiente pero se conserva la
@@ -795,7 +497,7 @@ similitud con otro juego.
   hipótesis medible, no una promesa de rewind del servidor.
 - En un throw se conserva la animación y el momento de release cuando forman
   parte de la mecánica. Desktop y móvil pueden tener entradas distintas (por
-  ejemplo, mouse2 frente al BoolValue ThrowMode del cliente móvil); ambas deben restaurar
+  ejemplo, mouse2 frente a un atributo como ForceThrow); ambas deben restaurar
   su estado al cancelar.
 - La evidencia se clasifica como **observado**, **intentado**, **confirmado por
   un evento local** o **desconocido**. Beam, PlaySound, DestroyBody, una
@@ -839,10 +541,12 @@ hace lento el módulo, o borrar un tiempo que la mecánica necesita para funcion
   cancelación sin timers ni atributos colgados. La prueba no debe afirmar una
   tasa de aceptación del servidor que el harness no puede observar.
 
-**Estado v143:** X2 Auto Shoot y Knife Throw ofrecen `Cooldown` independiente,
-por defecto 0; el de Knife empieza tras el windup/release nativo, no en paralelo.
-Ambos son límites de intentos del cliente, no prometen frecuencia aceptada por
-el servidor. Los delays medidos en MM2 no se copian a X2 como evidencia.
+**Estado actual frente a regla de diseño:** X2 v119 intenta Knife Throw en cada
+tick y no expone un slider; si se añade el control de delay descrito aquí, debe
+llamarse Cooldown y empezar en 0. Los delays documentados en MM2 son rutas
+históricas/medidas de ese juego, no una autorización para reintroducir un
+`Throw interval` genérico. Esta distinción queda escrita para que el próximo
+cambio no confunda documentación con una funcionalidad ya implementada.
 
 ### Cuando el arma tiene críticos o calidad de impacto
 
@@ -862,7 +566,7 @@ Por ejemplo, `Hit Time` puede controlar cuándo se intenta el impacto, mientras
 resultados que sólo se muestran. No se deben convertir todos en toggles ni
 prometer críticos si sólo se observó una animación. En Kill Aura estos detalles
 pertenecen a las opciones del melee correspondiente; en Knife Throw pertenecen
-a la tarjeta o sección del proyectil que el usuario haya pedido para ese juego.
+a la sección del proyectil dentro de Silent AIM.
 
 ## 1D. Auto Farm, Auto Win y estadísticas útiles
 
@@ -894,10 +598,12 @@ cada uno su propia copia. Hay que separar **sesión**, **ronda** y **total
 persistente**, y documentar cuándo se reinicia cada uno. Las cifras del cliente
 no se presentan como saldo autoritativo del servidor.
 
-**Estado actual:** X2 v143 Auto Win muestra `Time Spent`, `Duels Won` y
-`Current Game mode` con las definiciones de §1A. Auto Farm sigue reportando
-principalmente búsqueda y contacto. No escribir `Coins collected` como si
-estuviera confirmado sin una señal real de recompensa del servidor.
+**Estado actual:** X2 v119 ya tiene en Auto Win `Wins`, `Time Played`, `Kills`
+y `Loses`; Auto Farm todavía reporta principalmente su estado de búsqueda y
+contacto. Por tanto, `Coins collected`, `Time spent` y demás campos anteriores
+son el contrato para completar/compartir el farm, no una afirmación de que ya
+estén implementados en X2. No se debe escribir en una prueba o en el status
+«collected» hasta tener una confirmación real.
 
 ### Qué significa Utilities en este proyecto
 
@@ -925,9 +631,9 @@ Antes de dar un módulo por terminado, el próximo agente debe poder responder
    enemigo por conveniencia.
 3. **Core:** existe un solo adaptador de objetivo/ataque y los módulos lo usan;
    no hay dos árboles Shoot ni dos loops equipando el mismo Tool.
-4. **Silent AIM:** la keybind de acción no cambia el toggle maestro; las
-   tarjetas de proyectiles siguen la ubicación solicitada para ese juego. En X2
-   Auto Shoot y Knife Throw son independientes, con arbitraje compartido.
+4. **Silent AIM:** todos los ataques a distancia/proyectiles están bajo su
+   tarjeta, con secciones por arma y sus propias opciones; la keybind de acción
+   no cambia el toggle maestro.
 5. **Kill Aura:** sólo contiene melee; reach, swing, hit time, críticos,
    miss/bad/okay, recovery y cooldown se modelan únicamente si la mecánica los
    tiene y se pueden observar.
@@ -998,9 +704,9 @@ en el análisis o en el resumen del cambio:
    función necesita master propio. Un contador puede ser status; Team/Role ESP
    puede ser provider; un click puntual puede ser botón dentro de Teleport.
 5. **Si es una opción, ¿depende del master?** Define si Speed OFF detiene Auto
-   Sprint y qué preferencias se conservan. En X2 Silent AIM OFF no desactiva
-   Auto Shoot ni Knife Throw. «Independiente» significa independencia real con
-   coordinación del recurso compartido.
+   Sprint, si Silent AIM OFF cancela Auto Shoot, y si se conserva la preferencia
+   al volver a activar. «Independiente» debe significar independencia real, no
+   dos funciones modificando lo mismo sin coordinación.
 6. **¿Cuál es su mecanismo dominante?** Proyectil → Silent AIM; melee → Kill
    Aura; locomoción → Speed/Jump/Fly/Teleport según la acción; información →
    Render/status; farm o resultado automatizado → Utilities; alteración directa
@@ -1038,7 +744,7 @@ sin explicar cómo se evita la doble escritura.
 | **Auto Sprint / Sprint hold / sprint trail** | Opción o acción dentro de **Speed**. | Comparte Humanoid, velocidad, estados sentado/aire y restores. El archivo Sprint puede existir, pero no otra tarjeta ni otro escritor de velocidad. |
 | **Auto Jump / Bunny Hop** | Si mantiene el movimiento de Speed, dentro de **Speed**; si cambia impulso/altura de salto, dentro de **Jump**. | El nombre «jump» no basta: decide si el efecto principal es continuar desplazándose o modificar el salto. Si ambas lecturas cambian el comportamiento, preguntar. |
 | **Click Teleport / teleport a un marker** | Acción u opción de **Teleport**, reutilizando destinos y coordenadas. | No crear otro sistema de CFrame ni otra lista de puntos. Markers puede seguir siendo Render si su responsabilidad es mostrar/guardar marcadores. |
-| **Auto Shoot / Gun Throw / Knife Throw** | Evaluar secciones de **Silent AIM** o tarjetas separadas si el usuario lo solicita. | En X2 Auto Shoot/Knife Throw son tarjetas separadas por petición expresa; comparten adaptador y arbitraje, no checks ni master. |
+| **Auto Shoot / Gun Throw / Knife Throw** | Secciones del arma dentro de **Silent AIM**. | Comparten target, Team/Wall Check y sender. La activación puede ser llamada por otra utilidad, pero no se duplica el solver. |
 | **Melee Reach / Hit Time / Critical** | Opciones del arma bajo **Kill Aura**. | Reach como distancia de selección no es Hitbox. Si se cambia el tamaño real de una parte, eso sí pertenece a Hitbox/Exploits y necesita restore. |
 | **Team ESP / Role ESP / Enemy ESP** | **PlayerESP** y los providers compartidos de equipos/roles. | No crear otro scanner, otra paleta incompatible ni otra lista de jugadores. Chams/Nametags pueden ser tarjetas distintas si renderizan objetos distintos, pero usan la misma relación. |
 | **Coin ESP / Gun ESP / otro pickup ESP** | Provider del **ItemESP/CoinESP** que ya descubre esa familia. | Añadir una fuente o un estilo no exige repetir el escaneo completo. Si el mecanismo visual es realmente distinto, se justifica antes de crear otra tarjeta. |
@@ -1267,6 +973,44 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
      a ~0.1 s sin eco en la sesión v105; cada petición tras un eco fue respondida.
      En v109 el gate se hizo visible: mensaje con tiempo restante, contador en
      `state.mm2ShotGateHold` y acción "Shot gate status".
+- **v139.2 — el rayo no muere donde termina nuestro endpoint.** Es una línea
+  larga: un error de 1 stud no se pierde, entra en el cuerpo de detrás. Por eso
+  el punto de mira se elige por lo que hay **detrás** (`describeRayBeyond`,
+  sondeo 200 studs) y se salta el tiro si un cuerpo vivo está a menos de
+  **35 studs** detrás de todas las opciones del cuerpo. Un **muro** detrás no es
+  peligro (el rayo muere ahí). Si tocas el umbral, mide antes: 35 studs ≈ 2× la
+  distancia típica de enfrentamiento y el coste de pasarse es *no disparar*.
+  Para saber si un fallo fue balística o geometría, el evento del disparo trae
+  `missReason` (`hit` / `other-player` / `geometry` / `no-hit-part`) y el
+  resumen de sesión `gunMisses` + `gunMissReasons`.
+- **v139.4 — el error en studs es una estimación, y ahora es una estimación
+  honesta.** `Prediction.getHistory` **debe** devolver `aimOffset`/`aimPart`:
+  `measureEndpointErrorStuds` y `measureLeadErrorSeconds` lo suman al root
+  interpolado, así que sin él se comparaba root contra un aim de torso (1,5
+  studs de error falso) y ese número alimenta `noteLeadError` →
+  `leadUncertainty` → el barrido adaptativo de Silent. El tope de 36 puntos de
+  `captureTargetHistory` **decima**, no corta por el lado viejo: la última
+  muestra tiene que llegar siempre. Alcance declarado en `predictionError.scope`:
+  estimación del cliente, no medida del servidor.
+- **v139.4 — "raw" no significa "sin paredes".** `useRaw` (continuous+silent, o
+  `shootRaw`) sólo puede saltarse el guardián del **origen cercano**; la línea
+  del cañón se valida en todos los modos. Si añades un modo que dispare sin pasar
+  por `safeToSend`, está mal.
+- **v139.3 — punto blanco.** El cuerpo del asesino está excluido de todos los
+  rayos; a 0,8 studs el disparo sale. Lo que sí rompía era el **lead**: a 6
+  studs o menos, 17 studs/s × 0,1 s = 1,7 studs, y si viene **hacia ti** el punto
+  predicho cae detrás del cañón → `"Invalid shot geometry"`. Regla: dentro de
+  `POINT_BLANK_STUDS = 6` se apunta al `HumanoidRootPart` **sin lead** y se
+  autoriza desde el cañón real (`PointBlank`). Y ojo con las constantes
+  compartidas: `bystanderBlocks` (sólo personajes, **las paredes no lo frenan**)
+  y `corridorSafePoint` (primera pared y para) son preguntas distintas con
+  alcances distintos: `BODY_OVERSHOOT_STUDS = 12` frente a
+  `CORRIDOR_PROBE_STUDS = 200`. Un cadáver no es un inocente.
+- **El cuchillo va a ~96 studs/s** (`ThrowSpeed`, clamped 24–300): a 30 studs el
+  vuelo es 0,31 s y el objetivo recorre 5,2 studs; el lead del cuchillo importa
+  3× más que el de la pistola. `throwKnife` **no** dispara hasta que el tool
+  está colgado del personaje (`EquipTool` es ida y vuelta; el remote no). El
+  bucle cachea la puntería 1/15 s; el disparo siempre re-resuelve desde el mango.
 - **Cómo leer una calibración sin engañarte:**
   - `hitTarget` (el rayo tocó el personaje) **≠ kill**. Una sesión tuvo 20
     hitTarget y 0 kills con la salud siempre a 100 (lobby/intermisión/blancos
@@ -1412,12 +1156,9 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; v145 pasó las 64 suites,
-el boot simulado y las auditorías, que no sustituyen una prueba en juego:
+Nada de esto está probado en partida real todavía; está probado en estático,
+boot y las 61 suites:
 
-- v141: consumo real al inyectar y en reposo/con funciones activas, Auto Farm y
-  Auto Win en lobby/countdown, detección de monedas y Silent AIM/Knife PC/móvil;
-  reiniciar Roblox antes de comparar para retirar hooks anteriores de v140.
 - Shoot v106–v112: si con el muzzle real desaparecen los impactos en geometría
   del mapa (`Smooth Block Model`), y si el gate de 1.5 s recupera los ecos.
 - La sesión limpia que falta: bot en el suelo de verdad (Difícil/Auto/Saltos
@@ -1428,18 +1169,12 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
 - Fling por network ownership (v107) y Anti Fling (v108) contra un fling real.
 - Disguise v101: packs del objetivo / por ID, en servidor.
 - Salidas del standalone (Step 1 nil-parent, Step 4 origen) y TargetBot v5.
-- X2 v145: el usuario reportó que v143 no funcionaba en celular. Probar en vivo
-  1v1 y 2v2 con nombre de executor, botón Silent PC/móvil y disparo nativo, con
-  Mouse Compatibility OFF/ON, Head/Body y Aim FOV OFF/ON. Verificar si `fire` y
-  `showBeam` están en la Gun, `checkcaller` y hooks funcionan y qué status aparece;
-  comprobar si el arma usa MouseCast/Mouse/rayos y si `getcallingscript` o el
-  stack la identifican. Un tiro intentado o lectura redirigida no prueban daño.
-  Con el arma ya disponible ejecutar `snapshotWeapons()` del recolector y esperar
-  el mensaje de fin: el dump inicial puede preceder al arma. Revisar también
-  independientes Auto Shoot/Knife, ThrowMode, Safe Place (física/techo/restore),
-  Revancha, checks, FFA, Hitbox, TriggerBot, hooks ajenos, Pumpkin/saldo y
-  resultados finales. Un `MatchResults` atrasado previamente no visto de otra
-  partida aún podría limpiar Safe Place actual; IDs no están correlacionados.
+- X2 v119: comprobar en vivo Gun/Knife, precisión del throw, el ESP universal
+  con TeamRed/TeamBlue y FFA, la keybind Button y Sender CFrame en móvil, y la
+  actualización de Wins/Time Played/Kills/Loses. El harness cubre activaciones,
+  estados, colores, contadores y contactos; no prueba daño, monedas ni
+  aceptación del servidor. La siguiente evidencia debe obtenerse con
+  `tools/X2DuelsDecompiler.luau`.
 
 ## 10. Cómo trabajar con este usuario
 
@@ -1457,7 +1192,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-29 · v155, Gun y Knife CFrame experimentales sin
-hooks; Delta móvil, BAC, aceptación del servidor y daño real siguen sin validar.
+*Última actualización: 2026-10-29 · v156, base migrada completa y modos MM2
+experimentales; los resultados reales y la aceptación del servidor no verificados.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

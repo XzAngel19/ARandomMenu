@@ -107,29 +107,6 @@ lighting.ClockTime=18;bright.loop(0);assert(lighting.ClockTime==14)
 lighting.Brightness=4;bright:Toggle(false)
 assert(lighting.ClockTime==18 and lighting.Brightness==4 and lighting.GlobalShadows and lighting.Ambient=='original' and lighting.FogEnd==900)
 Fullbright.destroy();pass('Fullbright: optional time, fast cycle, immediate suboption restoration, external updates and owned-only cleanup')
-local antiTick, feature, character='placeholder',nil,{}
-local humanoid={Health=100,FloorMaterial='Ground',WalkSpeed=16,MoveDirection=Vector3.zero}
-root={Position=Vector3.new(0,10,0),CFrame='safe',AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero}
-local flingActive=false
-host.Players={GetPlayers=function() return {{Character={FindFirstChild=function() return {Position=Vector3.new(1,10,0)} end}}} end}
-host.workspace.FallenPartsDestroyHeight=-500
-host.TaskManager={Connect=function(_,fn) antiTick=fn;return {Disconnect=function() antiTick=nil end} end}
-host.featureConnections={}
-host.disconnectFeatureConnection=function(name) local c=host.featureConnections[name];if c then c:Disconnect();host.featureConnections[name]=nil end end
-host.getCharacterParts=function() return character,humanoid,root end
-host.createUniversalFeature=function(name,_,_,fn) feature={fn=fn,options={}};return feature end
-host.addToggleOption=function(_,name,_,fn) feature.options[name]=fn end
-host.addNumberOption=function(_,name,_,_,_,fn) feature.options[name]=fn end
-host.addFeatureTooltip=function() end
-context.services={activity={isActive=function() return flingActive end}}
-'''+ '\nlocal AntiVoid='+source('src/games/universal/Movement/AntiVoid.lua')+r'''
-AntiVoid.init(context);feature.fn(true);root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.AssemblyLinearVelocity.X==999)
-root.AssemblyLinearVelocity=Vector3.zero;feature.options['Anti fling'](true);antiTick(.02)
-root.CFrame='unsafe';root.AssemblyLinearVelocity=Vector3.new(999,0,0);humanoid.FloorMaterial='Air';antiTick(.02)
-assert(root.AssemblyLinearVelocity.Magnitude==0 and root.CFrame=='unsafe')
-character={};root.CFrame='new character';root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.CFrame=='new character','no stale rescue across respawn')
-flingActive=true;root.AssemblyLinearVelocity=Vector3.new(999,0,0);antiTick(.02);assert(root.AssemblyLinearVelocity.X==999,'do not fight explicit MM2 Fling')
-feature.fn(false);assert(antiTick,'anti fling owns its tick with Anti Void off');feature.options['Anti fling'](false);assert(not antiTick);AntiVoid.destroy();pass('Anti Void: anti-fling independent of Anti Void, no rollback, respawn ownership, explicit-fling exclusion and shared cleanup')
 '''
 # Exercise the actual notification helper, not a copy of the filter.
 disguise=(ROOT/'src/games/universal/Other/Disguise.lua').read_text()
@@ -140,7 +117,11 @@ notify('Could not load avatar');assert(activeCard.count==1)
 pass('Disguise: routine readiness is status; actual failures remain notifications')
 '''
 manifest=(ROOT/'src/libraries/Manifest.lua').read_text()
-assert 'universal/Blatant/Fling.lua' not in manifest and 'AntiFling.lua' not in manifest and 'TimeChanger.lua' not in manifest
+assert 'universal/Blatant/Fling.lua' in manifest, 'Fling is a universal card since v138.3'
+assert 'MM2/Blatant/Fling.lua' not in manifest, 'the MM2 Fling card is gone'
+assert 'TimeChanger.lua' not in manifest
+assert 'universal/Movement/AntiFling.lua' in manifest, 'Anti Fling is its own card since v138.2'
+assert 'universal/Blatant/WalkFling.lua' in manifest, 'Walk Fling is its own card since v138.2'
 cards_source=(ROOT/'src/guis/Wurst/Code/Cards.lua').read_text()
 assert 'notify(name .. " ran")' not in cards_source and 'notify(name .. (requestedState' not in cards_source
 assert 'notify("Could not toggle "' in cards_source and 'notify("Could not run "' in cards_source

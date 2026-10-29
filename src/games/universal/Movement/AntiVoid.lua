@@ -1,184 +1,217 @@
--- Rescue actual void falls, not ordinary jumps or long drops onto lower ground.
-local Module={Name="AntiVoid",PlaceId=0,Initialized=false}
-local cleanup
-function Module.init(context)
-    local host, world = context.host, context.host.workspace
-    local antiFling, voidGuard, platform, platformY, token = false, false, nil, nil, 0
-    local previousCharacter, previousRoot, previousVelocity, overSpeedTicks
-    -- Fixed physical thresholds, measured against what the body itself can
-    -- produce. There is no user-facing velocity limit any more: a single
-    -- number has to be retuned per game and per speed setting, and when it
-    -- was wrong the protection silently did nothing.
-    local SPIN_LIMIT = 20      -- rad/s: a driven spin, not a turn
-    local SPEED_FACTOR = 2.2   -- multiples of the character's walking speed
-    local JUMP_FACTOR = 3      -- multiples of JumpPower no jump can reach
-    local function removePlatform()
-        token+=1
-        if platform then platform:Destroy();platform=nil;platformY=nil end
-    end
-    local function active(name)
-        return context.services.activity and context.services.activity.isActive(name)
-    end
-    local function module(name)
-        return context.framework and context.framework.GetModule and context.framework:GetModule(name)
-    end
-    local function motionLimits(humanoid)
-        local walk=math.max(16,humanoid.WalkSpeed or 16)
-        local feature=module("Speed")
-        if feature and feature.Enabled and feature.Options and feature.Options.Speed then
-            walk=math.max(walk,feature.Options.Speed.Value)
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+}
+
+local Module = {
+    Name = "AntiVoid",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local workspace: any = host.workspace or game:GetService("Workspace")
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addNumberOption: any = host.addNumberOption
+    local addToggleOption: any = host.addToggleOption
+    local addFeatureTooltip: any = host.addFeatureTooltip
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+
+    local enabled: boolean = false
+    local distance: number = 4
+    local visible: boolean = false
+    local platform: BasePart? = nil
+    local platformY: number? = nil
+    local antiVoidFeature: any = nil
+
+    local PLATFORM_NAME: string = "Wurst_AntiVoidPlatform"
+    local PLATFORM_SIZE: Vector3 = Vector3.new(14, 1, 14)
+
+    local function characterRoot(): (Model?, Humanoid?, BasePart?)
+        local ok: boolean, character, humanoid, root = pcall(function(): any
+            return host.getCharacterParts()
+        end)
+        if not ok then
+            character, humanoid, root = nil, nil, nil
         end
-        return walk,math.max(50,humanoid.JumpPower or 50)
+        if not character or not root then
+            return character, humanoid, root
+        end
+        return character, humanoid, root
     end
-    -- Infinite Yield antifling: disable CanCollide and zero velocity on all other
-    -- players' character parts before the physics solver runs (RunService.Stepped)
-    -- so another player's spin/walkfling can never transfer momentum on contact.
-    local function stripOtherPlayerCollisions()
-        if not antiFling or active("fling") then return end
-        local playersService = host.Players
-        if not playersService or type(playersService.GetPlayers) ~= "function" then return end
-        local okList, list = pcall(playersService.GetPlayers, playersService)
-        if not okList or type(list) ~= "table" then return end
-        for _, otherPlayer in ipairs(list) do
-            if otherPlayer ~= host.LocalPlayer then
-                local otherChar = otherPlayer and otherPlayer.Character
-                if otherChar and type(otherChar.GetDescendants) == "function" then
-                    local okDesc, descendants = pcall(otherChar.GetDescendants, otherChar)
-                    if okDesc and type(descendants) == "table" then
-                        for _, inst in ipairs(descendants) do
-                            if type(inst) == "table" or typeof(inst) == "Instance" then
-                                local isPart = false
-                                pcall(function()
-                                    if type(inst.IsA) == "function" then
-                                        isPart = inst:IsA("BasePart")
-                                    end
-                                end)
-                                if isPart then
-                                    pcall(function()
-                                        inst.CanCollide = false
-                                        inst.AssemblyLinearVelocity = Vector3.zero
-                                        inst.AssemblyAngularVelocity = Vector3.zero
-                                    end)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    local function step(dt)
-        local character,humanoid,root=host.getCharacterParts()
-        if not humanoid or not root or humanoid.Health<=0 then return end
-        local velocity=root.AssemblyLinearVelocity
-        local planar=Vector3.new(velocity.X,0,velocity.Z)
-        if previousCharacter~=character or previousRoot~=root then
-            previousCharacter,previousRoot,previousVelocity,overSpeedTicks=character,root,velocity,0
-            removePlatform()
-        end
-        local fly=module("Fly")
-        local busy=root.Anchored or humanoid.Sit or humanoid.SeatPart or active("fling")
-            or active("ghost") or active("teleport") or fly and fly.Enabled
-        if antiFling and not busy then
-            stripOtherPlayerCollisions()
-            -- Everything is compared to the body's own mobility, so a fast
-            -- walk or an intentional Speed never reads as a fling, and no
-            -- slider has to match it.
-            local walk,jump=motionLimits(humanoid)
-            local limit=walk*SPEED_FACTOR
-            local spin=root.AssemblyAngularVelocity.Magnitude>SPIN_LIMIT
-            local rise=velocity.Y>jump*JUMP_FACTOR
-            local delta=previousVelocity and (velocity-previousVelocity) or Vector3.zero
-            local kick=math.max(planar.Magnitude,Vector3.new(delta.X,0,delta.Z).Magnitude)
-            if planar.Magnitude>limit then overSpeedTicks=(overSpeedTicks or 0)+1 else overSpeedTicks=0 end
-            -- Four signatures, any one of them enough: a driven spin, a rise
-            -- no jump can produce, a single-frame planar spike, and a shove
-            -- held over several frames (contact flings accelerate instead of
-            -- jumping in one tick). Proximity is not one of them: a fling
-            -- sent through a tool or a remote arrives from any distance, and
-            -- the old 10-stud gate is why it used to need several attempts.
-            if spin or rise or kick>limit or overSpeedTicks>=2 then
-                -- Remove the impulse, never the position or the input.
-                local desired=humanoid.MoveDirection*walk
-                local lifted=rise or spin
-                root.AssemblyLinearVelocity=Vector3.new(desired.X,
-                    lifted and math.min(velocity.Y,jump) or velocity.Y,desired.Z)
-                root.AssemblyAngularVelocity=Vector3.zero
-                velocity=root.AssemblyLinearVelocity
-                planar=Vector3.new(desired.X,0,desired.Z)
-                overSpeedTicks=0
-            end
-        end
-        previousVelocity=velocity
-        if not voidGuard then return end
+
+    local function destroyPlatform(): ()
         if platform then
-            if platformY then
-                pcall(function()
-                    platform.CFrame=CFrame.new(root.Position.X,platformY,root.Position.Z)
-                end)
-                if root.Position.Y<=platformY+6 and velocity.Y<0 then
-                    root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
-                    root.AssemblyAngularVelocity=Vector3.zero
-                end
-            end
+            pcall(function(): ()
+                platform:Destroy()
+            end)
+        end
+        platform = nil
+        platformY = nil
+    end
+
+    local function destroyHeightFloor(): number
+        local destroyHeight: any = nil
+        pcall(function(): ()
+            destroyHeight = workspace.FallenPartsDestroyHeight
+        end)
+        if type(destroyHeight) ~= "number"
+            or destroyHeight ~= destroyHeight
+            or math.abs(destroyHeight) == math.huge
+            or math.abs(destroyHeight) > 1e6 then
+            return -500
+        end
+        return destroyHeight
+    end
+
+    local function createPlatform(): BasePart?
+        local part: any = Instance.new("Part")
+        if not part then
+            return nil
+        end
+        pcall(function(): ()
+            part.Name = PLATFORM_NAME
+            part.Anchored = true
+            part.CanCollide = true
+            -- Client-only: `CanQuery`/`CanTouch` keep the platform out of every
+            -- raycast and touch event, so it never breaks detection or triggers
+            -- in-game traps. Transparency 1 means nobody sees it, including us,
+            -- unless "Show platform" is on.
+            part.CanQuery = false
+            part.CanTouch = false
+            part.CastShadow = false
+            part.Locked = true
+            part.Transparency = if visible then 0.4 else 1
+            part.Size = PLATFORM_SIZE
+            part.TopSurface = Enum.SurfaceType.Smooth
+            part.BottomSurface = Enum.SurfaceType.Smooth
+        end)
+        local ok: boolean = pcall(function(): ()
+            part.Parent = workspace
+        end)
+        if not ok then
+            pcall(function(): ()
+                part:Destroy()
+            end)
+            return nil
+        end
+        return part
+    end
+
+    -- The platform follows the character horizontally and sits `distance` studs
+    -- under the feet. While the character is falling it stops descending where
+    -- it is, so the fall actually lands on it instead of dragging it down.
+    local function step(): ()
+        if not enabled then
             return
         end
-        if humanoid.FloorMaterial~=Enum.Material.Air or velocity.Y>=0 then return end
-        local destroyHeight=world.FallenPartsDestroyHeight
-        if destroyHeight~=destroyHeight or math.abs(destroyHeight)==math.huge then destroyHeight=-500 end
-        local distance=root.Position.Y-destroyHeight
-        if distance>math.max(35,-velocity.Y*0.25) then return end
-        local params=RaycastParams.new()
-        params.FilterType=Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances={character}
-        params.RespectCanCollide=true;params.IgnoreWater=false
-        if root.CollisionGroup then params.CollisionGroup=root.CollisionGroup end
-        -- A real floor before the destroy layer means this is a legitimate drop.
-        local hit=world:Raycast(root.Position,Vector3.new(0,-math.clamp(distance,1,15000),0),params)
-        if hit and hit.Position.Y>destroyHeight+2 then return end
-        local rescue=Instance.new("Part")
-        rescue.Name="Wurst_AntiVoidPlatform";rescue.Anchored=true;rescue.CanCollide=true
-        rescue.CanQuery=false;rescue.CanTouch=false;rescue.CastShadow=false
-        rescue.Size=Vector3.new(256,4,256);rescue.Transparency=1
-        platformY=root.Position.Y-4.25
-        rescue.CFrame=CFrame.new(root.Position-Vector3.new(0,4.25,0));rescue.Parent=world
-        platform=rescue
-        root.AssemblyLinearVelocity=Vector3.new(velocity.X,0,velocity.Z)
-        root.AssemblyAngularVelocity=Vector3.zero
-        token+=1;local mine=token
-        task.delay(3,function() if mine==token then removePlatform() end end)
-    end
-    -- Anti fling owns its connection: it protects with Anti Void off, and
-    -- Anti Void keeps the rescue without ever turning the damping off.
-    local function refresh()
-        host.disconnectFeatureConnection("AntiVoid")
-        host.disconnectFeatureConnection("AntiVoidStepped")
-        if not antiFling then overSpeedTicks=0 end
-        if voidGuard or antiFling then
-            host.featureConnections.AntiVoid=host.TaskManager:Connect(step)
+        local _character: Model?, humanoid: Humanoid?, root: BasePart? = characterRoot()
+        if not root or not root.Parent or (humanoid and humanoid.Health <= 0) then
+            destroyPlatform()
+            return
         end
-        if antiFling and host.RunService and host.RunService.Stepped then
-            host.featureConnections.AntiVoidStepped=host.RunService.Stepped:Connect(stripOtherPlayerCollisions)
+        if not platform or not platform.Parent then
+            destroyPlatform()
+            platform = createPlatform()
+            platformY = nil
+            if not platform then
+                return
+            end
         end
+
+        local position: Vector3 = root.Position
+        local desiredY: number = position.Y - distance
+        if platformY == nil
+            or desiredY > platformY
+            or position.Y - platformY > distance + 12
+            or platformY - position.Y > 200 then
+            platformY = desiredY
+        end
+        local floor: number = destroyHeightFloor()
+        local y: number = math.max(platformY or desiredY, floor + 8)
+
+        pcall(function(): ()
+            platform.Size = PLATFORM_SIZE
+            platform.CFrame = CFrame.new(position.X, y, position.Z)
+            platform.Transparency = if visible then 0.4 else 1
+        end)
     end
-    local feature=host.createUniversalFeature("Anti Void","Rescue imminent falls into the destroy layer, not normal drops",4,function(enabled)
-        voidGuard=enabled
-        removePlatform()
-        previousCharacter,previousRoot,previousVelocity,overSpeedTicks=nil,nil,nil,0
-        refresh()
-    end,{categoryName="Utilities"})
-    host.addToggleOption(feature,"Anti fling",false,function(value) antiFling=value;refresh() end,
-        "Cancels a fling on contact: strips other players' collisions on Stepped and damps spin/launch impulses. Works without Anti Void.")
-    host.addFeatureTooltip(feature,"Only rescues a falling character near the void when there is no collidable floor below. Anti fling never teleports you back and keeps your input.")
-    cleanup=function()
-        host.disconnectFeatureConnection("AntiVoid")
-        host.disconnectFeatureConnection("AntiVoidStepped")
-        removePlatform()
+
+    local function toggleAntiVoid(state: boolean): ()
+        enabled = state == true
+        disconnectFeatureConnection("AntiVoid")
+        if not enabled then
+            destroyPlatform()
+            return
+        end
+        host.featureConnections.AntiVoid = host.TaskManager:Connect(step)
+        step()
     end
-    Module.Initialized=true;return feature
+
+    antiVoidFeature = createUniversalFeature(
+        "Anti Void",
+        "Invisible platform kept under the character so the void never catches you",
+        1,
+        toggleAntiVoid,
+        {categoryName = "Utilities"}
+    )
+    addNumberOption(
+        antiVoidFeature,
+        "Distance",
+        distance,
+        1,
+        40,
+        function(value: number): ()
+            distance = math.clamp(tonumber(value) or 4, 1, 40)
+            platformY = nil
+        end,
+        "Studs below your feet where the platform waits.",
+        1
+    )
+    addToggleOption(
+        antiVoidFeature,
+        "Show platform",
+        false,
+        function(value: boolean): ()
+            visible = value == true
+            if platform then
+                pcall(function(): ()
+                    platform.Transparency = if visible then 0.4 else 1
+                end)
+            end
+        end,
+        "Draw the platform so you can confirm where it is. Only you can see it either way."
+    )
+    addFeatureTooltip(
+        antiVoidFeature,
+        "Creates one anchored part, locally only (the server never knows), a few "
+            .. "studs below the character. It ignores every raycast and touch, so it "
+            .. "cannot trip traps or detection, and it stops descending while you fall "
+            .. "so you land on it instead of falling into the void."
+    )
+
+    activeCleanup = function(): ()
+        enabled = false
+        if disconnectFeatureConnection then
+            disconnectFeatureConnection("AntiVoid")
+        end
+        destroyPlatform()
+    end
+    Module.Initialized = true
+    return antiVoidFeature
 end
-function Module.destroy()
-    if cleanup then cleanup() end
-    cleanup=nil;Module.Initialized=false
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+    end
+    activeCleanup = nil
+    Module.Initialized = false
 end
+
 return Module

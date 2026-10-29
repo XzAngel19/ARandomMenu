@@ -18,7 +18,6 @@ function Module.init(runtime: any): any
 
     local findDroppedGun: any = core.findDroppedGun
     local findMM2Map: any = core.findMM2Map
-    local findLobbyReferencePart: any = core.findLobbyReferencePart
     local findMurderer: any = core.findMurderer
     local findSheriff: any = core.findSheriff
     local getGunOriginCFrame: any = core.getGunOriginCFrame
@@ -125,6 +124,37 @@ function Module.init(runtime: any): any
         return character, humanoid, root
     end
 
+    local function findLobbyReferencePart(): BasePart?
+        for _, child: Instance in ipairs(workspace:GetChildren()) do
+            local lowerName: string = string.lower(tostring(child.Name))
+            local isLobby: boolean = string.find(lowerName, "lobby", 1, true) ~= nil
+                or child:FindFirstChild("VotePads", true) ~= nil
+                or child:FindFirstChild("VotePad1", true) ~= nil
+                or child:FindFirstChild("VoteIcons", true) ~= nil
+            if isLobby then
+                local votePads: Instance? = child:FindFirstChild("VotePads", true)
+                if votePads then
+                    local padPart: BasePart? = votePads:FindFirstChildWhichIsA("BasePart", true)
+                    if padPart then
+                        return padPart
+                    end
+                end
+                local spawns: Instance? = child:FindFirstChild("Spawns", true)
+                if spawns then
+                    local spawnPart: BasePart? = spawns:FindFirstChildWhichIsA("BasePart", true)
+                    if spawnPart then
+                        return spawnPart
+                    end
+                end
+                local anyPart: BasePart? = child:FindFirstChildWhichIsA("BasePart", true)
+                if anyPart then
+                    return anyPart
+                end
+            end
+        end
+        return nil
+    end
+
     -- True as soon as the player's character is on the MM2 map, even during
     -- the pre-round countdown before roles or weapons have been handed out.
     local function isCharacterOnMap(root: BasePart): (boolean, Vector3?)
@@ -141,8 +171,7 @@ function Module.init(runtime: any): any
         if not okRoot or typeof(rootPos) ~= "Vector3" then
             return false, nil
         end
-        local lobbyPart: BasePart? = type(findLobbyReferencePart) == "function"
-            and findLobbyReferencePart() or nil
+        local lobbyPart: BasePart? = findLobbyReferencePart()
         if lobbyPart then
             local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
                 return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude
@@ -524,7 +553,12 @@ function Module.init(runtime: any): any
             return false
         end
         if type(state.mm2FireSilentShot) == "function" then
-            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer)
+            -- v139.4: pass our options so the shared path keeps the wall check.
+            local okSilent: boolean, res: any = pcall(state.mm2FireSilentShot, murderer, {
+                continuous = true,
+                quiet = true,
+                wallCheck = true,
+            })
             if okSilent and res == true then
                 return true
             end
@@ -556,6 +590,20 @@ function Module.init(runtime: any): any
         local startPoint: Vector3 = endpoint + Vector3.new(0, 1.5, -2.5)
         local shotOrigin: CFrame = CFrame.lookAt(startPoint, endpoint)
         local shotEnd: CFrame = CFrame.new(endpoint)
+        -- v139.4: the hand-rolled fallback must not shoot through a wall.
+        if type(isWeaponPathClear) == "function" then
+            local okClear: boolean, allowed: any = pcall(
+                isWeaponPathClear,
+                originCF.Position,
+                endpoint,
+                targetChar,
+                nil,
+                {ignoreTarget = true}
+            )
+            if not okClear or allowed ~= true then
+                return false
+            end
+        end
         pcall(function(): ()
             (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
         end)

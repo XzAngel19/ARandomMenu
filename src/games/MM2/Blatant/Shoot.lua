@@ -27,6 +27,7 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
+    local describeRayBeyond: any = core.describeRayBeyond
     local mm2Settings: any = core.mm2Settings
     local validateGunShot: any = core.validateGunShot
 
@@ -97,7 +98,27 @@ function Module.init(runtime: any): any
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
-    local OVERSHOOT_PROBE_STUDS: number = 12
+    -- v139.3: two different questions, two different reaches. They shared one
+    -- constant in v139.2, and raising it to 200 studs for the corridor also
+    -- widened the silent construction's bystander probe -- which asks a
+    -- PLAYER-ONLY raycast that ignores walls. The v139.2 session then refused
+    -- shots ("Another player blocks the silent shot") with an innocent 100+
+    -- studs behind the murderer and a wall in between.
+    --
+    --  * how far behind the authored segment a body still takes the ray:
+    --    the v139.1 value the silent construction was validated with.
+    local BODY_OVERSHOOT_STUDS: number = 12
+    --  * how far behind the AIM the corridor looks for a body (see
+    --    corridorSafePoint): a long reach, because this probe stops at the
+    --    first thing it meets, so a wall ends the question.
+    local CORRIDOR_PROBE_STUDS: number = 200
+    -- A body this close behind the aim is a point-blank innocent hit waiting
+    -- to happen: even a 1-stud prediction error walks into it.
+    local INNOCENT_DANGER_STUDS: number = 35
+    -- Inside this distance the murderer's body covers the whole line of sight,
+    -- so the lead stops helping and can even invert the shot: 17 studs/s of
+    -- charge times a 0.1 s lead is 1.7 studs, more than the gap itself.
+    local POINT_BLANK_STUDS: number = 6
     local MAX_AUTO_LEAD_SAFE: number = 0.6
 
     -- The Top/fallback origin lift belongs to the target's rig, not to a
@@ -117,8 +138,15 @@ function Module.init(runtime: any): any
     end
 
     -- The server ray is not clipped at our authored endpoint, so the
-    -- bystander check covers the segment plus an overshoot probe: a
-    -- body just behind the target would take the continuing ray.
+    -- bystander check covers the segment plus a short overshoot probe: a body
+    -- just behind the target would take the continuing ray.
+    --
+    -- v139.3: the overshoot probe now stops at the FIRST thing it meets and a
+    -- wall ends it. The old version asked bystanderOnSegment, whose raycast is
+    -- filtered to player characters only, so walls were transparent to it: an
+    -- innocent in the next room sat on the ray and every silent shot was
+    -- refused. "What is behind the aim" is corridorSafePoint's job; this check
+    -- only needs to know whether the continuing ray immediately finds a body.
     local function bystanderBlocks(
         target: Player,
         startPoint: Vector3,
@@ -131,8 +159,27 @@ function Module.init(runtime: any): any
         if segment.Magnitude <= 0.05 then
             return false
         end
+        if type(describeRayBeyond) == "function" then
+            local exclude: {Instance} = {target}
+            local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
+            if ownCharacter then
+                table.insert(exclude, ownCharacter)
+            end
+            local ok: boolean, hit: any = pcall(
+                describeRayBeyond,
+                startPoint,
+                endPoint,
+                BODY_OVERSHOOT_STUDS,
+                exclude
+            )
+            if ok then
+                return type(hit) == "table"
+                    and hit.isBody == true
+                    and hit.player ~= target
+            end
+        end
         local beyond: Vector3 = endPoint
-            + segment.Unit * OVERSHOOT_PROBE_STUDS
+            + segment.Unit * BODY_OVERSHOOT_STUDS
         return bystanderOnSegment(target, endPoint, beyond)
     end
 
@@ -268,6 +315,23 @@ function Module.init(runtime: any): any
         wallCheck: boolean?,
     }
 
+    -- Experimental policy, not a measured hit-rate optimization: prefer the
+    -- ordinary muzzle path nearby/stationary and the CFrame path for a fast,
+    -- distant target. It selects exactly one path per request; a refusal is
+    -- not evidence that a second packet would be safe or accepted.
+    local function chooseExperimentalGunMode(target: Player?, origin: Vector3?): string
+        local character: Model? = target and target.Character
+        local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not root or not origin then return "Bullet" end
+        local speed: number = 0
+        pcall(function(): ()
+            local velocity: Vector3 = root.AssemblyLinearVelocity
+            speed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+        end)
+        if (root.Position - origin).Magnitude >= 30 and speed >= 8 then return "CFrame" end
+        return "Bullet"
+    end
+
     -- How long an authored request owns the gun. The feedback queue resolves
     -- or expires a shot at 1.6-1.8 s; keeping the window inside that bound
     -- means the gate never outlives the pending state it reads.
@@ -276,13 +340,97 @@ function Module.init(runtime: any): any
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
+    -- v139.2: pick the aim point whose line is safest BEYOND the target.
+    -- A shot that misses by a stud continues into whoever is standing behind;
+    -- the aim is therefore chosen by what is behind it, not only by what is in
+    -- front. Candidates stay inside the body (torso, root, head, outer limbs),
+    -- so the target itself remains just as hittable.
+    local function corridorSafePoint(
+        target: Player,
+        info: any,
+        origin: Vector3,
+        preferred: Vector3
+    ): (Vector3, boolean, string)
+        local character: Model? = target.Character
+        if not character or not describeRayBeyond then
+            return preferred, true, "none"
+        end
+        local exclude: {Instance} = {}
+        local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
+        if ownCharacter then
+            table.insert(exclude, ownCharacter)
+        end
+        table.insert(exclude, character)
+        local function blocker(point: Vector3): any
+            local hit: any = describeRayBeyond(
+                origin,
+                point,
+                CORRIDOR_PROBE_STUDS,
+                exclude
+            )
+            if not hit or not hit.isBody then
+                return nil
+            end
+            if hit.player == target then
+                return nil
+            end
+            -- A rig with no player behind it is only a danger while alive: a
+            -- corpse is not an innocent, and refusing on one costs the shot.
+            if hit.player == nil and (tonumber(hit.health) or 0) <= 0 then
+                return nil
+            end
+            return hit
+        end
+        -- The preferred point is the predictor's own aim; it is only touched
+        -- when something alive is close behind it.
+        local near: any = blocker(preferred)
+        if not near or near.gap >= INNOCENT_DANGER_STUDS then
+            return preferred, true, "torso"
+        end
+        -- Same lead the preferred point got, applied to each body part, so the
+        -- candidates differ in where the ray goes, not in how far ahead it is.
+        local lead: Vector3 = info.endpoint - (info.capturedPosition or info.endpoint)
+        local bestPoint: Vector3 = preferred
+        local bestGap: number = near.gap
+        local bestName: string = "torso"
+        for _, partName: string in ipairs({
+            "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+            "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
+            "Right Arm", "Left Arm", "Right Leg", "Left Leg",
+        }) do
+            local part: Instance? = character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                local candidate: Vector3 = (part :: BasePart).Position + lead
+                local hit: any = blocker(candidate)
+                if not hit or hit.gap >= INNOCENT_DANGER_STUDS then
+                    -- This line is safe enough: aim there instead.
+                    return candidate, true, partName
+                end
+                if hit.gap > bestGap then
+                    bestGap = hit.gap
+                    bestPoint = candidate
+                    bestName = partName
+                end
+            end
+        end
+        -- Every line has a body within the danger radius: the safest one is
+        -- still a coin flip, so the shot is skipped (MM2 takes the gun away
+        -- from a sheriff who shoots an innocent).
+        return bestPoint, false, bestName
+    end
+
     local function fireGunAtTarget(
         target: Player?,
         options: FireOptions?
     ): boolean
         local opts: FireOptions = options or {}
         local silent: boolean = mm2Settings.silentAim
-        if opts.silent ~= nil then
+        local experimental: boolean = opts.silent == nil and mm2Settings.experimentalAim == true
+        if experimental then
+            local localCharacter: Model? = LocalPlayer and LocalPlayer.Character
+            local ownRoot: BasePart? = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+            silent = chooseExperimentalGunMode(target, ownRoot and ownRoot.Position) == "CFrame"
+        elseif opts.silent ~= nil then
             silent = opts.silent
         end
         local quiet: boolean = opts.quiet == true
@@ -365,6 +513,65 @@ function Module.init(runtime: any): any
             end
         end
 
+        -- v139.3: at arm's length the lead stops helping and starts hurting.
+        -- The murderer charging at the measured 17 studs/s covers 1.7 studs in
+        -- a 0.1 s lead: from 1.5 studs away the predicted point lands BEHIND
+        -- our own muzzle, the authored segment inverts, and the shot is
+        -- refused as "Invalid shot geometry" (reproduced in
+        -- tools/test_gun_pointblank.py). Inside POINT_BLANK_STUDS the body
+        -- covers the whole sight, so aim at it and drop the lead.
+        if origin and info then
+            local root: BasePart? = nil
+            pcall(function(): ()
+                root = targetCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+            end)
+            local aimVector: Vector3 = info.endpoint - origin.Position
+            local toRoot: Vector3 = root and (root.Position - origin.Position) or aimVector
+            local inverted: boolean = aimVector.Magnitude < 0.05
+                or aimVector:Dot(toRoot) <= 0
+            if root and (inverted or aimVector.Magnitude < POINT_BLANK_STUDS) then
+                info.capturedPosition = root.Position
+                info.endpoint = root.Position
+                info.aimPartChosen = "HumanoidRootPart"
+                info.pointBlank = true
+            end
+        end
+
+        -- v139.2: choose the aim point by what is BEHIND it. The server ray
+        -- does not stop at our endpoint, so a stud of prediction error turns
+        -- into a body behind the murderer. Measured in the v139.1 session:
+        -- 2 of 10 confirmed shots hit another player's root, 3 stopped on
+        -- map geometry beyond the aim.
+        if mm2Settings.avoidInnocents ~= false and origin and info then
+            local chosen: Vector3, safe: boolean, picked: string =
+                corridorSafePoint(target, info, origin.Position, info.endpoint)
+            if not safe then
+                -- Recorded like any other refusal, with its own reason, so a
+                -- session can answer "how many shots did this cost me?".
+                if trajectoryCalibration
+                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                    pcall(trajectoryCalibration.noteBlockedShot,
+                        trajectoryCalibration, {
+                            reason = "corridor",
+                            name = "body behind aim",
+                            distance = 0,
+                            skipped = false,
+                            canCollide = false,
+                        })
+                end
+                return reject("An innocent is right behind the murderer.")
+            end
+            if chosen ~= info.endpoint then
+                local shift: Vector3 = chosen - info.endpoint
+                info.capturedPosition = (info.capturedPosition or info.endpoint)
+                    + shift
+                info.endpoint = chosen
+                info.aimPartChosen = picked
+            else
+                info.aimPartChosen = picked
+            end
+        end
+
         local rejectMessages: {[string]: string} = {
             ["no body"] = "The murderer has no usable body to aim at.",
             ["no samples"] = "The murderer has no fresh motion samples yet.",
@@ -408,9 +615,33 @@ function Module.init(runtime: any): any
                 or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
                 return reject("The gun is disabled or reloading.")
             end
-            -- Raw mode or continuous CFrame: skip the WeaponService wall
-            -- filter entirely so CFrame Silent AIM fires immediately.
+            -- v139.4: "raw" means "do not wait for the near-target origin
+            -- guard", NOT "do not look at walls". Raw/continuous Silent AIM
+            -- used to return true here, so Auto Shoot and Auto Win (which call
+            -- this path with continuous=true) fired with no wall check at all:
+            -- the only geometry they ever saw was the near-target pass, never
+            -- the gun's own line. A wall between the gun and the murderer is a
+            -- wall in every mode, so the muzzle line is always checked.
             if useRaw then
+                if not useWallCheck or not isWeaponPathClear then
+                    return true
+                end
+                local rawMuzzle: Vector3 = (muzzle or shotOrigin).Position
+                local rawClear, rawBlocker = isWeaponPathClear(
+                    rawMuzzle,
+                    shotEnd.Position,
+                    targetCharacter,
+                    nil,
+                    {ignoreTarget = true}
+                )
+                if not rawClear then
+                    if type(rawBlocker) == "table" and trajectoryCalibration
+                        and type(trajectoryCalibration.noteBlockedShot) == "function" then
+                        pcall(trajectoryCalibration.noteBlockedShot,
+                            trajectoryCalibration, rawBlocker)
+                    end
+                    return reject("A wall or another body blocks the shot.")
+                end
                 return true
             end
             -- The muzzle is the character's gun, never the authored origin.
@@ -444,10 +675,33 @@ function Module.init(runtime: any): any
         -- checked above; no speculative 3.1-second local lockout.
         if silent then
 
+            -- The configured construction, not a hardcoded one: the setting was
+            -- only ever read for telemetry, so a saved "Top" or "Front" was
+            -- silently replaced by "Through" on every shot.
             local variant: string = "Through"
+            local configuredSpawn: any = mm2Settings.silentSpawn
+            if configuredSpawn == "Top" or configuredSpawn == "Behind"
+                or configuredSpawn == "Front" then
+                variant = configuredSpawn
+            end
             local shotOrigin: CFrame?, shotEnd: CFrame?, offset: number,
-                sweep: number, resolvedVariant: string =
-                buildSilentShot(target, info, origin, variant)
+                sweep: number, resolvedVariant: string
+            if info.pointBlank and origin then
+                -- v139.3: at arm's length the "Through" construction pierces
+                -- along the target's own motion, and a murderer charging at us
+                -- makes that direction point at US: the authored segment ended
+                -- on our own muzzle (muzzle 0.5, endpoint 0.5) and every shot
+                -- was refused as "Invalid shot geometry". Point blank needs no
+                -- trick at all -- the muzzle already sees the body.
+                shotOrigin = origin
+                shotEnd = CFrame.new(info.endpoint)
+                offset = 0
+                sweep = 0
+                resolvedVariant = "PointBlank"
+            else
+                shotOrigin, shotEnd, offset, sweep, resolvedVariant =
+                    buildSilentShot(target, info, origin, variant)
+            end
             if not shotOrigin or not shotEnd then
                 if continuous and target.Character then
                     local tr: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
@@ -514,7 +768,9 @@ function Module.init(runtime: any): any
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
                     leadCorrection = info.leadCorrection},
             })
-            if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
+            if not quiet and ShootFeature then
+                ShootFeature:SetStatus(experimental and "Experimental · CFrame · request sent" or nil)
+            end
             if not continuous then
                 macroUnequip(gun)
             end
@@ -555,7 +811,9 @@ function Module.init(runtime: any): any
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
                 leadCorrection = info.leadCorrection},
         })
-        if not quiet and ShootFeature then ShootFeature:SetStatus(nil) end
+        if not quiet and ShootFeature then
+            ShootFeature:SetStatus(experimental and "Experimental · Bullet · request sent" or nil)
+        end
         if not continuous then
             macroUnequip(gun)
         end
@@ -696,8 +954,8 @@ function Module.init(runtime: any): any
         configData.values["MM2.Shoot.Aimmethod"] = configData.values["MM2.Shoot.Mode"]
     end
     ShootFeature = createUniversalFeature(
-        "Gun Aimbot Buttons",
-        "Button/key-triggered Gun aimbot (Gun.Shoot:FireServer) with independent Bullet and CFrame mode settings. Pressing the assigned key or mobile button equips the Gun and fires at the Murderer.",
+        "Gun Aimbot",
+        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
         4,
         toggleShootMurderer,
         {
@@ -707,16 +965,21 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    ShootFeature.searchText ..= " gun aimbot buttons shoot"
     state.mm2SilentAimFeature = ShootFeature
-    state.mm2GunAimbotButtonsFeature = ShootFeature
-    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win, Silent AIM) fire
+    state.mm2ChooseExperimentalAim = chooseExperimentalGunMode
+    -- Other modules (Auto Shoot, Auto Farm's full-bag grab, Auto Win) fire
     -- through the exact Gun Aimbot path instead of hand-rolling their own shot.
-    state.mm2FireSilentShot = function(target: Player?): boolean
+    -- v139.4: the shared constructor accepts the caller's options. Without
+    -- them Auto Shoot's own WallCheck setting was dropped on the floor: the
+    -- wrapper hardcoded continuous=true, which is exactly the mode that used
+    -- to skip the geometry check.
+    state.mm2FireSilentShot = function(target: Player?, shotOpts: any): boolean
+        local opts: any = type(shotOpts) == "table" and shotOpts or {}
         return fireGunAtTarget(target, {
             silent = true,
-            quiet = true,
-            continuous = true,
+            quiet = opts.quiet ~= false,
+            continuous = opts.continuous ~= false,
+            wallCheck = opts.wallCheck,
         })
     end
     state.mm2FireGunShot = function(target: Player?, shotOpts: any): boolean
@@ -728,183 +991,114 @@ function Module.init(runtime: any): any
             continuous = opts.continuous ~= false,
         })
     end
-    state.mm2BuildSilentShot = buildSilentShot
-    state.mm2PlanGunEndpoint = planGunEndpoint
-    state.mm2CanDirectHitTarget = canDirectHitTarget
     -- One card, two weapons: the heading keeps the gun rows together and the
     -- knife module opens its own section further down.
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
-
-    local modeConfigs: {[string]: {wallCheck: boolean, macro: boolean, targetMode: string, targetName: string}} = {
-        Bullet = {
-            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.WallCheck"] ~= nil
-                then configData.states["MM2.Shoot.Bullet.WallCheck"] == true
-                else (mm2Settings.shootWallCheck ~= false),
-            macro = if type(configData) == "table" and configData.states["MM2.Shoot.Bullet.Macro"] ~= nil
-                then configData.states["MM2.Shoot.Bullet.Macro"] == true
-                else false,
-            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.Target"]) == "string"
-                then configData.values["MM2.Shoot.Bullet.Target"]
-                else (mm2Settings.shootMode or "Murder"),
-            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.Bullet.TargetPlayer"]) == "string"
-                then configData.values["MM2.Shoot.Bullet.TargetPlayer"]
-                else (mm2Settings.shootTarget or ""),
-        },
-        CFrame = {
-            wallCheck = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.WallCheck"] ~= nil
-                then configData.states["MM2.Shoot.CFrame.WallCheck"] == true
-                else false,
-            macro = if type(configData) == "table" and configData.states["MM2.Shoot.CFrame.Macro"] ~= nil
-                then configData.states["MM2.Shoot.CFrame.Macro"] == true
-                else false,
-            targetMode = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.Target"]) == "string"
-                then configData.values["MM2.Shoot.CFrame.Target"]
-                else "Murder",
-            targetName = if type(configData) == "table" and type(configData.values["MM2.Shoot.CFrame.TargetPlayer"]) == "string"
-                then configData.values["MM2.Shoot.CFrame.TargetPlayer"]
-                else "",
-        },
-    }
-
-    local activeModeKey: string = (mm2Settings.silentAim and "CFrame") or "Bullet"
-    local switchingShootMode: boolean = false
-
+    local states: any = type(configData) == "table" and configData.states or {}
+    local values: any = type(configData) == "table" and configData.values or {}
+    local initialMode: string = values["MM2.Shoot.Aimmethod"] or (mm2Settings.silentAim and "CFrame" or "Bullet")
+    if initialMode ~= "CFrame" and initialMode ~= "Experimental" then initialMode = "Bullet" end
+    local function modeConfig(mode: string): any
+        local prefix: string = "MM2.Shoot." .. mode .. "."
+        local legacy: boolean = mode == initialMode
+        local wall: any = states[prefix .. "WallCheck"]
+        local macro: any = states[prefix .. "Macro"]
+        local avoid: any = states[prefix .. "AvoidInnocents"]
+        local targetMode: any = values[prefix .. "Target"]
+        local targetName: any = values[prefix .. "TargetPlayer"]
+        if legacy then
+            if wall == nil then wall = states["MM2.Shoot.WallCheck"] end
+            if macro == nil then macro = states["MM2.Shoot.Macro"] end
+            if avoid == nil then avoid = states["MM2.Shoot.Avoidinnocents"] end
+            if targetMode == nil then targetMode = values["MM2.Shoot.Target"] end
+            if targetName == nil then targetName = values["MM2.Shoot.Targetplayer"] end
+        end
+        return {wallCheck = wall == nil or wall == true, macro = macro == true,
+            avoid = avoid == nil or avoid == true, targetMode = targetMode == "Custom" and "Custom" or "Murder",
+            targetName = type(targetName) == "string" and targetName or ""}
+    end
+    local modeConfigs: any = {Bullet = modeConfig("Bullet"), CFrame = modeConfig("CFrame"),
+        Experimental = modeConfig("Experimental")}
+    local activeModeKey: string = initialMode
+    local switching: boolean = false
+    local optionsReady: boolean = false
     local ShootTargetBox
     local function refreshShootOptions(): ()
         if ShootTargetBox then
-            setOptionVisible(
-                ShootFeature,
-                ShootTargetBox.Parent :: GuiObject,
-                mm2Settings.shootMode == "Custom"
-            )
+            setOptionVisible(ShootFeature, ShootTargetBox.Parent :: GuiObject, mm2Settings.shootMode == "Custom")
         end
     end
-
-    local function syncShootModeControls(): ()
-        local cfg = modeConfigs[activeModeKey] or modeConfigs.Bullet
-        switchingShootMode = true
-        mm2Settings.shootWallCheck = cfg.wallCheck == true
-        shootMacro = cfg.macro == true
-        mm2Settings.shootMode = cfg.targetMode
-        mm2Settings.shootTarget = cfg.targetName
+    local function syncMode(): ()
+        local cfg: any = modeConfigs[activeModeKey] or modeConfigs.Bullet
+        switching = true
+        mm2Settings.shootWallCheck, mm2Settings.avoidInnocents = cfg.wallCheck, cfg.avoid
+        shootMacro, mm2Settings.shootMode, mm2Settings.shootTarget = cfg.macro, cfg.targetMode, cfg.targetName
         if state and type(state.toggleControls) == "table" then
-            local wc = state.toggleControls["MM2.Shoot.WallCheck"]
-            if wc and type(wc.setChecked) == "function" then
-                pcall(wc.setChecked, cfg.wallCheck == true)
-            end
-            local mc = state.toggleControls["MM2.Shoot.Macro"]
-            if mc and type(mc.setChecked) == "function" then
-                pcall(mc.setChecked, cfg.macro == true)
+            for _, item: any in ipairs({{"WallCheck", cfg.wallCheck}, {"Avoidinnocents", cfg.avoid}, {"Macro", cfg.macro}}) do
+                local control: any = state.toggleControls["MM2.Shoot." .. item[1]]
+                if control and control.setChecked then pcall(control.setChecked, item[2]) end
             end
         end
         if state and type(state.valueControls) == "table" then
-            local tc = state.valueControls["MM2.Shoot.Target"]
-            if tc and type(tc.apply) == "function" then
-                pcall(tc.apply, cfg.targetMode)
-            end
-            local tp = state.valueControls["MM2.Shoot.Targetplayer"]
-            if tp and type(tp.apply) == "function" then
-                pcall(tp.apply, cfg.targetName)
-            end
+            local target: any = state.valueControls["MM2.Shoot.Target"]
+            local name: any = state.valueControls["MM2.Shoot.Targetplayer"]
+            if target and target.apply then pcall(target.apply, cfg.targetMode) end
+            if name and name.apply then pcall(name.apply, cfg.targetName) end
         end
-        switchingShootMode = false
+        switching = false
         refreshShootOptions()
     end
-
-    addCycleOption(
-        ShootFeature,
-        "Aim method",
-        {"Bullet", "CFrame"},
-        mm2Settings.silentAim and 2 or 1,
+    addCycleOption(ShootFeature, "Aim method", {"Bullet", "CFrame", "Experimental"},
+        mm2Settings.experimentalAim and 3 or (mm2Settings.silentAim and 2 or 1),
         function(value: string): ()
-            local isCF: boolean = value == "CFrame" or value == "Silent AIM"
-            mm2Settings.silentAim = isCF
-            activeModeKey = isCF and "CFrame" or "Bullet"
-            syncShootModeControls()
+            activeModeKey = value == "Experimental" and "Experimental" or (value == "CFrame" and "CFrame" or "Bullet")
+            mm2Settings.experimentalAim = activeModeKey == "Experimental"
+            mm2Settings.silentAim = activeModeKey == "CFrame"
+            syncMode()
         end,
-        "Bullet fires from the gun barrel; CFrame spoofs the Gun.Shoot origin CFrame beside the target. "
-            .. "Each mode maintains independent WallCheck and Macro settings."
-    )
-    addCycleOption(
-        ShootFeature,
-        "Target",
-        {"Murder", "Custom"},
-        (modeConfigs[activeModeKey].targetMode == "Custom") and 2 or 1,
-        function(value: string): ()
-            mm2Settings.shootMode = value
-            if not switchingShootMode then
-                local cfg = modeConfigs[activeModeKey]
-                if cfg then
-                    cfg.targetMode = value
-                end
-                if type(configData) == "table" and type(configData.values) == "table" then
-                    configData.values["MM2.Shoot." .. activeModeKey .. ".Target"] = value
-                end
-            end
-            refreshShootOptions()
+        "Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode.")
+    addCycleOption(ShootFeature, "Target", {"Murder", "Custom"}, 1, function(value: string): ()
+        mm2Settings.shootMode = value
+        if optionsReady and not switching then
+            modeConfigs[activeModeKey].targetMode = value
+            values["MM2.Shoot." .. activeModeKey .. ".Target"] = value
         end
-    )
-
+        refreshShootOptions()
+    end)
     if state.bindFeatureActivationKey then
-        state.bindFeatureActivationKey(
-            ShootFeature,
-            mm2Settings.shootKey,
-            triggerManualShot
-        )
+        state.bindFeatureActivationKey(ShootFeature, mm2Settings.shootKey, triggerManualShot)
     end
-    addToggleOption(
-        ShootFeature,
-        "WallCheck",
-        modeConfigs[activeModeKey].wallCheck,
-        function(value: boolean): ()
-            local on: boolean = value == true
-            mm2Settings.shootWallCheck = on
-            if not switchingShootMode then
-                local cfg = modeConfigs[activeModeKey]
-                if cfg then
-                    cfg.wallCheck = on
-                end
-                if type(configData) == "table" and type(configData.states) == "table" then
-                    configData.states["MM2.Shoot." .. activeModeKey .. ".WallCheck"] = on
-                end
-            end
-        end,
-        "Checks that no wall or solid barrier blocks the shot (independent per mode)."
-    )
-    addToggleOption(
-        ShootFeature,
-        "Macro",
-        modeConfigs[activeModeKey].macro,
-        function(value: boolean): ()
-            local on: boolean = value == true
-            shootMacro = on
-            if not switchingShootMode then
-                local cfg = modeConfigs[activeModeKey]
-                if cfg then
-                    cfg.macro = on
-                end
-                if type(configData) == "table" and type(configData.states) == "table" then
-                    configData.states["MM2.Shoot." .. activeModeKey .. ".Macro"] = on
-                end
-            end
-        end,
-        "Pistol macro: hides the gun 0.01 seconds after every shot (independent per mode)."
-    )
-    ShootTargetBox = addTextOption(ShootFeature, "Target player", modeConfigs[activeModeKey].targetName, function(
-        value: string
-    ): ()
+    addToggleOption(ShootFeature, "WallCheck", true, function(value: boolean): ()
+        mm2Settings.shootWallCheck = value == true
+        if optionsReady and not switching then
+            modeConfigs[activeModeKey].wallCheck = value == true
+            states["MM2.Shoot." .. activeModeKey .. ".WallCheck"] = value == true
+        end
+    end, "Check for walls; saved independently per mode.")
+    addToggleOption(ShootFeature, "Avoid innocents", true, function(value: boolean): ()
+        mm2Settings.avoidInnocents = value == true
+        if optionsReady and not switching then
+            modeConfigs[activeModeKey].avoid = value == true
+            states["MM2.Shoot." .. activeModeKey .. ".AvoidInnocents"] = value == true
+        end
+    end, "Avoid firing toward innocents behind the target; saved per mode.")
+    addToggleOption(ShootFeature, "Macro", false, function(value: boolean): ()
+        shootMacro = value == true
+        if optionsReady and not switching then
+            modeConfigs[activeModeKey].macro = value == true
+            states["MM2.Shoot." .. activeModeKey .. ".Macro"] = value == true
+        end
+    end, "Pistol macro: hides the gun after the shot; saved per mode.")
+    ShootTargetBox = addTextOption(ShootFeature, "Target player", "", function(value: string): ()
         mm2Settings.shootTarget = value
-        if not switchingShootMode then
-            local cfg = modeConfigs[activeModeKey]
-            if cfg then
-                cfg.targetName = value
-            end
-            if type(configData) == "table" and type(configData.values) == "table" then
-                configData.values["MM2.Shoot." .. activeModeKey .. ".TargetPlayer"] = value
-            end
+        if optionsReady and not switching then
+            modeConfigs[activeModeKey].targetName = value
+            values["MM2.Shoot." .. activeModeKey .. ".TargetPlayer"] = value
+            if type(queueConfigSave) == "function" then queueConfigSave() end
         end
     end, false)
-    syncShootModeControls()
+    optionsReady = true
+    syncMode()
 
     -- The visible Auto control is at the top, but arming waits until saved
     -- aim method/target options below have all been restored.
@@ -914,12 +1108,9 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
-        state.mm2GunAimbotButtonsFeature = nil
         state.mm2FireSilentShot = nil
         state.mm2FireGunShot = nil
-        state.mm2BuildSilentShot = nil
-        state.mm2PlanGunEndpoint = nil
-        state.mm2CanDirectHitTarget = nil
+        state.mm2ChooseExperimentalAim = nil
         toggleAutoShoot(false)
         state.mm2ShotFeedback.hide()
     end

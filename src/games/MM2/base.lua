@@ -59,6 +59,11 @@ local mm2Settings = {
     shootMode = "Manual",
     shootWallCheck = true,
     shootRaw = false,
+    -- v139.2: two of ten confirmed shots in the last saved session ended on
+    -- another player's HumanoidRootPart because the server ray kept going past
+    -- the murderer. Shooting an innocent costs the sheriff the gun, so the
+    -- shot is moved to a body part whose line is clear -- or skipped.
+    avoidInnocents = true,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
@@ -212,6 +217,96 @@ local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?
             info.distance = (position - origin).Magnitude
         end
     end)
+    if part:IsA("BasePart") then
+        info.transparency = part.Transparency
+        info.canCollide = part.CanCollide
+    end
+    return info
+end
+
+-- v139.2: the server does NOT stop its ray at the endpoint we author. MM2's
+-- gun fires a long raycast in the aim direction and the thrown knife is a
+-- physical projectile, so both keep going past the target. The saved v139.1
+-- session shows what that costs: of 10 confirmed shots, 4 hit the murderer,
+-- 2 stopped on map geometry and 2 landed on ANOTHER player's HumanoidRootPart
+-- (the shot was 1-4 studs behind/ahead and the ray carried on). This probe
+-- answers "what is behind the target on this exact line", which the 12-stud
+-- overshoot check could not: a lobby is not 12 studs deep.
+--
+-- Only bodies are interesting here (a wall behind the target is a good thing:
+-- it stops a miss). `exclude` must contain the local character and the target.
+local function describeRayBeyond(
+    origin: Vector3,
+    endpoint: Vector3,
+    beyondStuds: number,
+    exclude: {Instance}?
+): any
+    local segment: Vector3 = endpoint - origin
+    local length: number = segment.Magnitude
+    if length < 0.05 then
+        return nil
+    end
+    local reach: number = math.max(1, math.min(beyondStuds or 200, 500))
+    local direction: Vector3 = segment.Unit * reach
+    local params: RaycastParams = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.RespectCanCollide = false
+    local excluded: {Instance} = {}
+    for _, object: Instance in ipairs(exclude or {}) do
+        table.insert(excluded, object)
+    end
+    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
+        table.insert(excluded, object)
+    end
+    params.FilterDescendantsInstances = excluded
+    local hit: RaycastResult? = workspace:Raycast(endpoint, direction, params)
+    if not hit then
+        return nil
+    end
+    local part: Instance = hit.Instance
+    local info: any = {
+        name = string.sub(part:GetFullName(), 1, 160),
+        className = part.ClassName,
+        isBody = false,
+        player = nil :: Player?,
+        gap = math.huge,
+    }
+    pcall(function(): ()
+        info.gap = (hit.Position - endpoint).Magnitude
+    end)
+    -- Walk up to the model: every character hangs from a Model whose parent is
+    -- the Workspace, and Players:GetPlayerFromCharacter is the only identity
+    -- that is safe to compare (no cloneref equality games).
+    local current: Instance? = part
+    for _ = 1, 8 do
+        if not current then
+            break
+        end
+        local ok: boolean, owner: any = pcall(Players.GetPlayerFromCharacter, Players, current)
+        if ok and owner then
+            info.isBody = true
+            info.player = owner
+            break
+        end
+        if current:IsA("Model") then
+            local humanoid: Humanoid? = current:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                info.isBody = true
+                -- v139.3: a body without an owner is only dangerous while it is
+                -- ALIVE. A corpse lying behind the murderer used to count as
+                -- "an innocent behind" and refused the shot.
+                pcall(function(): ()
+                    info.health = humanoid.Health
+                end)
+                break
+            end
+        end
+        if current == workspace then
+            break
+        end
+        current = current.Parent
+    end
     if part:IsA("BasePart") then
         info.transparency = part.Transparency
         info.canCollide = part.CanCollide
@@ -938,7 +1033,7 @@ local function findMM2Map(): Instance?
     if cached and cached.Parent == workspace and isMM2MapModel(cached) then
         return cached
     end
-    if os.clock() - mm2MapCache.at < 0.1 then
+    if os.clock() - mm2MapCache.at < 0.25 then
         return (cached and cached.Parent == workspace) and cached or nil
     end
     mm2MapCache.at = os.clock()
@@ -1363,133 +1458,67 @@ local function onRoundPhase(listener: (string, string) -> ()): () -> ()
     end
 end
 
--- Round detection, Auto Farm and Auto Win all need the same lobby reference.
--- Searching every top-level subtree recursively on every physics frame is very
--- expensive in large maps, so share a validated reference and cache misses too.
-local lobbyCache: {
-    model: Instance?, fallback: Instance?, reference: BasePart?, referenceModel: Instance?,
-    checkedAt: number, fallbackAt: number, referenceAt: number,
-} = {
-    model = nil,
-    fallback = nil,
-    reference = nil,
-    referenceModel = nil,
-    checkedAt = -math.huge,
-    fallbackAt = -math.huge,
-    referenceAt = -math.huge,
-}
-local LOBBY_MISS_RETRY: number = 0.25
+-- v139: the round-phase check runs 10 times a second for the whole session, so
+-- the lobby model and its reference part are cached. Before this, every tick
+-- walked workspace:GetChildren() (hundreds of objects) and did a recursive
+-- FindFirstChild("VotePads", true) inside the lobby model.
+local lobbyCache: {model: Instance?, at: number} = {model = nil, at = -math.huge}
+local LOBBY_CACHE_SECONDS: number = 0.75
 
-local function invalidateLobbyCache(): ()
-    lobbyCache.model = nil
-    lobbyCache.fallback = nil
-    lobbyCache.reference = nil
-    lobbyCache.referenceModel = nil
-    lobbyCache.checkedAt = -math.huge
-    lobbyCache.fallbackAt = -math.huge
-    lobbyCache.referenceAt = -math.huge
+local function findLobbyModelUncached(): Instance?
+    for _, object: Instance in ipairs(workspace:GetChildren()) do
+        if isLobbyName(object.Name) or isLobbyModel(object) then
+            return object
+        end
+    end
+    return nil
 end
 
 local function findLobbyModel(): Instance?
     local cached: Instance? = lobbyCache.model
-    if cached and cached.Parent == workspace then
+    if cached and cached.Parent then
         return cached
     end
-    if os.clock() - lobbyCache.checkedAt < LOBBY_MISS_RETRY then
+    local now: number = os.clock()
+    if now - lobbyCache.at < LOBBY_CACHE_SECONDS then
         return nil
     end
-    lobbyCache.checkedAt = os.clock()
-    lobbyCache.model = nil
-    -- Preserve round detection's original direct-child classification.
-    for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if isLobbyName(object.Name) or isLobbyModel(object) then
-            lobbyCache.model = object
-            return object
+    lobbyCache.at = now
+    lobbyCache.model = findLobbyModelUncached()
+    return lobbyCache.model
+end
+
+local lobbyRefCache: {model: Instance?, part: BasePart?, at: number} =
+    {model = nil, part = nil, at = -math.huge}
+
+local function lobbyReferencePart(lobby: Instance): BasePart?
+    local now: number = os.clock()
+    if lobbyRefCache.model == lobby and lobbyRefCache.part
+        and lobbyRefCache.part.Parent then
+        return lobbyRefCache.part
+    end
+    if lobbyRefCache.model == lobby and now - lobbyRefCache.at < 1 then
+        return lobbyRefCache.part
+    end
+    lobbyRefCache.at = now
+    lobbyRefCache.model = lobby
+    local votePads: Instance? = lobby:FindFirstChild("VotePads", true)
+    local refPart: BasePart? = nil
+    if votePads then
+        refPart = votePads:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not refPart then
+        local spawns: Instance? = lobby:FindFirstChild("Spawns", true)
+        if spawns then
+            refPart = spawns:FindFirstChildWhichIsA("BasePart", true)
         end
     end
-    return nil
+    if not refPart then
+        refPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+    end
+    lobbyRefCache.part = refPart
+    return refPart
 end
-
-local function findNestedLobbyFallback(): Instance?
-    if lobbyCache.fallback and lobbyCache.fallback.Parent == workspace then
-        return lobbyCache.fallback
-    end
-    if os.clock() - lobbyCache.fallbackAt < LOBBY_MISS_RETRY then
-        return nil
-    end
-    lobbyCache.fallbackAt = os.clock()
-    lobbyCache.fallback = nil
-    -- Auto Farm/Auto Win historically also recognized seasonal lobbies whose
-    -- vote pads are nested inside an otherwise unnamed top-level folder.
-    for _, object: Instance in ipairs(workspace:GetChildren()) do
-        if object:FindFirstChild("VotePads", true)
-            or object:FindFirstChild("VotePad1", true)
-            or object:FindFirstChild("VoteIcons", true) then
-            lobbyCache.fallback = object
-            return object
-        end
-    end
-    return nil
-end
-
-local function findLobbyReferencePart(lobby: Instance?): BasePart?
-    local resolved: Instance? = lobby or findLobbyModel() or findNestedLobbyFallback()
-    if not resolved then
-        return nil
-    end
-    local reference: BasePart? = lobbyCache.reference
-    if lobbyCache.referenceModel == resolved and reference and reference.Parent
-        and reference:IsDescendantOf(resolved) then
-        return reference
-    end
-    if lobbyCache.referenceModel == resolved and reference then
-        -- Removed/reparented references are invalid immediately, unlike a
-        -- genuine miss, which may safely be throttled.
-        lobbyCache.reference = nil
-        lobbyCache.referenceAt = -math.huge
-    end
-    if lobbyCache.referenceModel == resolved
-        and os.clock() - lobbyCache.referenceAt < LOBBY_MISS_RETRY then
-        return nil
-    end
-    lobbyCache.referenceModel = resolved
-    lobbyCache.referenceAt = os.clock()
-    local votePads: Instance? = resolved:FindFirstChild("VotePads", true)
-    reference = votePads and votePads:FindFirstChildWhichIsA("BasePart", true) or nil
-    if not reference then
-        local spawns: Instance? = resolved:FindFirstChild("Spawns", true)
-        reference = spawns and spawns:FindFirstChildWhichIsA("BasePart", true) or nil
-    end
-    if not reference then
-        reference = resolved:FindFirstChildWhichIsA("BasePart", true)
-    end
-    lobbyCache.reference = reference
-    return reference
-end
-
--- Streaming can create the lobby or its reference after an earlier miss.
--- Invalidate on relevant arrivals/removals rather than delaying detection.
-featureConnections.MM2LobbyAdded = workspace.ChildAdded:Connect(invalidateLobbyCache)
-featureConnections.MM2LobbyRemoved = workspace.ChildRemoved:Connect(invalidateLobbyCache)
-local function isLobbyMarker(object: Instance): boolean
-    return object.Name == "VotePads" or object.Name == "VotePad1"
-        or object.Name == "VoteIcons" or object.Name == "Spawns"
-end
-featureConnections.MM2LobbyDescendantAdded = workspace.DescendantAdded:Connect(function(object: Instance): ()
-    if isLobbyMarker(object) then
-        invalidateLobbyCache()
-    elseif lobbyCache.referenceModel and object:IsA("BasePart")
-        and object:IsDescendantOf(lobbyCache.referenceModel) then
-        -- A pad can appear after a lower-priority spawn/generic part.
-        lobbyCache.reference = nil
-        lobbyCache.referenceAt = -math.huge
-    end
-end)
-featureConnections.MM2LobbyDescendantRemoving = workspace.DescendantRemoving:Connect(function(object: Instance): ()
-    if isLobbyMarker(object) then
-        invalidateLobbyCache()
-    end
-end)
 
 local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     local okRoot: boolean, rootPos: any = pcall(function(): any
@@ -1498,7 +1527,7 @@ local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
     if not okRoot or typeof(rootPos) ~= "Vector3" then
         return false
     end
-    local refPart: BasePart? = findLobbyReferencePart(lobby)
+    local refPart: BasePart? = lobbyReferencePart(lobby)
     if refPart then
         local okDist: boolean, dist: any = pcall(function(): any
             return (rootPos - refPart.Position).Magnitude
@@ -1554,7 +1583,9 @@ if lastPhase == "map" then
 end
 featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: number): ()
     phaseElapsed += deltaTime
-    if phaseElapsed < 0.05 then
+    -- v139: 10 Hz instead of 20. The phase only changes between lobby and map,
+    -- and 100 ms of extra latency on a round transition is invisible.
+    if phaseElapsed < 0.1 then
         return
     end
     phaseElapsed = 0
@@ -1579,7 +1610,7 @@ featureConnections.MM2RoundPhase = TaskManager:Connect(function(deltaTime: numbe
         roleRefreshGeneration += 1
         setRoundPhase("lobby", "teleport")
     end
-end)
+end, nil, "MM2 round phase")
 setRoundPhase(lastPhase, "boot")
 
 local roundTimerPartCache: {part: Instance?, at: number} =
@@ -1712,7 +1743,7 @@ featureConnections.MM2RoundClock = TaskManager:Connect(function(deltaTime: numbe
     if roundLifecycleActive == nil then
         roundLifecycleActive = true
     end
-end)
+end, nil, "MM2 round clock")
 
 requestRoleRefresh(true)
 
@@ -1905,6 +1936,7 @@ local function createTrajectoryCalibration(): any
         latencyMs: number?,
         confirmedEndpoint: Vector3?,
         confirmedHitTarget: boolean?,
+        missReason: string?,
         -- Everything below exists so a saved session can answer "did the shot
         -- land, where, and when" without a second session: the server-clock
         -- round trip, the part that was actually hit and its size, and the
@@ -1971,6 +2003,13 @@ local function createTrajectoryCalibration(): any
         targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
         destroyConnection: RBXScriptConnection?,
+        -- v139.2: how close the blade actually passed to the target. Until
+        -- now the knife only reported "a projectile with a valid speed was
+        -- observed", so an auto throw that landed 6 studs behind was
+        -- indistinguishable from one through the chest.
+        closestApproach: number?,
+        closestApproachAt: number?,
+        bodyRadius: number?,
     }
     type CalibrationEvent = {
         shotId: string?,
@@ -2081,6 +2120,8 @@ local function createTrajectoryCalibration(): any
         sessionGunConfirmed = 0,
         sessionGunHitTarget = 0,
         sessionGunKills = 0,
+        sessionGunMisses = 0,
+        missReasons = {} :: {[string]: number},
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
@@ -2541,13 +2582,29 @@ local function createTrajectoryCalibration(): any
         -- that sample was at the shot. Clocks in the two modules do not share
         -- an epoch, so the subtraction happens on the predictor's side only.
         local sampleAge: number = predictionMath.finite(age) and age or 0
+        -- v139.4: the cap used to `break` while walking oldest -> newest, so a
+        -- 0.6 s window sampled above 60 FPS threw away the NEWEST samples --
+        -- exactly the ones the scoring interpolates from, and the ones a replay
+        -- needs to know where the target was at the shot. The window is
+        -- decimated instead: the span survives, and both ends are kept.
+        local HISTORY_LIMIT: number = 36
+        local samples: {any} = {}
         for _, sample: any in ipairs(history) do
-            if #points >= 36 then
-                break
-            end
             local position: any = sample.position
             local velocity: any = sample.velocity
             if typeof(position) == "Vector3" and typeof(velocity) == "Vector3" then
+                table.insert(samples, sample)
+            end
+        end
+        local stride: number = 1
+        if #samples > HISTORY_LIMIT then
+            stride = math.ceil(#samples / (HISTORY_LIMIT - 1))
+        end
+        for index, sample: any in ipairs(samples) do
+            local isLast: boolean = index == #samples
+            if isLast or (index - 1) % stride == 0 then
+                local position: any = sample.position
+                local velocity: any = sample.velocity
                 local move: any = sample.moveDirection
                 local offset: any = sample.aimOffset
                 table.insert(points, {
@@ -2983,7 +3040,12 @@ local function createTrajectoryCalibration(): any
                         samples = ok and n or 0,
                         medianStuds = ok and med or nil,
                         meanStuds = ok and mean or nil,
-                        scope = "own predicted point vs target at scoring instant, confirmed gun shots",
+                        -- v139.4: say what it is. The reference is the torso
+                        -- point the aim used, interpolated between the newest
+                        -- pre-shot sample and the root at confirmation, so this
+                        -- is the client's best estimate of the miss distance --
+                        -- not a server-side measurement.
+                        scope = "own predicted point vs the torso point at the scoring instant (interpolated from the newest pre-shot sample and the root at confirmation); an estimate, not a server measurement",
                     }
                 end)(),
                 gunByMode = (function(): {[string]: any}
@@ -3018,6 +3080,11 @@ local function createTrajectoryCalibration(): any
                 gunConfirmed = runtime.sessionGunConfirmed,
                 gunHitTarget = runtime.sessionGunHitTarget,
                 gunKills = runtime.sessionGunKills,
+                -- v139.2: hits are only half the story; this splits the rest
+                -- into "the ray carried into another player" and "the ray
+                -- stopped on the map".
+                gunMisses = runtime.sessionGunMisses or 0,
+                gunMissReasons = runtime.missReasons or {},
                 knifeAttempts = runtime.sessionKnifeAttempts,
                 knifeConfirmed = runtime.sessionKnifeConfirmed,
                 events = runtime.events,
@@ -3343,6 +3410,9 @@ local function createTrajectoryCalibration(): any
             bestMotionModel = analysis.bestMotionModel,
             motionModelErrors = analysis.motionModelErrors,
             evaluationSeconds = analysis.evaluationSeconds,
+            -- Why this shot did or did not score, decided from the hit part's
+            -- own owner: "hit", "other-player", "geometry" or "no-hit-part".
+            missReason = missReason,
         })
     end
 
@@ -3471,6 +3541,37 @@ local function createTrajectoryCalibration(): any
         if hitTarget then
             runtime.sessionGunHitTarget += 1
         end
+        -- v139.2: name the miss. The v139.1 session could only say "5 of 10
+        -- confirmed shots hit"; the saved hit parts show the rest were not
+        -- prediction errors at all: two landed on another player's
+        -- HumanoidRootPart (the ray kept going past the murderer) and three
+        -- stopped on map geometry behind the aim. Without this label the next
+        -- session repeats the same archaeology.
+        local missReason: string? = nil
+        if hitTarget then
+            missReason = "hit"
+        elseif typeof(hitPartValue) == "Instance" then
+            local otherOwner: any = nil
+            pcall(function(): ()
+                otherOwner = Players:GetPlayerFromCharacter(
+                    hitPartValue:FindFirstAncestorOfClass("Model")
+                )
+            end)
+            if otherOwner and otherOwner ~= target then
+                missReason = "other-player"
+            else
+                missReason = "geometry"
+            end
+        else
+            missReason = "no-hit-part"
+        end
+        pending.missReason = missReason
+        if missReason ~= "hit" then
+            runtime.sessionGunMisses = (runtime.sessionGunMisses or 0) + 1
+            runtime.missReasons = runtime.missReasons or {}
+            runtime.missReasons[missReason] =
+                (runtime.missReasons[missReason] or 0) + 1
+        end
         pending.confirmedAt = now
         pending.latencyMs = latencyMs
         pending.confirmedEndpoint = endpoint
@@ -3538,6 +3639,15 @@ local function createTrajectoryCalibration(): any
                 bestMotionModel = analysis.bestMotionModel,
                 motionModelErrors = analysis.motionModelErrors,
                 evaluationSeconds = analysis.evaluationSeconds,
+                closestApproachStuds = track.closestApproach,
+                closestApproachAtMs = track.closestApproachAt,
+                bodyRadiusStuds = track.bodyRadius,
+                -- A blade that passes inside the torso's half-diagonal is a
+                -- touch the client can prove; anything else is a measured
+                -- miss distance the next session can be scored against.
+                passedThroughBody = (track.closestApproach ~= nil
+                    and track.bodyRadius ~= nil
+                    and track.closestApproach <= track.bodyRadius),
             })
         end
         stopKnifeSamplerIfIdle()
@@ -3571,6 +3681,31 @@ local function createTrajectoryCalibration(): any
                 if position then
                     track.previousPosition = position
                     track.previousAt = now
+                    if track.targetUserId then
+                        local target: Player? = Players:GetPlayerByUserId(
+                            track.targetUserId
+                        )
+                        local body: BasePart? = target
+                            and getTargetRoot(target)
+                            or nil
+                        if body then
+                            local distance: number =
+                                (position - body.Position).Magnitude
+                            if not track.closestApproach
+                                or distance < track.closestApproach then
+                                track.closestApproach = distance
+                                track.closestApproachAt =
+                                    (now - track.startedAt) * 1000
+                                -- Half-diagonal of the torso the blade has to
+                                -- cross: a distance under it is a touch.
+                                local size: Vector3 = body.Size
+                                track.bodyRadius = 0.5 * math.max(
+                                    size.X,
+                                    math.max(size.Y, size.Z)
+                                )
+                            end
+                        end
+                    end
                 end
                 if track.targetUserId
                     and now - track.lastTrajectorySampleAt >= 1 / 30 then
@@ -4002,7 +4137,10 @@ local function createTrajectoryCalibration(): any
             phase = "blocked",
             serverTime = workspace:GetServerTimeNow(),
             pingMs = getPingMilliseconds(),
-            reason = "wall",
+            -- v139.3: the refusal carries its own reason ("wall", "corridor"),
+            -- so a calibration session can tell a real barrier apart from a
+            -- policy decision that cost a shot.
+            reason = type(blocker.reason) == "string" and blocker.reason or "wall",
             blockedName = type(blocker.name) == "string" and blocker.name or nil,
             blockedTransparency = tonumber(blocker.transparency),
             blockedCanCollide = blocker.canCollide == true,
@@ -4344,6 +4482,13 @@ state.mm2ShotFeedback.showMiss = function(
     local token: number = state.mm2ShotFeedback.token
     state.mm2ShotFeedback.root.Visible = true
 
+    -- v139: the cooldown used to rebuild the label string and write two GUI
+    -- properties on every single frame. Text is one of the expensive ones
+    -- (layout + glyph re-shape), so the marker now refreshes at ~12 Hz and only
+    -- writes when the text or the bar actually changed.
+    local lastText: string = ""
+    local lastScale: number = -1
+    local lastRefresh: number = -math.huge
     local function updateCountdown(): ()
         if token ~= state.mm2ShotFeedback.token then
             disconnectFeatureConnection("MM2ShootCooldown")
@@ -4351,21 +4496,33 @@ state.mm2ShotFeedback.showMiss = function(
             return
         end
 
-        local remaining: number = math.max(0, cooldownEndsAt - os.clock())
+        local now: number = os.clock()
+        local remaining: number = math.max(0, cooldownEndsAt - now)
         if remaining <= 0 then
             state.mm2ShotFeedback.hide()
             return
         end
+        if now - lastRefresh < 0.08 then
+            return
+        end
+        lastRefresh = now
 
         local progress: number = math.clamp(remaining / duration, 0, 1)
-        state.mm2ShotFeedback.fill.Size = UDim2.fromScale(progress, 1)
-        state.mm2ShotFeedback.text.Text =
-            string.format("Miss cooldown - %.1fs", remaining)
+        local scale: number = math.floor(progress * 200 + 0.5) / 200
+        if scale ~= lastScale then
+            lastScale = scale
+            state.mm2ShotFeedback.fill.Size = UDim2.fromScale(scale, 1)
+        end
+        local nextText: string = string.format("Miss cooldown - %.1fs", remaining)
+        if nextText ~= lastText then
+            lastText = nextText
+            state.mm2ShotFeedback.text.Text = nextText
+        end
     end
 
     updateCountdown()
     featureConnections.MM2ShootCooldown =
-        TaskManager:Connect(updateCountdown)
+        TaskManager:Connect(updateCountdown, nil, "Miss cooldown")
 end
 
 state.mm2ShotFeedback.toPosition = function(value: any): Vector3?
@@ -4752,10 +4909,10 @@ state.mm2Core = {
     isProtectedTarget = isProtectedTarget,
 
     findMM2Map = findMM2Map,
-    findLobbyReferencePart = findLobbyReferencePart,
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
+    describeRayBeyond = describeRayBeyond,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     getEstimatedLatency = getEstimatedLatency,
@@ -4789,10 +4946,6 @@ cleanupMM2Runtime = function()
         "MM2TimerTrackerEnd",
         "MM2RoundPhase",
         "MM2RoundClock",
-        "MM2LobbyAdded",
-        "MM2LobbyRemoved",
-        "MM2LobbyDescendantAdded",
-        "MM2LobbyDescendantRemoving",
         "MM2RoleWatchAdded",
         "MM2RoleWatchRemoving",
         "MM2RoleTagAddedWeapon_Knife",
