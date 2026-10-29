@@ -122,10 +122,17 @@ local workspace = {Raycast = function(_, origin, direction)
     if blocked then return {Position = origin + direction * 0.2} end
     return nil
 end}
-local weaponService = {
-    GetMouseTargetCFrame = function() return 'original-cframe' end,
-    GetTargetPosition = function() return 'original-position' end,
-}
+-- The decompiled WeaponService returns CFrame for BOTH methods. The real
+-- consumer can access .Position, so a Vector3 result is not a valid mock.
+local originalMouse = CFrame.new(Vector3.new(10, 20, 30))
+local originalTarget = CFrame.new(Vector3.new(40, 50, 60))
+local forwardedSelf, forwardedX, forwardedY
+local weaponService = {}
+function weaponService:GetMouseTargetCFrame() return originalMouse end
+function weaponService:GetTargetPosition(x, y)
+    forwardedSelf, forwardedX, forwardedY = self, x, y
+    return originalTarget
+end
 local module = {}
 local clientServices = {FindFirstChild = function(_, name) return name == 'WeaponService' and module or nil end}
 local replicated = {FindFirstChild = function(_, name) return name == 'ClientServices' and clientServices or nil end}
@@ -283,20 +290,50 @@ clock = 308
 knifeThrowLoop()
 assert(#fired == 0, 'speculative knife fired while OFF')
 
--- 10. PC/mobile WeaponService redirect shares the same speculative fallback.
+-- 10. The captured native WeaponService returns CFrame for BOTH methods.
+-- Exercise realistic native consumers (mouse/viewport coordinates), with a
+-- target and with a speculative lane; no camera movement or packet is needed.
 settings.enabled, settings.autoThrow = true, false
-lobby = {Player}
+lobby = {Player, target}
+isWeaponPathClear = function() return true end
 clock = 310
 installRedirect()
-local cf = weaponService:GetMouseTargetCFrame()
-local pos = weaponService:GetTargetPosition()
-assert(type(cf) == 'table' and cf.Position and typeof(pos) == 'Vector3',
-    'manual weapon service did not aim toward a clear lane')
+local function nativeConsumer(cf)
+    assert(type(cf) == 'table' and typeof(cf.Position) == 'Vector3',
+        'native consumer requires a CFrame-like object with a Vector3 Position')
+    return cf.Position
+end
+local mouseAim = nativeConsumer(weaponService:GetMouseTargetCFrame())
+local touchAim = nativeConsumer(weaponService:GetTargetPosition(123, 456))
+assert((mouseAim - touchAim).Magnitude < 1e-6, 'mouse/touch must share the predicted point')
+assert((touchAim - victimRoot.Position).Magnitude < 5, 'visible target was not selected')
+lobby = {Player}
+clock = 311
+mouseAim = nativeConsumer(weaponService:GetMouseTargetCFrame())
+touchAim = nativeConsumer(weaponService:GetTargetPosition(123, 456))
+assert((mouseAim - touchAim).Magnitude < 1e-6, 'mouse/touch must share the speculative point')
+assert((touchAim - handle.CFrame.Position).Magnitude > 3, 'speculative lane missing')
+-- No viable speculative lane falls through with the original self/coordinates.
+blocked = true
+clock = 312
+assert(weaponService:GetTargetPosition(123, 456) == originalTarget, 'no lane must preserve native aim')
+assert(forwardedSelf == weaponService and forwardedX == 123 and forwardedY == 456,
+    'fallback must forward self and viewport coordinates')
+blocked = false
+-- Unequipped and OFF must not override either native method.
+knife.Parent = backpack
+assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'unequipped knife redirected mouse')
+assert(weaponService:GetTargetPosition(1, 2) == originalTarget, 'unequipped knife redirected touch')
+knife.Parent = character
 settings.enabled = false
-assert(weaponService:GetTargetPosition() == 'original-position', 'OFF did not bypass redirect')
+assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'OFF did not bypass mouse redirect')
+assert(weaponService:GetTargetPosition(3, 4) == originalTarget, 'OFF did not bypass touch redirect')
 uninstallRedirect()
-assert(weaponService:GetMouseTargetCFrame() == 'original-cframe', 'uninstall did not restore original')
-print('PASS knife speculative lanes: empty, hidden, wall, floor, protection, round, delay, OFF and manual redirect')
+assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'uninstall did not restore mouse')
+assert(weaponService:GetTargetPosition(5, 6) == originalTarget, 'uninstall did not restore touch')
+assert(forwardedSelf == weaponService and forwardedX == 5 and forwardedY == 6)
+print('PASS knife manual contract: CFrame mouse/touch, target, speculative, no lane, OFF, unequipped and restore')
+print('PASS knife speculative lanes: empty, hidden, wall, floor, protection, round and delay')
 
 print('PASS knife equip: no packet before the blade is in hand, then one per throw')
 print('PASS knife loop: aim solved ' .. tostring(solvesPerSecond)

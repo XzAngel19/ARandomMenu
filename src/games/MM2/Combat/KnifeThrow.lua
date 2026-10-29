@@ -636,7 +636,10 @@ function Module.init(runtime: any): any
                             if originCF then
                                 local aim: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
                                     or resolveSpeculativeAim(originCF.Position)
-                                if aim then return aim end
+                                -- The captured MM2 WeaponService returns a CFrame here,
+                                -- despite the method name. Preserve that native contract
+                                -- just as GetMouseTargetCFrame does.
+                                if aim then return CFrame.new(aim) end
                             end
                         end
                     end

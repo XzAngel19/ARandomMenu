@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v156-20261029-mm2-experimental`**, con árbol base de
+> **`v157-20261029-mm2-simulation-contract`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,43 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (91 fuentes, 73 suites,
-     boot `failures=0`, auditoría de menú 52/51 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v157: 90 fuentes,
+     76 suites, boot `failures=0`, auditoría de menú 49/48 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v157 — contrato Knife manual y simulación MM2 (2026-10-29)
+
+- La copia de cliente de TestingStuff (`place, source.rbxlx`, blob
+  `755f47708dfbe83a5eaad25d5a60a5a36788dcf6`) devuelve CFrame tanto en
+  `GetMouseTargetCFrame` como en `GetTargetPosition`. Knife Throw ahora respeta
+  ese contrato en ambos redirects; antes el segundo devolvía Vector3 y el mock
+  incorrecto lo exigía. El test actualizado usa un consumidor CFrame y prueba
+  objetivo, carril especulativo, caída al original con argumentos, tool sin
+  equipar, OFF y restore. Una copia antigua no demuestra que el juego actual o
+  Delta invoquen esta ruta; falta prueba live.
+- Auto Shoot Bullet/CFrame no hacen un fallback después de que el helper común
+  rechace o falle: así no saltan una negativa ni mandan otra solicitud incierta.
+  El fallback solo se usa si no existe el helper; respeta WallCheck y propaga un
+  error local de FireServer. Un error incierto también activa el pacing local
+  en los tres modos. `pcall` exitoso significa envío local, no hit ni aceptación.
+- `tools/test_mm2_trajectory_simulation.py` ejecuta el predictor actual en 486
+  casos sintéticos; compara posición simulada con una hipótesis explícita de
+  RTT + 25 ms y Knife recto de velocidad constante. En el salto de ejemplo, el
+  estado Freefall cerca del ápice con velocidad vertical casi 0 hace que el
+  predictor mantenga la altura; una prueba anterior exige ese comportamiento
+  ante estados de salto engañosos. No se cambió el modelo sin datos que permitan
+  distinguir ápice verdadero de estado/velocidad replicados incorrectamente.
+  Giros o paradas futuros causan grandes errores de predicción como es de
+  esperar. Estos valores NO son tasas de acierto del servidor. Resultados y
+  alcance: `docs/FIXES-v157.md`.
+- `tools/test_mm2_auto_shoot_dispatch.py` prueba rechazos, errores, una llamada
+  que envía antes de lanzar error, WallCheck del fallback y salida correcta.
+  `test_mm2_experimental.py` comprueba además el pacing y estado incierto tras
+  error. Validación final: 90 fuentes, 76 suites, boot `failures=0` y menú
+  49/48 tarjetas PASS. Esto no supone compatibilidad live.
 
 ## v156 — migración completa y experimentos MM2 (2026-10-29)
 

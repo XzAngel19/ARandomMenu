@@ -235,6 +235,11 @@ function Module.init(runtime: any): any
                 wallCheck = settings.wallCheck,
             })
             firedSilent = okSilent and res == true
+            -- A false result or exception can mean a safety refusal or an
+            -- uncertain send. Never bypass it or send a second request. Pace
+            -- exceptions too: the send may have happened before the error.
+            if not okSilent then lastShotSentAt = os.clock() end
+            if not firedSilent then return false end
         end
         if not firedSilent then
             -- Never fire past a wall: the hand-rolled CFrame is only a
@@ -254,9 +259,13 @@ function Module.init(runtime: any): any
                 clear = true
             end
             if clear then
-                pcall(function(): ()
+                local okFire: boolean = pcall(function(): ()
                     (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
                 end)
+                if not okFire then
+                    lastShotSentAt = os.clock()
+                    return false
+                end
             else
                 lastShotSentAt = 0
                 return false
@@ -311,13 +320,20 @@ function Module.init(runtime: any): any
                 quiet = true,
             })
             firedCore = okShot and res == true
+            -- Respect a refusal or uncertain send from the shared path.
+            if not okShot then lastShotSentAt = os.clock() end
+            if not firedCore then return false end
         end
         if not firedCore then
             local shotOrigin: CFrame = CFrame.lookAt(originCF.Position, endpoint)
             local shotEnd: CFrame = CFrame.new(endpoint)
-            pcall(function(): ()
+            local okFire: boolean = pcall(function(): ()
                 (shootRemote :: RemoteEvent):FireServer(shotOrigin, shotEnd)
             end)
+            if not okFire then
+                lastShotSentAt = os.clock()
+                return false
+            end
         end
         lastShotSentAt = os.clock()
         return true
@@ -384,16 +400,21 @@ function Module.init(runtime: any): any
                 if okMode and chosen == "CFrame" then mode = "CFrame" end
             end
             local sent: boolean = false
+            local uncertain: boolean = false
             if type(state.mm2FireGunShot) == "function" then
                 local ok: boolean, result: any = pcall(state.mm2FireGunShot, target, {
                     silent = mode == "CFrame", wallCheck = settings.wallCheck,
                     continuous = true, quiet = true,
                 })
                 sent = ok and result == true
+                -- A thrown error can happen after dispatch; pace rather than
+                -- repeatedly sending on every frame while the result is unknown.
+                uncertain = not ok
+                if uncertain then lastShotSentAt = os.clock() end
             end
             if sent then lastShotSentAt = os.clock() end
             if AutoShootFeature then AutoShootFeature:SetStatus("Experimental · " .. mode
-                .. (sent and " · request sent" or " · not sent")) end
+                .. (sent and " · request sent" or (uncertain and " · send uncertain" or " · not sent"))) end
         elseif isCFrame then
             fireCFrameShotImmediate(target, targetRoot, character, localRoot, gun)
         else

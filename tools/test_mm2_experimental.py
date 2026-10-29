@@ -74,11 +74,22 @@ result = false
 autoShootTick()
 assert(#calls == 3 and legacyCalls == 0 and string.find(status, 'not sent', 1, true),
     'a rejected/uncertain request must not trigger another transport')
-autoShootActive = false
 now = 4
+state.mm2FireGunShot = function(player, opts)
+    table.insert(calls, {player=player, opts=opts})
+    error('uncertain send')
+end
 autoShootTick()
-assert(#calls == 3, 'OFF must not dispatch')
-print('PASS experimental Auto Shoot: policy, independent options, one route, rejection and OFF')
+assert(#calls == 4 and lastShotSentAt == 4 and string.find(status, 'send uncertain', 1, true),
+    'uncertain send must be paced and not claimed as unsent')
+now = 4.1
+autoShootTick()
+assert(#calls == 4, 'uncertain send must not repeat every frame')
+autoShootActive = false
+now = 5
+autoShootTick()
+assert(#calls == 4, 'OFF must not dispatch')
+print('PASS experimental Auto Shoot: policy, independent options, one route, rejection, error pacing and OFF')
 '''
 
 with tempfile.TemporaryDirectory(prefix='mm2-experimental-') as directory:
