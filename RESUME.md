@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v152-20261029-x2duels-native-gun`**.
+> **`v153-20261029-x2duels-camera-safe`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,51 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1W. X2: fuente Gun, Vape CameraModule y Auto Shoot nativo v152
+## 1X. X2: cámara y Auto Shoot v153 — experimento no validado en vivo
+
+El usuario reportó que Auto Shoot y Silent AIM no funcionan y que la cámara se
+sale del personaje. La captura móvil `X2Duels-calibration.json` (SHA256
+`a54a8d525ef7c4eed9b5d409c03d62cb84289697c6ccae2a00ac098bc396d220`)
+retuvo 400 eventos, descartó 470 y tenía `silent=false` en todos los eventos
+conservados: **no permite atribuir el giro a Silent**. Tenía Probe activo, 58
+activaciones y ocho rayos Gun de 10.000 studs; las ráfagas de activación y tres
+rayos separados ~2,6 s son compatibles con el debounce Gun de 2,5 s, no prueban
+hits ni soporte de Oth. El LocalScript real de MimicGlare recuperado usa
+Mouse.Hit cacheado al toque y Raycast de HRP; Tool:Activate no crea Button1Down.
+
+- Auto Shoot ya no llama al giro de cámara de v152. Instala/reutiliza Oth sin
+  hookmetamethod y arma una ventana de 0,35 s, de un rayo, para un LocalScript
+  descendiente de ESA Gun, origen próximo al HRP, RaycastParams Exclude y longitud
+  ~10.000, con controles de personaje/partida/equipo/vida/rango y Wall Check en
+  selección y raycast. Conserva longitud y parámetros. Si falta Oth o la API de
+  caller, no activa Gun y avisa. Si el hook parece instalado pero no intercepta
+  el rayo, puede haber activación sin redirección: Status lo informa, no equivale
+  a daño; no garantiza impedir un disparo mal dirigido. Las APIs y semántica de
+  checkcaller/Activated en Delta siguen SIN probarse.
+- Una sola activación queda pendiente hasta su diagnóstico, evitando solapes.
+  Solo para la skin MimicGlare se limita a 2,5 s según el código observado; no se
+  extrapola a todas las armas. Auto Win usa esa misma ruta sin cámara si Silent
+  o Auto Shoot están activos; Auto Win por sí solo y Knife Throw nativo aún
+  pueden rotar la cámara. Los lanzamientos automáticos Knife se cancelan/pausan
+  mientras Silent está activo para no hacer aim lock. Safe Place puede mover el
+  personaje: desactivarlo al aislar cámara. Los ajustes propios siguen separados.
+- Se ignoran CameraModule y descendientes, y pings; compatibilidad amplia no
+  redirige si el caller es desconocido. Una identidad ausente no permite probar
+  que sea Gun, por lo que este modo ahora falla cerrado y puede dejar de funcionar
+  en executors que la ocultan. No promete interceptar otros diseños de Gun.
+- Gun Probe NO funciona simultáneamente con Silent, Auto Shoot, Auto Win, Knife
+  Throw ni Kill Aura: se detiene al activar combate y se rechaza su arranque
+  mientras esos módulos estén activos. `Save gun sources` sigue independiente.
+  El usuario reportó BAC-1583 y disparos bloqueados con Probe; **no pedir que lo
+  active para probar esto** ni garantizar seguridad anticheat.
+- `tools/test_x2duels.py` simula Gun/cámara/ping, Caller/Oth ausentes, args y
+  longitud, equipo, pared tardía, OFF/expiración, simultaneidad, cooldown y
+  pausa Knife; mocks no prueban Roblox ni servidor. Prueba sugerida en sesión
+  limpia: Gun Probe, Knife Throw, Auto Win y Safe Place OFF; probar Silent solo
+  con disparo normal, luego OFF y Auto Shoot solo; anotar Status y si cámara,
+  rayo y daño funcionan. Reiniciar Roblox para retirar posibles hooks viejos.
+
+## 1W. X2: fuente Gun, Vape CameraModule y Auto Shoot nativo v152 (histórico)
 
 El usuario aclaró que su Vape móvil no presenta Oth y que en Delta Silent AIM
 solo acciona botones; no inferir que alguna versión o executor soporte Oth/Silent
@@ -1329,7 +1373,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-29 · v152, captura de fuente Gun sin Probe y Auto Shoot nativo;
-Silent en Delta móvil, origen del raycast, BAC y daño real siguen sin validar.
+*Última actualización: 2026-10-29 · v153, Auto Shoot experimental sin giro de cámara;
+Silent y Auto Shoot en Delta móvil, BAC y daño real siguen sin validar.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*

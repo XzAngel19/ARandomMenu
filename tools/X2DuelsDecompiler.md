@@ -1,6 +1,6 @@
 # X2 Duels: captura de código y remotes
 
-## Opción integrada: Gun Probe (v152)
+## Opción integrada: Gun Probe (v153)
 
 **Advertencia:** el usuario reportó BAC-1583 con Probe v148 y que la v149
 impedía disparar. No está probada la causa ni su corrección. Oth no garantiza
@@ -29,6 +29,10 @@ informa el Status en lugar de activar Gun Probe.
 Escribe `X2Duels-workspace-test.txt` en la raíz del workspace, sin tocar el JSON
 anterior. Status distingue lectura verificada, solo existencia y sin verificar.
 Cada executor determina la ubicación física y su acceso externo.
+
+Desde v153 Probe se detiene al iniciar combate y no se inicia mientras Silent,
+Auto Shoot, Auto Win, Knife Throw o Kill Aura estén activos. No lo actives para
+probar esas funciones: el usuario reportó BAC-1583 e interferencia con la Gun.
 
 Cuando se activa Probe, `X2Duels-calibration.json` usa esa misma raíz y se
 sobrescribe al empezar, cada ~3 s si hay cambios y al parar. La captura Oth

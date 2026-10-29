@@ -112,6 +112,8 @@ local function buildX2Duels(runtime: any): ()
         nextKnifeAt = {["Auto Win"] = 0, ["Knife Throw"] = 0},
         nativeAimUntil = 0,
         gunPending = nil,
+        autoAimLease = nil,
+        autoAimAttempt = 0,
         gunToken = 0,
         silentAttempt = 0,
         redirectCount = 0,
@@ -806,8 +808,14 @@ local function buildX2Duels(runtime: any): ()
         return root and root.Position or nil
     end
 
+    local ensureAutoOth: () -> boolean = function(): boolean return false end
     local function cancelGun(owner: string?): ()
         if owner == nil or owner == "Silent AIM" then runtimeState.mouseShot = nil end
+        local lease: any = runtimeState.autoAimLease
+        if owner == nil or (lease and lease.owner == owner) then
+            runtimeState.autoAimLease = nil
+            runtimeState.autoAimAttempt += 1
+        end
         local pending: any = runtimeState.gunPending
         if owner ~= nil and (not pending or pending.owner ~= owner) then return end
         runtimeState.gunToken += 1
@@ -821,7 +829,9 @@ local function buildX2Duels(runtime: any): ()
         if not gun then return false, false, "No gun is available in your inventory." end
         if not target then return false, true, "No eligible opponent." end
         if runtimeState.knifeBusy then return false, true, "Waiting for the knife throw." end
-        if runtimeState.gunPending then return false, true, "A gun action is already pending." end
+        if runtimeState.gunPending or runtimeState.autoAimLease then
+            return false, true, "A gun action is already pending."
+        end
         local character: Model? = localPlayer.Character
         if not character or not isAlive(localPlayer) then
             return false, true, "Your character is not alive or ready."
@@ -839,6 +849,41 @@ local function buildX2Duels(runtime: any): ()
                 if not clear then return false, why end
                 clear, why = hasLineOfSight(target)
                 if not clear then return false, why end
+            end
+            if (opts.owner == "Auto Shoot" or (opts.owner == "Auto Win"
+                and (settings.autoShoot or settings.silentAim))) and noAim ~= true then
+                -- The captured Gun uses a cached mobile Mouse.Hit. Moving the
+                -- camera does not reliably change it, and produces aim-lock.
+                -- Instead arm only the identified native 10,000-stud gun ray.
+                if type(host.getcallingscript) ~= "function" or not ensureAutoOth() then
+                    return false, "Gun aim unavailable: Oth and weapon caller required; camera unchanged."
+                end
+                if gun.Name == "MimicGlare" and os.clock() < (runtimeState.nextMimicGunAt or 0) then
+                    return false, "Gun cooling down (observed 2.5 seconds)."
+                end
+                runtimeState.autoAimAttempt += 1
+                local attempt: number = runtimeState.autoAimAttempt
+                local before: number = runtimeState.autoRedirectSerial or 0
+                local lease: any = {gun = gun, target = target, character = character, owner = opts.owner,
+                    gameToken = matchToken(localPlayer), teamCheck = opts.teamCheck, wallCheck = opts.wallCheck,
+                    range = opts.range or math.huge, expires = os.clock() + 0.35}
+                runtimeState.autoAimLease = lease
+                local ok: boolean = activateNative(gun, target, false)
+                if not ok and runtimeState.autoAimLease == lease then runtimeState.autoAimLease = nil end
+                if ok then
+                    if gun.Name == "MimicGlare" then runtimeState.nextMimicGunAt = os.clock() + 2.5 end
+                    task.delay(0.4, function(): ()
+                        if runtimeState.closed or runtimeState.autoAimAttempt ~= attempt then return end
+                        if runtimeState.autoAimLease == lease then runtimeState.autoAimLease = nil end
+                        if lease.owner == "Auto Shoot" and settings.autoShoot then
+                            runtimeState.autoShootOutcome = (runtimeState.autoRedirectSerial or 0) > before
+                                and "Native gun ray redirected; hit not confirmed."
+                                or "No gun ray redirected; Oth or weapon may be unsupported."
+                            setCombatStatus(autoShootCard, "Auto Shoot", runtimeState.autoShootOutcome)
+                        end
+                    end)
+                end
+                return ok, if ok then nil else "The gun is disabled, reloading or not ready."
             end
             local ok: boolean = activateNative(gun, target, noAim ~= true)
             return ok, if ok then nil else "The gun is disabled, reloading or not ready."
@@ -1045,7 +1090,7 @@ local function buildX2Duels(runtime: any): ()
         if type(getCaller) == "function" then
             local ok: boolean, caller: any = pcall(getCaller)
             if ok and typeof(caller) == "Instance" then
-                if caller:IsDescendantOf(tool) then return true, false end
+                if caller.IsDescendantOf(caller, tool) then return true, false end
                 -- An explicitly identified foreign script wins over an
                 -- incidental weapon-looking stack or anonymous compatibility.
                 -- MouseCast is the shared module whose stack may identify Gun.
@@ -1428,6 +1473,37 @@ local function buildX2Duels(runtime: any): ()
         lease.active = false
     end
 
+    local function redirectAutoGunRay(origin: Vector3, direction: Vector3, params: any): Vector3?
+        local lease: any = runtimeState.autoAimLease
+        if not lease or not ((lease.owner == "Auto Shoot" and settings.autoShoot)
+                or (lease.owner == "Auto Win" and settings.autoWin)) or os.clock() > lease.expires
+            or runtimeState.suppressRaycast or lease.gun.Parent ~= localPlayer.Character
+            or lease.character ~= localPlayer.Character or matchToken(localPlayer) ~= lease.gameToken then return nil end
+        if typeof(params) ~= "RaycastParams" or params.FilterType ~= Enum.RaycastFilterType.Exclude
+            or math.abs(direction.Magnitude - 10000) > 25 then return nil end
+        -- Unlike broad Silent compatibility, automation never falls back to
+        -- stack guesses or anonymous callers for a camera-sensitive cast.
+        local gotCaller: boolean, caller: any = pcall(host.getcallingscript)
+        if not gotCaller or typeof(caller) ~= "Instance"
+            or not caller.IsDescendantOf(caller, lease.gun) then return nil end
+        local target: any = lease.target
+        local root: BasePart? = rootOf(localPlayer.Character)
+        if not root or (origin - root.Position).Magnitude > 8 or not target or not target.player
+            or target.player.Character ~= target.character or not target.part or not target.part.Parent
+            or not target.part.IsDescendantOf(target.part, target.character)
+            or not isEnemy(target.player, false, lease.teamCheck)
+            or (target.part.Position - root.Position).Magnitude > lease.range then return nil end
+        if lease.wallCheck then
+            runtimeState.suppressRaycast = true
+            local ok: boolean, clear: any = pcall(hasLineOfSight, target, origin)
+            runtimeState.suppressRaycast = false
+            if not ok or not clear then return nil end
+        end
+        local offset: Vector3 = target.part.Position - origin
+        if offset.Magnitude < 0.05 or offset.Magnitude > direction.Magnitude then return nil end
+        return offset.Unit * direction.Magnitude
+    end
+
     -- One OTH __namecall bridge is shared by Silent and the optional passive
     -- probe. No __index / direct-function hooks or legacy fallback are added.
     local function installOthRaycast(forSilent: boolean?): boolean
@@ -1447,7 +1523,11 @@ local function buildX2Duels(runtime: any): ()
         local callback: any = function(object: any, ...: any): any
             if not predecessor then return nil end
             local observer: any = runtimeState.othProbeObserver
-            if runtimeState.closed or (not record.active and type(observer) ~= "function") then
+            local autoLease: any = runtimeState.autoAimLease
+            local autoActive: boolean = autoLease ~= nil and not autoLease.consumed and os.clock() <= autoLease.expires
+                and ((autoLease.owner == "Auto Shoot" and settings.autoShoot)
+                    or (autoLease.owner == "Auto Win" and settings.autoWin))
+            if runtimeState.closed or (not record.active and not autoActive and type(observer) ~= "function") then
                 return predecessor(object, ...)
             end
             local methodOk: boolean, method: any = pcall(host.getnamecallmethod)
@@ -1465,12 +1545,44 @@ local function buildX2Duels(runtime: any): ()
             local callerOk: boolean, executorCaller: any = pcall(host.checkcaller)
             if not callerOk or executorCaller ~= false then return predecessor(object, unpack(args, 1, args.n)) end
             if type(observer) == "function" then pcall(observer, object, method, args, false) end
-            if record.active and settings.silentAim and object == currentWorkspace and method == "Raycast"
+            if object == currentWorkspace and method == "Raycast"
                 and typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" then
-                local ok: boolean, direction: any = pcall(redirectRay, args[1], args[2], true)
+                -- Camera and ping casts are returned immediately when caller
+                -- identification is available, including in compatibility mode.
+                local callerKnown: boolean = false
+                if type(host.getcallingscript) == "function" then
+                    local gotCaller: boolean, caller: any = pcall(host.getcallingscript)
+                    if gotCaller and typeof(caller) == "Instance" then
+                        callerKnown = true
+                        -- CameraModule has child modules such as ZoomController;
+                        -- check ancestors too, not only the immediate script name.
+                        local ancestor: Instance? = caller
+                        for _ = 1, 32 do
+                            if not ancestor then break end
+                            local callerName: string = string.lower(tostring(ancestor.Name or ""))
+                            if string.find(callerName, "camera", 1, true) or string.find(callerName, "ping", 1, true) then
+                                return predecessor(object, unpack(args, 1, args.n))
+                            end
+                            ancestor = ancestor.Parent
+                        end
+                    end
+                end
+                -- Anonymous compatibility cannot distinguish a camera ray.
+                if not autoActive and settings.raycastCompatibility and not callerKnown then
+                    return predecessor(object, unpack(args, 1, args.n))
+                end
+                local ok: boolean, direction: any = false, nil
+                if autoActive then
+                    ok, direction = pcall(redirectAutoGunRay, args[1], args[2], args[3])
+                elseif record.active and settings.silentAim then
+                    ok, direction = pcall(redirectRay, args[1], args[2], true)
+                end
                 if ok and typeof(direction) == "Vector3" then
                     args[2] = direction
-                    runtimeState.othRedirectSerial = (runtimeState.othRedirectSerial or 0) + 1
+                    if autoActive then
+                        runtimeState.autoRedirectSerial = (runtimeState.autoRedirectSerial or 0) + 1
+                        if runtimeState.autoAimLease == autoLease then autoLease.consumed = true end
+                    else runtimeState.othRedirectSerial = (runtimeState.othRedirectSerial or 0) + 1 end
                     if type(observer) == "function" then pcall(observer, object, method, args, true) end
                 end
             end
@@ -1482,6 +1594,8 @@ local function buildX2Duels(runtime: any): ()
         runtimeState.othRaycast = record
         return true
     end
+
+    ensureAutoOth = function(): boolean return installOthRaycast(false) end
 
     local function installHooks(): boolean
         if settings.silentBackend == "Oth" then return installOthRaycast() end
@@ -2123,7 +2237,11 @@ local function buildX2Duels(runtime: any): ()
     local function runGun(
         maxDistance: number, cooldown: number?, teamCheck: boolean, wallCheck: boolean, owner: string
     ): (boolean, boolean, string?)
-        if cooldown ~= nil then runtimeState.nextGunAt = os.clock() + math.max(0, cooldown) end
+        if cooldown ~= nil then
+            local gun: Tool? = findWeapon("Gun")
+            local nativeInterval: number = owner == "Auto Shoot" and gun and gun.Name == "MimicGlare" and 2.5 or 0
+            runtimeState.nextGunAt = os.clock() + math.max(0, cooldown, nativeInterval)
+        end
         local target: {[string]: any}?, why: string? = nearestEnemy(
             maxDistance, teamCheck, wallCheck, false, gunOrigin(findWeapon("Gun"))
         )
@@ -2141,6 +2259,7 @@ local function buildX2Duels(runtime: any): ()
     local function runKnifeThrow(
         maxDistance: number, cooldown: number, teamCheck: boolean, wallCheck: boolean, owner: string
     ): (boolean, boolean, string?)
+        if settings.silentAim then return false, false, "Paused: Silent AIM protects the camera." end
         local target: {[string]: any}?, why: string? = nearestEnemy(maxDistance, teamCheck, wallCheck, false)
         local queued: boolean = fireKnife(target, false, {
             owner = owner, teamCheck = teamCheck, wallCheck = wallCheck,
@@ -2310,8 +2429,10 @@ local function buildX2Duels(runtime: any): ()
                         settings.autoShootTeamCheck, settings.autoShootWallCheck, "Auto Shoot"
                     )
                     usedGun = fired
-                    setCombatStatus(autoShootCard, "Auto Shoot", fired and "Shot attempted / queued"
-                        or (reason or "Gun not ready."))
+                    if reason ~= "A gun action is already pending." then
+                        setCombatStatus(autoShootCard, "Auto Shoot", fired and (runtimeState.autoShootOutcome or "Shot attempted / queued")
+                            or (reason or "Gun not ready."))
+                    end
                 end
                 if autoRound then
                     if usedGun then
@@ -2598,6 +2719,7 @@ local function buildX2Duels(runtime: any): ()
         2,
         function(enabled: boolean): ()
             if enabled and not settings.autoWin then
+                if runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
                 runtimeState.autoWinStartedAt = os.clock()
                 runtimeState.nextKnifeAt["Auto Win"] = 0
             elseif not enabled and settings.autoWin then
@@ -2674,6 +2796,9 @@ local function buildX2Duels(runtime: any): ()
             setAimActivity(enabled)
             runtimeState.silentAttempt += 1
             if enabled then
+                if runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
+                cancelGun("Auto Win") -- cancel a queued camera-aim action before Silent starts
+                cancelKnifeThrow() -- native automatic throws otherwise rotate the camera
                 installHooks()
                 discoverMouseCast()
                 setCombatStatus(silentAimCard, "Silent AIM", silentAdapterAvailable(findWeapon("Gun"))
@@ -2738,7 +2863,7 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "Oth Raycast mode only; no legacy hook fallback. Raycast Compatibility can affect unrelated game scripts. Equipped Gun/Knife can be aimed without turning the camera. Hook installation or redirected rays do not prove a hit or prevent detection."
+        "Oth Raycast mode only; no legacy hook fallback. Compatibility can affect unrelated scripts but skips unknown, camera and ping callers. Automatic Knife Throw pauses to protect the camera. Hook installation or redirected rays do not prove a hit or prevent detection."
     )
 
     local function pressSenderButton(): ()
@@ -2841,9 +2966,14 @@ local function buildX2Duels(runtime: any): ()
     end
 
     autoShootCard = card(
-        "Auto Shoot", "Automatically aim and activate the native gun independently of Silent AIM", 4,
+        "Auto Shoot", "Attempt native gun shots without moving the camera; uses its own scoped Oth raycast", 4,
         function(enabled: boolean): ()
             settings.autoShoot = enabled
+            runtimeState.autoShootOutcome = nil
+            if enabled then
+                if runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
+                cancelGun("Auto Win")
+            end
             runtimeState.nextGunAt = 0
             if not enabled then cancelGun("Auto Shoot") end
             setCombatStatus(autoShootCard, "Auto Shoot", enabled and "Waiting for gun" or nil)
@@ -2866,12 +2996,13 @@ local function buildX2Duels(runtime: any): ()
         autoShootCard, "Status", combatStatuses["Auto Shoot"] or "Off"
     )
     host.addInformationOption(autoShootCard,
-        "Independent of Silent AIM and hooks. Temporarily aims the camera and activates the native Tool; actual gun input and server hits are not confirmed.")
+        "Independent of Silent AIM. Uses Oth and an identified native Gun LocalScript; no camera rotation or legacy-hook fallback. Missing APIs prevent firing; an ineffective hook may still activate the gun without redirecting. Server hits are not confirmed.")
 
     knifeThrowCard = card(
         "Knife Throw", "Automatically attempt native knife throws independently of Silent AIM", 5,
         function(enabled: boolean): ()
             settings.knifeThrow = enabled
+            if enabled and runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
             runtimeState.nextKnifeAt["Knife Throw"] = 0
             if not enabled then cancelKnifeThrow("Knife Throw") end
             setCombatStatus(knifeThrowCard, "Knife Throw", enabled and "Waiting for knife" or nil)
@@ -2906,7 +3037,7 @@ local function buildX2Duels(runtime: any): ()
         knifeThrowCard, "Status", combatStatuses["Knife Throw"] or "Off"
     )
     host.addInformationOption(knifeThrowCard,
-        "Uses desktop right-click or the game's mobile ThrowMode and native Tool activation; release requires live verification.")
+        "Uses desktop right-click or the game's mobile ThrowMode and can rotate the camera. Automatic throws pause while Silent AIM is on; release requires live verification.")
 
     local auraCard: any = card(
         "Kill Aura",
@@ -2914,6 +3045,7 @@ local function buildX2Duels(runtime: any): ()
         5,
         function(enabled: boolean): ()
             settings.killAura = enabled
+            if enabled and runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
             runtimeState.nextAuraAt = 0
         end,
         "Combat"
@@ -3136,6 +3268,10 @@ local function buildX2Duels(runtime: any): ()
         end
         local function start(): ()
             if probe.active then return end
+            if settings.silentAim or settings.autoShoot or settings.autoWin or settings.knifeThrow or settings.killAura then
+                report("Probe blocked during combat; turn OFF to retry")
+                return
+            end
             probe.active, probe.guard = true, false
             probe.started, probe.expires, probe.nextTick, probe.stoppedAt = os.clock(), os.clock() + 60, 0, nil
             probe.nextSaveAt, probe.savedCount, probe.savedDropped, probe.saveFailed = 0, -1, -1, false

@@ -760,6 +760,24 @@ do
     checkcaller = function() return false end
     getcallingscript, debug = nil, {}
     oth = nil
+    local absentCaller = Instance.new("LocalScript")
+    absentCaller.Parent = nativeGun
+    getcallingscript = function() return absentCaller end
+    local oldWallForAbsent = core.settings.autoShootWallCheck
+    core.settings.autoShootWallCheck = false
+    nativeHumanoid:EquipTool(nativeGun)
+    local beforeAbsent = nativeGunShots
+    local cameraBeforeAbsent = workspace.CurrentCamera.CFrame
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(nativeGunShots == beforeAbsent and legacyCalls == 0
+        and string.find(autoShootFeature.status, "unavailable", 1, true)
+        and workspace.CurrentCamera.CFrame == cameraBeforeAbsent, "Auto Shoot did not fail closed without Oth")
+    autoShootFeature.onToggle(false)
+    core.settings.autoShootWallCheck = oldWallForAbsent
+    absentCaller.Parent = nil
+    getcallingscript = nil
     silentFeature.onToggle(true)
     assert(legacyCalls == 0 and string.find(silentFeature.status, "unavailable", 1, true),
         "absent OTH did not fail closed")
@@ -812,6 +830,11 @@ do
     assert(compatibility, "OTH compatibility option missing")
     compatibility.setChecked(true)
     installed(workspace, origin, direction, nil)
+    assert(captured[2] == direction, "anonymous compatibility changed an unknown camera caller")
+    local foreignCaller = Instance.new("LocalScript")
+    foreignCaller.Name = "UnrelatedScript"
+    getcallingscript = function() return foreignCaller end
+    installed(workspace, origin, direction, nil)
     assert(captured.n == 3 and captured[2] ~= direction and math.abs(captured[2].Magnitude - 500) < 0.01,
         "OTH Raycast did not redirect/preserve native range and nil arguments")
     assert(workspace.CurrentCamera.CFrame == cameraBefore, "OTH moved camera")
@@ -861,7 +884,7 @@ do
     getcallingscript = function() return cameraScript end
     installed(workspace, origin, direction)
     assert(captured[2] == direction, "OTH compatibility changed camera Raycast")
-    getcallingscript = nil
+    getcallingscript = function() return foreignCaller end
     HarnessMatchData[HarnessHeroGuy].team = "Red"
     installed(workspace, origin, direction)
     assert(captured[2] == direction, "OTH targeted a teammate")
@@ -876,8 +899,8 @@ do
     assert(installed == node, "OTH enabled a duplicate hook")
     installed(workspace, origin, direction)
     assert(captured[2] ~= direction, "OTH reusable node did not resume")
-    -- A single OTH node is shared by Silent AIM and Gun Probe. Start passive
-    -- observation while Silent is enabled, and verify both toggle orders.
+    -- Probe must not run simultaneously with combat: it intercepts unrelated
+    -- camera and remote traffic and may disturb the native client.
     local oldEncode = HttpService.JSONEncode
     local snapshot, saveCount = nil, 0
     HttpService.JSONEncode = function(_, value)
@@ -891,16 +914,18 @@ do
     remote.Name = "fire"
     remote.Parent = nativeGun
     probeCard.onToggle(true)
+    assert(string.find(probeCard.status, "blocked during combat", 1, true) and saveCount == 0,
+        "probe ran while Silent AIM was active")
+    probeCard.onToggle(false)
+    silentFeature.onToggle(false)
+    probeCard.onToggle(true)
     assert(installed == hookNode and hookInstalls == 1 and saveCount >= 2
-        and files["X2Duels-calibration.json"] == "{}",
-        "probe installed a second OTH hook or missed the initial crash-safe snapshot")
+        and files["X2Duels-calibration.json"] == "{}", "probe failed to reuse the OTH node")
     UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(25, 25, 0)}, false)
     nativeGun.Activated:Fire()
     currentOthMethod = "Raycast"
     installed(workspace, origin, direction, nil)
-    local redirectedArgs = captured
-    assert(redirectedArgs[2] ~= direction and redirectedArgs.n == 3,
-        "probe broke Silent Raycast or nil forwarding")
+    assert(captured[2] == direction and captured.n == 3, "probe changed aim or nil forwarding")
     currentOthMethod = "FireServer"
     installed(remote, "private-argument", nil, Vector3.new(1, 2, 3))
     assert(captured.n == 3 and captured[1] == "private-argument" and captured[2] == nil,
@@ -919,27 +944,17 @@ do
     assert(saveCount >= 2, "probe did not periodically save partial evidence")
     local earlySnapshot = snapshot
     currentOthMethod = "Raycast"
-    silentFeature.onToggle(false)
-    installed(workspace, origin, direction)
-    assert(captured[2] == direction, "probe alone modified aim")
-    silentFeature.onToggle(true)
-    nativeNow += 0.2
-    coreTask.callback(0.1)
-    installed(workspace, origin, direction)
-    assert(captured[2] ~= direction and hookInstalls == 1, "shared hook did not resume Silent")
     for i = 1, 450 do installed(workspace, origin, direction) end
     currentOthMethod = "FireServer"
     installed(remote, "latest-shot")
     probeCard.onToggle(false)
     currentOthMethod = "Raycast"
     assert(snapshot and snapshot.backend == "Oth shared namecall" and snapshot.namecallHook
-        and snapshot.aim.enabled and snapshot.aim.backend == "Oth namecall Raycast"
-        and #snapshot.events == 400 and snapshot.dropped > 0,
-        "probe omitted OTH/aim info or bounded buffer")
+        and not snapshot.aim.enabled and snapshot.aim.backend == "Oth namecall Raycast"
+        and #snapshot.events == 400 and snapshot.dropped > 0, "probe omitted metadata or bounded buffer")
     local newest = snapshot.events[#snapshot.events - 1]
-    assert(newest.event == "namecall" and newest.detail.method == "FireServer",
-        "overflow discarded the latest evidence instead of the oldest")
-    local foundCall, foundInput, foundRay, foundRedirect, foundCamera, foundActivation, foundAim = false, false, false, false, false, false, false
+    assert(newest.event == "namecall" and newest.detail.method == "FireServer", "overflow discarded latest evidence")
+    local foundCall, foundInput, foundRay, foundCamera, foundActivation, foundAim = false, false, false, false, false, false
     local foundLegacyRays = {}
     for _, event in ipairs(earlySnapshot.events) do
         if event.event == "namecall" and event.detail.method == "FireServer" then
@@ -947,21 +962,27 @@ do
                 and event.detail.argumentTypes[2] == "nil" and event.detail.argumentTypes[3] == "Vector3"
                 and event.detail.argumentValues == nil)
         elseif event.event == "namecall" and event.detail.method == "Raycast" then
-            if event.detail.redirected then foundRedirect = true
-            else foundRay = foundRay or (event.detail.origin[2] == 3 and event.detail.direction[3] == -500) end
+            foundRay = foundRay or (event.detail.origin[2] == 3 and event.detail.direction[3] == -500)
         elseif event.event == "namecall" and string.sub(event.detail.method, 1, 13) == "FindPartOnRay" then foundLegacyRays[event.detail.method] = true
         elseif event.event == "namecall" and event.detail.method == "ViewportPointToRay" then foundCamera = true
         elseif event.event == "input_began" then foundInput = true
         elseif event.event == "tool_activated" then foundActivation = true
-        elseif event.event == "aim_configuration" then foundAim = event.detail.enabled and event.detail.compatibility end
+        elseif event.event == "aim_configuration" then foundAim = not event.detail.enabled and event.detail.compatibility end
     end
-    assert(foundCall and foundInput and foundRay and foundRedirect and foundCamera and foundActivation and foundAim
+    assert(foundCall and foundInput and foundRay and foundCamera and foundActivation and foundAim
         and foundLegacyRays.FindPartOnRay and foundLegacyRays.FindPartOnRayWithIgnoreList
-        and foundLegacyRays.FindPartOnRayWithWhitelist,
-        "shared probe omitted touch, activation, input/redirected ray, camera or remote types")
+        and foundLegacyRays.FindPartOnRayWithWhitelist, "probe omitted passive evidence")
+    -- Starting Silent while Probe is already active must stop the Probe and
+    -- reuse the same node, rather than leaving its camera observer in the chain.
+    probeCard.onToggle(true)
+    silentFeature.onToggle(true)
+    assert(string.find(probeCard.status, "Probe stopped", 1, true) and hookInstalls == 1,
+        "enabling Silent did not stop Probe")
+    nativeNow += 0.2
+    coreTask.callback(0.1)
     local count = #snapshot.events
     installed(workspace, origin, direction)
-    assert(captured[2] ~= direction and #snapshot.events == count, "probe OFF disturbed Silent or kept recording")
+    assert(captured[2] ~= direction and #snapshot.events == count, "Silent did not resume after Probe stop")
     silentFeature.onToggle(false)
     compatibility.setChecked(false)
     probeCard.onToggle(true)
@@ -980,6 +1001,130 @@ do
     probeCard.onToggle(true)
     assert(string.find(probeCard.status, "JSONEncode", 1, true), "JSON encoding failure not reported")
     probeCard.onToggle(false)
+    -- Auto Shoot arms only a short-lived Gun LocalScript ray, independent of
+    -- Silent. Test real signatures, camera/ping pass-through and OFF.
+    local oldAutoActivate, oldTypeof, savedAutoWall = nativeGun.Activate, typeof, core.settings.autoShootWallCheck
+    local autoGunScript = Instance.new("LocalScript")
+    autoGunScript.Name, autoGunScript.Parent = "LocalScript", nativeGun
+    local autoCaller = autoGunScript
+    local autoParams = {FilterType = Enum.RaycastFilterType.Exclude}
+    typeof = function(value) if value == autoParams then return "RaycastParams" end return oldTypeof(value) end
+    getcallingscript = function() return autoCaller end
+    currentOthMethod = "Raycast"
+    local autoOrigin = nativeLocal.Character:FindFirstChild("HumanoidRootPart").Position
+    local autoDirection = Vector3.new(0, 0, -10000)
+    local cameraState = workspace.CurrentCamera.CFrame
+    local autoChecks = 0
+    nativeGun.Activate = function()
+        nativeGunShots += 1
+        local nestedCamera = Instance.new("LocalScript")
+        nestedCamera.Name, nestedCamera.Parent = "ZoomController", cameraScript
+        autoCaller = nestedCamera
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot modified a CameraModule child")
+        autoCaller = cameraScript
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot modified CameraModule")
+        cameraScript.Name = "PingsController"
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot modified ping")
+        cameraScript.Name = "CameraModule"
+        autoCaller = autoGunScript
+        installed(workspace, autoOrigin, Vector3.new(0, 0, -500), autoParams)
+        assert(captured[2].Magnitude == 500, "Auto Shoot modified another gun ray signature")
+        installed(workspace, autoOrigin, autoDirection, nil)
+        assert(captured[2] == autoDirection, "Auto Shoot modified a ray without native params")
+        installed(workspace, autoOrigin + Vector3.new(100, 0, 0), autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot modified a distant origin")
+        checkcaller = function() return true end
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot modified executor ray")
+        checkcaller = function() return false end
+        HarnessMatchData[HarnessHeroGuy].team = "Red"
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot redirected after target changed team")
+        HarnessMatchData[HarnessHeroGuy].team = "Blue"
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] ~= autoDirection and math.abs(captured[2].Magnitude - 10000) < 0.01
+            and captured[3] == autoParams, "Auto Shoot failed to redirect gun ray preserving arguments")
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot redirected more than one ray per activation")
+        assert(workspace.CurrentCamera.CFrame == cameraState, "Auto Shoot rotated camera")
+        autoChecks += 1
+    end
+    core.settings.autoShootWallCheck = false
+    nativeHumanoid:EquipTool(nativeGun)
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(autoChecks == 1 and not core.settings.silentAim, "Auto Shoot did not aim independently")
+    autoShootFeature.onToggle(false)
+    installed(workspace, autoOrigin, autoDirection, autoParams)
+    assert(captured[2] == autoDirection, "Auto Shoot ray remained active after OFF")
+    nativeGun.Name = "MimicGlare"
+    game:GetService("CollectionService"):AddTag(nativeGun, "Gun")
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(autoChecks == 2, "observed MimicGlare did not fire the first time")
+    nativeNow += 0.1
+    coreTask.callback(0.1)
+    assert(autoChecks == 2, "observed MimicGlare cooldown was ignored")
+    nativeNow += 2.4
+    coreTask.callback(0.1)
+    assert(autoChecks == 3, "observed MimicGlare did not resume after cooldown")
+    autoShootFeature.onToggle(false)
+    game:GetService("CollectionService"):RemoveTag(nativeGun, "Gun")
+    nativeGun.Name = "Gun"
+    -- Auto Win takes the same camera-free route when Silent is on.
+    core.settings.autoWin, core.settings.silentAim = true, true
+    assert(core.fireGun(nativeTarget, false, {owner = "Auto Win", teamCheck = true, wallCheck = false, range = 1000})
+        and autoChecks == 4 and workspace.CurrentCamera.CFrame == cameraState,
+        "Auto Win fallback moved camera while Silent was active")
+    core.settings.autoWin, core.settings.silentAim = false, false
+    -- A deferred ray after OFF, or after its short expiry, must not be redirected.
+    local savedDelay = task.delay
+    local diagnosticTimers = {}
+    task.delay = function(seconds, fn) if seconds == 0.4 then table.insert(diagnosticTimers, fn) end end
+    nativeGun.Activate = function() nativeGunShots += 1 end
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    autoShootFeature.onToggle(false)
+    installed(workspace, autoOrigin, autoDirection, autoParams)
+    assert(captured[2] == autoDirection, "pending Auto Shoot ray survived OFF")
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    nativeNow += 0.36
+    installed(workspace, autoOrigin, autoDirection, autoParams)
+    assert(captured[2] == autoDirection, "expired Auto Shoot ray was redirected")
+    local beforeDiagnostic = nativeGunShots
+    coreTask.callback(0.1)
+    assert(nativeGunShots == beforeDiagnostic, "automatic activation overlapped an unfinished diagnostic")
+    diagnosticTimers[#diagnosticTimers]()
+    assert(string.find(autoShootFeature.status, "No gun ray redirected", 1, true),
+        "Auto Shoot did not report an unobserved gun ray")
+    autoShootFeature.onToggle(false)
+    task.delay = savedDelay
+    -- Wall Check must be revalidated at the native ray, not just at selection.
+    local savedRay = workspace.Raycast
+    local lateWall = Instance.new("Part")
+    workspace.Raycast = function() return nil end
+    core.settings.autoShootWallCheck = true
+    nativeGun.Activate = function()
+        nativeGunShots += 1
+        workspace.Raycast = function() return {Instance = lateWall} end
+        installed(workspace, autoOrigin, autoDirection, autoParams)
+        assert(captured[2] == autoDirection, "Auto Shoot redirected through a new wall")
+    end
+    autoShootFeature.onToggle(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    autoShootFeature.onToggle(false)
+    workspace.Raycast = savedRay
+    nativeGun.Activate, typeof, core.settings.autoShootWallCheck = oldAutoActivate, oldTypeof, savedAutoWall
+    autoGunScript.Parent = nil
     writefile, readfile, isfile = previousWriteFile, previousReadFile, previousIsFile
     HttpService.JSONEncode = oldEncode
     remote.Parent = nil
@@ -1220,7 +1365,23 @@ workspace.Raycast = nativeRaycast
 nativeGun.Activate = function() nativeGunShots += 1 end
 end
 
--- Auto Shoot acts without Silent AIM and owns its team, LOS and range policy.
+-- Auto Shoot fails closed without caller attribution, then acts independently
+-- with a mocked identified caller. This mock is not evidence about Delta.
+local oldAutoCaller = getcallingscript
+local autoCallerScript = Instance.new("LocalScript")
+autoCallerScript.Parent = nativeGun
+getcallingscript = nil
+core.settings.autoShootWallCheck = false
+nativeHumanoid:EquipTool(nativeGun)
+autoShootFeature.onToggle(true)
+local noCallerShots = nativeGunShots
+nativeNow += 1
+coreTask.callback(0.1)
+assert(nativeGunShots == noCallerShots and string.find(autoShootFeature.status, "unavailable", 1, true),
+    "Auto Shoot fired without caller attribution")
+autoShootFeature.onToggle(false)
+getcallingscript = function() return autoCallerScript end
+-- Auto Shoot owns its team, LOS and range policy.
 core.settings.autoShootWallCheck = false
 nativeGun.Parent = nil
 autoShootFeature.onToggle(true)
@@ -1463,6 +1624,14 @@ nativeNow += 1
 coreTask.callback(0.1)
 assert(nativeKnifeShots == standaloneBefore + 1 and not core.settings.silentAim,
     "standalone Knife Throw did not use native activation")
+-- Native automatic throws rotate the camera, so they pause while Silent is on.
+silentFeature.onToggle(true)
+local beforeSilentKnife, beforeSilentCamera = nativeKnifeShots, workspace.CurrentCamera.CFrame
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeKnifeShots == beforeSilentKnife and workspace.CurrentCamera.CFrame == beforeSilentCamera
+    and string.find(knifeThrowFeature.status, "Paused", 1, true), "Knife Throw moved camera during Silent")
+silentFeature.onToggle(false)
 core.settings.knifeRange = 5
 nativeNow += 0.1
 coreTask.callback(0.1)
@@ -2671,8 +2840,8 @@ assert(currentIndex == originalIndex, "mobile OFF did not restore the Mouse hook
 hookmetamethod, getcallingscript, debug, checkcaller = oldHookMeta, oldCaller, oldDebug, oldCheckCaller
 localPlayer.GetMouse = oldMouseGetter
 
--- The two existing automatic cards remain independently operable from a touch
--- menu; these fixture Activates/ThrowMode writes are not proof of server hits.
+-- Mobile without Oth/caller must fail closed; Knife Throw remains independent.
+-- The fixture ThrowMode write does not prove a server hit.
 local autoShoot, knifeThrow = nil, nil
 for _, candidate in ipairs(ex.allFeatures) do
     if candidate.sectionName == "MVSD" and candidate.name == "Auto Shoot" then autoShoot = candidate end
@@ -2693,8 +2862,9 @@ hookmetamethod = function() autoHookCalls += 1; error("Auto Shoot must nothook")
 hookfunction = function() autoHookCalls += 1; error("Auto Shoot must nothook") end
 autoShoot.activate()
 scheduledCore.callback(0.1)
-assert(shots == 4 and not feature.enabled and not mobileCore.settings.silentAim and autoHookCalls == 0,
-    "mobile Auto Shoot did not activate independently of Silent AIM/hooks")
+assert(shots == 3 and not feature.enabled and not mobileCore.settings.silentAim and autoHookCalls == 0
+    and string.find(autoShoot.status, "unavailable", 1, true) and camera.CFrame == cameraBefore,
+    "mobile Auto Shoot did not fail safely without Oth/caller")
 autoShoot.activate()
 oth, hookmetamethod, hookfunction = mobileOldOth, mobileOldMeta, mobileOldFunction
 local mobileMain = Instance.new("Folder")
@@ -2759,6 +2929,7 @@ do
     assert(camera.CFrame == beforeCamera, "mobile OTH changed the camera")
     feature.activate()
     assert(installs == 1, "disabling Silent disturbed the shared probe hook")
+    probe.onToggle(true)
     UserInputService.InputBegan:Fire({UserInputType = Enum.UserInputType.Touch, Position = Vector3.new(900, 400, 0)}, false)
     hook(workspace, Vector3.new(0, 3, 0), Vector3.new(0, 0, -500))
     probe.onToggle(false)
