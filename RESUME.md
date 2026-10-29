@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v157-20261029-mm2-simulation-contract`**, con árbol base de
+> **`v158-20261029-mm2-knife-openings`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,37 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v157: 90 fuentes,
-     76 suites, boot `failures=0`, auditoría de menú 49/48 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v158: 90 fuentes,
+     77 suites, boot `failures=0`, auditoría de menú 49/48 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v158 — Knife apunta a aperturas, no a enemigos ocultos ni cadáveres (2026-10-29)
+
+El usuario reportó que el Knife especulativo apuntaba a enemigos detrás de
+paredes y a enemigos muertos en el piso, «prediciéndoles», en vez de apuntar a
+aperturas estratégicas. Detalle completo: `docs/FIXES-v158.md`.
+
+- `resolveSpeculativeAim` ya **no usa ninguna posición de jugador**. Antes
+  centraba radios 4/9/16 studs en el elegible oculto más cercano; por eso con
+  WallCheck encendido el redirect nativo apuntaba a través de la geometría.
+  Ahora muestrea 16 rumbos alrededor de la mirada de cámara (o del personaje),
+  descarta paredes a menos de 16 studs y elige el carril con suelo, hueco y
+  línea despejada, puntuando **primero la dirección mirada**, luego la
+  profundidad y el ancho de la boca del carril. El carril nunca es un objetivo
+  ni un hit confirmado.
+- `isPlayerAlive` (base.lua) rechaza `Health 0`, estado `Dead`/`Physics` y
+  atributo `Dead`, no solo salud. El predictor (`Prediction.lua`) aplica la
+  misma regla y devuelve `nil, "dead target"`; las pistas se descartan en el
+  muestreo, no 0,5 s después.
+- Pruebas: nueva `tools/test_mm2_knife_openings.py` con mapa analítico (puerta,
+  pared, sala sellada, borde de suelo, cadáver); `test_mm2_knife_equip.py`
+  ahora exige que el carril NO se construya alrededor del rival oculto;
+  `test_mm2_precision.py` cubre la retirada de cadáveres.
+- Sigue sin probarse Volt, servidor, daño ni hit-rate; los pesos del puntaje son
+  heurística sin calibrar.
 
 ## v157 — contrato Knife manual y simulación MM2 (2026-10-29)
 
@@ -86,6 +111,9 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 - `Knife Throw` intenta primero el predictor existente. Si no encuentra una
   trayectoria visible, busca hasta tres radios en torno al enemigo elegible más
   cercano; sin ninguno busca caminos a 24/45/70 studs alrededor del personaje.
+  **Superado en v158:** esos radios alrededor del rival oculto se retiraron
+  porque apuntaban detrás de paredes y a cadáveres; ahora son carriles de
+  apertura sin datos de jugador.
   Exige suelo y un raycast despejado, incluso con WallCheck apagado; son carriles
   especulativos, no detección de jugadores ni una prueba de hit. No especula si
   hay jugadores protegidos, si no es Murderer, está muerto o se conoce el fin de

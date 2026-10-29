@@ -381,11 +381,46 @@ local function getPlayerWeapon(
     )
 end
 
+-- v158: `Health > 0` alone called a corpse alive. MM2 keeps the body around
+-- after the kill (only the server stops treating it as a player), and the
+-- client can read Health > 0 while the Humanoid is already Dead/Physics. Every
+-- targeting module asked this function, so the knife kept predicting the
+-- ragdoll on the floor as if it were going to run. Health is still the first
+-- gate; the humanoid state and the Dead attribute catch the rag.
 local function isPlayerAlive(player: Player): boolean
-    local humanoid: Humanoid? = player.Character
-        and player.Character:FindFirstChildOfClass("Humanoid")
+    local character: Model? = player.Character
+    if not character then
+        return false
+    end
+    local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
         :: Humanoid?
-    return humanoid ~= nil and humanoid.Health > 0
+    if not humanoid or humanoid.Health <= 0 then
+        return false
+    end
+    local okDeadAttribute: boolean, deadAttribute: any =
+        pcall(function(): any
+            return character:GetAttribute("Dead")
+        end)
+    if okDeadAttribute and deadAttribute == true then
+        return false
+    end
+    local okState: boolean, currentState: any = pcall(function(): any
+        return humanoid:GetState()
+    end)
+    if okState and currentState ~= nil then
+        -- Looked up inside a pcall: some harness Enum tables do not name these
+        -- states, and a missing member must not turn into a false corpse.
+        local deadState: any = nil
+        local physicsState: any = nil
+        pcall(function(): ()
+            deadState = Enum.HumanoidStateType.Dead
+            physicsState = Enum.HumanoidStateType.Physics
+        end)
+        if currentState == deadState or currentState == physicsState then
+            return false
+        end
+    end
+    return true
 end
 
 

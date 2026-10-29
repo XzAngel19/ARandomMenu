@@ -256,15 +256,18 @@ clock = 300.7
 knifeThrowLoop()
 assert(#fired == 2, 'speculative throw did not resume after Delay')
 
--- 8. A hidden target: try a nearby visible lane, not a ray through the wall.
+-- 8. A hidden target: the blade may leave down an open lane, but that lane is
+-- a map decision, not a radius walk around the hidden body. v157 centred the
+-- pre-fire points on the nearest hidden opponent, which is exactly what the
+-- redirect must never do.
 lobby = {Player, target}
 isWeaponPathClear = function() return false end
 fired = {}
 clock = 302
 knifeThrowLoop()
-assert(#fired == 1, 'hidden target should use a visible nearby lane')
-assert((fired[1].target.Position - victimRoot.Position).Magnitude <= 18,
-    'the speculative lane should be near the hidden opponent')
+assert(#fired == 1, 'hidden target should use a clear opening lane')
+assert((fired[1].target.Position - victimRoot.Position).Magnitude > 30,
+    'the opening lane must not be built around a hidden opponent')
 
 -- 9. No clear lane, no ground, protected player or round ended: no packet.
 blocked = true
@@ -333,7 +336,7 @@ assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'uninstall did not
 assert(weaponService:GetTargetPosition(5, 6) == originalTarget, 'uninstall did not restore touch')
 assert(forwardedSelf == weaponService and forwardedX == 5 and forwardedY == 6)
 print('PASS knife manual contract: CFrame mouse/touch, target, speculative, no lane, OFF, unequipped and restore')
-print('PASS knife speculative lanes: empty, hidden, wall, floor, protection, round and delay')
+print('PASS knife opening lanes: empty, hidden opponent independent, wall, floor, protection, round and delay')
 
 print('PASS knife equip: no packet before the blade is in hand, then one per throw')
 print('PASS knife loop: aim solved ' .. tostring(solvesPerSecond)

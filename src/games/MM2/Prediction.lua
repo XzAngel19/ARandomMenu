@@ -269,6 +269,69 @@ local function humanoidStateName(humanoid: Humanoid): string
     return tostring(state)
 end
 
+-- v158: the predictor is asked only about live bodies. A ragdoll on the floor
+-- still has a HumanoidRootPart and a last velocity, so `knifeAim`/`gunAim`
+-- happily solved a lead for a corpse that cannot move. This is the same test
+-- base.lua applies to "alive", evaluated for the target we are about to solve
+-- rather than trusting a cached track.
+local function bodyIsAlive(humanoid: any): boolean
+    if humanoid == nil then
+        return false
+    end
+    local okHealth: boolean, health: any = pcall(function(): any
+        return humanoid.Health
+    end)
+    if okHealth and type(health) == "number" and health <= 0 then
+        return false
+    end
+    local okState: boolean, currentState: any = pcall(function(): any
+        return humanoid:GetState()
+    end)
+    if okState and currentState ~= nil then
+        local deadState: any = nil
+        local physicsState: any = nil
+        pcall(function(): ()
+            deadState = Enum.HumanoidStateType.Dead
+            physicsState = Enum.HumanoidStateType.Physics
+        end)
+        if currentState == deadState or currentState == physicsState then
+            return false
+        end
+    end
+    -- The flag may sit on the Humanoid or on the character model, depending on
+    -- who wrote it; either one retires the body.
+    local function deadAttribute(instance: any): boolean
+        if instance == nil then
+            return false
+        end
+        local ok: boolean, dead: any = pcall(function(): any
+            return instance:GetAttribute("Dead")
+        end)
+        return ok and dead == true
+    end
+    if deadAttribute(humanoid) then
+        return false
+    end
+    local okParent: boolean, parent: any = pcall(function(): any
+        return humanoid.Parent
+    end)
+    if okParent and deadAttribute(parent) then
+        return false
+    end
+    return true
+end
+
+local function targetHumanoid(target: Player): any
+    local ok: boolean, humanoid: any = pcall(function(): any
+        local character = target.Character
+        return character and character:FindFirstChildOfClass("Humanoid")
+    end)
+    if not ok then
+        return nil
+    end
+    return humanoid
+end
+
 local AIM_PARTS: {string} = {
     "UpperTorso",
     "Torso",
@@ -328,7 +391,7 @@ function Module.init(runtime: any): any
             :: Humanoid?
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
             :: BasePart?
-        if not humanoid or not root or humanoid.Health <= 0 then
+        if not humanoid or not root or not bodyIsAlive(humanoid) then
             return false
         end
         track.humanoid = humanoid
@@ -367,6 +430,11 @@ function Module.init(runtime: any): any
     local function samplePlayer(player: Player, now: number): ()
         local track: Track? = ensureTrack(player, now)
         if not track then
+            return
+        end
+        local humanoid: Humanoid? = track.humanoid
+        if not bodyIsAlive(humanoid) then
+            tracks[player] = nil
             return
         end
         local root: BasePart = track.root
@@ -1087,6 +1155,13 @@ function Module.init(runtime: any): any
         target: Player,
         _muzzle: Vector3
     ): (Vector3?, AimInfo?, string?)
+        -- v158: a fresh body check. A track survives the 0.5 s part refresh,
+        -- so without this the solver kept leading a body that had just died.
+        local humanoid: any = targetHumanoid(target)
+        if humanoid ~= nil and not bodyIsAlive(humanoid) then
+            tracks[target] = nil
+            return nil, nil, "dead target"
+        end
         local track: Track? = tracks[target]
         if not track then
             samplePlayer(target, os.clock())
@@ -1163,6 +1238,11 @@ function Module.init(runtime: any): any
         origin: Vector3,
         speed: number?
     ): (Vector3?, AimInfo?, string?)
+        local humanoid: any = targetHumanoid(target)
+        if humanoid ~= nil and not bodyIsAlive(humanoid) then
+            tracks[target] = nil
+            return nil, nil, "dead target"
+        end
         local track: Track? = tracks[target]
         if not track then
             samplePlayer(target, os.clock())

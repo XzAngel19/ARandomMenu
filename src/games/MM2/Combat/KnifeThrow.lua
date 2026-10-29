@@ -354,14 +354,31 @@ function Module.init(runtime: any): any
         return bestTarget
     end
 
-    -- Experimental pre-fire points are guesses, not targets or confirmed hits.
-    -- Prefer a walkable, visible lane near the closest hidden eligible player;
-    -- if nobody is found, try open lanes ahead/around the character. Never aim
-    -- through geometry, and do not speculate while a protected player exists.
+    -- v158: a speculative throw is a LANE decision, never a target decision.
+    -- v157 centred the pre-fire points on the nearest hidden opponent and
+    -- walked radii around that body: with nobody visible the redirect still
+    -- pointed the native throw at a player behind geometry, and a corpse got
+    -- the same treatment. This version never reads an opponent position. It
+    -- samples bearings around the camera/character forward, keeps only the
+    -- directions where the blade would travel down an unobstructed lane into
+    -- open, walkable space, and scores them by facing first, then depth and
+    -- the width of the doorway the lane threads.
     local speculativeAt: number = -math.huge
     local speculativePoint: Vector3? = nil
     local speculativeOrigin: Vector3? = nil
     local speculativeSequence: number = 0
+
+    local LANE_SAMPLES: number = 16
+    local LANE_MIN_STUDS: number = 16
+    local LANE_MAX_STUDS: number = 140
+    local LANE_SIDE_STUDS: number = 6
+    local LANE_HEADROOM_STUDS: number = 8
+    local LANE_FLOOR_TOLERANCE: number = 14
+    local LANE_GROUND_OFFSET: number = 2.5
+    local LANE_MOUTH_STUDS: number = 24
+    local LANE_SCORE_CAP: number = 60
+    local LANE_FACING_WEIGHT: number = 40
+
     local function resolveSpeculativeAim(originPos: Vector3): Vector3?
         if type(isPlayerAlive) == "function" and not isPlayerAlive(LocalPlayer) then return nil end
         if type(getPlayerRole) == "function" and getPlayerRole(LocalPlayer) ~= "Murderer" then return nil end
@@ -380,76 +397,157 @@ function Module.init(runtime: any): any
                 return nil
             end
         end
-        -- Speculative points must remain in an unobstructed lane even when
-        -- ordinary WallCheck is disabled; they are not a wall-penetration aim.
-        local function speculativePathClear(point: Vector3): boolean
-            local ok: boolean, clear: any = pcall(function(): boolean
-                local params: RaycastParams = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = {character}
-                params.RespectCanCollide = true
-                params.IgnoreWater = true
-                return workspace:Raycast(originPos, point - originPos, params) == nil
-            end)
-            return ok and clear == true
-        end
-        local now: number = os.clock()
-        if now - speculativeAt < 0.4 and speculativeOrigin
-            and (originPos - speculativeOrigin).Magnitude < 4 then
-            if not speculativePoint then return nil end
-            if speculativePathClear(speculativePoint) then return speculativePoint end
-        end
-        speculativeAt, speculativeOrigin, speculativePoint = now, originPos, nil
-        local hidden: BasePart? = nil
-        local bestDistance: number = 250
-        for _, player: Player in ipairs(players) do
-            if isValidTarget(player) then
-                local root: BasePart? = player.Character and player.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                if root then
-                    local dist: number = (root.Position - originPos).Magnitude
-                    if dist < bestDistance then bestDistance, hidden = dist, root end
-                end
-            end
-        end
+        -- Every character is skipped by the lane probes: an opponent body may
+        -- stand in the lane (that would be a hit, not a wall), but no body
+        -- position may decide where the lane goes. Corpses are colliders, so
+        -- ignoring them keeps a ragdoll from displacing the opening.
         local ignore: {Instance} = {}
         if character then table.insert(ignore, character) end
         for _, player: Player in ipairs(players) do
-            if player.Character and player.Character ~= character then table.insert(ignore, player.Character) end
+            local other: Model? = player.Character
+            if other and other ~= character then table.insert(ignore, other) end
         end
-        local function usable(candidate: Vector3): Vector3?
-            local ok: boolean, ground: any = pcall(function(): any
+        local function cast(from: Vector3, to: Vector3): (boolean, RaycastResult?)
+            local ok: boolean, result: any = pcall(function(): any
                 local params: RaycastParams = RaycastParams.new()
                 params.FilterType = Enum.RaycastFilterType.Exclude
                 params.FilterDescendantsInstances = ignore
                 params.RespectCanCollide = true
                 params.IgnoreWater = true
-                return workspace:Raycast(candidate + Vector3.new(0, 8, 0), Vector3.new(0, -18, 0), params)
+                return workspace:Raycast(from, to - from, params)
             end)
-            if not ok or not ground or typeof(ground.Position) ~= "Vector3" then return nil end
-            local point: Vector3 = ground.Position + Vector3.new(0, 2.5, 0)
-            local distance: number = (point - originPos).Magnitude
-            if distance < 3 or distance > 250 then return nil end
-            return speculativePathClear(point) and point or nil
+            if not ok then
+                return false, nil
+            end
+            return true, result
         end
-        local direction: Vector3 = Vector3.new(0, 0, -1)
+        local function laneClear(from: Vector3, to: Vector3): boolean
+            local ok: boolean, hit: any = cast(from, to)
+            return ok and hit == nil
+        end
+        local function groundBelow(point: Vector3): Vector3?
+            local ok: boolean, hit: any = cast(
+                point + Vector3.new(0, LANE_HEADROOM_STUDS, 0),
+                point + Vector3.new(0, -10, 0)
+            )
+            if not ok or not hit or typeof(hit.Position) ~= "Vector3" then
+                return nil
+            end
+            local normal: any = hit.Normal
+            if typeof(normal) == "Vector3" and normal.Y < 0.55 then
+                return nil
+            end
+            return hit.Position
+        end
+        local now: number = os.clock()
+        if now - speculativeAt < 0.4 and speculativeOrigin
+            and (originPos - speculativeOrigin).Magnitude < 4 then
+            if not speculativePoint then return nil end
+            if laneClear(originPos, speculativePoint) then return speculativePoint end
+        end
+        speculativeAt, speculativeOrigin = now, originPos
+        local forward: Vector3 = Vector3.new(0, 0, -1)
         pcall(function(): ()
-            local look: Vector3 = localRoot.CFrame.LookVector
-            local flat: Vector3 = Vector3.new(look.X, 0, look.Z)
-            if flat.Magnitude > 0.05 then direction = flat.Unit end
+            local sources: {any} = {}
+            local camera: any = workspace.CurrentCamera
+            if camera then table.insert(sources, camera) end
+            table.insert(sources, localRoot)
+            for _, source: any in ipairs(sources) do
+                local okLook: boolean, look: any = pcall(function(): any
+                    return source.CFrame.LookVector
+                end)
+                if okLook and typeof(look) == "Vector3" then
+                    local flat: Vector3 = Vector3.new(look.X, 0, look.Z)
+                    if flat.Magnitude > 0.05 then
+                        forward = flat.Unit
+                        break
+                    end
+                end
+            end
         end)
-        local startAngle: number = math.atan2(direction.Z, direction.X)
-        local centre: Vector3 = hidden and hidden.Position or originPos
-        local radii: {number} = hidden and {4, 9, 16} or {24, 45, 70}
-        -- Rotate starting direction between throws rather than spamming one lane.
-        for _, radius: number in ipairs(radii) do
-            for i: number = 0, 7 do
-                local angle: number = startAngle + ((i + speculativeSequence) % 8) * math.pi / 4
-                local candidate: Vector3 = centre + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-                local point: Vector3? = usable(candidate)
-                if point then speculativePoint = point; return point end
+        -- The hand throws from a little above the pivot; probes start there so
+        -- a low railing or a ledge at waist height is part of the lane.
+        local eye: Vector3 = originPos + Vector3.new(0, 1.2, 0)
+        local referenceFloor: Vector3? = groundBelow(originPos)
+        local referenceY: number = referenceFloor and referenceFloor.Y or originPos.Y
+        local baseAngle: number = math.atan2(forward.Z, forward.X)
+        local step: number = (math.pi * 2) / LANE_SAMPLES
+        local bestPoint: Vector3? = nil
+        local bestScore: number = -math.huge
+        -- The floor can end before the LaneMax ray does (a ledge, a map edge),
+        -- so a lane is sampled from far to near and the farthest landing with
+        -- solid floor, headroom and a clear hand line wins.
+        local laneDistances: {number} = {140, 80, 45, 26, 16}
+        for i: number = 0, LANE_SAMPLES - 1 do
+            -- Rotating the start only breaks ties between equal lanes; the
+            -- chosen opening is stable while the map and the hand are.
+            local index: number = (i + speculativeSequence) % LANE_SAMPLES
+            local angle: number = baseAngle + index * step
+            local direction: Vector3 = Vector3.new(math.cos(angle), 0, math.sin(angle))
+            local castOk: boolean, hit: any = cast(eye, eye + direction * LANE_MAX_STUDS)
+            if castOk then
+                local clearDistance: number = LANE_MAX_STUDS
+                if hit and typeof(hit.Position) == "Vector3" then
+                    clearDistance = (hit.Position - eye).Magnitude - 1.5
+                end
+                local point: Vector3? = nil
+                local landing: number = 0
+                if clearDistance >= LANE_MIN_STUDS then
+                    for _, candidate: number in ipairs(laneDistances) do
+                        if candidate <= clearDistance and candidate >= LANE_MIN_STUDS then
+                            local floor: Vector3? = groundBelow(eye + direction * candidate)
+                            if floor and math.abs(floor.Y - referenceY) <= LANE_FLOOR_TOLERANCE then
+                                local candidatePoint: Vector3 = floor
+                                    + Vector3.new(0, LANE_GROUND_OFFSET, 0)
+                                local distance: number = (candidatePoint - originPos).Magnitude
+                                if distance >= 3 and distance <= 250
+                                    and laneClear(candidatePoint, candidatePoint
+                                        + Vector3.new(0, LANE_HEADROOM_STUDS, 0))
+                                    and laneClear(originPos, candidatePoint) then
+                                    point = candidatePoint
+                                    landing = candidate
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+                if point then
+                    -- Facing is what makes an opening strategic: a doorway in
+                    -- front beats a wider patch of floor behind the player.
+                    -- Depth and width only separate openings that are ahead.
+                    local alignment: number = direction:Dot(forward)
+                    local baseScore: number = alignment * LANE_FACING_WEIGHT
+                        + math.min(landing, LANE_SCORE_CAP) * 0.5
+                    -- Only pay for the width probes when the lane can still
+                    -- win; a narrow slot scores at most +16.
+                    if baseScore + 16 > bestScore then
+                        -- Width at the mouth of the lane (a doorway), not the
+                        -- size of the room behind it.
+                        local side: Vector3 = Vector3.new(-direction.Z, 0, direction.X)
+                        local mouth: Vector3 = eye + direction * math.min(landing, LANE_MOUTH_STUDS)
+                        local mouthFloor: Vector3? = groundBelow(mouth)
+                        local widthScore: number = 0
+                        if mouthFloor then
+                            local mouthPoint: Vector3 = mouthFloor
+                                + Vector3.new(0, LANE_GROUND_OFFSET, 0)
+                            if laneClear(mouthPoint, mouthPoint + side * LANE_SIDE_STUDS) then
+                                widthScore += 1
+                            end
+                            if laneClear(mouthPoint, mouthPoint - side * LANE_SIDE_STUDS) then
+                                widthScore += 1
+                            end
+                        end
+                        local score: number = baseScore + widthScore * 8
+                        if score > bestScore then
+                            bestScore, bestPoint = score, point
+                        end
+                    end
+                end
             end
         end
-        return nil
+        speculativePoint = bestPoint
+        return bestPoint
     end
 
     local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
@@ -736,7 +834,7 @@ function Module.init(runtime: any): any
             destroyTracerVisuals()
             return
         end
-        setKnifeStatus(target and "Predicted target" or "Speculative lane · no visible target")
+        setKnifeStatus(target and "Predicted target" or "Opening lane · no visible target")
 
         if settings.knifeTracer and originCF and aimPos then
             updateTracerVisual(originCF.Position, aimPos)
@@ -797,7 +895,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.wallCheck = value
         end,
-        "Checks line of sight; when nobody is visible, a clear speculative lane may be used instead."
+        "Checks line of sight; when nobody is visible, the throw is aimed down a clear opening lane instead of at a hidden player."
     )
 
     addToggleOption(
@@ -807,7 +905,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.autoThrow = value == true
         end,
-        "Throws toward predicted targets or speculative visible lanes when none is visible. A lane is not a confirmed target or hit."
+        "Throws toward predicted targets; with nobody visible it aims down an open, unobstructed lane. An opening is not a target or a confirmed hit."
     )
 
     addNumberOption(

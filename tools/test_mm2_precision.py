@@ -49,7 +49,7 @@ local CFrame={new=function(p) return {Position=p} end,lookAt=function(p,q)
     assert((q-p).Magnitude>0.00001,"degenerate CFrame")
     return {Position=p,Endpoint=q}
 end}
-local Enum={Material={Air="Air"},HumanoidStateType={Jumping="Jumping",Freefall="Freefall"},
+local Enum={Material={Air="Air"},HumanoidStateType={Jumping="Jumping",Freefall="Freefall",Dead="Dead",Physics="Physics",Running="Running"},
     RaycastFilterType={Exclude="Exclude",Include="Include"}}
 local now=0
 local os={clock=function() return now end}
@@ -232,7 +232,29 @@ do
     local blade,bladeInfo=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
     assert(blade and bladeInfo.flightSeconds)
     assert(blade.Y<falling.Y,"airborne blade aims at the projected impact, not a straight Y")
-    pass("live predictor: weighted fit, echo median, freshness, teleport reset, gravity")
+    -- v158: a corpse is not a target. MM2 leaves the ragdoll in the workspace
+    -- and the client can still read Health > 0, so the solver has to reject a
+    -- Dead/Physics humanoid before it predicts where the body would move.
+    humanoid.Health=0
+    local corpseAim,_,corpseReason=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    assert(corpseAim==nil and corpseReason=="dead target",tostring(corpseReason))
+    assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,
+        "a zero-health body must not be aimed at")
+    humanoid.Health=100
+    humanoid.GetState=function() return Enum.HumanoidStateType.Dead end
+    local deadAim,_,deadReason=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    assert(deadAim==nil and deadReason=="dead target",tostring(deadReason))
+    humanoid.GetState=function() return Enum.HumanoidStateType.Physics end
+    assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,
+        "a ragdoll in the Physics state must not be aimed at")
+    humanoid.GetState=function() return "Freefall" end
+    for i=1,12 do
+        now=now+1/60
+        sampleTick(1/60)
+    end
+    assert(prediction.knifeAim(target,Vector3.new(0,0,-30),96),
+        "a live body must be aimed at again after the corpse is gone")
+    pass("live predictor: weighted fit, echo median, freshness, teleport reset, gravity, corpses")
 
     -- A sustained set of implausibly late echoes (1 s at a 120 ms ping)
     -- is a contaminated pairing, not a transport change: every sample
