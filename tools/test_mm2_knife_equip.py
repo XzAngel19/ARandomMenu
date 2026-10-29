@@ -239,66 +239,45 @@ assert(throws >= 3 and throws <= 5,
 assert(getPlayersCalls <= 2 * 20,
     'throwing must not restore a per-frame solve (saw ' .. tostring(getPlayersCalls) .. ')')
 
--- 7. Nobody visible: speculative lanes are grounded and unobstructed.
--- These mocks demonstrate request construction only, never server hits.
+-- 7. Nobody visible: no packet at all. v159 removed the speculative lane, so
+-- an empty lobby spends nothing instead of throwing into an opening.
 lobby = {Player}
 fired = {}
 clock = 300
 knifeThrowLoop()
-assert(#fired == 1, 'empty lobby in active round should send at a clear lane')
-assert(fired[1].target.Position.Y == 2.5 and
-    (fired[1].target.Position - handle.CFrame.Position).Magnitude > 3,
-    'the speculative endpoint must be above ground and away from the hand')
-clock = 300.1
-knifeThrowLoop()
-assert(#fired == 1, 'speculative throw ignored Delay')
+assert(#fired == 0, 'an empty lobby must not spend a knife')
 clock = 300.7
 knifeThrowLoop()
-assert(#fired == 2, 'speculative throw did not resume after Delay')
+assert(#fired == 0, 'an empty lobby must stay silent across frames')
 
--- 8. A hidden target: the blade may leave down an open lane, but that lane is
--- a map decision, not a radius walk around the hidden body. v157 centred the
--- pre-fire points on the nearest hidden opponent, which is exactly what the
--- redirect must never do.
+-- 8. A target behind cover: WallCheck refuses it and nothing is thrown. The
+-- old build aimed at a lane near that body, which is what the user saw as a
+-- knife aimed through the wall.
 lobby = {Player, target}
 isWeaponPathClear = function() return false end
 fired = {}
 clock = 302
 knifeThrowLoop()
-assert(#fired == 1, 'hidden target should use a clear opening lane')
-assert((fired[1].target.Position - victimRoot.Position).Magnitude > 30,
-    'the opening lane must not be built around a hidden opponent')
+assert(#fired == 0, 'a target behind cover must not be thrown at')
 
--- 9. No clear lane, no ground, protected player or round ended: no packet.
-blocked = true
-fired = {}
-clock = 304
-knifeThrowLoop()
-assert(#fired == 0, 'speculative knife crossed a wall')
-blocked, hasGround = false, false
-clock = 305
-knifeThrowLoop()
-assert(#fired == 0, 'speculative knife aimed into a floorless void')
-hasGround = true
+-- 9. Protection and OFF stay silent even with a clear target. (The old round
+-- guard lived inside the speculative path; with the lane gone, a visible
+-- target is thrown at exactly like before v156.)
+isWeaponPathClear = function() return true end
 protectedPlayer = target
 clock = 306
 knifeThrowLoop()
-assert(#fired == 0, 'speculative knife ignored protection')
-protectedPlayer, roundActive = nil, false
-clock = 307
-knifeThrowLoop()
-assert(#fired == 0, 'speculative knife fired after the round')
-roundActive, settings.enabled = true, false
+assert(#fired == 0, 'knife ignored protection')
+protectedPlayer, settings.enabled = nil, false
 clock = 308
 knifeThrowLoop()
-assert(#fired == 0, 'speculative knife fired while OFF')
+assert(#fired == 0, 'knife fired while OFF')
 
 -- 10. The captured native WeaponService returns CFrame for BOTH methods.
--- Exercise realistic native consumers (mouse/viewport coordinates), with a
--- target and with a speculative lane; no camera movement or packet is needed.
+-- With a visible target both native consumers share the predicted point; with
+-- nobody visible they must fall through to the game's own aim, untouched.
 settings.enabled, settings.autoThrow = true, false
 lobby = {Player, target}
-isWeaponPathClear = function() return true end
 clock = 310
 installRedirect()
 local function nativeConsumer(cf)
@@ -310,20 +289,22 @@ local mouseAim = nativeConsumer(weaponService:GetMouseTargetCFrame())
 local touchAim = nativeConsumer(weaponService:GetTargetPosition(123, 456))
 assert((mouseAim - touchAim).Magnitude < 1e-6, 'mouse/touch must share the predicted point')
 assert((touchAim - victimRoot.Position).Magnitude < 5, 'visible target was not selected')
-lobby = {Player}
-clock = 311
-mouseAim = nativeConsumer(weaponService:GetMouseTargetCFrame())
-touchAim = nativeConsumer(weaponService:GetTargetPosition(123, 456))
-assert((mouseAim - touchAim).Magnitude < 1e-6, 'mouse/touch must share the speculative point')
-assert((touchAim - handle.CFrame.Position).Magnitude > 3, 'speculative lane missing')
--- No viable speculative lane falls through with the original self/coordinates.
-blocked = true
-clock = 312
-assert(weaponService:GetTargetPosition(123, 456) == originalTarget, 'no lane must preserve native aim')
+-- Hidden target: the original method decides, arguments forwarded.
+isWeaponPathClear = function() return false end
+assert(weaponService:GetTargetPosition(123, 456) == originalTarget,
+    'a hidden target must preserve the native aim')
 assert(forwardedSelf == weaponService and forwardedX == 123 and forwardedY == 456,
     'fallback must forward self and viewport coordinates')
-blocked = false
+-- Empty lobby: same, the redirect invents nothing.
+isWeaponPathClear = function() return true end
+lobby = {Player}
+clock = 311
+assert(weaponService:GetMouseTargetCFrame() == originalMouse,
+    'empty lobby redirected the native mouse aim')
+assert(weaponService:GetTargetPosition(7, 8) == originalTarget,
+    'empty lobby redirected the native touch aim')
 -- Unequipped and OFF must not override either native method.
+lobby = {Player, target}
 knife.Parent = backpack
 assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'unequipped knife redirected mouse')
 assert(weaponService:GetTargetPosition(1, 2) == originalTarget, 'unequipped knife redirected touch')
@@ -335,8 +316,8 @@ uninstallRedirect()
 assert(weaponService:GetMouseTargetCFrame() == originalMouse, 'uninstall did not restore mouse')
 assert(weaponService:GetTargetPosition(5, 6) == originalTarget, 'uninstall did not restore touch')
 assert(forwardedSelf == weaponService and forwardedX == 5 and forwardedY == 6)
-print('PASS knife manual contract: CFrame mouse/touch, target, speculative, no lane, OFF, unequipped and restore')
-print('PASS knife opening lanes: empty, hidden opponent independent, wall, floor, protection, round and delay')
+print('PASS knife manual contract: CFrame mouse/touch, visible target, hidden fallback, OFF, unequipped and restore')
+print('PASS knife discipline: nothing visible and nothing blocked spends no knife')
 
 print('PASS knife equip: no packet before the blade is in hand, then one per throw')
 print('PASS knife loop: aim solved ' .. tostring(solvesPerSecond)

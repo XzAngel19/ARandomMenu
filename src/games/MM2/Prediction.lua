@@ -1285,9 +1285,14 @@ function Module.init(runtime: any): any
         if not flight then
             return nil, nil, "unreachable"
         end
-        -- One re-solve with the average velocity over the whole flight: a
-        -- turning or braking target does not travel along the instantaneous
-        -- tangent, and the blade needs the chord.
+        -- v159: solve the intercept to a FIXED POINT instead of one re-solve.
+        -- The chord a turning or braking target travels depends on how long
+        -- the blade is in the air, and that flight time depends on the chord,
+        -- so a single pass leaves the aim inconsistent: the point and the
+        -- flight time it was solved for disagree. Iterating until the flight
+        -- time stops moving makes |endpoint - origin| == speed * flight exact,
+        -- which is the one property a straight constant-speed blade has to
+        -- satisfy. It converges in two or three passes; the cap is a guard.
         local span: number = horizon + flight
         local lead: Vector3 = leadHorizontal(motion, span)
         local vertical: number = motion.verticalLead and motion.vertical or 0
@@ -1299,13 +1304,22 @@ function Module.init(runtime: any): any
             vertical * span,
             lead.Z
         ) / span
-        local revised: number? = predictionMath.interceptTime(
-            aimStart + effective * horizon - origin,
-            effective,
-            resolvedSpeed
-        )
-        if revised then
+        for _iteration: number = 1, 4 do
+            local revised: number? = predictionMath.interceptTime(
+                aimStart + effective * horizon - origin,
+                effective,
+                resolvedSpeed
+            )
+            if not revised then
+                break
+            end
+            local delta: number = math.abs(revised - flight)
             flight = revised
+            if delta <= 1e-4 then
+                -- `effective` is still the velocity this flight was solved
+                -- with, so the endpoint below sits exactly on the intercept.
+                break
+            end
             span = horizon + flight
             lead = leadHorizontal(motion, span)
             vertical = motion.verticalLead and motion.vertical or 0
@@ -1320,6 +1334,12 @@ function Module.init(runtime: any): any
             -- root's projected position at impact instead of a linear Y.
             endpoint = predictedRoot(track, motion, horizon + flight)
                 + last.aimOffset
+            -- v159: that point is not where the chord solve landed, so the
+            -- flight time it returned was for a different distance. A blade
+            -- travels straight at constant speed, so the honest number is the
+            -- distance left over the speed; the target scoring and the
+            -- telemetry both read it.
+            flight = (endpoint - origin).Magnitude / resolvedSpeed
         end
         return endpoint, {
             endpoint = endpoint,

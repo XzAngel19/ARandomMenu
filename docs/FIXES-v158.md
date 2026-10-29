@@ -1,3 +1,7 @@
+> **Retirado en v159.** Los carriles de apertura que describe este
+> documento se eliminaron por completo a petición del usuario: el cuchillo
+> ya no apunta a nada que no sea un objetivo visible. Ver `docs/FIXES-v159.md`.
+
 # v158 — Knife: openings estratégicos, no enemigos detrás de pared ni cadáveres
 
 Fecha: 2026-10-29 · Stamp: `v158-20261029-mm2-knife-openings`

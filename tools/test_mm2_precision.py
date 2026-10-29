@@ -151,6 +151,12 @@ do
     -- A grounded target is aimed at where it is; the predictor must not invent
     -- a projectile drop for a blade that travels in a straight line.
     near(aim.Y,1,1e-6)
+    -- v159: a straight constant-speed blade has exactly one checkable
+    -- property: the point must be speed * flightSeconds from the hand. The old
+    -- solver did one re-solve, so on a turning target the point and the flight
+    -- time it was solved for disagreed; the fixed point has to satisfy it to
+    -- numerical tolerance.
+    near((aim-Vector3.zero).Magnitude,96*knife.flightSeconds,1e-2)
     -- Three echoes are enough now that the source is the confirmation path
     -- only: the v64 file matched it to the server clock within 8 ms on 13/13.
     for _=1,2 do prediction.noteEcho(0,0.18) end
@@ -232,6 +238,10 @@ do
     local blade,bladeInfo=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
     assert(blade and bladeInfo.flightSeconds)
     assert(blade.Y<falling.Y,"airborne blade aims at the projected impact, not a straight Y")
+    -- The ballistic override moves the point, so the flight time has to be
+    -- recomputed for the distance actually aimed at.
+    near((blade-Vector3.new(0,0,-30)).Magnitude,96*bladeInfo.flightSeconds,1e-2)
+
     -- v158: a corpse is not a target. MM2 leaves the ragdoll in the workspace
     -- and the client can still read Health > 0, so the solver has to reject a
     -- Dead/Physics humanoid before it predicts where the body would move.

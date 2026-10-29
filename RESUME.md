@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v158-20261029-mm2-knife-openings`**, con árbol base de
+> **`v159-20261029-mm2-knife-wallcheck`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,14 +21,58 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v158: 90 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v159: 90 fuentes,
      77 suites, boot `failures=0`, auditoría de menú 49/48 tarjetas).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v158 — Knife apunta a aperturas, no a enemigos ocultos ni cadáveres (2026-10-29)
+## v159 — Knife: fuera toda especulación; WallCheck real y solver consistente (2026-10-29)
+
+El usuario rechazó el invento de "aperturas" de v158 («no mejora nada, quita
+esa
+cosa», en resumen): **no quiere que el cuchillo apunte a nada que no sea un
+objetivo visible**. Detalle: `docs/FIXES-v159.md`.
+
+- **Eliminado por completo** `resolveSpeculativeAim` y sus cuatro usos. Sin
+  objetivo visible no hay lanzamiento: `Auto Knife Throw` gasta cuchillo solo
+  con objetivo válido y visible; el redirect nativo devuelve el aim original
+  del juego. Estado del módulo: `No visible target` / `Target blocked ·
+  WallCheck`.
+- **WallCheck es ahora la única garantía y es estricta**:
+  1. el helper compartido se llama con `strict = true`, así una barrera
+     invisible pero sólida (Transparency 1, CanCollide true) frena el cuchillo,
+     cosa que el primer pase del gun sí salta;
+  2. el trayecto se prueba como **corredor de 5 rayos** (±0,45 studs), no una
+     línea matemática, así una baranda o poste no se cuela entre muestras;
+  3. **el cuerpo tiene que verse AHORA**, no solo el punto predicho: un punto
+     que asoma por la esquina ya no se acepta (era el "cuchillo a través de la
+     pared").
+  Ningún rayo del corredor usa un raycast crudo: usan la misma regla estricta,
+  o una decoración no-colisionable bloquearía el tiro.
+- **Predicción**: `knifeAim` resuelve el intercepto a **punto fijo** (hasta 4
+  pasadas, corta a 1e-4 s) en vez de una sola re-solución; así
+  `|punto - mano| == velocidad × flightSeconds` deja de ser aproximado cuando
+  el objetivo gira o frena. En el camino aéreo se **recalcula el tiempo de
+  vuelo** con la distancia real al punto balístico (antes quedaba el del
+  cálculo de cuerda).
+- **Selección de objetivo por tiempo de vuelo**, no por distancia bruta: un
+  cuerpo más lejos que corre hacia el cuchillo se impacta antes que uno más
+  cercano parado, y antes = menos error de predicción. Bonus Sheriff/Hero
+  −0,08 s. `findTarget` usa el modo barato (solo visibilidad del cuerpo) y el
+  corredor se comprueba con el origen vivo justo antes del paquete.
+- Se mantiene el rechazo de cadáveres de `isPlayerAlive`/`bodyIsAlive`
+  (`Health 0`, `Dead`, `Physics`, atributo `Dead`).
+- Pruebas: `tools/test_mm2_knife_targeting.py` nueva (mapa de cajas con
+  `isWeaponPathClear` REAL de base.lua: pared, barrera invisible sólida,
+  decoración, poste en el corredor, esquina, cadáveres, tiempo de vuelo y
+  toggle). `test_mm2_knife_equip.py` reescrita al contrato "nada visible = nada
+  se gasta". `test_mm2_precision.py` exige la identidad
+  `velocidad × vuelo` en suelo y en aire. `test_mm2_knife_openings.py`
+  (aperturas) **borrada**.
+
+## v158 — Knife apunta a aperturas, no a enemigos ocultos ni cadáveres (2026-10-29) — aperturas retiradas en v159
 
 El usuario reportó que el Knife especulativo apuntaba a enemigos detrás de
 paredes y a enemigos muertos en el piso, «prediciéndoles», en vez de apuntar a
@@ -111,9 +155,9 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 - `Knife Throw` intenta primero el predictor existente. Si no encuentra una
   trayectoria visible, busca hasta tres radios en torno al enemigo elegible más
   cercano; sin ninguno busca caminos a 24/45/70 studs alrededor del personaje.
-  **Superado en v158:** esos radios alrededor del rival oculto se retiraron
-  porque apuntaban detrás de paredes y a cadáveres; ahora son carriles de
-  apertura sin datos de jugador.
+  **Retirado en v158 y eliminado del todo en v159:** el cuchillo ya no
+  especula. Sin objetivo visible y con el cuerpo visible ahora, no se envía
+  nada.
   Exige suelo y un raycast despejado, incluso con WallCheck apagado; son carriles
   especulativos, no detección de jugadores ni una prueba de hit. No especula si
   hay jugadores protegidos, si no es Murderer, está muerto o se conoce el fin de

@@ -108,6 +108,10 @@ local function checkLineOfSight(origin, point, character)
     return losVisible(point, head)
 end
 local function getEstimatedLatency() return 0.1 end
+-- v159: the shipped solver asks whether the body is visible before it aims.
+-- This harness owns line of sight (checkLineOfSight below), so the body check
+-- is satisfied and the solver's own picks are what the assertions read.
+local function bodyVisible() return true end
 local function getPlayerWeapon() return nil end
 local function isPlayerAlive() return true end
 local function isProtectedTarget() return false end

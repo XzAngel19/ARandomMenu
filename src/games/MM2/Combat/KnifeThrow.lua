@@ -149,52 +149,142 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    -- v159: WallCheck is now the only guarantee, so it has to be honest:
+    --  * the shared helper is called with `strict`, which makes a fully
+    --    transparent but SOLID barrier stop the blade. The gun's first pass
+    --    skips those; the knife must not.
+    --  * the segment is tested as a thin corridor, not one mathematical line,
+    --    so a railing edge cannot slip between samples.
+    --  * the body has to be visible from the hand RIGHT NOW, not only at the
+    --    predicted point. A predicted point that peeks around a corner is not
+    --    reachable by a straight blade, and aiming at it is what looked like
+    --    "knife through the wall".
+    local CORRIDOR_STUDS: number = 0.45
+    local function raycastClear(
+        from: Vector3,
+        to: Vector3,
+        ignoreList: {Instance},
+        requireBody: Model?
+    ): boolean
+        local ok: boolean, clear: any = pcall(function(): boolean
+            local params: RaycastParams = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances = ignoreList
+            params.RespectCanCollide = true
+            params.IgnoreWater = true
+            local hit: RaycastResult? = workspace:Raycast(from, to - from, params)
+            if requireBody then
+                return hit ~= nil and hit.Instance:IsDescendantOf(requireBody)
+            end
+            return hit == nil
+        end)
+        return ok and clear == true
+    end
+
+    local function sharedPathClear(
+        from: Vector3,
+        to: Vector3,
+        targetChar: Model?,
+        requireBody: boolean
+    ): boolean?
+        if type(isWeaponPathClear) ~= "function" or not targetChar then
+            return nil
+        end
+        local options: any = requireBody and { requireTarget = true } or { ignoreTarget = true }
+        local ok: boolean, clear: any = pcall(isWeaponPathClear, from, to, targetChar, true, options)
+        if not ok or type(clear) ~= "boolean" then
+            return nil
+        end
+        return clear
+    end
+
+    local function ignoreListFor(targetChar: Model?): {Instance}
+        local list: {Instance} = {}
+        local localChar: Model? = LocalPlayer and LocalPlayer.Character
+        if localChar then table.insert(list, localChar) end
+        if targetChar then table.insert(list, targetChar) end
+        return list
+    end
+
+    -- "I can see that body from the hand": the ray must END on the body.
+    local function bodyVisible(originPos: Vector3, bodyPos: Vector3, targetChar: Model?): boolean
+        if not settings.wallCheck then
+            return true
+        end
+        local from: Vector3 = originPos
+        local to: Vector3 = bodyPos
+        if (to - from).Magnitude < 0.05 then
+            return true
+        end
+        local shared: boolean? = sharedPathClear(from, to, targetChar, true)
+        if shared ~= nil then
+            return shared
+        end
+        return raycastClear(from, to, ignoreListFor(nil), targetChar)
+    end
+
+    -- "Nothing solid between the hand and that point": corridor of five rays.
     local function checkLineOfSight(originPos: Vector3, targetPos: Vector3, targetChar: Model?): boolean
         if not settings.wallCheck then
             return true
         end
-        if type(isWeaponPathClear) == "function" and targetChar then
-            local okClear: boolean, isClear: any = pcall(
-                isWeaponPathClear,
-                originPos,
-                targetPos,
-                targetChar,
-                nil,
-                { ignoreTarget = true }
-            )
-            if okClear then
-                return isClear == true
-            end
-        end
         local direction: Vector3 = targetPos - originPos
-        if direction.Magnitude < 0.05 then
+        local length: number = direction.Magnitude
+        if length < 0.05 then
             return true
         end
-        local params: RaycastParams = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        local ignoreList: {Instance} = {}
-        if LocalPlayer and LocalPlayer.Character then
-            table.insert(ignoreList, LocalPlayer.Character)
+        local unit: Vector3 = direction / length
+        local side: Vector3 = unit:Cross(Vector3.new(0, 1, 0))
+        if side.Magnitude < 0.05 then
+            side = Vector3.new(1, 0, 0)
         end
-        if targetChar then
-            table.insert(ignoreList, targetChar)
+        side = side.Unit
+        local up: Vector3 = side:Cross(unit).Unit
+        local offsets: {Vector3} = {
+            Vector3.zero,
+            side * CORRIDOR_STUDS,
+            side * -CORRIDOR_STUDS,
+            up * CORRIDOR_STUDS,
+            up * -CORRIDOR_STUDS,
+        }
+        for _index: number, offset: Vector3 in ipairs(offsets) do
+            local from: Vector3 = originPos + offset
+            local to: Vector3 = targetPos + offset
+            -- Every corridor ray uses the same strict rule as the centre one.
+            -- A raw raycast here would let an invisible decoration that the
+            -- shared helper skips block the throw, which made WallCheck say no
+            -- for geometry the blade would have flown through.
+            local shared: boolean? = sharedPathClear(from, to, targetChar, false)
+            if shared ~= nil then
+                if not shared then
+                    return false
+                end
+            elseif not raycastClear(from, to, ignoreListFor(targetChar), nil) then
+                return false
+            end
         end
-        params.FilterDescendantsInstances = ignoreList
-        params.RespectCanCollide = true
-        params.IgnoreWater = true
-        local result: RaycastResult? = workspace:Raycast(originPos, direction, params)
-        return result == nil
+        return true
     end
 
     -- Predict target intercept position for MM2 ThrowingKnife (96 studs/s linear projectile)
-    local function resolveKnifeAim(target: Player, originPos: Vector3, knife: Tool?): Vector3?
+    -- Returns the point and the blade's flight time, which is what makes one
+    -- target a sooner hit than another.
+    -- `cheap` is for target SELECTION: it still requires the body to be
+    -- visible, but skips the five-ray corridor, which is re-checked with the
+    -- live origin right before the packet leaves.
+    local function resolveKnifeAim(
+        target: Player,
+        originPos: Vector3,
+        knife: Tool?,
+        cheap: boolean?
+    ): (Vector3?, number?)
         local character: Model? = target.Character
         if not character then
-            return nil
+            return nil, nil
         end
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not root then
-            return nil
+            return nil, nil
         end
 
         local speed: number = 96
@@ -269,11 +359,25 @@ function Module.init(runtime: any): any
         end
 
         if not predicted then
-            return nil
+            return nil, nil
         end
 
-        if checkLineOfSight(originPos, predicted, character) then
-            return predicted
+        local flight: number? = nil
+        if aimInfo and type(aimInfo.flightSeconds) == "number" then
+            flight = math.max(0, aimInfo.flightSeconds)
+        else
+            flight = (predicted - originPos).Magnitude / speed
+        end
+
+        -- The body we aim at has to be visible right now. Without this a
+        -- corner-peeking predicted point made the throw look like it went
+        -- through the wall even when the corridor test passed.
+        if not bodyVisible(originPos, root.Position, character) then
+            return nil, nil
+        end
+
+        if cheap or checkLineOfSight(originPos, predicted, character) then
+            return predicted, flight
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
@@ -296,14 +400,16 @@ function Module.init(runtime: any): any
         for _, partName: string in ipairs(candidateNames) do
             local part: Instance? = character:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
-                local candidatePoint: Vector3 = (part :: BasePart).Position + leadOffset
-                if checkLineOfSight(originPos, candidatePoint, character) then
-                    return candidatePoint
+                local partPosition: Vector3 = (part :: BasePart).Position
+                local candidatePoint: Vector3 = partPosition + leadOffset
+                if bodyVisible(originPos, partPosition, character)
+                    and (cheap or checkLineOfSight(originPos, candidatePoint, character)) then
+                    return candidatePoint, flight
                 end
             end
         end
 
-        return nil
+        return nil, nil
     end
 
     -- Find best target for knife throw
@@ -331,16 +437,22 @@ function Module.init(runtime: any): any
                 if targetRoot then
                     local distance: number = (targetRoot.Position - originPos).Magnitude
                     if distance <= 250 then
-                        local aimPoint: Vector3? = resolveKnifeAim(player, originPos, knife)
+                        local aimPoint: Vector3?, flight: number? =
+                            resolveKnifeAim(player, originPos, knife, true)
                         if aimPoint then
-                            local roleBonus: number = 0
+                            -- v159: score by the blade's FLIGHT TIME, not raw
+                            -- distance. The nearest body is not the soonest hit:
+                            -- a target running towards the throw intercepts in
+                            -- a fraction of the time a farther one standing
+                            -- still does, and the sooner the blade lands, the
+                            -- smaller every prediction error is.
+                            local score: number = flight or (distance / 96)
                             if type(getPlayerRole) == "function" then
                                 local role: string? = getPlayerRole(player)
                                 if role == "Sheriff" or role == "Hero" then
-                                    roleBonus = -35
+                                    score -= 0.08
                                 end
                             end
-                            local score: number = distance + roleBonus
                             if score < bestScore then
                                 bestScore = score
                                 bestTarget = player
@@ -352,202 +464,6 @@ function Module.init(runtime: any): any
         end
 
         return bestTarget
-    end
-
-    -- v158: a speculative throw is a LANE decision, never a target decision.
-    -- v157 centred the pre-fire points on the nearest hidden opponent and
-    -- walked radii around that body: with nobody visible the redirect still
-    -- pointed the native throw at a player behind geometry, and a corpse got
-    -- the same treatment. This version never reads an opponent position. It
-    -- samples bearings around the camera/character forward, keeps only the
-    -- directions where the blade would travel down an unobstructed lane into
-    -- open, walkable space, and scores them by facing first, then depth and
-    -- the width of the doorway the lane threads.
-    local speculativeAt: number = -math.huge
-    local speculativePoint: Vector3? = nil
-    local speculativeOrigin: Vector3? = nil
-    local speculativeSequence: number = 0
-
-    local LANE_SAMPLES: number = 16
-    local LANE_MIN_STUDS: number = 16
-    local LANE_MAX_STUDS: number = 140
-    local LANE_SIDE_STUDS: number = 6
-    local LANE_HEADROOM_STUDS: number = 8
-    local LANE_FLOOR_TOLERANCE: number = 14
-    local LANE_GROUND_OFFSET: number = 2.5
-    local LANE_MOUTH_STUDS: number = 24
-    local LANE_SCORE_CAP: number = 60
-    local LANE_FACING_WEIGHT: number = 40
-
-    local function resolveSpeculativeAim(originPos: Vector3): Vector3?
-        if type(isPlayerAlive) == "function" and not isPlayerAlive(LocalPlayer) then return nil end
-        if type(getPlayerRole) == "function" and getPlayerRole(LocalPlayer) ~= "Murderer" then return nil end
-        local currentCore: any = state and state.mm2Core
-        if currentCore and type(currentCore.isRoundLifecycleActive) == "function" then
-            local ok: boolean, active: any = pcall(currentCore.isRoundLifecycleActive)
-            if ok and active == false then return nil end
-        end
-        local character: Model? = LocalPlayer and LocalPlayer.Character
-        local localRoot: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-        if not localRoot then return nil end
-        local players: {Player} = Players:GetPlayers()
-        for _, player: Player in ipairs(players) do
-            if player ~= LocalPlayer and type(isProtectedTarget) == "function" and isProtectedTarget(player) then
-                speculativePoint = nil
-                return nil
-            end
-        end
-        -- Every character is skipped by the lane probes: an opponent body may
-        -- stand in the lane (that would be a hit, not a wall), but no body
-        -- position may decide where the lane goes. Corpses are colliders, so
-        -- ignoring them keeps a ragdoll from displacing the opening.
-        local ignore: {Instance} = {}
-        if character then table.insert(ignore, character) end
-        for _, player: Player in ipairs(players) do
-            local other: Model? = player.Character
-            if other and other ~= character then table.insert(ignore, other) end
-        end
-        local function cast(from: Vector3, to: Vector3): (boolean, RaycastResult?)
-            local ok: boolean, result: any = pcall(function(): any
-                local params: RaycastParams = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Exclude
-                params.FilterDescendantsInstances = ignore
-                params.RespectCanCollide = true
-                params.IgnoreWater = true
-                return workspace:Raycast(from, to - from, params)
-            end)
-            if not ok then
-                return false, nil
-            end
-            return true, result
-        end
-        local function laneClear(from: Vector3, to: Vector3): boolean
-            local ok: boolean, hit: any = cast(from, to)
-            return ok and hit == nil
-        end
-        local function groundBelow(point: Vector3): Vector3?
-            local ok: boolean, hit: any = cast(
-                point + Vector3.new(0, LANE_HEADROOM_STUDS, 0),
-                point + Vector3.new(0, -10, 0)
-            )
-            if not ok or not hit or typeof(hit.Position) ~= "Vector3" then
-                return nil
-            end
-            local normal: any = hit.Normal
-            if typeof(normal) == "Vector3" and normal.Y < 0.55 then
-                return nil
-            end
-            return hit.Position
-        end
-        local now: number = os.clock()
-        if now - speculativeAt < 0.4 and speculativeOrigin
-            and (originPos - speculativeOrigin).Magnitude < 4 then
-            if not speculativePoint then return nil end
-            if laneClear(originPos, speculativePoint) then return speculativePoint end
-        end
-        speculativeAt, speculativeOrigin = now, originPos
-        local forward: Vector3 = Vector3.new(0, 0, -1)
-        pcall(function(): ()
-            local sources: {any} = {}
-            local camera: any = workspace.CurrentCamera
-            if camera then table.insert(sources, camera) end
-            table.insert(sources, localRoot)
-            for _, source: any in ipairs(sources) do
-                local okLook: boolean, look: any = pcall(function(): any
-                    return source.CFrame.LookVector
-                end)
-                if okLook and typeof(look) == "Vector3" then
-                    local flat: Vector3 = Vector3.new(look.X, 0, look.Z)
-                    if flat.Magnitude > 0.05 then
-                        forward = flat.Unit
-                        break
-                    end
-                end
-            end
-        end)
-        -- The hand throws from a little above the pivot; probes start there so
-        -- a low railing or a ledge at waist height is part of the lane.
-        local eye: Vector3 = originPos + Vector3.new(0, 1.2, 0)
-        local referenceFloor: Vector3? = groundBelow(originPos)
-        local referenceY: number = referenceFloor and referenceFloor.Y or originPos.Y
-        local baseAngle: number = math.atan2(forward.Z, forward.X)
-        local step: number = (math.pi * 2) / LANE_SAMPLES
-        local bestPoint: Vector3? = nil
-        local bestScore: number = -math.huge
-        -- The floor can end before the LaneMax ray does (a ledge, a map edge),
-        -- so a lane is sampled from far to near and the farthest landing with
-        -- solid floor, headroom and a clear hand line wins.
-        local laneDistances: {number} = {140, 80, 45, 26, 16}
-        for i: number = 0, LANE_SAMPLES - 1 do
-            -- Rotating the start only breaks ties between equal lanes; the
-            -- chosen opening is stable while the map and the hand are.
-            local index: number = (i + speculativeSequence) % LANE_SAMPLES
-            local angle: number = baseAngle + index * step
-            local direction: Vector3 = Vector3.new(math.cos(angle), 0, math.sin(angle))
-            local castOk: boolean, hit: any = cast(eye, eye + direction * LANE_MAX_STUDS)
-            if castOk then
-                local clearDistance: number = LANE_MAX_STUDS
-                if hit and typeof(hit.Position) == "Vector3" then
-                    clearDistance = (hit.Position - eye).Magnitude - 1.5
-                end
-                local point: Vector3? = nil
-                local landing: number = 0
-                if clearDistance >= LANE_MIN_STUDS then
-                    for _, candidate: number in ipairs(laneDistances) do
-                        if candidate <= clearDistance and candidate >= LANE_MIN_STUDS then
-                            local floor: Vector3? = groundBelow(eye + direction * candidate)
-                            if floor and math.abs(floor.Y - referenceY) <= LANE_FLOOR_TOLERANCE then
-                                local candidatePoint: Vector3 = floor
-                                    + Vector3.new(0, LANE_GROUND_OFFSET, 0)
-                                local distance: number = (candidatePoint - originPos).Magnitude
-                                if distance >= 3 and distance <= 250
-                                    and laneClear(candidatePoint, candidatePoint
-                                        + Vector3.new(0, LANE_HEADROOM_STUDS, 0))
-                                    and laneClear(originPos, candidatePoint) then
-                                    point = candidatePoint
-                                    landing = candidate
-                                    break
-                                end
-                            end
-                        end
-                    end
-                end
-                if point then
-                    -- Facing is what makes an opening strategic: a doorway in
-                    -- front beats a wider patch of floor behind the player.
-                    -- Depth and width only separate openings that are ahead.
-                    local alignment: number = direction:Dot(forward)
-                    local baseScore: number = alignment * LANE_FACING_WEIGHT
-                        + math.min(landing, LANE_SCORE_CAP) * 0.5
-                    -- Only pay for the width probes when the lane can still
-                    -- win; a narrow slot scores at most +16.
-                    if baseScore + 16 > bestScore then
-                        -- Width at the mouth of the lane (a doorway), not the
-                        -- size of the room behind it.
-                        local side: Vector3 = Vector3.new(-direction.Z, 0, direction.X)
-                        local mouth: Vector3 = eye + direction * math.min(landing, LANE_MOUTH_STUDS)
-                        local mouthFloor: Vector3? = groundBelow(mouth)
-                        local widthScore: number = 0
-                        if mouthFloor then
-                            local mouthPoint: Vector3 = mouthFloor
-                                + Vector3.new(0, LANE_GROUND_OFFSET, 0)
-                            if laneClear(mouthPoint, mouthPoint + side * LANE_SIDE_STUDS) then
-                                widthScore += 1
-                            end
-                            if laneClear(mouthPoint, mouthPoint - side * LANE_SIDE_STUDS) then
-                                widthScore += 1
-                            end
-                        end
-                        local score: number = baseScore + widthScore * 8
-                        if score > bestScore then
-                            bestScore, bestPoint = score, point
-                        end
-                    end
-                end
-            end
-        end
-        speculativePoint = bestPoint
-        return bestPoint
     end
 
     local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
@@ -646,9 +562,13 @@ function Module.init(runtime: any): any
         if not originCF then
             return false
         end
-        if target and not isValidTarget(target) then return false end
-        local aimPos: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
-            or resolveSpeculativeAim(originCF.Position)
+        -- v159: no lane fallback at all. Without a visible target there is
+        -- nothing to throw at: a blade is not a homing projectile, and a throw
+        -- into an opening only spent the knife.
+        if not target or not isValidTarget(target) then
+            return false
+        end
+        local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
         if not aimPos then
             return false
         end
@@ -712,9 +632,8 @@ function Module.init(runtime: any): any
                         if knife and character and knife.Parent == character then
                             local originCF: CFrame? = getThrowOriginCFrame(knife)
                             local target: Player? = findTarget()
-                            if originCF then
-                                local aim: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
-                                    or resolveSpeculativeAim(originCF.Position)
+                            if originCF and target then
+                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
                                 if aim then return CFrame.new(aim) end
                             end
                         end
@@ -731,9 +650,8 @@ function Module.init(runtime: any): any
                         if knife and character and knife.Parent == character then
                             local originCF: CFrame? = getThrowOriginCFrame(knife)
                             local target: Player? = findTarget()
-                            if originCF then
-                                local aim: Vector3? = target and resolveKnifeAim(target, originCF.Position, knife)
-                                    or resolveSpeculativeAim(originCF.Position)
+                            if originCF and target then
+                                local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
                                 -- The captured MM2 WeaponService returns a CFrame here,
                                 -- despite the method name. Preserve that native contract
                                 -- just as GetMouseTargetCFrame does.
@@ -784,9 +702,8 @@ function Module.init(runtime: any): any
             cachedTarget = findTarget()
             cachedAim = nil
             cachedOrigin = getThrowOriginCFrame(knife)
-            if cachedOrigin then
-                cachedAim = cachedTarget and resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
-                    or resolveSpeculativeAim(cachedOrigin.Position)
+            if cachedOrigin and cachedTarget then
+                cachedAim = resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
             end
         elseif cachedOrigin then
             -- Origin only: the target's predicted point stays cached, but the
@@ -830,11 +747,11 @@ function Module.init(runtime: any): any
         -- direction is always current even when this list is stale.
         local target, aimPos, originCF = solveAim(knife)
         if not aimPos then
-            setKnifeStatus("No clear target or lane")
+            setKnifeStatus(target and "Target blocked · WallCheck" or "No visible target")
             destroyTracerVisuals()
             return
         end
-        setKnifeStatus(target and "Predicted target" or "Opening lane · no visible target")
+        setKnifeStatus("Predicted target")
 
         if settings.knifeTracer and originCF and aimPos then
             updateTracerVisual(originCF.Position, aimPos)
@@ -844,12 +761,8 @@ function Module.init(runtime: any): any
 
         if wantThrow then
             if throwKnife(target, knife) then
-                setKnifeStatus(target and "Throw sent · hit unconfirmed" or "Speculative throw sent · hit unconfirmed")
+                setKnifeStatus("Throw sent · hit unconfirmed")
                 lastThrowAttempt = now
-                if not target then
-                    speculativeSequence += 1
-                    speculativeAt, speculativePoint = -math.huge, nil
-                end
                 -- A throw consumes the aim: the next frame re-solves instead of
                 -- reusing a point measured before the blade left.
                 invalidateAim()
@@ -867,7 +780,6 @@ function Module.init(runtime: any): any
             setKnifeStatus(nil)
             destroyTracerVisuals()
             invalidateAim()
-            speculativeAt, speculativePoint, speculativeOrigin = -math.huge, nil, nil
             return
         end
 
@@ -895,7 +807,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.wallCheck = value
         end,
-        "Checks line of sight; when nobody is visible, the throw is aimed down a clear opening lane instead of at a hidden player."
+        "Checks the blade's path from the hand to the target, including a thin corridor and invisible solid barriers. With nobody visible, nothing is thrown."
     )
 
     addToggleOption(
@@ -905,7 +817,7 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.autoThrow = value == true
         end,
-        "Throws toward predicted targets; with nobody visible it aims down an open, unobstructed lane. An opening is not a target or a confirmed hit."
+        "Throws at the predicted intercept of a visible target. With nobody visible, or with the path blocked, no knife is spent. A sent throw is not a confirmed hit."
     )
 
     addNumberOption(
