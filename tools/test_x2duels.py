@@ -198,12 +198,15 @@ def run_integration_contracts() -> None:
     decompiler = DECOMPILER.read_text(encoding="utf-8")
     wurst = (ROOT / "src" / "Wurst.lua").read_text(encoding="utf-8")
 
-    # v154 explicitly experiments with the three observed Gun requests.
-    # Knife packets remain forbidden until their real signature is known.
-    if base.count(":FireServer(") != 4:
+    # One captured Knife ThrowEvent, three Gun requests and Rematch only;
+    # KnifeKill remains owned by the native projectile collision handler.
+    if base.count(":FireServer(") != 5:
         raise AssertionError("unexpected outgoing X2 remote calls")
     require(base, 'net:FindFirstChild("RE/GunKill")', "observed GunKill remote")
     require(base, 'local function fireCFrameGun', "CFrame Gun request")
+    require(base, 'net:FindFirstChild("RE/ThrowEvent")', "observed Knife ThrowEvent")
+    require(base, 'local function queueCFrameKnife', "CFrame Knife request")
+    forbid(base, 'net:FindFirstChild("RE/KnifeKill")', "KnifeKill belongs to native collision handler")
     require(base, 'Packages/Networking/RE/Rematch/RematchVote', "captured rematch vote")
     require(base, '(remote :: any):FireServer()', "zero-argument rematch vote")
     forbid(base, 'queue_again', "rematch is not requeue")
@@ -663,8 +666,8 @@ local knifeThrowFeature = featuresByName["Knife Throw"]
 local senderBinding = ex.state.shortcutBindings["MVSD.SilentAIM"]
 assert(senderBinding and senderBinding.onPress, "Silent AIM action binding missing")
 -- Production defaults to CFrame; this block tests the historical OTH path.
-assert(core.settings.silentBackend == "CFrame" and core.settings.autoShootBackend == "CFrame",
-    "X2 CFrame defaults missing")
+assert(core.settings.silentBackend == "CFrame" and core.settings.autoShootBackend == "CFrame"
+    and core.settings.knifeBackend == "CFrame", "X2 CFrame defaults missing")
 -- Captured X2 Gun protocol fixture: direct requests, not a real hit or
 -- evidence of server acceptance. No Oth, metahook or MouseCast wrappers.
 do
@@ -775,7 +778,188 @@ do
     core.settings.wallCheck, core.settings.autoShootWallCheck = oldWall, oldAutoWall
     hookmetamethod, oth, CFrame.lookAt = oldHookMeta, oldOth, oldLook
 end
-core.settings.silentBackend, core.settings.autoShootBackend = "Oth", "Oth"
+-- Captured Knife ThrowEvent plus native local projectile callback. This is a
+-- fixture only; it cannot validate real LocalScripts, collision or server damage.
+do
+    local binding = ex.state.shortcutBindings["MVSD.KnifeThrow"]
+    local auto = ex.state.toggleControls["MVSD.KnifeThrow.AutoThrow"]
+    assert(binding and binding.onPress and auto, "CFrame Knife button or Auto Throw option missing")
+    local handle = Instance.new("Part")
+    handle.Name, handle.Position, handle.Parent = "Handle", Vector3.new(5, 3, 0), nativeKnife
+    local makerModule = Instance.new("ModuleScript")
+    makerModule.Name, makerModule.Parent = "MakeLocalFlyingHandle", nativeKnife
+    local handler = Instance.new("LocalScript")
+    handler.Name, handler.Parent = "ThrowingKinfeHandlerScript", nativeKnife
+    local handlerMeta, priorIndex = getmetatable(handler), getmetatable(handler).__index
+    handlerMeta.__index = function(self, key)
+        if key == "Clone" then return function()
+            local clone = Instance.new("LocalScript")
+            clone.Name = "ThrowingKinfeHandlerScript"
+            local creator = Instance.new("ObjectValue")
+            creator.Name, creator.Parent = "creator", clone
+            return clone
+        end end
+        return priorIndex(self, key)
+    end
+    local activation = Instance.new("BindableEvent")
+    activation.Name, activation.Parent = "ActivateThrowing", nativeKnife
+    local eventCount, calls, order = 0, {}, {}
+    local lastProjectile, suspendedProjectile = nil, nil
+    local simulatedHit, fakeKills, normalMode, yieldMaker = false, 0, false, false
+    -- Only the fixture's stand-in for the native collision listener emits this.
+    local kill = Instance.new("RemoteEvent")
+    kill.Name, kill.Parent = "RE/KnifeKill", X2Net
+    kill.FireServer = function(_, key, player, position)
+        assert(key == "bb15e94b-1af0-48fe-be2b-b2f9e007565a" and player == HarnessHeroGuy
+            and position == nativeTarget.part.Position)
+        fakeKills += 1
+    end
+    local generated = Instance.new("Folder")
+    generated.Name, generated.Parent = "UserGenerated", x2Replicated
+    local abModule = Instance.new("ModuleScript")
+    abModule.Name, abModule.Parent = "ABTests", generated
+    activation.Fire = function(_, projectile, player)
+        eventCount += 1
+        table.insert(order, "local")
+        assert(player == nativeLocal and projectile.Parent == workspace
+            and projectile:FindFirstChild("VelocityV").Value.Magnitude > 0.99
+            and projectile:FindFirstChild("VelocityVClient").Value.Magnitude > 0.99,
+            "native local projectile was not correctly initialized")
+        local cloned = projectile:FindFirstChild("ThrowingKinfeHandlerScript")
+        assert(cloned and cloned:FindFirstChild("creator").Value == nativeLocal,
+            "native collision handler was not cloned with owner")
+        lastProjectile = projectile
+        if simulatedHit then kill:FireServer("bb15e94b-1af0-48fe-be2b-b2f9e007565a", HarnessHeroGuy, nativeTarget.part.Position) end
+    end
+    local remote = Instance.new("RemoteEvent")
+    remote.Name = "RE/ThrowEvent"
+    remote.FireServer = function(_, ...) table.insert(calls, table.pack(...)); table.insert(order, "remote") end
+    local originalRequire = require
+    require = function(module)
+        if module == abModule then return {GetJobAttribute = function(name, default)
+            assert(name == "NormalKnifeThrow" and default == false)
+            return normalMode
+        end} end
+        if module == makerModule then return function(_handle, origin, endpoint, normal)
+            assert(_handle == handle and normal == normalMode and typeof(endpoint) == "CFrame")
+            local projectile = Instance.new("Part")
+            projectile.Position = origin
+            for _, name in ipairs({"VelocityV", "VelocityVClient"}) do
+                local value = Instance.new("Vector3Value")
+                value.Name, value.Parent = name, projectile
+            end
+            if yieldMaker then suspendedProjectile = projectile; coroutine.yield() end
+            return projectile
+        end end
+        return originalRequire(module)
+    end
+    local oldHookMeta, oldOth = hookmetamethod, oth
+    local hooks = 0
+    hookmetamethod = function() hooks += 1; error("unexpected metahook") end
+    oth = {hook = function() hooks += 1; error("unexpected Oth") end}
+    local cameraBefore, beforeNative = workspace.CurrentCamera.CFrame, nativeKnifeShots
+    core.settings.knifeWallCheck = false
+    nativeKnife.Parent = nativeBackpack
+    knifeThrowFeature.onToggle(true)
+    auto.setChecked(false)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(#calls == 0, "button-only Knife Throw fired automatically")
+    binding.onPress()
+    assert(#calls == 0 and string.find(knifeThrowFeature.status, "components missing", 1, true),
+        "missing ThrowEvent was not reported")
+    remote.Parent = X2Net
+    silentFeature.onToggle(true)
+    binding.onPress()
+    assert(#calls == 1 and calls[1].n == 3
+        and calls[1][1] == "959d5e90-231d-4f6e-8861-050e2c22b938"
+        and typeof(calls[1][2]) == "CFrame" and calls[1][2].Position == nativeTarget.part.Position
+        and calls[1][3] == handle.Position and eventCount == 1
+        and order[1] == "remote" and order[2] == "local" and fakeKills == 0
+        and nativeKnifeShots == beforeNative and workspace.CurrentCamera.CFrame == cameraBefore
+        and hooks == 0 and string.find(knifeThrowFeature.status, "hit not confirmed", 1, true),
+        "CFrame Knife packet, local handler, coexistence or camera changed")
+    binding.onPress()
+    assert(#calls == 1 and string.find(knifeThrowFeature.status, "cooldown", 1, true), "Knife cooldown ignored")
+    nativeNow += 1.1
+    HarnessMatchData[HarnessHeroGuy].team = "Red"
+    binding.onPress()
+    assert(#calls == 1, "Knife targeted a teammate")
+    HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    HarnessGame.CurrentRoundEnded = true
+    binding.onPress()
+    assert(#calls == 1, "Knife fired after the round ended")
+    HarnessGame.CurrentRoundEnded = false
+    local oldRay = workspace.Raycast
+    workspace.Raycast = function() return {Instance = Instance.new("Part")} end
+    core.settings.knifeWallCheck = true
+    binding.onPress()
+    assert(#calls == 1 and string.find(knifeThrowFeature.status, "wall", 1, true), "Knife ignored Wall Check")
+    workspace.Raycast, core.settings.knifeWallCheck = oldRay, false
+    simulatedHit = true -- fake native listener reports a collision, not a server acceptance
+    auto.setChecked(true)
+    nativeNow += 1
+    coreTask.callback(0.1)
+    assert(#calls == 2 and eventCount == 2 and fakeKills == 1
+        and string.find(knifeThrowFeature.status, "hit not confirmed", 1, true)
+        and workspace.CurrentCamera.CFrame == cameraBefore,
+        "automatic CFrame Knife or simulated native collision failed")
+    auto.setChecked(false)
+    simulatedHit = false
+    local hand = nativeLocal.Character:FindFirstChild("RightHand")
+    local grip = Instance.new("Attachment")
+    grip.Name, grip.WorldCFrame, grip.Parent = "RightGripAttachment", CFrame.new(Vector3.new(9, 4, 1)), hand
+    normalMode = true
+    nativeNow += 2
+    binding.onPress()
+    assert(#calls == 3 and calls[3][3] == grip.WorldCFrame.Position,
+        "NormalKnifeThrow did not use the native RightGripAttachment origin")
+    normalMode = false
+    grip.Parent = nil
+    nativeNow += 2
+    abModule.Parent = nil
+    binding.onPress()
+    assert(#calls == 3 and string.find(knifeThrowFeature.status, "ABTests module missing", 1, true),
+        "unknown throw mode did not fail closed")
+    abModule.Parent = generated
+    local oldSpawn, heartbeat = task.spawn, game:GetService("RunService").Heartbeat
+    local oldWait, thread = heartbeat.Wait, nil
+    task.spawn = function(fn) thread = coroutine.create(fn); assert(coroutine.resume(thread)) end
+    heartbeat.Wait = function() coroutine.yield() end
+    nativeKnife.Parent = nativeBackpack
+    nativeNow += 2
+    binding.onPress()
+    assert(thread and coroutine.status(thread) == "suspended", "Knife did not wait after equip")
+    knifeThrowFeature.onToggle(false)
+    local resumed, err = coroutine.resume(thread)
+    assert(resumed, tostring(err))
+    assert(#calls == 3, "Knife fired after OFF during equip")
+    task.spawn, heartbeat.Wait = oldSpawn, oldWait
+    -- A yielding maker may return after cancellation; its unlaunched part must
+    -- still be destroyed and never passed to the native collision handler.
+    knifeThrowFeature.onToggle(true)
+    nativeKnife.Parent = nativeLocal.Character
+    task.spawn = function(fn) thread = coroutine.create(fn); assert(coroutine.resume(thread)) end
+    yieldMaker = true
+    binding.onPress()
+    assert(thread and coroutine.status(thread) == "suspended" and suspendedProjectile, "maker did not suspend")
+    knifeThrowFeature.onToggle(false)
+    local resumedMaker, makerErr = coroutine.resume(thread)
+    assert(resumedMaker, tostring(makerErr))
+    assert(#calls == 3 and suspendedProjectile.destroyed, "canceled projectile leaked or was sent")
+    task.spawn, yieldMaker = oldSpawn, false
+    silentFeature.onToggle(false)
+    nativeNow += 2
+    binding.onPress()
+    assert(#calls == 3, "Knife button fired while OFF")
+    if lastProjectile then lastProjectile:Destroy() end
+    nativeKnife.Parent = nativeBackpack
+    handle.Parent, makerModule.Parent, handler.Parent, activation.Parent, remote.Parent, kill.Parent, generated.Parent = nil, nil, nil, nil, nil, nil, nil
+    require, hookmetamethod, oth = originalRequire, oldHookMeta, oldOth
+    core.settings.knifeWallCheck = true
+    auto.setChecked(true)
+end
+core.settings.silentBackend, core.settings.autoShootBackend, core.settings.knifeBackend = "Oth", "Oth", "Native"
 do
     assert(core.settings.silentBackend == "Oth" and not core.settings.raycastCompatibility,
         "OTH and conservative Raycast compatibility defaults changed")
@@ -2837,6 +3021,7 @@ end
 assert(feature and feature.shortcutButton, "mobile Silent action slot missing")
 ex.state.x2duelsCore.settings.silentBackend = "Legacy" -- historical touch fixture
 ex.state.x2duelsCore.settings.autoShootBackend = "Oth"
+ex.state.x2duelsCore.settings.knifeBackend = "Native"
 local localPlayer = game:GetService("Players").LocalPlayer
 local backpack = localPlayer:FindFirstChildOfClass("Backpack")
 local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
@@ -3051,6 +3236,88 @@ assert(throws == 1 and sawThrowMode and throwMode.Value == false
     and not feature.enabled and not mobileCore.settings.silentAim,
     "mobile Knife Throw did not use/restore ThrowMode independently")
 knifeThrow.activate()
+
+-- The new Knife button through the real mobile placement/release UI. These
+-- stubs model the callback boundary, not Roblox physics or server acceptance.
+do
+    mobileCore.settings.knifeBackend = "CFrame"
+    local knifeCameraBefore = camera.CFrame
+    local auto = ex.state.toggleControls["MVSD.KnifeThrow.AutoThrow"]
+    auto.setChecked(false)
+    local handle = Instance.new("Part")
+    handle.Name, handle.Position, handle.Parent = "Handle", Vector3.new(1, 3, 0), knife
+    local makerModule = Instance.new("ModuleScript")
+    makerModule.Name, makerModule.Parent = "MakeLocalFlyingHandle", knife
+    local generated = Instance.new("Folder")
+    generated.Name, generated.Parent = "UserGenerated", game:GetService("ReplicatedStorage")
+    local abModule = Instance.new("ModuleScript")
+    abModule.Name, abModule.Parent = "ABTests", generated
+    local handler = Instance.new("LocalScript")
+    handler.Name, handler.Parent = "ThrowingKinfeHandlerScript", knife
+    local mt, oldIndex = getmetatable(handler), getmetatable(handler).__index
+    mt.__index = function(self, key)
+        if key == "Clone" then return function()
+            local clone = Instance.new("LocalScript")
+            clone.Name = "ThrowingKinfeHandlerScript"
+            local creator = Instance.new("ObjectValue")
+            creator.Name, creator.Parent = "creator", clone
+            return clone
+        end end
+        return oldIndex(self, key)
+    end
+    local activated, packets = 0, {}
+    local activation = Instance.new("BindableEvent")
+    activation.Name, activation.Parent = "ActivateThrowing", knife
+    activation.Fire = function(_, projectile, player)
+        assert(projectile.Parent == workspace and player == localPlayer)
+        activated += 1
+    end
+    local remote = Instance.new("RemoteEvent")
+    remote.Name, remote.Parent = "RE/ThrowEvent", X2Net
+    remote.FireServer = function(_, ...) table.insert(packets, table.pack(...)) end
+    local oldRequire = require
+    require = function(module)
+        if module == abModule then return {GetJobAttribute = function() return false end} end
+        if module == makerModule then return function(_, origin)
+            local projectile = Instance.new("Part")
+            projectile.Position = origin
+            for _, name in ipairs({"VelocityV", "VelocityVClient"}) do
+                local value = Instance.new("Vector3Value")
+                value.Name, value.Parent = name, projectile
+            end
+            return projectile
+        end end
+        return oldRequire(module)
+    end
+    local oldOth, oldMeta = oth, hookmetamethod
+    local hooks = 0
+    oth = {hook = function() hooks += 1; error("unexpected Oth") end}
+    hookmetamethod = function() hooks += 1; error("unexpected hook") end
+    knifeThrow.activate()
+    ex.state.setMenuVisible(true)
+    knifeThrow.shortcutButton.MouseButton1Click:Fire()
+    assert(overlay.Visible, "Knife action slot did not start mobile placement")
+    overlay.InputBegan:Fire(placementTouch)
+    local knifeAction = ex.state.mobileUi.actions[ex.state.mobileUi.actionId(knifeThrow.configKey)]
+    assert(knifeAction and knifeAction.button, "Knife mobile action was not placed")
+    ex.state.setMenuVisible(false)
+    knifeAction.button.InputBegan:Fire(touch)
+    assert(#packets == 0, "Knife sent before touch release")
+    UserInputService.InputEnded:Fire(touch)
+    assert(#packets == 1 and packets[1].n == 3 and packets[1][1] == "959d5e90-231d-4f6e-8861-050e2c22b938"
+        and packets[1][2].Position == target.part.Position and packets[1][3] == handle.Position
+        and activated == 1 and throws == 1 and hooks == 0 and camera.CFrame == knifeCameraBefore
+        and string.find(knifeThrow.status, "hit not confirmed", 1, true),
+        "mobile CFrame Knife action changed camera, called native input or missed the protocol")
+    knifeThrow.activate()
+    knifeAction.button.InputBegan:Fire(touch)
+    UserInputService.InputEnded:Fire(touch)
+    assert(#packets == 1, "mobile Knife fired while OFF")
+    handle.Parent, makerModule.Parent, handler.Parent, activation.Parent, remote.Parent, generated.Parent = nil, nil, nil, nil, nil, nil
+    require, oth, hookmetamethod = oldRequire, oldOth, oldMeta
+    mobileCore.settings.knifeBackend = "Native"
+    auto.setChecked(true)
+end
 
 -- The actual touch action with an OTH namecall fixture. This verifies the UI
 -- and forwarding contract, not Delta's off-thread behaviour or real hits.

@@ -1,6 +1,6 @@
 # X2 Duels: captura de código y remotes
 
-## Opción integrada: Gun Probe (v154)
+## Opción integrada: Gun Probe (v155)
 
 **Advertencia:** el usuario reportó BAC-1583 con Probe v148 y que la v149
 impedía disparar. No está probada la causa ni su corrección. Oth no garantiza
@@ -21,9 +21,11 @@ scripts guardó y si hubo fallos. Busca en la raíz del workspace del executor:
 Para el cuchillo, con Knife en mochila o equipado, pulsa **Save knife sources**
 con Gun Probe apagado. Busca `X2Duels-knife-sources.json` y todos los archivos
 `X2Duels-knife-source-<timestamp>-<generación>-<n>.luau` que indique. La captura
-no sobrescribe los archivos Gun ni el informe de Probe. El nombre `RE/ThrowEvent`
-existe en el RBXL, pero su firma y validación no están probadas: necesitamos el
-LocalScript principal antes de implementar un disparo CFrame de Knife.
+no sobrescribe los archivos Gun ni el informe de Probe. La fuente capturada de
+DefaultKnife ya muestra la forma de `RE/ThrowEvent` y el manejador local de
+colisión; la aceptación del servidor y el daño real siguen sin comprobarse. El
+LocalScript principal de DefaultGun (archivo 1/2 de su captura) aún falta; el
+protocolo Gun usado se obtuvo de MimicGlare, no de todas las skins.
 
 Revisa los archivos antes de compartirlos: pueden incluir datos privados o
 código sensible. No hay garantía de que capturen el script principal, y no son

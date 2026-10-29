@@ -224,7 +224,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v154-20261029-x2duels-cframe-button"
+local SOURCE_STAMP: string = "v155-20261029-x2duels-cframe-knife"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

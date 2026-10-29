@@ -1,5 +1,5 @@
 return {
-    stamp = "v154-20261029-x2duels-cframe-button",
+    stamp = "v155-20261029-x2duels-cframe-knife",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -25045,9 +25045,9 @@ return Module
 -- X2 Duels (MVS) native combat and observed session statistics.
 --
 -- The supplied Cobalt log captures DefaultGun/DefaultKnife native calls,
--- including fire/showBeam and the respawn/death events. Combat still goes
--- v154 offers a direct, explicitly experimental Gun CFrame request based on
--- the captured Gun LocalScript. Knife still uses the native activation path.
+-- including fire/showBeam and the respawn/death events.
+-- Direct CFrame Gun/Knife requests use the captured weapon LocalScripts.
+-- Server acceptance, local projectile behaviour and anticheat are unverified.
 
 local Module = {
     Name = "X2Duels",
@@ -25093,6 +25093,8 @@ local function buildX2Duels(runtime: any): ()
         silentAim = false,
         autoShoot = false,
         knifeThrow = false,
+        autoKnifeThrow = true,
+        knifeBackend = "CFrame",
         killAura = false,
         hitboxes = false,
         teamCheck = true,
@@ -25117,7 +25119,7 @@ local function buildX2Duels(runtime: any): ()
         knifeRange = 600,
         knifeCooldown = 0,
         knifePrediction = false,
-        knifeProjectileSpeed = 100,
+        knifeProjectileSpeed = 78,
         knifeProjectileGravity = 0,
         hitboxTeamCheck = true,
         killAuraTeamCheck = true,
@@ -26071,6 +26073,7 @@ local function buildX2Duels(runtime: any): ()
                 pcall(host.mouse2release)
             end
             restoreThrowMode(pending)
+            if pending.projectile then pcall(function(): () pending.projectile:Destroy() end) end
         end
         restoreCamera()
     end
@@ -26183,6 +26186,170 @@ local function buildX2Duels(runtime: any): ()
             if not ok then runtimeState.lastKnifeError = tostring(failure) end
         end)
         return true
+    end
+
+    -- Replays the captured X2 ThrowEvent shape and invokes the weapon's own
+    -- local projectile handler. It never fabricates a KnifeKill: the native
+    -- handler performs collision checks and decides whether to send that call.
+    local function queueCFrameKnife(target: any, options: {[string]: any}): (boolean, string?)
+        if not target or runtimeState.knifeBusy or runtimeState.gunPending or runtimeState.autoAimLease then
+            return false, "Another weapon action is pending."
+        end
+        local knife: Tool? = findWeapon("Knife")
+        local character: Model? = localPlayer.Character
+        if not knife or not character or not isAlive(localPlayer) then return false, "Knife or character unavailable." end
+        if os.clock() < (runtimeState.nextCFrameKnifeAt or 0) then return false, "Knife cooldown." end
+        local wasEquipped: boolean = knife.Parent == character
+        if not equip(knife) then return false, "Could not equip the knife." end
+        local token: number = runtimeState.knifeToken + 1
+        runtimeState.knifeToken = token
+        local match: string? = matchToken(localPlayer)
+        local pending: any = {tool = knife, owner = options.owner}
+        runtimeState.knifeOutcome = nil
+        runtimeState.knifePending, runtimeState.knifeBusy = pending, true
+        task.spawn(function(): ()
+            local function active(): boolean
+                if runtimeState.closed or token ~= runtimeState.knifeToken
+                    or knife.Parent ~= character or localPlayer.Character ~= character
+                    or matchToken(localPlayer) ~= match or not isAlive(localPlayer)
+                    or not isEnemy(target.player, false, options.teamCheck)
+                    or target.player.Character ~= target.character or not target.part or not target.part.Parent
+                    or not target.part:IsDescendantOf(target.character) then return false end
+                if type(options.isActive) == "function" then
+                    local ok: boolean, value: any = pcall(options.isActive)
+                    if not ok or value ~= true then return false end
+                end
+                if runtimeState.resultsPending then return false end
+                local gameOk: boolean, gameData: any = matchApiCall("getGame", localPlayer)
+                if gameOk and type(gameData) == "table" and (gameData.CurrentRoundEnded == true
+                    or (gameData.Phase ~= nil and gameData.Phase ~= "InGame")) then return false end
+                -- RoundStarted in the decompiled Knife contradicts other game
+                -- state; do not reinterpret that field without live evidence.
+                local zombieOk: boolean, zombie: any = matchApiCall("isInfectionZombie", localPlayer)
+                if zombieOk and zombie == true then return false end
+                local root: BasePart? = rootOf(character)
+                return root ~= nil and (target.part.Position - root.Position).Magnitude <= (options.range or math.huge)
+            end
+            local function report(message: string): ()
+                if options.owner == "Knife Throw" and settings.knifeThrow then
+                    runtimeState.knifeOutcome = message
+                    setCombatStatus(knifeThrowCard, "Knife Throw", message)
+                end
+            end
+            local ok: boolean, failure: any = pcall(function(): ()
+                if not wasEquipped then runService.Heartbeat:Wait() end
+                if not active() then report("Throw canceled: character, match or target changed."); return end
+                local enabledOk: boolean, enabled: any = pcall(function(): any return knife.Enabled end)
+                if not enabledOk or enabled == false then report("Knife disabled or not ready."); return end
+                local packages: Instance? = replicated:FindFirstChild("Packages")
+                local net: Instance? = packages and packages:FindFirstChild("Net")
+                local remote: Instance? = net and net:FindFirstChild("RE/ThrowEvent")
+                local handle: Instance? = knife:FindFirstChild("Handle")
+                local makerModule: Instance? = knife:FindFirstChild("MakeLocalFlyingHandle")
+                local activation: Instance? = knife:FindFirstChild("ActivateThrowing")
+                local handler: Instance? = knife:FindFirstChild("ThrowingKinfeHandlerScript", true)
+                if not remote or not remote:IsA("RemoteEvent") or not handle or not handle:IsA("BasePart")
+                    or not makerModule or not makerModule:IsA("ModuleScript")
+                    or not activation or not activation:IsA("BindableEvent")
+                    or not handler or not handler:IsA("LocalScript") then
+                    report("CFrame Knife unavailable: native projectile components missing."); return
+                end
+                local loaded: boolean, maker: any = pcall(require, makerModule)
+                if not loaded or type(maker) ~= "function" then report("Knife projectile module unavailable."); return end
+                -- The native source reads this flag to choose the origin.
+                -- Do not silently guess when its AB module is unavailable.
+                local userGenerated: Instance? = replicated:FindFirstChild("UserGenerated")
+                local abModule: Instance? = userGenerated and userGenerated:FindFirstChild("ABTests")
+                if not abModule or not abModule:IsA("ModuleScript") then
+                    report("CFrame Knife unavailable: ABTests module missing."); return
+                end
+                local loadedAB: boolean, ab: any = pcall(require, abModule)
+                if not loadedAB or type(ab) ~= "table" or type(ab.GetJobAttribute) ~= "function" then
+                    report("CFrame Knife unavailable: ABTests could not load."); return
+                end
+                local got: boolean, value: any = pcall(ab.GetJobAttribute, "NormalKnifeThrow", false)
+                if not got or type(value) ~= "boolean" then
+                    report("CFrame Knife unavailable: throw mode unknown."); return
+                end
+                local normal: boolean = value
+                if not active() then report("Throw canceled before request."); return end
+                local origin: Vector3 = (handle :: BasePart).Position
+                if normal then
+                    local hand: Instance? = character:FindFirstChild("RightHand")
+                    local grip: Instance? = hand and hand:FindFirstChild("RightGripAttachment")
+                    if grip and grip:IsA("Attachment") then origin = (grip :: Attachment).WorldCFrame.Position end
+                end
+                if options.wallCheck then
+                    local clear: boolean, reason: string? = hasLineOfSight(target, origin)
+                    if not clear then report(reason or "Wall Check unavailable."); return end
+                end
+                local aim: Vector3 = target.part.Position
+                if settings.knifePrediction and options.owner == "Knife Throw" then
+                    aim = predictedKnifePoint(target, origin, settings.knifeProjectileSpeed,
+                        settings.knifeProjectileGravity) or aim
+                end
+                if (aim - origin).Magnitude < 0.05 then report("Target too close for knife."); return end
+                local endpoint: CFrame = CFrame.new(aim)
+                local made: boolean, projectile: any = pcall(maker, handle, origin, endpoint, normal)
+                if not made or typeof(projectile) ~= "Instance" or not projectile:IsA("BasePart") then
+                    report("Local knife projectile could not be created."); return
+                end
+                pending.projectile = projectile
+                local velocity: Instance? = projectile:FindFirstChild("VelocityV")
+                local visualVelocity: Instance? = projectile:FindFirstChild("VelocityVClient")
+                if not velocity or not velocity:IsA("Vector3Value") or not visualVelocity or not visualVelocity:IsA("Vector3Value") then
+                    report("Local knife projectile is missing velocity values."); return
+                end
+                local direction: Vector3 = (aim - projectile.Position).Unit
+                local velocityValue: any = velocity
+                local visualVelocityValue: any = visualVelocity
+                velocityValue.Value = direction
+                visualVelocityValue.Value = direction
+                local cloned: any = handler:Clone()
+                local creator: Instance? = cloned and cloned:FindFirstChild("creator")
+                if not cloned or not creator or not creator:IsA("ObjectValue") then
+                    if cloned then cloned:Destroy() end
+                    report("Native knife collision handler is incomplete."); return
+                end
+                local creatorValue: any = creator
+                creatorValue.Value = localPlayer
+                cloned.Parent = projectile
+                cloned.Disabled = false
+                if not active() then report("Throw canceled before request."); return end
+                if handle.Parent ~= knife or knife.Enabled == false then
+                    report("Knife disabled or Handle changed before request."); return
+                end
+                if options.wallCheck then
+                    local clear: boolean, reason: string? = hasLineOfSight(target, origin)
+                    if not clear then report(reason or "Wall Check unavailable."); return end
+                end
+                local sent: boolean = pcall(function(): ()
+                    (remote :: RemoteEvent):FireServer("959d5e90-231d-4f6e-8861-050e2c22b938", endpoint, origin)
+                end)
+                if not sent then report("Knife throw request failed."); return end
+                local debounce: Instance? = knife:FindFirstChild("Debounce")
+                local nativeDelay: number = 1
+                if debounce and (debounce:IsA("NumberValue") or debounce:IsA("IntValue")) then
+                    nativeDelay = math.clamp((debounce :: any).Value - 0.3, 0.25, 10)
+                end
+                runtimeState.nextCFrameKnifeAt = os.clock() + nativeDelay + math.max(0, options.cooldown or 0)
+                local rendered: Instance? = currentWorkspace:FindFirstChild("RenderedObjects")
+                projectile.Parent = rendered or currentWorkspace
+                local eventOk: boolean = pcall(function(): () (activation :: BindableEvent):Fire(projectile, localPlayer) end)
+                pending.projectile = nil -- native handler now owns the launched projectile
+                pcall(function(): () game:GetService("Debris"):AddItem(projectile, 7) end)
+                report(eventOk and "CFrame throw sent; hit not confirmed."
+                    or "Throw sent, but local collision handler failed; hit unconfirmed.")
+            end)
+            -- Even a canceled task can resume after require/maker yielded.
+            if pending.projectile then pcall(function(): () pending.projectile:Destroy() end) end
+            if token == runtimeState.knifeToken then
+                runtimeState.knifePending, runtimeState.knifeBusy = nil, false
+                runtimeState.nextKnifeAt[options.owner] = math.max(runtimeState.nextCFrameKnifeAt or 0, os.clock() + 0.25)
+                if not ok then report("Knife action failed: " .. tostring(failure)) end
+            end
+        end)
+        return true, "CFrame throw queued; hit not confirmed."
     end
 
     local function isWeaponCaller(tool: Tool): (boolean, boolean)
@@ -27362,6 +27529,23 @@ local function buildX2Duels(runtime: any): ()
     local function runKnifeThrow(
         maxDistance: number, cooldown: number, teamCheck: boolean, wallCheck: boolean, owner: string
     ): (boolean, boolean, string?)
+        if settings.knifeBackend == "CFrame" then
+            local knife: Tool? = findWeapon("Knife")
+            local handle: Instance? = knife and knife:FindFirstChild("Handle")
+            local root: BasePart? = rootOf(localPlayer.Character)
+            local origin: Vector3? = handle and handle:IsA("BasePart") and (handle :: BasePart).Position
+                or (root and root.Position)
+            local target: any, why: string? = nearestEnemy(maxDistance, teamCheck, wallCheck, false, origin)
+            if not target then return false, false, why end
+            local queued: boolean, message: string? = queueCFrameKnife(target, {
+                owner = owner, teamCheck = teamCheck, wallCheck = wallCheck, range = maxDistance, cooldown = cooldown,
+                isActive = function(): boolean
+                    return owner == "Knife Throw" and settings.knifeThrow
+                        or owner == "Auto Win" and settings.autoWin and activeRound()
+                end,
+            })
+            return queued, target ~= nil, message
+        end
         if settings.silentAim then return false, false, "Paused: Silent AIM protects the camera." end
         local target: {[string]: any}?, why: string? = nearestEnemy(maxDistance, teamCheck, wallCheck, false)
         local queued: boolean = fireKnife(target, false, {
@@ -27556,7 +27740,7 @@ local function buildX2Duels(runtime: any): ()
         elseif wantsKnife and not runtimeState.knifeBusy and not runtimeState.gunPending then
             local knifeAvailable: boolean = findWeapon("Knife") ~= nil
             local usedKnife: boolean = false
-            if settings.knifeThrow then
+            if settings.knifeThrow and settings.autoKnifeThrow then
                 if not knifeAvailable then
                     setCombatStatus(knifeThrowCard, "Knife Throw", "Waiting for knife")
                 elseif now >= runtimeState.nextKnifeAt["Knife Throw"] then
@@ -27565,8 +27749,8 @@ local function buildX2Duels(runtime: any): ()
                         settings.knifeTeamCheck, settings.knifeWallCheck, "Knife Throw"
                     )
                     usedKnife = queued
-                    setCombatStatus(knifeThrowCard, "Knife Throw", queued and "Throw attempted"
-                        or (hasTarget and "Knife/input not ready" or reason or "No eligible opponent."))
+                    setCombatStatus(knifeThrowCard, "Knife Throw", queued and (runtimeState.knifeOutcome or reason or "Throw attempted")
+                        or (reason or (hasTarget and "Knife/input not ready" or "No eligible opponent.")))
                 end
             end
             if autoRound then
@@ -27901,7 +28085,7 @@ local function buildX2Duels(runtime: any): ()
             if enabled then
                 if runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
                 cancelGun("Auto Win") -- cancel a queued camera-aim action before Silent starts
-                cancelKnifeThrow() -- native automatic throws otherwise rotate the camera
+                if settings.knifeBackend ~= "CFrame" then cancelKnifeThrow() end
                 if settings.silentBackend == "CFrame" then
                     setCombatStatus(silentAimCard, "Silent AIM", "CFrame button ready; gun request is experimental.")
                 else
@@ -27958,7 +28142,7 @@ local function buildX2Duels(runtime: any): ()
     )
     host.addInformationOption(
         silentAimCard,
-        "CFrame button only: direct observed X2 Gun requests, no aim hook or camera rotation. This is not automatic redirection of native taps. Server acceptance and anticheat safety are unverified. Knife Throw pauses while active."
+        "CFrame button only: direct observed X2 Gun requests, no aim hook or camera rotation. This is not automatic redirection of native taps. Server acceptance and anticheat safety are unverified."
     )
 
     local function pressSenderButton(): ()
@@ -28103,7 +28287,7 @@ local function buildX2Duels(runtime: any): ()
         "Independent of Silent AIM. Sends the observed X2 Gun request with CFrame direction, without hooks or camera rotation. Conservative 2.5s interval; server hits and anticheat safety are not confirmed.")
 
     knifeThrowCard = card(
-        "Knife Throw", "Automatically attempt native knife throws independently of Silent AIM", 5,
+        "Knife Throw", "CFrame knife button with optional automatic throws; no camera lock", 5,
         function(enabled: boolean): ()
             settings.knifeThrow = enabled
             if enabled and runtimeState.calibration then runtimeState.calibration.stop("Probe stopped for combat; turn OFF") end
@@ -28113,6 +28297,23 @@ local function buildX2Duels(runtime: any): ()
         end,
         "Combat"
     )
+    if type(state.bindFeatureActivationKey) == "function" then
+        state.bindFeatureActivationKey(knifeThrowCard, Enum.KeyCode.Unknown, function(): ()
+            if not settings.knifeThrow then
+                pcall(notify, "X2 Duels · Enable Knife Throw first.")
+                return
+            end
+            local queued: boolean, _hasTarget: boolean, why: string? = runKnifeThrow(
+                settings.knifeRange, settings.knifeCooldown, settings.knifeTeamCheck, settings.knifeWallCheck, "Knife Throw")
+            setCombatStatus(knifeThrowCard, "Knife Throw", queued and (runtimeState.knifeOutcome or why or "Throw queued; hit not confirmed.")
+                or (why or "Knife not ready."))
+        end)
+    end
+    host.addToggleOption(knifeThrowCard, "Auto Throw", true, function(value: boolean): ()
+        settings.autoKnifeThrow = value
+        if not value then cancelKnifeThrow("Knife Throw") end
+        runtimeState.nextKnifeAt["Knife Throw"] = 0
+    end, "Automatically throw while the card is enabled. Disable for button-only use.")
     host.addToggleOption(knifeThrowCard, "Wall Check", true, function(value: boolean): ()
         settings.knifeWallCheck = value
         cancelKnifeThrow("Knife Throw")
@@ -28131,9 +28332,9 @@ local function buildX2Duels(runtime: any): ()
     host.addToggleOption(knifeThrowCard, "Projectile Prediction", false, function(value: boolean): ()
         settings.knifePrediction = value
     end, "Experimental lead during automatic native Knife Throw; independent of Silent AIM.")
-    host.addNumberOption(knifeThrowCard, "Projectile Speed", 100, 1, 1000, function(value: number): ()
+    host.addNumberOption(knifeThrowCard, "Projectile Speed", 78, 1, 1000, function(value: number): ()
         settings.knifeProjectileSpeed = math.clamp(value, 1, 10000)
-    end, "Estimated studs per second; calibrate for the game.")
+    end, "Local source moves approximately 78 studs/second; server behaviour is unverified.")
     host.addNumberOption(knifeThrowCard, "Projectile Gravity", 0, 0, 200, function(value: number): ()
         settings.knifeProjectileGravity = math.clamp(value, 0, 10000)
     end, "Estimated projectile gravity; Wall Check tests a direct line, not the full arc.")
@@ -28141,7 +28342,7 @@ local function buildX2Duels(runtime: any): ()
         knifeThrowCard, "Status", combatStatuses["Knife Throw"] or "Off"
     )
     host.addInformationOption(knifeThrowCard,
-        "Uses desktop right-click or the game's mobile ThrowMode and can rotate the camera. Automatic throws pause while Silent AIM is on; release requires live verification.")
+        "Button and Auto Throw use the captured ThrowEvent and native local collision handler without moving the camera. Server acceptance and damage are not confirmed.")
 
     local auraCard: any = card(
         "Kill Aura",

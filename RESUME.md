@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v154-20261029-x2duels-cframe-button`**.
+> **`v155-20261029-x2duels-cframe-knife`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -68,7 +68,53 @@
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
 
-## 1Y. X2 v154 — CFrame con botón solicitado; Gun experimental, Knife pendiente
+## 1Z. X2 v155 — Knife CFrame experimental a partir de fuentes capturadas
+
+El usuario adjuntó cinco fuentes de `DefaultKnife` y su manifiesto 5/5. El
+LocalScript principal muestra `Packages.Net["RE/ThrowEvent"]:FireServer(
+"959d5e90-231d-4f6e-8861-050e2c22b938", CFrame.new(hitPosition), origin)`.
+El origen depende del AB test `NormalKnifeThrow`: posición de Handle o
+RightHand.RightGripAttachment (fallback Handle). Inmediatamente después el
+juego fabrica un proyectil con `MakeLocalFlyingHandle`, inicializa `VelocityV`
+y `VelocityVClient`, clona `ThrowingKinfeHandlerScript` con `creator`, lo
+parenta en `RenderedObjects`/workspace y emite `ActivateThrowing:Fire`, con
+Debris de 7 s. El handler nativo realiza colisiones y decide enviar `KnifeKill`;
+**no se fabrica ni envía directamente ese remoto**. El servidor no está en la
+captura y ninguna prueba confirma que acepte esto o produzca daño en vivo.
+
+- `Knife Throw` ahora tiene acción de botón/tecla y `Auto Throw` independiente
+  (por defecto ON para conservar el automático anterior; OFF para solo botón).
+  En móvil se coloca tocando el pequeño cuadro de acceso de la tarjeta. El modo
+  CFrame funciona con Silent activo o apagado sin hooks ni escribir cámara, y
+  comparte el arbitraje de arma con Gun/Auto Win. El antiguo camino nativo aún
+  existe para otras llamadas como TriggerBot, que no debe confundirse con esta
+  ruta CFrame. Wall Check, equipo, vida, partida, protección, ronda terminada,
+  infección zombi cuando el API la informa y distancia se vuelven a comprobar;
+  se cancela si cambia objetivo/equipo, match, vida, estado o se apaga. La fuente
+  de Knife dice `RoundStarted == false`, en conflicto con otras fuentes: no se
+  reinterpreta ese campo sin evidencia de funcionamiento real.
+- Falla sin enviar si falta ThrowEvent, Handle, BindableEvent, módulos del
+  proyectil o ABTests, o el handler/creator; requiere estos componentes y el
+  listener original ya iniciado al equipar. Usa el valor `Debounce - 0.3` con
+  mínimo conservador más el Delay del usuario, sin afirmar reproducir el timing
+  completo de ThrowCharge/animación. Predicción opcional usa 78 studs/s por la
+  trayectoria local de ~1,3 studs por 1/60 s, no un dato de física del servidor.
+  Status distingue petición enviada y fallo local, nunca confirma impacto.
+- `tools/test_x2duels.py` simula forma y orden, handler sin/ con choque simulado,
+  origen AB verdadero/falso, módulo o remoto ausente, OFF durante equip y maker
+  que cede, limpieza, equipo/pared/ronda/cooldown y acceso táctil colocado real.
+  Son fixtures, no ejecutan el LocalScript real ni prueban Delta/servidor/BAC.
+  Validación v155: `tools/validate.sh` PASS, 64 suites, boot `failures=0` y
+  auditorías; `git diff --check` PASS.
+- El manifiesto Gun nuevo es `DefaultGun`, pero solo se adjuntó su archivo Maid
+  2/2; el LocalScript principal disponible sigue siendo `MimicGlare`. La firma
+  Gun de v154 **no está corroborada para DefaultGun ni todas las skins**. No
+  pedir activar Gun Probe: el usuario reportó BAC-1583 e interferencia. Para
+  completar ese dato se necesita el archivo Gun 1/2 o una captura de fuentes sin
+  activar Probe. Probar en vivo con cuenta controlada, indicar Status exacto y si
+  hubo impacto real; no afirmar seguridad anticheat ni compatibilidad Delta.
+
+## 1Y. X2 v154 — histórico, Knife pendiente en ese momento (v155 lo sustituye)
 
 El usuario reportó que nada de Raycast/Oth le sirve en su celular y pidió CFrame
 como MM2 para Silent con botón, Auto Shoot y Knife. MM2 CFrame **no gira cámara**:
@@ -91,11 +137,11 @@ son intercambiables con X2. Se investigó la Gun real que el usuario adjuntó.
   falta cualquier RemoteEvent/Handle, no envía; Cooldown conservador 2,5 s
   compartido entre botón/Auto Shoot/Auto Win, inferido de MimicGlare, no medido
   para todas las skins. No promete eficacia ni seguridad anticheat.
-- En la fuente de Knife disponible solo hay `MobileKnifeLocalScript` (GUI) y
-  efectos visuales; el RBXL contiene `Packages.Net.RE/ThrowEvent`, pero NO se
-  conoce la firma ni GUID de la petición de lanzamiento. No se inventó un
+- En v154 la fuente de Knife disponible solo tenía `MobileKnifeLocalScript` (GUI) y
+  efectos visuales; el RBXL contenía `Packages.Net.RE/ThrowEvent`, pero NO se
+  conocían la firma ni GUID de la petición de lanzamiento en ese momento. No se inventó un
   protocolo ni se afirmó implementado Knife CFrame. Su implementación nativa
-  anterior aún puede mover la cámara y se pausa con Silent. Para completarlo,
+  anterior podía mover la cámara y se pausaba con Silent. Para completarlo,
   Gun Probe ofrece acción **Save knife sources** sin activar Probe ni hooks;
   guarda `X2Duels-knife-sources.json` y `X2Duels-knife-source-*.luau` sin
   sobrescribir los de Gun. Decompile puede fallar o ser detectado.
@@ -103,8 +149,8 @@ son intercambiables con X2. Se investigó la Gun real que el usuario adjuntó.
   sin cámara/hook, falta de remoto, equipo, OFF, cooldown y Auto Shoot separado;
   captura Knife independiente. Las pruebas mock no son Roblox/Delta/servidor.
   Reiniciar Roblox para quitar nodos Oth antiguos, probar en cuenta controlada
-  con Gun Probe y Safe Place apagados, reportar Status y resultado real; pedir
-  archivos Knife con la acción sin activar Probe.
+  con Gun Probe y Safe Place apagados, reportar Status y resultado real; en ese
+  momento se pidieron archivos Knife con la acción sin activar Probe.
 
 ## 1X. X2: cámara y Auto Shoot v153 — histórico, sustituido en v154
 
@@ -1411,7 +1457,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-29 · v154, Gun CFrame experimental sin hooks;
-Knife CFrame pendiente de fuente, Delta móvil, BAC y daño real siguen sin validar.
+*Última actualización: 2026-10-29 · v155, Gun y Knife CFrame experimentales sin
+hooks; Delta móvil, BAC, aceptación del servidor y daño real siguen sin validar.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*
