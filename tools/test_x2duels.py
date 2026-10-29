@@ -559,6 +559,12 @@ game:GetService("CollectionService"):AddTag(nativeKnife, "Knife")
 assert(core.toolKind(nativeKnife) == "Knife", "tagged skin without a knife name was missed")
 game:GetService("CollectionService"):RemoveTag(nativeKnife, "Knife")
 nativeKnife.Name = "Knife"
+nativeGun.Name = "Orchid"
+game:GetService("CollectionService"):AddTag(nativeGun, "Gun")
+assert(core.toolKind(nativeGun) == "Gun" and core.findGun() == nativeGun,
+    "Gun-tagged skin without weapon name was not found")
+game:GetService("CollectionService"):RemoveTag(nativeGun, "Gun")
+nativeGun.Name = "Gun"
 local nativeTarget = core.targetFor(HarnessHeroGuy)
 assert(nativeTarget, "native target fixture missing")
 assert(not core.isEnemy(HarnessHeroGuy), "loading MatchState fell back to stale lobby attributes")
@@ -705,6 +711,45 @@ do
     testWorkspace.onPress()
     assert(string.find(probeCard.status, "unverified", 1, true), "unverified write not distinguished")
     writefile, readfile, isfile = fsWrite, fsRead, fsExists
+    -- Decompile a gun in the Backpack without enabling Gun Probe or hooking.
+    local saveSources = ex.state.shortcutBindings[probeCard.configKey .. "Save gun sources"]
+    assert(saveSources and saveSources.onPress, "gun sources action missing")
+    local oldDecompile = decompile
+    decompile = nil
+    saveSources.onPress()
+    assert(string.find(probeCard.status, "decompile unavailable", 1, true), "missing decompile not reported")
+    local gunSource = Instance.new("LocalScript")
+    gunSource.Name, gunSource.Parent = "LocalScript", nativeGun
+    GENV.decompile = function(script) assert(script == gunSource); return "return 17" end
+    local nesting, nestedCalls = 0, 0
+    task.spawn = function(fn, ...)
+        if nesting > 0 then
+            nestedCalls += 1
+            if nestedCalls == 1 then return end -- skip the UI spinner
+        end
+        nesting += 1
+        fn(...)
+        nesting -= 1
+    end
+    saveSources.onPress()
+    local sourceFile = nil
+    for path, data in pairs(files) do
+        if string.sub(path, 1, #"X2Duels-gun-source-") == "X2Duels-gun-source-" and data == "return 17" then sourceFile = path end
+    end
+    assert(sourceFile and files["X2Duels-gun-sources.json"] == "{}"
+        and files["X2Duels-calibration.json"] == "previous report"
+        and hookInstalls == 0 and string.find(probeCard.status, "1/1", 1, true),
+        "offline gun source capture installed a hook, failed, or overwrote calibration")
+    nestedCalls = 0
+    GENV.decompile = function() error("simulated decompile error") end
+    saveSources.onPress()
+    assert(string.find(probeCard.status, "0/1", 1, true)
+        and string.find(probeCard.status, "decompile failed", 1, true)
+        and files[sourceFile] == "return 17" and hookInstalls == 0,
+        "failed gun decompile was hidden or overwrote old evidence")
+    gunSource.Parent = nil
+    GENV.decompile = nil
+    decompile = oldDecompile
     task.spawn = oldSpawn
     local previousHookMeta, previousHookFunction = hookmetamethod, hookfunction
     hookmetamethod = function() legacyCalls += 1; error("legacy hook invoked") end
@@ -1192,6 +1237,13 @@ assert(nativeGunShots == shotsBeforeAuto + 1 and not core.settings.silentAim,
 nativeNow += 0.1
 coreTask.callback(0.1)
 assert(nativeGunShots == shotsBeforeAuto + 2, "Auto Shoot did not keep attempting shots")
+local savedCurrentCamera = workspace.CurrentCamera
+workspace.CurrentCamera = false
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 2 and string.find(autoShootFeature.status, "Camera unavailable", 1, true),
+    "Auto Shoot activated despite missing camera or hid the failure")
+workspace.CurrentCamera = savedCurrentCamera
 core.settings.autoShootRange = 5
 nativeNow += 0.1
 coreTask.callback(0.1)
@@ -1218,6 +1270,19 @@ core.settings.autoShootWallCheck = true
 nativeNow += 0.1
 coreTask.callback(0.1)
 assert(nativeGunShots == shotsBeforeAuto + 3, "Auto Shoot ignored its own Wall Check")
+-- A clear muzzle must not mask an obstructed camera ray.
+local gunHandle = Instance.new("Part")
+gunHandle.Name, gunHandle.Position, gunHandle.Parent = "Handle", Vector3.new(5, 3, 0), nativeGun
+workspace.Raycast = function(_self, origin)
+    if origin.X == 5 then return nil end
+    return {Instance = independentWall}
+end
+nativeNow += 0.1
+coreTask.callback(0.1)
+assert(nativeGunShots == shotsBeforeAuto + 3 and string.find(autoShootFeature.status, "wall", 1, true),
+    "Auto Shoot failed to check obstruction from the camera")
+gunHandle.Parent = nil
+workspace.Raycast = function() return {Instance = independentWall} end
 core.settings.autoShootWallCheck = false
 nativeNow += 0.1
 coreTask.callback(0.1)
@@ -1276,8 +1341,18 @@ do
     HarnessMatchData[HarnessHeroGuy].team = "Red"
     ok, err = coroutine.resume(thread)
     assert(ok, tostring(err))
-    assert(nativeGunShots == before, "Auto Shoot fired at a new teammate after equip")
+    assert(nativeGunShots == before and string.find(autoShootFeature.status, "canceled", 1, true),
+        "Auto Shoot fired at a new teammate or concealed the canceled shot")
     HarnessMatchData[HarnessHeroGuy].team = "Blue"
+    nativeGun.Parent = nativeBackpack
+    nativeNow += 1
+    coreTask.callback(0.1)
+    nativeGun.Enabled = false
+    ok, err = coroutine.resume(thread)
+    assert(ok, tostring(err))
+    assert(nativeGunShots == before and string.find(autoShootFeature.status, "disabled", 1, true),
+        "Auto Shoot concealed a gun becoming disabled while equipping")
+    nativeGun.Enabled = true
     autoShootFeature.onToggle(false)
     task.spawn = savedSpawn
     heartbeat.Wait = savedWait
@@ -2611,11 +2686,17 @@ end
 assert(autoShoot and knifeThrow and scheduledCore, "mobile automatic cards/core missing")
 mobileCore.settings.autoShootWallCheck = false
 gun.Activate = function() shots += 1 end
+local mobileOldOth, mobileOldMeta, mobileOldFunction = oth, hookmetamethod, hookfunction
+local autoHookCalls = 0
+oth = nil
+hookmetamethod = function() autoHookCalls += 1; error("Auto Shoot must nothook") end
+hookfunction = function() autoHookCalls += 1; error("Auto Shoot must nothook") end
 autoShoot.activate()
 scheduledCore.callback(0.1)
-assert(shots == 4 and not feature.enabled and not mobileCore.settings.silentAim,
-    "mobile Auto Shoot did not activate independently of Silent AIM")
+assert(shots == 4 and not feature.enabled and not mobileCore.settings.silentAim and autoHookCalls == 0,
+    "mobile Auto Shoot did not activate independently of Silent AIM/hooks")
 autoShoot.activate()
+oth, hookmetamethod, hookfunction = mobileOldOth, mobileOldMeta, mobileOldFunction
 local mobileMain = Instance.new("Folder")
 mobileMain.Name, mobileMain.Parent = "Main", localPlayer.PlayerGui
 local mobileKnifeGui = Instance.new("Folder")

@@ -1,5 +1,5 @@
 return {
-    stamp = "v151-20261028-x2duels-raycast-knife",
+    stamp = "v152-20261029-x2duels-native-gun",
     files = {
         ["src/Profile/124848751642883.lua"] = [[
 --!strict
@@ -25653,6 +25653,9 @@ local function buildX2Duels(runtime: any): ()
         -- tag, so a skin need not contain "knife" in its display name.
         local okKnife: boolean, taggedKnife: any = pcall(collection.HasTag, collection, tool, "Knife")
         if okKnife and taggedKnife == true then return "Knife" end
+        -- The captured DualWieldGun observer identifies gun skins by this tag.
+        local okGun: boolean, taggedGun: any = pcall(collection.HasTag, collection, tool, "Gun")
+        if okGun and taggedGun == true then return "Gun" end
         local gunStructure: boolean = hasChild(tool, {"fire", "showBeam", "GunKill"})
         local knifeStructure: boolean = hasChild(tool, {
             "ThrowEvent", "SlashEvent", "MobileKnifeLocalScript", "KnifeKill",
@@ -25799,6 +25802,7 @@ local function buildX2Duels(runtime: any): ()
             return false
         end
         if aimAtTarget == true and target then
+            if not currentWorkspace.CurrentCamera then return false end
             -- Do not let Silent's independent target override another card's
             -- native shot while its deferred Activated handler reads the aim.
             runtimeState.nativeAimUntil = os.clock() + 0.1
@@ -25867,15 +25871,25 @@ local function buildX2Duels(runtime: any): ()
             return false, true, "Your character is not alive or ready."
         end
         local opts: {[string]: any} = options or {}
-        local function activate(): boolean
+        local function activate(): (boolean, string?)
             -- TriggerBot deliberately uses the crosshair, not the independent
             -- Silent target, even when both modules are enabled.
-            if noAim == true then runtimeState.nativeAimUntil = os.clock() + 0.1 end
-            return activateNative(gun, target, noAim ~= true)
+            if noAim == true then runtimeState.nativeAimUntil = os.clock() + 0.1
+            elseif not currentWorkspace.CurrentCamera then return false, "Camera unavailable: cannot aim." end
+            if opts.wallCheck == true then
+                -- The native gun may use a camera ray, while a muzzle may be
+                -- obstructed independently. Check both without hooking either.
+                local clear: boolean, why: string? = hasLineOfSight(target, gunOrigin(gun))
+                if not clear then return false, why end
+                clear, why = hasLineOfSight(target)
+                if not clear then return false, why end
+            end
+            local ok: boolean = activateNative(gun, target, noAim ~= true)
+            return ok, if ok then nil else "The gun is disabled, reloading or not ready."
         end
         if gun.Parent == character then
-            local ok: boolean = activate()
-            return ok, true, ok and nil or "The gun is disabled, reloading or not ready."
+            local ok: boolean, reason: string? = activate()
+            return ok, true, reason
         end
         if not equip(gun) then return false, true, "Could not equip the gun." end
         runtimeState.gunToken += 1
@@ -25903,10 +25917,16 @@ local function buildX2Duels(runtime: any): ()
                     and matchToken(localPlayer) == gameToken and sameTarget
                     and isEnemy(target.player, false, opts.teamCheck)
                     and root ~= nil and (target.part.Position - root.Position).Magnitude <= (opts.range or math.huge)
-                if valid and opts.wallCheck == true then
-                    valid = hasLineOfSight(target, gunOrigin(gun))
+                if valid then
+                    local fired: boolean, reason: string? = activate()
+                    if opts.owner == "Auto Shoot" and settings.autoShoot then
+                        setCombatStatus(autoShootCard, "Auto Shoot", fired
+                            and "Native activation attempted; hit not confirmed."
+                            or (reason or "The gun is not ready."))
+                    end
+                elseif active and opts.owner == "Auto Shoot" and settings.autoShoot then
+                    setCombatStatus(autoShootCard, "Auto Shoot", "Shot canceled: character, match or target changed.")
                 end
-                if valid then activate() end
             end)
             local pending: any = runtimeState.gunPending
             if pending and pending.token == token then runtimeState.gunPending = nil end
@@ -27890,7 +27910,7 @@ local function buildX2Duels(runtime: any): ()
         autoShootCard, "Status", combatStatuses["Auto Shoot"] or "Off"
     )
     host.addInformationOption(autoShootCard,
-        "Works without Silent AIM. Native Tool activation is used; the server decides hits.")
+        "Independent of Silent AIM and hooks. Temporarily aims the camera and activates the native Tool; actual gun input and server hits are not confirmed.")
 
     knifeThrowCard = card(
         "Knife Throw", "Automatically attempt native knife throws independently of Silent AIM", 5,
@@ -28210,38 +28230,68 @@ local function buildX2Duels(runtime: any): ()
             report(saved and ("workspace/" .. path .. " · " .. message) or ("workspace test failed: " .. message))
         end, "Test executor workspace without enabling Gun Probe or installing hooks.")
         host.addActionOption(calibrationCard, "Save gun sources", function(): ()
+            -- No Probe or hook is required. The gun can be equipped or in the
+            -- Backpack. Decompile is executor-provided and may fail or be detected.
             local gun: Tool? = findWeapon("Gun")
-            if not probe.active or not gun then report("Enable Gun Probe and obtain a gun first"); return end
+            if not gun then report("No gun found in inventory or equipped"); return end
             local decompile: any = executorFunction("decompile")
-            if not decompile or not executorFunction("writefile") then
-                report("Gun source capture requires decompile and writefile"); return
-            end
-            report("Saving gun sources; please wait...")
-            local lease: any = probe.lease
+            if not decompile then report("Gun sources: decompile unavailable"); return end
+            if not executorFunction("writefile") then report("Gun sources: writefile unavailable"); return end
+            report("Saving gun sources without Probe; please wait...")
+            probe.sourceGeneration = (probe.sourceGeneration or 0) + 1
+            local generation: number = probe.sourceGeneration
+            local captureId: string = tostring(os.time()) .. "-" .. tostring(generation)
+            local session: any = probe.active and probe.lease or nil
             task.spawn(function(): ()
                 local saved: number = 0
                 local attempted: number = 0
+                local lastIssue: string? = nil
+                local files: {any} = {}
                 for _, item: Instance in ipairs(gun:GetDescendants()) do
-                    if not lease.active then return end
+                    if runtimeState.closed or generation ~= probe.sourceGeneration then return end
                     if item:IsA("LocalScript") or item:IsA("ModuleScript") then
                         attempted += 1
                         local ok: boolean, source: any = pcall(decompile, item)
-                        if not lease.active then return end
+                        if runtimeState.closed or generation ~= probe.sourceGeneration then return end
                         if ok and type(source) == "string" and #source > 0 then
-                            local filename: string = "X2Duels-gun-source-" .. tostring(attempted) .. ".luau"
-                            local written: boolean = writeWorkspace(filename, source)
+                            -- Distinct capture names prevent a failed new run
+                            -- from masquerading as a previous successful one.
+                            local filename: string = "X2Duels-gun-source-" .. captureId .. "-" .. tostring(attempted) .. ".luau"
+                            local written: boolean, writeMessage: string = writeWorkspace(filename, source)
                             if written then
                                 saved += 1
-                                table.insert(probe.sources, {file = filename, name = item.Name, class = item.ClassName})
+                                table.insert(files, {file = filename, name = item.Name, class = item.ClassName})
+                            else
+                                lastIssue = "write failed: " .. writeMessage
                             end
+                        else
+                            lastIssue = ok and "decompile returned empty" or "decompile failed"
                         end
                         if attempted >= 20 then break end
                     end
                 end
-                save()
-                report("Gun sources saved: " .. tostring(saved) .. "/" .. tostring(attempted) .. "; review before sharing")
+                if runtimeState.closed or generation ~= probe.sourceGeneration then return end
+                local manifest: any = {version = 1, captureId = captureId, weapon = gun.Name, attempted = attempted, saved = saved,
+                    sources = files, note = "Review sources for private data before sharing. No hooks installed by this action."}
+                local encodedOk: boolean, encoded: any = pcall(function(): string
+                    return game:GetService("HttpService"):JSONEncode(manifest)
+                end)
+                local manifestOk: boolean = false
+                local manifestMessage: string = "JSONEncode unavailable"
+                if encodedOk and type(encoded) == "string" then
+                    manifestOk, manifestMessage = writeWorkspace("X2Duels-gun-sources.json", encoded)
+                end
+                if runtimeState.closed or generation ~= probe.sourceGeneration then return end
+                if session and session.active and probe.active and session == probe.lease then
+                    probe.sources = files
+                    save()
+                end
+                local detail: string = if manifestOk then "manifest saved" else "manifest failed: " .. manifestMessage
+                local problem: string = if attempted == 0 then " · no LocalScript/ModuleScript found"
+                    elseif lastIssue then " · " .. lastIssue else ""
+                report("Gun sources " .. tostring(saved) .. "/" .. tostring(attempted) .. " · " .. detail .. problem .. "; review before sharing")
             end)
-        end)
+        end, "Save local Gun scripts without enabling Probe; decompile availability and safety vary by executor.")
         host.addInformationOption(calibrationCard, "Passive shared Oth namecall probe: enable, equip Gun and shoot normally. Mouse property reads and direct function calls are not captured. Ray coordinates and script/remote names may be sensitive; review local files before sharing. Detection remains possible.")
         runtimeState.calibration = {tick = tick, stop = stop}
     end

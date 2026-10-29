@@ -1,30 +1,40 @@
 # X2 Duels: captura de código y remotes
 
-## Opción integrada: Gun Probe (v150 y posteriores)
+## Opción integrada: Gun Probe (v152)
 
-**Advertencia:** el usuario reportó BAC-1583 con v148 y que la v149 impide
-disparar. La causa no se conoce y v150 **no corrige ni valida** ese problema.
-No activar el Probe hasta investigar; Oth no garantiza evitar una expulsión.
+**Advertencia:** el usuario reportó BAC-1583 con Probe v148 y que la v149
+impedía disparar. No está probada la causa ni su corrección. Oth no garantiza
+que el juego no vuelva a expulsar.
 
-La opción **Combat → Gun Probe → Test workspace** funciona con el módulo apagado
-y sin instalar hooks. Escribe `X2Duels-workspace-test.txt` en la raíz del
-workspace del executor, sin tocar el informe previo. Status muestra si leyó y
-verificó el contenido, si solo vio el archivo, si no pudo verificarlo o si falló.
-El nombre relativo se usa en móvil y escritorio; cada executor decide dónde
-está físicamente esa raíz y puede no exponerla al gestor de archivos.
+### Buscar la fuente de Gun sin activar Probe
 
-Al usar Probe en una versión futura validada, su informe
-`X2Duels-calibration.json` usa esa misma raíz y se sobrescribe al empezar (se
-intenta guardar antes de instalar Oth), al guardar cambios cada ~3 s y al parar.
-Copia el archivo anterior antes de otra captura. Un kick inmediato puede perder
-los últimos segundos o el archivo completo. `Save gun sources` es opcional y
-usa `decompile`/`writefile`.
+Con la pistola en la mochila o equipada, abre la tarjeta **Gun Probe** y pulsa
+**Save gun sources** sin encenderla. Esta acción no instala hooks ni activa el
+Probe. Usa las funciones `decompile` y `writefile` del executor, que pueden no
+estar disponibles, fallar o ser detectadas. Al completarse, Status indica cuántos
+scripts guardó y si hubo fallos. Busca en la raíz del workspace del executor:
 
-El hook Oth compartido observa solo determinadas llamadas que pasan por
-`__namecall`; no captura lecturas Mouse, `Ray.new` ni llamadas directas fuera de
-namecall. El JSON contiene hasta los 400 eventos más recientes y puede incluir
-vectores y nombres de scripts/remotos; revisar privacidad antes de compartir.
-Otros scripts pueden producir eventos y una redirección no confirma impacto.
+- `X2Duels-gun-sources.json`: manifiesto de la última captura (se sobrescribe).
+- `X2Duels-gun-source-<timestamp>-<generación>-<n>.luau`: scripts capturados;
+  cada intento usa nombres distintos, no borrar ni confundir archivos anteriores.
+
+Revisa los archivos antes de compartirlos: pueden incluir datos privados o
+código sensible. No hay garantía de que capturen el script principal, y no son
+el código de validación del servidor. Si dice `decompile unavailable` o `0/n`,
+informa el Status en lugar de activar Gun Probe.
+
+### Comprobar la carpeta
+
+**Test workspace** también funciona con el módulo apagado y sin instalar hooks.
+Escribe `X2Duels-workspace-test.txt` en la raíz del workspace, sin tocar el JSON
+anterior. Status distingue lectura verificada, solo existencia y sin verificar.
+Cada executor determina la ubicación física y su acceso externo.
+
+Cuando se activa Probe, `X2Duels-calibration.json` usa esa misma raíz y se
+sobrescribe al empezar, cada ~3 s si hay cambios y al parar. La captura Oth
+puede interferir con el arma: **no la actives para recolectar las fuentes**.
+El JSON guarda como máximo los 400 eventos más recientes y puede contener
+vectores y nombres; revisa privacidad antes de compartirlo.
 
 ## Recolector independiente anterior
 

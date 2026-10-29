@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama `arena/9492e6b6-arandommenu`, build
-> **`v151-20261028-x2duels-raycast-knife`**.
+> **`v152-20261029-x2duels-native-gun`**.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -67,6 +67,59 @@
   órdenes. Validación completa v141: 92 fuentes, 64 suites, boot `failures=0`,
   51/50 tarjetas. Falta prueba live: perfil CPU por fase, menú apagado/activo,
   PC/móvil, executor, tiempo de inyección y revisión F9/MicroProfiler.
+
+## 1W. X2: fuente Gun, Vape CameraModule y Auto Shoot nativo v152
+
+El usuario aclaró que su Vape móvil no presenta Oth y que en Delta Silent AIM
+solo acciona botones; no inferir que alguna versión o executor soporte Oth/Silent
+sin prueba. Pidió investigar cómo dispara la pistola y mejorar Auto Shoot móvil.
+La experiencia reportada corrige cualquier afirmación anterior de compatibilidad
+móvil; usar una cuenta de prueba y no prometer que no haya kick ni impacto.
+
+- Fuente Vape universal commit `5d951c27f9677cc1d4a658c44a42c120356b9f58`,
+  `src/games/universal - base/Combat/SilentAim.lua`, blob
+  `051dc5b17d6a4d5c2c16df737fd5168a72d83996`: `Ignored Scripts` tiene por
+  defecto `CameraModule`, compara nombre vía `getcallingscript` y deriva a
+  original; si no identifica caller no puede excluirlo. El archivo expone el
+  toggle Oth y fallback hookmetamethod, pero no demuestra que esté disponible
+  ni funcione en el Vape/Delta móvil del usuario. Vape AutoFire depende de
+  `mouse1press/release`, no se asume que funcione en touch.
+- Volvimos a leer el RBXL 1v1 TestingStuff blob `8968d4dc5906b3f52fe93b59d8ce4f8e9f9d918c`
+  SHA256 `4abae6cae221a32bbddabdea6f54ec0ac559537b93ada74c38f9daaa7bb0816d`:
+  928 LuaSourceContainer, 8 Tools y **ningún Tool con nombre Gun/revolver/pistol**.
+  El `DefaultGun` vivo y LocalScript principal no aparecen. `GunCrosshairController`
+  solo contiene `return {}`. `Client.Modules.MouseCast` convierte posición de
+  pantalla a `ViewportPointToRay`, luego llama Raycast 500 studs con filtros;
+  no hay evidencia de que Gun use MouseCast, pues otros módulos como pings lo
+  consumen. `CreateBeam` dibuja el efecto, no comprueba daño ni velocidad real.
+  `DualWieldGun` reconoce `CollectionService:HasTag(tool, "Gun")`: toolKind de
+  v152 ahora reconoce ese tag además de nombre/hijos, para skins desconocidas.
+- El JSON adjuntado (touch=false, keyboard=true) registró a ~31,301 s un
+  Raycast Exclude de 10.000 studs y remoto `fire` sin argumentos, caller nombre
+  `LocalScript`, tras Activated; no ofrece ruta completa ni prueba entrega a
+  servidor. Visto junto con `MouseCast` de 500, **no son intercambiables**.
+  No afirmar método de puntería móvil ni inventar remotos/validación servidor.
+- `Save gun sources` es ahora acción independiente: con Gun en Backpack o
+  equipada y **Gun Probe desactivado**, usa únicamente `decompile`/`writefile`,
+  sin instalar hooks ni tocar el informe previo. Genera en workspace raíz
+  `X2Duels-gun-source-<timestamp>-<generación>-<n>.luau` y manifiesto
+  `X2Duels-gun-sources.json` (se sobrescribe cada intento). Indica éxito/error y
+  no elimina fuentes anteriores. `decompile` depende del executor, puede fallar
+  o ser detectado, y las fuentes pueden contener información privada; el usuario
+  debe revisarlas antes de compartir. El action en Probe activo actualiza además
+  el JSON de esa sesión sin reinstalar hooks. No es prueba de datos del servidor.
+- Auto Shoot no depende de Silent ni instala hooks: usa selección propia, equipa,
+  aguarda Heartbeat si venía de Backpack, apunta con cámara brevemente y activa
+  Tool nativo. No es Silent, puede mover cámara; no se ha validado cómo Gun
+  interpreta el cursor/touch. Ahora reconoce Gun-tagged skin, verifica pared
+  tanto desde origen del arma como de cámara, no activa si cámara falta y reporta
+  cancelación o arma deshabilitada tras equipar. Cooldown y checks siguen
+  independientes de Silent; nada garantiza disparo o impacto real. La fuente de
+  Gun es necesaria antes de proponer una solución fiable para Delta touch.
+- Tests mock: captura sin Probe ni hooks, decompile desde getgenv y fallo,
+  conservación JSON previo, Tool Gun etiquetado, pared cámara/muzzle, cámara
+  ausente, cancelación/dehabilitado tras Heartbeat, Auto Shoot móvil con Oth,
+  hookmetamethod y hookfunction ausentes. No son prueba Roblox/Delta/servidor.
 
 ## 1V. X2 Duels: Raycast inspirado en Vape y predicción Knife v151
 
@@ -1276,7 +1329,7 @@ el boot simulado y las auditorías, que no sustituyen una prueba en juego:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-28 · v151, Raycast Oth tipo Vape y predicción Knife experimental;
-BAC, disparo con Probe, física de Knife y daño real siguen sin validar.
+*Última actualización: 2026-10-29 · v152, captura de fuente Gun sin Probe y Auto Shoot nativo;
+Silent en Delta móvil, origen del raycast, BAC y daño real siguen sin validar.
 Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
 sección que cambie.*
