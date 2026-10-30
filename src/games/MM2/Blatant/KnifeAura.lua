@@ -189,7 +189,7 @@ function Module.init(runtime: any): any
                 if elapsed + 1e-9 < interval then return end
                 elapsed = elapsed % interval
                 processKnifeAura()
-            end)
+            end, nil, "MM2 Knife Aura")
     end
 
     local function toggleKnifeAura(enabled: boolean): ()

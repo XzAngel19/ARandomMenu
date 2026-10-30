@@ -136,7 +136,7 @@ function Module.init(context: Runtime): any
                     refreshInteractionExtender()
                 end
             end
-        )
+        , nil, "Interact Extender")
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
                 if not interactionExtenderEnabled then

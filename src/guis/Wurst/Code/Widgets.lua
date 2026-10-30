@@ -328,12 +328,22 @@ function Module.init(context: any): WidgetLibrary
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
+        local lastText: string = tostring(initialValue or "0")
         return {
             row = option,
             label = valueLabel,
+            -- v160: modules refresh their stat rows from a per-frame task. A
+            -- Text assignment re-runs the label layout, so writing the same
+            -- string 60 times a second was pure waste. Only a change is
+            -- written now; the first call always goes through.
             set = function(newText: string): ()
+                local nextText: string = tostring(newText)
+                if nextText == lastText then
+                    return
+                end
+                lastText = nextText
                 if valueLabel and valueLabel.Parent then
-                    valueLabel.Text = tostring(newText)
+                    valueLabel.Text = nextText
                 end
             end,
         }

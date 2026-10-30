@@ -83,7 +83,7 @@ function Module.init(runtime: any): any
         Function = function(): ()
             speed.SetSprintHeld(true)
             if not featureConnections.MM2SprintHold then
-                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint)
+                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint, nil, "MM2 Sprint")
             end
         end,
         OnRelease = releaseSprint,

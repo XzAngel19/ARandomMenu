@@ -726,7 +726,7 @@ function Module.init(runtime: any): any
             end
         end
 
-        featureConnections.MM2AutoVote = TaskManager:Connect(autoVoteTick)
+        featureConnections.MM2AutoVote = TaskManager:Connect(autoVoteTick, nil, "MM2 Auto Vote")
         autoVoteTick()
     end
 

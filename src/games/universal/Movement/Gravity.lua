@@ -40,7 +40,7 @@ function Module.init(context: Runtime): any
         originalGravity = workspace.Gravity
         featureConnections.Gravity = TaskManager:Connect(function()
             workspace.Gravity = gravitySettings.value
-        end)
+        end, nil, "Gravity")
     end
 
     GravityFeature = createUniversalFeature(

@@ -467,6 +467,28 @@ function Module.init(runtime: any): any
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
+        -- v160: the two cheap gates move ABOVE the aim solve. Auto Shoot runs
+        -- this function every frame; during the 1.5 s confirmation window it
+        -- used to pay for the predictor plus the corridor/wall rays and then
+        -- reject at the very end. Refusing before the work leaves the firing
+        -- instant unchanged (the gate is time based) and makes an Auto Shoot
+        -- that is holding fire cost almost nothing per frame.
+        local pendingShot: any = state.mm2ShotFeedback.pending
+        if not continuous
+            and type(pendingShot) == "table"
+            and type(pendingShot.queuedAt) == "number"
+            and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
+            local remaining: number = SHOT_CONFIRM_WINDOW
+                - (os.clock() - pendingShot.queuedAt)
+            return reject(string.format(
+                "Shot gate: waiting for the previous shot (%.1f s left).",
+                remaining))
+        end
+        if not remote or not remote:IsA("RemoteEvent") or not origin then
+            return reject(not origin and "The gun has no usable origin."
+                or "The murderer is unavailable or obstructed.")
+        end
+
         local info: any = nil
         local reason: string? = nil
         if origin then
@@ -593,19 +615,8 @@ function Module.init(runtime: any): any
 
         -- One authored request at a time (v106). Continuous Auto Shoot /
         -- Auto Win bypasses the 1.5s confirmation gate so it never stops
-        -- firing while the Murderer is still alive.
-        local pendingShot: any = state.mm2ShotFeedback.pending
-        if not continuous
-            and type(pendingShot) == "table"
-            and type(pendingShot.queuedAt) == "number"
-            and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
-            local remaining: number = SHOT_CONFIRM_WINDOW
-                - (os.clock() - pendingShot.queuedAt)
-            return reject(string.format(
-                "Shot gate: waiting for the previous shot (%.1f s left).",
-                remaining))
-        end
-
+        -- firing while the Murderer is still alive. The gate itself is
+        -- checked above, before any aim or raycast work.
         local function safeToSend(
             shotOrigin: CFrame,
             shotEnd: CFrame,
@@ -921,7 +932,8 @@ function Module.init(runtime: any): any
         end
         -- One attempt per current frame, with no range/confidence/fire-delay
         -- timer. No cached aim or visibility survives into the next attempt.
-        featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+        featureConnections.MM2AutoShoot =
+            TaskManager:Connect(autoShootTick, nil, "MM2 Auto Shoot")
         autoShootTick()
     end
 

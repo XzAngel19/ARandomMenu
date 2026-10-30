@@ -29,7 +29,7 @@ teleport = read("src/games/MM2/Movement/Teleport.lua")
 # are gone: per-frame checks, an immediate tick on enable, and a
 # ~3-frame negative cache.
 assert "elapsed < 0.5" not in teleport
-assert "TaskManager:Connect(autoGetGunTick)" in teleport
+assert "TaskManager:Connect(autoGetGunTick" in teleport
 assert "autoGetGunTick()" in teleport, "enable must react the same frame"
 assert "Gun pickup delay" not in teleport
 assert "autoGetGunDelay" not in teleport

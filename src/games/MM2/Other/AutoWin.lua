@@ -1040,7 +1040,7 @@ function Module.init(runtime: any): any
             return
         end
         setupInstantWeaponWatchers()
-        featureConnections.MM2AutoWin = TaskManager:Connect(autoWinTick)
+        featureConnections.MM2AutoWin = TaskManager:Connect(autoWinTick, nil, "MM2 Auto Win")
         autoWinTick()
     end
 

@@ -282,7 +282,7 @@ function Module.init(context: Runtime): any
                     pcall(updateScenery, pending[cursor])
                     cursor += 1
                 end
-            end)
+            end, nil, "Improve FPS")
         end
         task.spawn(function(): ()
             local scanned = 0

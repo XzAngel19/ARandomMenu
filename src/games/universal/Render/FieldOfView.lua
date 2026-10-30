@@ -38,7 +38,7 @@ function Module.init(context: Runtime): any
         featureConnections.FOV = TaskManager:Connect(function()
             fovOwnership.set("Universal", fovSettings.value)
             fovOwnership.apply(workspace.CurrentCamera)
-        end)
+        end, nil, "FOV")
     end
 
     FovFeature = createUniversalFeature(

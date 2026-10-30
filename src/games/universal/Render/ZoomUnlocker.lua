@@ -32,7 +32,7 @@ function Module.init(context)
         if not enabled then feature:SetStatus(nil); return end
         original = {minimum=player.CameraMinZoomDistance, maximum=player.CameraMaxZoomDistance, mode=player.CameraMode}
         apply()
-        host.featureConnections.ZoomUnlocker = host.TaskManager:Connect(apply)
+        host.featureConnections.ZoomUnlocker = host.TaskManager:Connect(apply, nil, "Zoom Unlocker")
     end, {configKey="Universal.ZoomUnlocker", categoryName="Render"})
     local function update(key,value)
         settings[key] = value

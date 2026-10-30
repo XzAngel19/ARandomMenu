@@ -262,7 +262,7 @@ function Module.init(runtime: any): any
             end
         end
 
-        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
+        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick, nil, "MM2 Coins Aura")
         auraTick()
     end
 

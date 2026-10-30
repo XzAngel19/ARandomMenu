@@ -54,7 +54,7 @@ function Module.init(runtime: any): any
                     mm2Settings.gunTransparency
                 )
             end
-        end)
+        end, nil, "MM2 Gun ESP")
     end
 
     local savedTrapTransparency: {[Instance]: number} =

@@ -1,5 +1,5 @@
 return {
-    stamp = "v159-20261029-mm2-knife-wallcheck",
+    stamp = "v160-20261029-perf-audit",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -1749,7 +1749,7 @@ function Module.init(runtime: any): any
                 if elapsed + 1e-9 < interval then return end
                 elapsed = elapsed % interval
                 processKnifeAura()
-            end)
+            end, nil, "MM2 Knife Aura")
     end
 
     local function toggleKnifeAura(enabled: boolean): ()
@@ -2524,6 +2524,28 @@ function Module.init(runtime: any): any
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
         local origin: CFrame? = getGunOriginCFrame(character, gun)
 
+        -- v160: the two cheap gates move ABOVE the aim solve. Auto Shoot runs
+        -- this function every frame; during the 1.5 s confirmation window it
+        -- used to pay for the predictor plus the corridor/wall rays and then
+        -- reject at the very end. Refusing before the work leaves the firing
+        -- instant unchanged (the gate is time based) and makes an Auto Shoot
+        -- that is holding fire cost almost nothing per frame.
+        local pendingShot: any = state.mm2ShotFeedback.pending
+        if not continuous
+            and type(pendingShot) == "table"
+            and type(pendingShot.queuedAt) == "number"
+            and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
+            local remaining: number = SHOT_CONFIRM_WINDOW
+                - (os.clock() - pendingShot.queuedAt)
+            return reject(string.format(
+                "Shot gate: waiting for the previous shot (%.1f s left).",
+                remaining))
+        end
+        if not remote or not remote:IsA("RemoteEvent") or not origin then
+            return reject(not origin and "The gun has no usable origin."
+                or "The murderer is unavailable or obstructed.")
+        end
+
         local info: any = nil
         local reason: string? = nil
         if origin then
@@ -2650,19 +2672,8 @@ function Module.init(runtime: any): any
 
         -- One authored request at a time (v106). Continuous Auto Shoot /
         -- Auto Win bypasses the 1.5s confirmation gate so it never stops
-        -- firing while the Murderer is still alive.
-        local pendingShot: any = state.mm2ShotFeedback.pending
-        if not continuous
-            and type(pendingShot) == "table"
-            and type(pendingShot.queuedAt) == "number"
-            and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
-            local remaining: number = SHOT_CONFIRM_WINDOW
-                - (os.clock() - pendingShot.queuedAt)
-            return reject(string.format(
-                "Shot gate: waiting for the previous shot (%.1f s left).",
-                remaining))
-        end
-
+        -- firing while the Murderer is still alive. The gate itself is
+        -- checked above, before any aim or raycast work.
         local function safeToSend(
             shotOrigin: CFrame,
             shotEnd: CFrame,
@@ -2978,7 +2989,8 @@ function Module.init(runtime: any): any
         end
         -- One attempt per current frame, with no range/confidence/fire-delay
         -- timer. No cached aim or visibility survives into the next attempt.
-        featureConnections.MM2AutoShoot = TaskManager:Connect(autoShootTick)
+        featureConnections.MM2AutoShoot =
+            TaskManager:Connect(autoShootTick, nil, "MM2 Auto Shoot")
         autoShootTick()
     end
 
@@ -4599,7 +4611,8 @@ function Module.init(runtime: any): any
         end
 
         installWeaponServiceRedirect()
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(knifeThrowLoop)
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(knifeThrowLoop, nil, "MM2 Knife Throw")
     end
 
     -- Create the feature in Combat category
@@ -4870,7 +4883,7 @@ function Module.init(runtime: any): any
                 return
             end
             scheduleBlurt()
-        end)
+        end, nil, "MM2 Blurt Roles")
     end
 
     local BlurtFeature = createUniversalFeature(
@@ -5038,7 +5051,7 @@ function Module.init(runtime: any): any
         Function = function(): ()
             speed.SetSprintHeld(true)
             if not featureConnections.MM2SprintHold then
-                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint)
+                featureConnections.MM2SprintHold = TaskManager:Connect(speed.StepSprint, nil, "MM2 Sprint")
             end
         end,
         OnRelease = releaseSprint,
@@ -5186,7 +5199,7 @@ function Module.init(runtime: any): any
             end)
         end
         featureConnections.MM2AutoGetGun =
-            TaskManager:Connect(autoGetGunTick)
+            TaskManager:Connect(autoGetGunTick, nil, "MM2 Get Gun")
         autoGetGunTick()
     end
 
@@ -8042,7 +8055,7 @@ function Module.init(runtime: any): any
             session.nextAt = math.max(os.clock(), revealUntil)
             session.finished = false
             report(summary())
-            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)
+            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick, nil, "MM2 Auto Unbox")
         end,
         {
             categoryName = "Utilities",
@@ -8903,7 +8916,7 @@ function Module.init(runtime: any): any
             end
         end
 
-        featureConnections.MM2AutoVote = TaskManager:Connect(autoVoteTick)
+        featureConnections.MM2AutoVote = TaskManager:Connect(autoVoteTick, nil, "MM2 Auto Vote")
         autoVoteTick()
     end
 
@@ -10043,7 +10056,7 @@ function Module.init(runtime: any): any
             return
         end
         setupInstantWeaponWatchers()
-        featureConnections.MM2AutoWin = TaskManager:Connect(autoWinTick)
+        featureConnections.MM2AutoWin = TaskManager:Connect(autoWinTick, nil, "MM2 Auto Win")
         autoWinTick()
     end
 
@@ -10528,7 +10541,7 @@ function Module.init(runtime: any): any
             end
         end
 
-        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick)
+        featureConnections.MM2CoinsAura = TaskManager:Connect(auraTick, nil, "MM2 Coins Aura")
         auraTick()
     end
 
@@ -11339,7 +11352,8 @@ function Module.init(runtime: any): any
         end
 
         setStatus(tostring(math.round(settings.studs)) .. " studs")
-        featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
+        featureConnections.MM2GunAura =
+            TaskManager:Connect(gunAuraTick, nil, "MM2 Gun Aura")
         gunAuraTick()
     end
 
@@ -13939,7 +13953,7 @@ function Module.init(runtime: any): any
                     mm2Settings.gunTransparency
                 )
             end
-        end)
+        end, nil, "MM2 Gun ESP")
     end
 
     local savedTrapTransparency: {[Instance]: number} =
@@ -16546,7 +16560,7 @@ local function createTrajectoryCalibration(): any
             compactPending(runtime.pendingGuns, os.clock())
             compactPending(runtime.pendingKnives, os.clock())
             samplePendingTrajectories()
-        end)
+        end, nil, "MM2 shot sampler")
     end
 
     local function addSample(stats: RunningStats, value: number): ()
@@ -17751,10 +17765,10 @@ local function createTrajectoryCalibration(): any
     end
 
     local function ensureKnifeSampler(): ()
-        if featureConnections.MM2TrajectorySampler then
+        if featureConnections.MM2KnifeSampler then
             return
         end
-        featureConnections.MM2TrajectorySampler = TaskManager:Connect(function(
+        featureConnections.MM2KnifeSampler = TaskManager:Connect(function(
             _deltaTime: number
         ): ()
             local now: number = os.clock()
@@ -17825,7 +17839,16 @@ local function createTrajectoryCalibration(): any
             for _, projectile: Instance in ipairs(completed) do
                 finishKnifeTrack(projectile, "sample-window-complete")
             end
-        end)
+            -- v160: this task used to live for the whole session after the
+            -- first knife, measuring an empty table 60 times a second. It is
+            -- cheap per frame, but a permanent connection nothing can turn off
+            -- is exactly the kind of cost that adds up. It retires when the
+            -- last blade is gone and ensureKnifeSampler re-arms it on the next
+            -- throw.
+            if next(runtime.tracks) == nil then
+                disconnectFeatureConnection("MM2KnifeSampler")
+            end
+        end, nil, "MM2 knife sampler")
     end
 
     local function resolveKnifeProjectile(projectile: Instance): ()
@@ -27885,7 +27908,7 @@ function Module.init(context: Runtime): any
                     noClipPart(descendant)
                 end
             end
-        end)
+        end, nil, "Noclip")
         featureConnections.NoclipDescendant = {
             Disconnect = function(): ()
                 if addConnection then
@@ -27998,6 +28021,39 @@ function Module.init(context: Runtime): any
 
         local impulseElapsed: number = math.huge
 
+        -- v160: the per-frame callback used to build a fresh RaycastParams and
+        -- a fresh ignore list with `Players:GetPlayers()` BEFORE it looked at
+        -- the input, so a Spider that was merely sitting still still paid for
+        -- one table per frame plus one lookup per player. Order is now: read
+        -- the character and the input (cheap), and only then build the ray.
+        -- The ignore list is rebuilt at 2 Hz: characters appear and vanish a
+        -- few times per round, not 60 times per second.
+        local raycastParams: RaycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        raycastParams.RespectCanCollide = true
+        local ignoreRefreshAt: number = -math.huge
+        local ignoreList: {Instance} = {}
+        local ignoreSignature: string = ""
+        local function refreshIgnore(character: Model): ()
+            local now: number = os.clock()
+            if now - ignoreRefreshAt < 0.5 then
+                return
+            end
+            ignoreRefreshAt = now
+            local names: {string} = {}
+            table.clear(ignoreList)
+            table.insert(ignoreList, character)
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    table.insert(ignoreList, player.Character)
+                    table.insert(names, player.Name)
+                end
+            end
+            table.sort(names)
+            ignoreSignature = table.concat(names, ",")
+            raycastParams.FilterDescendantsInstances = ignoreList
+        end
+
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             impulseElapsed += math.max(0, deltaTime)
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -28007,31 +28063,20 @@ function Module.init(context: Runtime): any
                 releaseClimbState()
                 return
             end
-            if climbingHumanoid and climbingHumanoid ~= humanoidOrNil then releaseClimbState() end
-            local humanoid: Humanoid = humanoidOrNil :: Humanoid
-            local root: BasePart = rootOrNil :: BasePart
-
-            local raycastParams: RaycastParams = RaycastParams.new()
-            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-            raycastParams.RespectCanCollide = true
-            raycastParams.CollisionGroup = root.CollisionGroup
-            local ignored: {Instance} = {character :: Instance}
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and player.Character then
-                    table.insert(ignored, player.Character :: Instance)
-                end
-            end
-            raycastParams.FilterDescendantsInstances = ignored
-
-            local hipHeight: number = humanoid.HipHeight > 0 and humanoid.HipHeight or 2.0
-            local rootPos: Vector3 = root.Position
-            local moveDir: Vector3 = humanoid.MoveDirection
-
+            local moveDir: Vector3 = humanoidOrNil.MoveDirection
+            -- Standing still (or climbing nothing) costs two property reads.
             if moveDir.Magnitude < 0.05 then
                 releaseClimbState()
                 return
             end
+            if climbingHumanoid and climbingHumanoid ~= humanoidOrNil then releaseClimbState() end
+            local humanoid: Humanoid = humanoidOrNil :: Humanoid
+            local root: BasePart = rootOrNil :: BasePart
 
+            refreshIgnore(character :: Model)
+            raycastParams.CollisionGroup = root.CollisionGroup
+            local hipHeight: number = humanoid.HipHeight > 0 and humanoid.HipHeight or 2.0
+            local rootPos: Vector3 = root.Position
             local origin: Vector3 = rootPos - Vector3.new(0, math.max(hipHeight - 0.5, 0), 0)
             local wall: RaycastResult? = workspace:Raycast(
                 origin,
@@ -28068,7 +28113,7 @@ function Module.init(context: Runtime): any
             else
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, spiderSettings.speed, velocity.Z)
             end
-        end)
+        end, nil, "Spider")
     end
 
     SpiderFeature = createUniversalFeature(
@@ -29902,7 +29947,7 @@ function Module.init(context: Runtime): any
         if not enabled then
             return
         end
-        host.featureConnections.AntiFling = host.TaskManager:Connect(step)
+        host.featureConnections.AntiFling = host.TaskManager:Connect(step, nil, "Anti Fling")
     end
 
     -- No options on purpose (v138.8): Anti Fling is a plain ON/OFF card. The
@@ -29975,6 +30020,11 @@ function Module.init(context: Runtime): any
     local visible: boolean = false
     local platform: BasePart? = nil
     local platformY: number? = nil
+    -- v160: the step used to write Size, CFrame and Transparency every single
+    -- frame, even standing still, and each write inside a pcall. The part only
+    -- has to move when the character moved or the platform was rebuilt.
+    local writtenPosition: Vector3? = nil
+    local writtenVisible: boolean? = nil
     local antiVoidFeature: any = nil
 
     local PLATFORM_NAME: string = "Wurst_AntiVoidPlatform"
@@ -30001,6 +30051,7 @@ function Module.init(context: Runtime): any
         end
         platform = nil
         platformY = nil
+        writtenPosition, writtenVisible = nil, nil
     end
 
     local function destroyHeightFloor(): number
@@ -30083,9 +30134,15 @@ function Module.init(context: Runtime): any
         local floor: number = destroyHeightFloor()
         local y: number = math.max(platformY or desiredY, floor + 8)
 
+        local target: Vector3 = Vector3.new(position.X, y, position.Z)
+        if writtenPosition and writtenVisible == visible
+            and (target - writtenPosition).Magnitude < 0.05 then
+            return
+        end
+        writtenPosition, writtenVisible = target, visible
         pcall(function(): ()
             platform.Size = PLATFORM_SIZE
-            platform.CFrame = CFrame.new(position.X, y, position.Z)
+            platform.CFrame = CFrame.new(target)
             platform.Transparency = if visible then 0.4 else 1
         end)
     end
@@ -30097,7 +30154,7 @@ function Module.init(context: Runtime): any
             destroyPlatform()
             return
         end
-        host.featureConnections.AntiVoid = host.TaskManager:Connect(step)
+        host.featureConnections.AntiVoid = host.TaskManager:Connect(step, nil, "Anti Void")
         step()
     end
 
@@ -31145,7 +31202,7 @@ function Module.init(context: Runtime): any
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
             end
-        end)
+        end, nil, "Freeze Movements")
     end
 
     FreezeFeature = createUniversalFeature(
@@ -31242,7 +31299,7 @@ function Module.init(context: Runtime): any
         originalGravity = workspace.Gravity
         featureConnections.Gravity = TaskManager:Connect(function()
             workspace.Gravity = gravitySettings.value
-        end)
+        end, nil, "Gravity")
     end
 
     GravityFeature = createUniversalFeature(
@@ -32332,7 +32389,7 @@ function Module.init(context: Runtime): any
                 elapsed = 0
                 pokeAfk()
             end
-        )
+        , nil, "Anti AFK")
     end
 
     local AntiAfkFeature = createUniversalFeature(
@@ -35287,7 +35344,7 @@ function Module.init(context: Runtime): any
                     pcall(updateScenery, pending[cursor])
                     cursor += 1
                 end
-            end)
+            end, nil, "Improve FPS")
         end
         task.spawn(function(): ()
             local scanned = 0
@@ -35511,7 +35568,7 @@ function Module.init(context: Runtime): any
                     refreshInteractionExtender()
                 end
             end
-        )
+        , nil, "Interact Extender")
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
                 if not interactionExtenderEnabled then
@@ -36270,7 +36327,7 @@ function Module.init(context: Runtime): any
         featureConnections.FOV = TaskManager:Connect(function()
             fovOwnership.set("Universal", fovSettings.value)
             fovOwnership.apply(workspace.CurrentCamera)
-        end)
+        end, nil, "FOV")
     end
 
     FovFeature = createUniversalFeature(
@@ -38873,7 +38930,7 @@ function Module.init(context)
         if not enabled then feature:SetStatus(nil); return end
         original = {minimum=player.CameraMinZoomDistance, maximum=player.CameraMaxZoomDistance, mode=player.CameraMode}
         apply()
-        host.featureConnections.ZoomUnlocker = host.TaskManager:Connect(apply)
+        host.featureConnections.ZoomUnlocker = host.TaskManager:Connect(apply, nil, "Zoom Unlocker")
     end, {configKey="Universal.ZoomUnlocker", categoryName="Render"})
     local function update(key,value)
         settings[key] = value
@@ -48415,12 +48472,22 @@ function Module.init(context: any): WidgetLibrary
             TextXAlignment = Enum.TextXAlignment.Right,
             ZIndex = option.ZIndex + 2,
         }) :: any) :: TextLabel
+        local lastText: string = tostring(initialValue or "0")
         return {
             row = option,
             label = valueLabel,
+            -- v160: modules refresh their stat rows from a per-frame task. A
+            -- Text assignment re-runs the label layout, so writing the same
+            -- string 60 times a second was pure waste. Only a change is
+            -- written now; the first call always goes through.
             set = function(newText: string): ()
+                local nextText: string = tostring(newText)
+                if nextText == lastText then
+                    return
+                end
+                lastText = nextText
                 if valueLabel and valueLabel.Parent then
-                    valueLabel.Text = tostring(newText)
+                    valueLabel.Text = nextText
                 end
             end,
         }

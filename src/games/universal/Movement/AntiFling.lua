@@ -120,7 +120,7 @@ function Module.init(context: Runtime): any
         if not enabled then
             return
         end
-        host.featureConnections.AntiFling = host.TaskManager:Connect(step)
+        host.featureConnections.AntiFling = host.TaskManager:Connect(step, nil, "Anti Fling")
     end
 
     -- No options on purpose (v138.8): Anti Fling is a plain ON/OFF card. The

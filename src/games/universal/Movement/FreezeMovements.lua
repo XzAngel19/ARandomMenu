@@ -513,7 +513,7 @@ function Module.init(context: Runtime): any
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
             end
-        end)
+        end, nil, "Freeze Movements")
     end
 
     FreezeFeature = createUniversalFeature(

@@ -179,7 +179,7 @@ function Module.init(runtime: any): any
                 return
             end
             scheduleBlurt()
-        end)
+        end, nil, "MM2 Blurt Roles")
     end
 
     local BlurtFeature = createUniversalFeature(

@@ -27,6 +27,11 @@ function Module.init(context: Runtime): any
     local visible: boolean = false
     local platform: BasePart? = nil
     local platformY: number? = nil
+    -- v160: the step used to write Size, CFrame and Transparency every single
+    -- frame, even standing still, and each write inside a pcall. The part only
+    -- has to move when the character moved or the platform was rebuilt.
+    local writtenPosition: Vector3? = nil
+    local writtenVisible: boolean? = nil
     local antiVoidFeature: any = nil
 
     local PLATFORM_NAME: string = "Wurst_AntiVoidPlatform"
@@ -53,6 +58,7 @@ function Module.init(context: Runtime): any
         end
         platform = nil
         platformY = nil
+        writtenPosition, writtenVisible = nil, nil
     end
 
     local function destroyHeightFloor(): number
@@ -135,9 +141,15 @@ function Module.init(context: Runtime): any
         local floor: number = destroyHeightFloor()
         local y: number = math.max(platformY or desiredY, floor + 8)
 
+        local target: Vector3 = Vector3.new(position.X, y, position.Z)
+        if writtenPosition and writtenVisible == visible
+            and (target - writtenPosition).Magnitude < 0.05 then
+            return
+        end
+        writtenPosition, writtenVisible = target, visible
         pcall(function(): ()
             platform.Size = PLATFORM_SIZE
-            platform.CFrame = CFrame.new(position.X, y, position.Z)
+            platform.CFrame = CFrame.new(target)
             platform.Transparency = if visible then 0.4 else 1
         end)
     end
@@ -149,7 +161,7 @@ function Module.init(context: Runtime): any
             destroyPlatform()
             return
         end
-        host.featureConnections.AntiVoid = host.TaskManager:Connect(step)
+        host.featureConnections.AntiVoid = host.TaskManager:Connect(step, nil, "Anti Void")
         step()
     end
 

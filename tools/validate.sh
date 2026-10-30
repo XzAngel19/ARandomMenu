@@ -41,6 +41,16 @@ echo "PASS $sources Lua sources compile"
 # and this checks the catalog against the disk before anything else runs.
 python3 tools/card.py check
 
+# Per-frame cost audit: every callback that runs 60 times a second is counted,
+# and one that raycasts or enumerates instances must throttle itself. Also
+# checks that each toggle can actually disconnect what it registered and that
+# every MM2/Universal task is named in the FPS report.
+python3 tools/audit_performance.py >build/performance_audit.txt 2>&1 || {
+    cat build/performance_audit.txt
+    exit 1
+}
+tail -1 build/performance_audit.txt
+
 suites=0
 for suite in tools/test_*.py; do
     python3 "$suite"

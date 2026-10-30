@@ -66,6 +66,39 @@ function Module.init(context: Runtime): any
 
         local impulseElapsed: number = math.huge
 
+        -- v160: the per-frame callback used to build a fresh RaycastParams and
+        -- a fresh ignore list with `Players:GetPlayers()` BEFORE it looked at
+        -- the input, so a Spider that was merely sitting still still paid for
+        -- one table per frame plus one lookup per player. Order is now: read
+        -- the character and the input (cheap), and only then build the ray.
+        -- The ignore list is rebuilt at 2 Hz: characters appear and vanish a
+        -- few times per round, not 60 times per second.
+        local raycastParams: RaycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        raycastParams.RespectCanCollide = true
+        local ignoreRefreshAt: number = -math.huge
+        local ignoreList: {Instance} = {}
+        local ignoreSignature: string = ""
+        local function refreshIgnore(character: Model): ()
+            local now: number = os.clock()
+            if now - ignoreRefreshAt < 0.5 then
+                return
+            end
+            ignoreRefreshAt = now
+            local names: {string} = {}
+            table.clear(ignoreList)
+            table.insert(ignoreList, character)
+            for _, player: Player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    table.insert(ignoreList, player.Character)
+                    table.insert(names, player.Name)
+                end
+            end
+            table.sort(names)
+            ignoreSignature = table.concat(names, ",")
+            raycastParams.FilterDescendantsInstances = ignoreList
+        end
+
         featureConnections.Spider = TaskManager:Connect(function(deltaTime: number): ()
             impulseElapsed += math.max(0, deltaTime)
             local character: Model?, humanoidOrNil: Humanoid?, rootOrNil: BasePart? =
@@ -75,31 +108,20 @@ function Module.init(context: Runtime): any
                 releaseClimbState()
                 return
             end
-            if climbingHumanoid and climbingHumanoid ~= humanoidOrNil then releaseClimbState() end
-            local humanoid: Humanoid = humanoidOrNil :: Humanoid
-            local root: BasePart = rootOrNil :: BasePart
-
-            local raycastParams: RaycastParams = RaycastParams.new()
-            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-            raycastParams.RespectCanCollide = true
-            raycastParams.CollisionGroup = root.CollisionGroup
-            local ignored: {Instance} = {character :: Instance}
-            for _, player: Player in ipairs(Players:GetPlayers()) do
-                if player ~= LocalPlayer and player.Character then
-                    table.insert(ignored, player.Character :: Instance)
-                end
-            end
-            raycastParams.FilterDescendantsInstances = ignored
-
-            local hipHeight: number = humanoid.HipHeight > 0 and humanoid.HipHeight or 2.0
-            local rootPos: Vector3 = root.Position
-            local moveDir: Vector3 = humanoid.MoveDirection
-
+            local moveDir: Vector3 = humanoidOrNil.MoveDirection
+            -- Standing still (or climbing nothing) costs two property reads.
             if moveDir.Magnitude < 0.05 then
                 releaseClimbState()
                 return
             end
+            if climbingHumanoid and climbingHumanoid ~= humanoidOrNil then releaseClimbState() end
+            local humanoid: Humanoid = humanoidOrNil :: Humanoid
+            local root: BasePart = rootOrNil :: BasePart
 
+            refreshIgnore(character :: Model)
+            raycastParams.CollisionGroup = root.CollisionGroup
+            local hipHeight: number = humanoid.HipHeight > 0 and humanoid.HipHeight or 2.0
+            local rootPos: Vector3 = root.Position
             local origin: Vector3 = rootPos - Vector3.new(0, math.max(hipHeight - 0.5, 0), 0)
             local wall: RaycastResult? = workspace:Raycast(
                 origin,
@@ -136,7 +158,7 @@ function Module.init(context: Runtime): any
             else
                 root.AssemblyLinearVelocity = Vector3.new(velocity.X, spiderSettings.speed, velocity.Z)
             end
-        end)
+        end, nil, "Spider")
     end
 
     SpiderFeature = createUniversalFeature(

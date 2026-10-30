@@ -431,7 +431,8 @@ function Module.init(runtime: any): any
         end
 
         setStatus(tostring(math.round(settings.studs)) .. " studs")
-        featureConnections.MM2GunAura = TaskManager:Connect(gunAuraTick)
+        featureConnections.MM2GunAura =
+            TaskManager:Connect(gunAuraTick, nil, "MM2 Gun Aura")
         gunAuraTick()
     end
 

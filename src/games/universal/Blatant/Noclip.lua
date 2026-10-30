@@ -108,7 +108,7 @@ function Module.init(context: Runtime): any
                     noClipPart(descendant)
                 end
             end
-        end)
+        end, nil, "Noclip")
         featureConnections.NoclipDescendant = {
             Disconnect = function(): ()
                 if addConnection then

@@ -784,7 +784,8 @@ function Module.init(runtime: any): any
         end
 
         installWeaponServiceRedirect()
-        featureConnections.MM2KnifeThrow = TaskManager:Connect(knifeThrowLoop)
+        featureConnections.MM2KnifeThrow =
+            TaskManager:Connect(knifeThrowLoop, nil, "MM2 Knife Throw")
     end
 
     -- Create the feature in Combat category

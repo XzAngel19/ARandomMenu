@@ -115,7 +115,7 @@ function Module.init(runtime: any): any
             end)
         end
         featureConnections.MM2AutoGetGun =
-            TaskManager:Connect(autoGetGunTick)
+            TaskManager:Connect(autoGetGunTick, nil, "MM2 Get Gun")
         autoGetGunTick()
     end
 

@@ -862,7 +862,7 @@ def main() -> None:
     assert "computeGunAim" not in SHOOT and "predictionMath.sampleDue" not in BASE
     assert "predictionMath.closestCrossing" not in BASE and "GUN_LEAD" not in BASE
     assert "bodyHalfWidth" not in SHOOT and "WurstHitbox" not in BASE
-    assert "TaskManager:Connect(autoShootTick)" in SHOOT
+    assert "TaskManager:Connect(autoShootTick" in SHOOT
     assert "task.delay(10, function()" in BASE
     assert "candidate.ambiguous" in BASE
     assert "GUN_PIERCE_STUDS" not in SHOOT

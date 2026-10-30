@@ -758,7 +758,7 @@ function Module.init(runtime: any): any
             session.nextAt = math.max(os.clock(), revealUntil)
             session.finished = false
             report(summary())
-            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick)
+            featureConnections.MM2AutoUnbox = TaskManager:Connect(tick, nil, "MM2 Auto Unbox")
         end,
         {
             categoryName = "Utilities",

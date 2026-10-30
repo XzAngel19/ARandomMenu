@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v159-20261029-mm2-knife-wallcheck`**, con árbol base de
+> **`v160-20261029-perf-audit`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,39 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v159: 90 fuentes,
-     77 suites, boot `failures=0`, auditoría de menú 49/48 tarjetas).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v160: 90 fuentes,
+     77 suites, auditoría de rendimiento, boot `failures=0`, menú 49/48).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v160 — Auditoría de rendimiento (2026-10-29)
+
+El usuario reportó lag y pidió verificar si lo causa el executor o el menú, en
+MM2 y Universal. Detalle y tabla de hallazgos: `docs/FIXES-v160.md`.
+
+- **Diagnóstico que ya existe y ahora sirve:** overlay `Session Info` muestra
+  `FPS`, `Ping`, `Menu X+Y ms` y `Spikes`, y el scheduler avisa por consola si
+  una tarea pasa de 3 ms o un frame de 45 ms, nombrando el módulo. Con el menú
+  por debajo de ~1.5 ms y FPS malo, el culpable no es el menú. También
+  `print(state.perfReport())`.
+- **Etiquetas:** las 33 tareas por frame de MM2 y Universal tienen nombre
+  (`MM2 Auto Shoot`, `MM2 Knife Throw`, `Spider`, `Noclip`, `Anti Void`…). Antes
+  muchas se reportaban como `task`.
+- **Corregido:** el muestreador de cuchillos ya no queda conectado para siempre
+  tras el primer lanzamiento; Auto Shoot evalúa las compuertas baratas (shot
+  pendiente / remote / arma) ANTES de predecir y raycastear; Spider lee input
+  antes de construir params y lista de jugadores (y la refresca a 2 Hz);
+  Anti Void deja de reescribir CFrame/Size/Transparency cada frame; las filas de
+  estadística (`addStatOption`) solo escriben `Text` cuando el texto cambia.
+- **Nuevo control permanente:** `tools/audit_performance.py`, ejecutado por
+  `tools/validate.sh`. Analiza los 72 callbacks por frame, exige autolímite a
+  quien raycastea o enumera instancias, exige etiqueta en MM2/Universal y exige
+  `disconnectFeatureConnection` para cada registro (una conexión que nadie
+  desconecta es CPU permanente al apagar el módulo).
+- Las bases BedFight/TRS/VD/X2 tienen bucles propios sin limitar; la auditoría
+  los lista como información porque no se cargan en MM2.
 
 ## v159 — Knife: fuera toda especulación; WallCheck real y solver consistente (2026-10-29)
 

@@ -104,7 +104,7 @@ function Module.init(context: Runtime): any
                 elapsed = 0
                 pokeAfk()
             end
-        )
+        , nil, "Anti AFK")
     end
 
     local AntiAfkFeature = createUniversalFeature(

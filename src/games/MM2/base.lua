@@ -2484,7 +2484,7 @@ local function createTrajectoryCalibration(): any
             compactPending(runtime.pendingGuns, os.clock())
             compactPending(runtime.pendingKnives, os.clock())
             samplePendingTrajectories()
-        end)
+        end, nil, "MM2 shot sampler")
     end
 
     local function addSample(stats: RunningStats, value: number): ()
@@ -3689,10 +3689,10 @@ local function createTrajectoryCalibration(): any
     end
 
     local function ensureKnifeSampler(): ()
-        if featureConnections.MM2TrajectorySampler then
+        if featureConnections.MM2KnifeSampler then
             return
         end
-        featureConnections.MM2TrajectorySampler = TaskManager:Connect(function(
+        featureConnections.MM2KnifeSampler = TaskManager:Connect(function(
             _deltaTime: number
         ): ()
             local now: number = os.clock()
@@ -3763,7 +3763,16 @@ local function createTrajectoryCalibration(): any
             for _, projectile: Instance in ipairs(completed) do
                 finishKnifeTrack(projectile, "sample-window-complete")
             end
-        end)
+            -- v160: this task used to live for the whole session after the
+            -- first knife, measuring an empty table 60 times a second. It is
+            -- cheap per frame, but a permanent connection nothing can turn off
+            -- is exactly the kind of cost that adds up. It retires when the
+            -- last blade is gone and ensureKnifeSampler re-arms it on the next
+            -- throw.
+            if next(runtime.tracks) == nil then
+                disconnectFeatureConnection("MM2KnifeSampler")
+            end
+        end, nil, "MM2 knife sampler")
     end
 
     local function resolveKnifeProjectile(projectile: Instance): ()
