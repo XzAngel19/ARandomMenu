@@ -802,6 +802,28 @@ do
     items.Options["Gun ESP"].Metadata.callback(true)
     items.Options["Trap ESP"].Metadata.callback(true)
     items:Toggle(false)
+    -- Booted bundle + real Framework + real widgets: PostEffects have to be
+    -- direct Lighting children, not descendants of an inert Folder.
+    local shaders = ex.state.framework:GetModule("Shaders")
+    assert(shaders and shaders.Options.Look and shaders.Options.Saturation, "Shaders must boot")
+    assert(shaders.Options.Saturation.Object:GetAttribute("Step") == 0.01,
+      "saturation must have decimal slider steps")
+    shaders.Options.Look.Metadata.callback("Noir")
+    shaders.Options.Saturation.Metadata.callback(0)
+    shaders:Toggle(true)
+    local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
+    local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
+    local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
+    assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
+      "ColorCorrectionEffect must be enabled directly under Lighting")
+    assert(shaderColor.Saturation == -1, "Noir must desaturate the real color pass")
+    assert(shaderBloom and shaderBloom.Parent == Lighting and shaderRays and shaderRays.Parent == Lighting,
+      "bloom and sun rays must be direct children of Lighting")
+    shaders:Toggle(false)
+    assert(not Lighting:FindFirstChild("ARMShaderColor")
+      and not Lighting:FindFirstChild("ARMShaderBloom") and not Lighting:FindFirstChild("ARMShaderRays"),
+      "disabling Shaders must remove its effects")
+    print("[HARNESS] SHADERS DIRECT LIGHTING PARENT + CLEANUP")
     local freeze = findFeature("Freeze Movements")
     assert(freeze, "Freeze Movements feature must exist after boot")
     for cycle = 1, 2 do

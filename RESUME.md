@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v162-20261030-shiftlock-shaders-fix`**, con árbol base de
+> **`v163-20261029-shaders-parent-perf`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,43 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v162: 91 fuentes,
-     80 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v163: 91 fuentes,
+     81 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v163 — Shaders de verdad y medición de picos sin atribuciones (2026-10-29)
+
+Detalle y limitaciones: `docs/FIXES-v163.md`.
+
+- El usuario informa que Shaders seguía sin modificar la imagen. La causa era
+  que los `PostEffect` vivían en un **Folder** bajo Lighting: Roblox exige
+  padre directo `Lighting`/`CurrentCamera`. Ahora son hijos directos, se limpian
+  por referencia propia, las fallas parciales se notifican, `Saturation` usa
+  paso 0.01 y el botón Diagnose muestra padres/Enabled/calidad disponible.
+  No hay bucle, no se cambian propiedades de Lighting ni efectos ajenos.
+- **Corrección explícita de v162:** `Framework.onToggle` pone `created.Enabled`
+  antes de llamar al callback. La explicación de v162 que culpó la guarda de
+  `Enabled` fue errónea; el mock previo ignoraba el requisito de jerarquía.
+  El nuevo test ejecuta el Framework y módulo reales; el boot completo verifica
+  además bundle + widgets + jerarquía. Ninguno reemplaza probar la imagen real.
+- La captura muestra 16 FPS, 42 spikes, peor 988 ms, muestra de menú 0.36+0.01
+  ms y etiqueta `MM2 Knife Throw`. La etiqueta era del **último** spike, no
+  necesariamente del peor, y la muestra tampoco era del peor. No se puede
+  atribuir la causa al cuchillo ni al juego/executor con esa captura. Perf report
+  ahora separa intervalos de frame de máximos de callback de heartbeat/render,
+  sin asignar causa; cuenta solo trabajo medido por scheduler (puede incluir
+  esperas y omitir tareas desacopladas/GPU). El botón reinicia ambos intervalos.
+- Eliminado trabajo inútil en Knife Throw: modo manual sin tracer no preselecciona
+  objetivos 15 veces/s y sin tracer no recalcula durante un cooldown. Hooks
+  manuales siguen resolviendo al input; tracer, WallCheck y auto siguen probados.
+  Esto reduce trabajo pero NO demuestra que sea la causa de los 988 ms.
+- Para investigar, comparar Perf report en periodos similares con Knife Throw ON
+  y OFF. Para probar Shaders: `Noir`, Saturation 0, gráficos adecuados, y evitar
+  `Improve FPS > Disable post effects`; si no se ve, pulsar Diagnose y pedir la
+  salida `[Shaders]`. El resultado visual real aún no se ha comprobado.
 
 ## v162 — Shift Lock, Shaders que no hacía nada, coste de los rayos (2026-10-30)
 
@@ -39,16 +70,15 @@ Detalle y tablas: `docs/FIXES-v162.md`.
   Reglas nuevas: solo se deshace lo que escribió el menú, nunca se escribe
   `LockCenter`, y tras 8 reafirmaciones en 1 s el menú cede. Test:
   `tools/test_menu_cursor.py` (8 comprobaciones sobre el bloque real).
-- **Shaders no hacía nada (dos causas).** `apply()` salía en la primera línea
-  porque `card.Enabled` todavía es `false` dentro del callback del interruptor
-  (ahora usa un flag propio), y los valores por defecto eran neutros (Look
-  `None`, saturación/contraste/brillo 0). Ahora `Look = Cinematic`, bloom 0.6,
-  sun rays 0.2: se enciende y se ve. Test: `tools/test_shaders.py`.
+- **Shaders (v162 insuficiente).** Se modificaron los defaults, pero los
+  efectos seguían en un Folder inerte. La explicación sobre el callback fue
+  equivocada; el defecto de jerarquía y los tests se corrigieron en v163.
 - **Lag spikes.** Lo único que v161 añadía por frame era el chequeo de cuerpo
   fantasma (hasta 13 rayos/frame con Auto Shoot): ahora máximo 5 rayos cada
   0.15 s. Para el resto, **UI Settings → Perf report** imprime el informe,
   muestra un resumen y reinicia el contador de spikes: pulsar, jugar un minuto,
-  pulsar otra vez. Si dice `menu 0.30+0.10 ms`, el menú no es el culpable.
+  pulsar otra vez. Una muestra pequeña del menú NO permite descartar un pico
+  anterior del menú, trabajo asíncrono ni atribuirlo al juego/executor.
 - **Menu scale** (0.7–1.3) en UI Settings, guardado en `UI.MenuScale`. No había
   ningún cambio de tamaño entre v139 y v161 (cardHeight, optionRowHeight,
   WINDOW_WIDTH y shape.scale idénticos), así que la escala es ahora un número
@@ -88,7 +118,8 @@ MM2 y Universal. Detalle y tabla de hallazgos: `docs/FIXES-v160.md`.
 - **Diagnóstico que ya existe y ahora sirve:** overlay `Session Info` muestra
   `FPS`, `Ping`, `Menu X+Y ms` y `Spikes`, y el scheduler avisa por consola si
   una tarea pasa de 3 ms o un frame de 45 ms, nombrando el módulo. Con el menú
-  por debajo de ~1.5 ms y FPS malo, el culpable no es el menú. También
+  por debajo de ~1.5 ms solo es una muestra, no descarta trabajo anterior o
+  asíncrono. v163 separa métricas y evita atribuir causa. También
   `print(state.perfReport())`.
 - **Etiquetas:** las 33 tareas por frame de MM2 y Universal tienen nombre
   (`MM2 Auto Shoot`, `MM2 Knife Throw`, `Spider`, `Noclip`, `Anti Void`…). Antes

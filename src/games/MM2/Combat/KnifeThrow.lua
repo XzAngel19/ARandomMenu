@@ -729,6 +729,24 @@ function Module.init(runtime: any): any
             return
         end
 
+        local now: number = os.clock()
+        local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
+        local wantThrow: boolean = settings.autoThrow
+            and now - lastThrowAttempt >= cooldown
+
+        -- Manual redirects solve on the native input path. Do not enumerate
+        -- players, predict and raycast merely to update a status when both
+        -- Auto Knife Throw and the tracer are off. Likewise, without a tracer
+        -- no preview is needed during a successful throw's cooldown.
+        if not settings.knifeTracer and not wantThrow then
+            destroyTracerVisuals()
+            if not settings.autoThrow then
+                setKnifeStatus(nil)
+                invalidateAim()
+            end
+            return
+        end
+
         local knife: Tool? = getKnife()
         if not knife then
             setKnifeStatus("Waiting for knife")
@@ -736,11 +754,6 @@ function Module.init(runtime: any): any
             invalidateAim()
             return
         end
-
-        local now: number = os.clock()
-        local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
-        local wantThrow: boolean = settings.autoThrow
-            and now - lastThrowAttempt >= cooldown
 
         -- The cached pick is at most 1/15 s old, which only decides WHO gets
         -- the blade. throwKnife re-solves the aim from the live handle, so the

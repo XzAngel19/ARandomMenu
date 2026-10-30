@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v162-20261030-shiftlock-shaders-fix"
+local SOURCE_STAMP: string = "v163-20261029-shaders-parent-perf"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3823,10 +3823,10 @@ type ScheduledTask = {
     warned: boolean,
 }
 
--- v139: the scheduler measures itself. Every task keeps an exponential average
--- of how long it takes, so "the menu is lagging" can be answered with a name
--- instead of a guess (state.perfReport()). The cost of measuring is two
--- os.clock() calls per task per frame (~0.2 us), far below anything visible.
+-- Scheduler callbacks are timed individually. These elapsed durations can
+-- include yielding/scheduling delays and cannot by themselves prove why a
+-- frame was long. The frame interval and the maximum callback are reported
+-- separately; no frame is attributed to whichever callback happens to run next.
 local TASK_WARN_MS: number = 3
 local PERFORMANCE_EVERY: number = 0.5
 
@@ -3844,22 +3844,25 @@ local TaskManager: any = {
 
 state.performance = {
     fps = 60,
-    frameMs = 1 / 60,
+    frameMs = 1000 / 60,
     tasksMs = 0,
     renderMs = 0,
     taskCount = 0,
     renderCount = 0,
     slowestTask = nil :: (string | nil),
     slowestMs = 0,
-    -- v139.1: lag SPIKES (frames well over budget) are a different problem
-    -- from a steady 3 ms task, so they are measured and reported apart.
+    -- Heartbeat intervals and callback durations are independent measurements.
     spikeMs = 0,
     spikeCount = 0,
-    spikeTask = nil :: (string | nil),
     spikeAgo = -1,
     spikeAt = nil :: (number | nil),
     spikeWarnedAt = nil :: (number | nil),
     worstSpikeMs = 0,
+    peakTask = nil :: (string | nil),
+    peakTaskMs = 0,
+    peakTaskPhase = nil :: (string | nil),
+    peakTaskAt = nil :: (number | nil),
+    observedSince = os.clock(),
 }
 
 local function describeTask(callback: any): string
@@ -3990,11 +3993,10 @@ end
 
 local function runBucket(
     bucket: {ScheduledTask},
-    deltaTime: number
-): (number, string?, number)
+    deltaTime: number,
+    phase: string
+): number
     local total: number = 0
-    local worstLabel: string? = nil
-    local worstMs: number = 0
     local index: number = 1
     while index <= #bucket do
         local scheduled: ScheduledTask = bucket[index]
@@ -4003,12 +4005,18 @@ local function runBucket(
             scheduled.callback,
             deltaTime
         )
-        local cost: number = (os.clock() - startedAt) * 1000
-        total += cost
-        if cost > worstMs then
-            worstMs = cost
-            worstLabel = scheduled.label
+        -- Elapsed time, not a CPU profiler; a yielding callback may include
+        -- time spent waiting. Retain the peak until the user resets the report.
+        local finishedAt: number = os.clock()
+        local cost: number = math.max(0, (finishedAt - startedAt) * 1000)
+        local performance: any = state.performance
+        if cost > (performance.peakTaskMs or 0) then
+            performance.peakTaskMs = cost
+            performance.peakTask = scheduled.label
+            performance.peakTaskPhase = phase
+            performance.peakTaskAt = finishedAt
         end
+        total += cost
         scheduled.calls += 1
         -- Fast attack, slow decay: a single spike is visible in the report but
         -- does not fire the warning; a task that is genuinely heavy will.
@@ -4034,8 +4042,8 @@ local function runBucket(
             warn(
                 "[" .. PRODUCT.name .. ":Perf] "
                     .. scheduled.label
-                    .. string.format(" is taking %.2f ms per frame", scheduled.costMs)
-                    .. " — that is what is dropping your FPS. Turn that module off or lower its range."
+                    .. string.format(" recent callback score %.2f ms", scheduled.costMs)
+                    .. " (decaying peak; elapsed may include waits). Compare with the module off."
             )
         end
         if not scheduled.handle.Connected then
@@ -4052,7 +4060,7 @@ local function runBucket(
             index += 1
         end
     end
-    return total, worstLabel, worstMs
+    return total
 end
 
 local function publishPerformance(deltaTime: number): ()
@@ -4081,17 +4089,13 @@ local performanceElapsed: number = 0
 local SPIKE_MS: number = 45
 local SPIKE_WARN_EVERY: number = 5
 
-TaskManager.frameSlowLabel = nil
-TaskManager.frameSlowMs = 0
-
 TaskManager.connection = RunService.Heartbeat:Connect(function(
     deltaTime: number
 ): ()
-    local total: number, label: string?, worst: number =
-        runBucket(TaskManager.tasks, deltaTime)
+    -- deltaTime describes the interval since the previous frame; tasks run
+    -- below now. Do not pair this delta with the current frame's task label.
+    local total: number = runBucket(TaskManager.tasks, deltaTime, "heartbeat")
     TaskManager.tasksMs = total
-    TaskManager.frameSlowLabel = label
-    TaskManager.frameSlowMs = worst
     performanceElapsed += deltaTime
     if performanceElapsed >= PERFORMANCE_EVERY then
         performanceElapsed = 0
@@ -4103,24 +4107,17 @@ TaskManager.connection = RunService.Heartbeat:Connect(function(
     if frameMs >= SPIKE_MS then
         performance.spikeCount += 1
         performance.spikeMs = frameMs
-        performance.spikeTask = label
         performance.spikeAt = os.clock()
         if frameMs > performance.worstSpikeMs then
             performance.worstSpikeMs = frameMs
         end
-        -- Rate limited: one line every few seconds, naming the module that was
-        -- running when the frame blew up. If the menu cost is tiny the hitch is
-        -- the game or the executor, which is also useful to know.
         local now: number = os.clock()
         if now - (performance.spikeWarnedAt or -math.huge) >= SPIKE_WARN_EVERY then
             performance.spikeWarnedAt = now
-            local menuMs: number = TaskManager.tasksMs + TaskManager.renderMs
             warn(string.format(
-                "[%s:Perf] frame spike %.0f ms (menu %.2f ms%s)",
+                "[%s:Perf] frame interval %.0f ms (cause not determined)",
                 PRODUCT.name,
-                frameMs,
-                menuMs,
-                label and (" · " .. label) or ""
+                frameMs
             ))
         end
     end
@@ -4129,7 +4126,7 @@ end)
 TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     deltaTime: number
 ): ()
-    local total: number = runBucket(TaskManager.renderTasks, deltaTime)
+    local total: number = runBucket(TaskManager.renderTasks, deltaTime, "render")
     TaskManager.renderMs = total
 end)
 
@@ -4138,7 +4135,7 @@ state.perfReport = function(): string
     local stats: any = TaskManager:Stats()
     local lines: {string} = {
         string.format(
-            "FPS %.0f (%.1f ms) · tasks %.2f ms (%d) · render %.2f ms (%d)",
+            "FPS %.0f (%.1f ms) · sampled tasks %.2f ms (%d) · render %.2f ms (%d)",
             state.performance.fps,
             state.performance.frameMs,
             stats.tasksMs,
@@ -4148,16 +4145,23 @@ state.perfReport = function(): string
         ),
     }
     local performance: any = state.performance
-    if performance.spikeCount > 0 then
-        local ago: number = performance.spikeAgo or -1
+    table.insert(lines, string.format("observation %.1f s · frame intervals >= %.0f ms: %d · worst %.0f ms",
+        math.max(0, os.clock() - (performance.observedSince or os.clock())),
+        SPIKE_MS,
+        performance.spikeCount,
+        performance.worstSpikeMs))
+    if performance.peakTask then
         table.insert(lines, string.format(
-            "spikes %d · worst %.0f ms · last %s%s",
-            performance.spikeCount,
-            performance.worstSpikeMs,
-            ago < 0 and "n/a" or string.format("%.1f s ago", ago),
-            performance.spikeTask and (" · " .. tostring(performance.spikeTask)) or ""
+            "longest callback %s · %.2f ms elapsed (%s) · not linked to worst frame",
+            tostring(performance.peakTask),
+            performance.peakTaskMs,
+            tostring(performance.peakTaskPhase or "unknown")
         ))
+    else
+        table.insert(lines, "longest callback n/a")
     end
+    table.insert(lines, "callback timings may include waits; detached work and GPU are not necessarily measured")
+    table.insert(lines, "current task scores (recent peak with decay; not frame attribution):")
     for index: number, entry: any in ipairs(stats.top) do
         if index > 6 then
             break
@@ -4168,6 +4172,21 @@ state.perfReport = function(): string
         )
     end
     return table.concat(lines, "\n")
+end
+
+-- Reset the interval consistently for both heartbeat and render tasks.
+state.resetPerfReport = function(): ()
+    local performance: any = state.performance
+    performance.spikeCount = 0
+    performance.worstSpikeMs = 0
+    performance.spikeAt = nil
+    performance.spikeAgo = -1
+    performance.spikeMs = 0
+    performance.peakTask = nil
+    performance.peakTaskMs = 0
+    performance.peakTaskPhase = nil
+    performance.peakTaskAt = nil
+    performance.observedSince = os.clock()
 end
 
 state.taskManager = TaskManager

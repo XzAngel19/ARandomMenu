@@ -1166,24 +1166,28 @@ function Module.init(context: any): any
                 local ping: number? = getSessionPing()
                 table.insert(lines, string.format("FPS       %.0f", math.clamp(sessionFps, 0, 999)))
                 table.insert(lines, "Ping      " .. (ping and string.format("%.0f ms", ping) or "N/A"))
-                -- v139: what the menu itself costs each frame. If this is high,
-                -- the module named in the console warning is the culprit.
+                -- Sampled scheduler costs; the worst callback in the window
+                -- is independent of the longest frame interval.
                 local cost: any = state.performance
                 if cost and type(cost.tasksMs) == "number" then
                     table.insert(lines, string.format(
-                        "Menu      %.2f+%.2f ms",
+                        "Menu sample %.2f+%.2f ms",
                         cost.tasksMs,
                         cost.renderMs
                     ))
                 end
-                -- v139.1: a hitch is not the same as a slow menu. When a
-                -- module is to blame the line names it.
                 if cost and (cost.spikeCount or 0) > 0 then
                     table.insert(lines, string.format(
-                        "Spikes    %d · %.0f ms%s",
+                        "Spikes    %d · worst %.0f ms",
                         cost.spikeCount,
-                        cost.worstSpikeMs or 0,
-                        cost.spikeTask and (" · " .. tostring(cost.spikeTask)) or ""
+                        cost.worstSpikeMs or 0
+                    ))
+                end
+                if cost and cost.peakTask then
+                    table.insert(lines, string.format(
+                        "Task peak %s · %.2f ms",
+                        tostring(cost.peakTask),
+                        tonumber(cost.peakTaskMs) or 0
                     ))
                 end
             end

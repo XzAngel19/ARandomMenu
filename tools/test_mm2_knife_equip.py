@@ -13,8 +13,9 @@ after one frame and asserts:
   * the remote is not re-spammed while the equip is travelling,
   * once the handle is in the character the throw fires with the handle origin,
   * the equipped path still works for a tool that was already in hand,
-  * the per-frame loop solves the aim at most 15x/s, not 60x/s, and still
-    throws on time once a target is in range.
+  * the idle manual-only loop does not solve; a live tracer remains capped at
+    15x/s; the solver also stays idle during a throw cooldown without a tracer;
+  * auto throws remain on time, and native mouse/touch redirects still resolve.
 
 LUAU=/path/to/luau python3 tools/test_mm2_knife_equip.py
 """
@@ -205,9 +206,8 @@ fired = {}
 assert(throwKnife(target, knife) == true, 'an already equipped blade throws at once')
 assert(#fired == 1 and equips == 1, 'one packet, no equip churn')
 
--- 5. Frame cost: one simulated second of the loop at 60 fps must not solve
--- the aim 60 times. resolveKnifeAim casts a line-of-sight ray per player, so
--- the 15 Hz cache is what keeps an idle menu from burning frames.
+-- 5. Manual-only mode has no reason to predict 15 times per second: both
+-- native WeaponService hooks below solve at the actual input event instead.
 settings.autoThrow = false
 settings.knifeTracer = false
 settings.delay = 0.6
@@ -218,10 +218,37 @@ for frame = 1, 60 do
     clock = 100 + frame / 60
     knifeThrowLoop()
 end
-assert(getPlayersCalls <= 20,
-    'the aim solver ran ' .. tostring(getPlayersCalls) .. ' times in 61 frames')
-assert(getPlayersCalls >= 2, 'the cache must still refresh (saw ' .. tostring(getPlayersCalls) .. ')')
-local solvesPerSecond = getPlayersCalls
+assert(getPlayersCalls == 0,
+    'manual-only idle must do zero aim selections, saw ' .. tostring(getPlayersCalls))
+local idleSolves = getPlayersCalls
+
+-- Live tracer still needs to run its bounded preview, even without auto-throw.
+settings.knifeTracer = true
+getPlayersCalls = 0
+for frame = 1, 60 do
+    clock = 110 + frame / 60
+    knifeThrowLoop()
+end
+assert(getPlayersCalls >= 2 and getPlayersCalls <= 20,
+    'tracer should refresh at a capped rate, saw ' .. tostring(getPlayersCalls))
+local tracerSolves = getPlayersCalls
+settings.knifeTracer = false
+
+-- Once a successful auto throw starts its cooldown, no tracer means no
+-- selection/prediction/rays until the next throw is actually due.
+settings.autoThrow = true
+fired = {}
+getPlayersCalls = 0
+clock = 150
+knifeThrowLoop()
+assert(#fired == 1, 'the first ready auto throw fires immediately')
+local initialCalls = getPlayersCalls
+for frame = 1, 29 do
+    clock = 150 + frame / 60
+    knifeThrowLoop()
+end
+assert(#fired == 1 and getPlayersCalls == initialCalls,
+    'cooldown without tracer must not re-solve every 1/15 s')
 
 -- 6. And the thinning must not cost a throw: the blade still leaves on time.
 settings.autoThrow = true
@@ -320,8 +347,9 @@ print('PASS knife manual contract: CFrame mouse/touch, visible target, hidden fa
 print('PASS knife discipline: nothing visible and nothing blocked spends no knife')
 
 print('PASS knife equip: no packet before the blade is in hand, then one per throw')
-print('PASS knife loop: aim solved ' .. tostring(solvesPerSecond)
-    .. 'x per second at 60 fps, ' .. tostring(throws) .. ' throws on schedule')
+print('PASS knife loop: manual idle ' .. tostring(idleSolves)
+    .. ' solves/s, tracer ' .. tostring(tracerSolves)
+    .. ' solves/s, no cooldown solves, ' .. tostring(throws) .. ' throws on schedule')
 '''
 
 

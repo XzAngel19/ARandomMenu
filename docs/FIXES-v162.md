@@ -2,6 +2,12 @@
 
 Fecha: 2026-10-30 · Stamp: `v162-20261030-shiftlock-shaders-fix`
 
+> **Corrección posterior (v163):** este informe sobrestimó el arreglo de
+> Shaders y la capacidad del informe de rendimiento. El Framework sí actualiza
+> `created.Enabled` antes del callback; los efectos estaban en un Folder inerte.
+> La muestra de `menu` y la etiqueta del último spike no identifican la causa
+> del peor intervalo. Ver `docs/FIXES-v163.md` para evidencia y corrección.
+
 Tres cosas reportadas: **el Shift Lock dejó de funcionar y el ratón se queda
 libre**, **Shaders no hace nada**, y **lag spikes**. Las dos primeras tienen
 causa encontrada y corrección con test. La tercera se acota por lo que el menú
@@ -38,26 +44,14 @@ Extra: al reaparecer con el menú cerrado se suelta cualquier posesión vieja
 (`LocalPlayer.CharacterAdded`). Un menú cerrado es **completamente inerte**: no
 escribe ni un valor, lo comprueba el test con 120 cambios externos.
 
-## 2. Shaders: el interruptor no encendía nada
+## 2. Shaders: corrección de la explicación original
 
-Dos causas reales, las dos corregidas y cubiertas por `tools/test_shaders.py`
-(que arranca el módulo real contra un motor simulado y mira las escrituras):
-
-1. **`apply()` salía antes de hacer nada.** La guarda era
-   `if not card.Enabled then return end`, y la tarjeta no pasa a `Enabled` hasta
-   que el callback del interruptor ha terminado. Resultado: al encenderla no se
-   escribía nada; solo empezaba a funcionar al tocar un slider. Ahora usa un flag
-   propio (`active`) que pone el propio callback.
-2. **Los valores por defecto eran neutros**: `Look = None`, saturación 0,
-   contraste 0, brillo 0, tinte blanco. Aunque todo funcionase, la imagen no
-   cambiaba. Ahora `Look = Cinematic` por defecto, bloom 0.6 y sun rays 0.2: se
-   enciende y **se ve**.
-
-Además, `Lighting` tiene un fallback a `game:GetService("Lighting")` si el
-entorno no lo expone, en vez de no crear nada en silencio.
-
-El módulo sigue sin bucle y sin tocar el servidor: `ColorCorrectionEffect`,
-`BloomEffect` y `SunRaysEffect` en una carpeta propia que se destruye al apagar.
+v162 cambió el preset y agregó una bandera `active`, pero **no corrigió** el
+padre de los efectos, que seguían en un Folder bajo Lighting. El Framework pone
+`created.Enabled` antes de llamar al callback: el diagnóstico previo que
+culpaba esa guarda era incorrecto. v163 mueve los efectos directamente a
+Lighting, modela ese contrato en tests y conserva la prueba visual real como
+pendiente; ver `docs/FIXES-v163.md`.
 
 ## 3. Lag spikes
 
@@ -82,9 +76,9 @@ Lo que hay que medir, y ahora es un botón: **UI Settings → Perf report**.
 - **Reinicia el contador de spikes**. Púlsalo, juega un minuto con lo que
   suelas tener encendido, púlsalo otra vez: la segunda lectura describe ese
   minuto.
-- Si la línea dice `menu 0.30+0.10 ms` y los spikes siguen, el menú no es el
-  culpable: es el juego/el executor (MM2 teleporta a todo el mundo cada ronda).
-  Si dice `· MM2 Auto Shoot` o similar, ese módulo es el que hay que apagar.
+- Corrección v163: `menu 0.30+0.10 ms` es una muestra, no el coste del peor
+  pico. La etiqueta de v162 era la tarea del último evento, no necesariamente
+  la del peor. Ni esa muestra ni esa etiqueta identifican un culpable.
 
 El overlay `Session Info` muestra lo mismo en vivo (`Menu`, `Spikes`).
 
@@ -103,8 +97,7 @@ pequeño).
 - `tools/test_menu_cursor.py` (nuevo, 8 comprobaciones): apertura/cierre normal,
   Shift Lock que sobrevive al cierre, `LockCenter` nunca reescrito, cesión tras
   la pelea, cesión por sesión, menú cerrado inerte y respawn.
-- `tools/test_shaders.py` (nuevo, 7 comprobaciones): creación de los tres
-  efectos, valores por defecto visibles, preset sumado a los sliders, clamp de
-  rangos, bloom/rayos a cero, tinte, destrucción completa y reencendido.
+- `tools/test_shaders.py` en v162 comprobaba valores en un mock, pero no modeló
+  el requisito de padre directo; se reemplazó y amplió en v163.
 - `tools/validate.sh`: VERDE (91 fuentes, 80 suites, auditoría, boot
   `failures=0`, menú 50/49).

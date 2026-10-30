@@ -2101,10 +2101,8 @@ function Module.init(context: any): any
         end)
     end
 
-    -- v162: what the menu itself costs, on demand. The overlay shows it live,
-    -- but the useful question after a hitch is "what was running", and that is
-    -- one press away here. It also restarts the counter, so the next press
-    -- describes the last minute and not the session.
+    -- Frame intervals and callback elapsed times are separate observations;
+    -- neither the last nor the largest callback proves what caused a spike.
     host.addActionOption(uiPanel, "Perf report", function(): ()
         local performance: any = state.performance or {}
         local report: string = "no report"
@@ -2115,27 +2113,26 @@ function Module.init(context: any): any
             end
         end
         print(report)
-        local worst: string = performance.spikeTask
-            and (" · " .. tostring(performance.spikeTask))
-            or ""
+        local peak: string = performance.peakTask
+            and string.format("%s %.2f ms", tostring(performance.peakTask),
+                tonumber(performance.peakTaskMs) or 0)
+            or "n/a"
         notify(string.format(
-            "FPS %.0f · menu %.2f+%.2f ms · spikes %d (worst %.0f ms%s)",
+            "FPS %.0f · menu sample %.2f+%.2f ms\nspikes %d · worst %.0f ms\ncallback peak %s (independent)",
             tonumber(performance.fps) or 0,
             tonumber(performance.tasksMs) or 0,
             tonumber(performance.renderMs) or 0,
             tonumber(performance.spikeCount) or 0,
             tonumber(performance.worstSpikeMs) or 0,
-            worst
+            peak
         ))
-        print("[" .. "perf" .. "] counter reset")
-        performance.spikeCount = 0
-        performance.worstSpikeMs = 0
-        performance.spikeTask = nil
-        performance.spikeAt = nil
-        performance.spikeMs = 0
-    end, "Prints FPS, the menu's own cost and the heaviest modules to the console, "
-        .. "then restarts the spike counter. Press it, play a minute, press it "
-        .. "again: the second line describes what just happened.")
+        if type(state.resetPerfReport) == "function" then
+            state.resetPerfReport()
+        end
+        print("[perf] observation reset")
+    end, "Prints sampled FPS, frame intervals and the longest callback separately "
+        .. "to the console, then resets the observation. Callback time can "
+        .. "include waits, may miss detached work, and does not identify the cause of a frame spike.")
 
     host.addActionOption(uiPanel, "Move dock", function(): ()
         if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
