@@ -149,13 +149,15 @@ function Module.init(runtime: any): any
     local function computeTargetEndpoint(
         target: Player,
         targetRoot: BasePart,
-        originPos: Vector3
+        originPos: Vector3,
+        aimMode: string?
     ): Vector3
         if type(prediction) == "table" and type(prediction.gunAim) == "function" then
             local ok: boolean, endpoint: any = pcall(
                 prediction.gunAim,
                 target,
-                originPos
+                originPos,
+                aimMode
             )
             if ok and typeof(endpoint) == "Vector3" then
                 return endpoint
@@ -191,7 +193,8 @@ function Module.init(runtime: any): any
         local endpoint: Vector3 = computeTargetEndpoint(
             target,
             targetRoot,
-            originCF.Position
+            originCF.Position,
+            "CFrame"
         )
         local capturedPos: Vector3 = targetRoot.Position
         local chordFlat: Vector3 = Vector3.new(
@@ -298,7 +301,8 @@ function Module.init(runtime: any): any
         local endpoint: Vector3 = computeTargetEndpoint(
             target,
             targetRoot,
-            originCF.Position
+            originCF.Position,
+            "Bullet"
         )
         if settings.wallCheck and type(isWeaponPathClear) == "function" then
             local okClear: boolean, clear: any = pcall(

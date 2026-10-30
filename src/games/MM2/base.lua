@@ -3333,19 +3333,45 @@ local function createTrajectoryCalibration(): any
         end
         -- Feed the measured lead error back into the predictor before the
         -- record is written, so the event can show what the next shot used.
+        -- v161: the feedback is filed per aim mode. Bullet (native gun ray)
+        -- and CFrame (explicit origin+endpoint) are authored differently and
+        -- nothing proves the server scores both with the same rewind, so a
+        -- bias measured on one must not steer the other.
         local leadError: number? = measureLeadErrorSeconds(pending)
         if leadError and state.mm2Prediction
             and type(state.mm2Prediction.noteLeadError) == "function" then
-            pcall(state.mm2Prediction.noteLeadError, leadError)
+            pcall(state.mm2Prediction.noteLeadError, leadError, pending.shotMode)
         end
         local leadCorrection: number? = nil
-        if state.mm2Prediction
-            and type(state.mm2Prediction.getLeadCorrection) == "function" then
-            local ok: boolean, value: any = pcall(
-                state.mm2Prediction.getLeadCorrection
-            )
-            if ok and predictionMath.finite(value) then
-                leadCorrection = value
+        local leadCorrectionTarget: number? = nil
+        local leadFeedbackSamples: number? = nil
+        if state.mm2Prediction then
+            if type(state.mm2Prediction.getLeadCorrection) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadCorrection,
+                    pending.shotMode
+                )
+                if ok and predictionMath.finite(value) then
+                    leadCorrection = value
+                end
+            end
+            if type(state.mm2Prediction.getLeadCorrectionTarget) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadCorrectionTarget,
+                    pending.shotMode
+                )
+                if ok and predictionMath.finite(value) then
+                    leadCorrectionTarget = value
+                end
+            end
+            if type(state.mm2Prediction.getLeadSamples) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadSamples,
+                    pending.shotMode
+                )
+                if ok and type(value) == "number" then
+                    leadFeedbackSamples = value
+                end
             end
         end
         local endpointError: number? = measureEndpointErrorStuds(pending)
@@ -3404,9 +3430,14 @@ local function createTrajectoryCalibration(): any
             -- Signed lead error measured from this very confirmation, and the
             -- bounded correction the next shot will apply. Both are written in
             -- seconds so a saved session can be replayed and audited without
-            -- rerunning the shot.
+            -- rerunning the shot. v161 adds what the median asks for before
+            -- the slew limit and how many confirmations back it, so a session
+            -- can show whether the loop is moving and how fast.
             leadErrorSeconds = leadError,
             leadCorrectionSeconds = leadCorrection,
+            leadCorrectionTargetSeconds = leadCorrectionTarget,
+            leadFeedbackSamples = leadFeedbackSamples,
+            aimMode = pending.shotMode,
             endpointErrorStuds = endpointError,
             trajectoryPoints = #pending.targetTrajectory,
             trajectorySpanSeconds = (
@@ -4957,6 +4988,9 @@ state.mm2Core = {
 
     isWeaponPathClear = isWeaponPathClear,
     describeRayBeyond = describeRayBeyond,
+    -- v161: the untouched first hit of the muzzle line, so the aim can notice
+    -- a ghost (transparent, non-colliding) body part on its own line.
+    describeRayHit = describeRayHit,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     getEstimatedLatency = getEstimatedLatency,

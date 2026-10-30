@@ -403,7 +403,8 @@ function Module.init(_runtime: any): any
         local prediction: any = state.mm2Prediction
         if prediction and type(prediction.gunAim) == "function" then
             local ok: boolean, predicted: any = pcall(
-                prediction.gunAim, murderer, (origin :: CFrame).Position)
+                prediction.gunAim, murderer, (origin :: CFrame).Position,
+                "Bullet")
             if ok and predicted then
                 endpoint = predicted
             end

@@ -28,6 +28,7 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
     local describeRayBeyond: any = core.describeRayBeyond
+    local describeRayHit: any = core.describeRayHit
     local mm2Settings: any = core.mm2Settings
     local validateGunShot: any = core.validateGunShot
 
@@ -194,8 +195,11 @@ function Module.init(runtime: any): any
         local uncertainty: number = 0
         if type(prediction) == "table"
             and type(prediction.getLeadUncertainty) == "function" then
+            -- v161: the silent path is the CFrame mode; its measurements are
+            -- the ones that size the sweep.
             local ok: boolean, seconds: any = pcall(
-                prediction.getLeadUncertainty
+                prediction.getLeadUncertainty,
+                "CFrame"
             )
             if ok and type(seconds) == "number" and seconds == seconds then
                 uncertainty = math.clamp(seconds, 0, 0.15)
@@ -340,6 +344,77 @@ function Module.init(runtime: any): any
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
+    -- The parts an aim may land on, best first. Shared by the corridor check
+    -- and the ghost check so both move the aim the same way.
+    local AIM_BODY_PARTS: {string} = {
+        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+        "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
+        "Right Arm", "Left Arm", "Right Leg", "Left Leg",
+    }
+
+    -- v161: the aim can be perfect and still be stopped by a GHOST part --
+    -- transparent AND non-colliding, which every client wall check skips. The
+    -- v159 session lost exactly that shot: 0.24 studs from the torso, occluder
+    -- "Workspace.Workplace.Raggy.HumanoidRootPart", transparency 1,
+    -- CanCollide false, 10.3 studs in front of the aim. What the server's own
+    -- weapon ray does with such a part is not known, so this never refuses a
+    -- shot: it only prefers another part of the same body whose line does not
+    -- cross the ghost. If every candidate crosses it, the original point stands.
+    local function ghostOnLine(
+        muzzle: Vector3,
+        endpoint: Vector3,
+        targetCharacter: Model?
+    ): any
+        if type(describeRayHit) ~= "function" then
+            return nil
+        end
+        local ok: boolean, hit: any = pcall(
+            describeRayHit,
+            muzzle,
+            endpoint,
+            targetCharacter
+        )
+        if not ok or type(hit) ~= "table" or hit.onTarget then
+            return nil
+        end
+        if hit.transparency ~= 1 or hit.canCollide ~= false then
+            return nil
+        end
+        local reach: number = (endpoint - muzzle).Magnitude
+        if type(hit.distance) ~= "number" or hit.distance >= reach - 0.5 then
+            return nil
+        end
+        return hit
+    end
+
+    -- Returns a cleaner endpoint and the part it moved to, or nil.
+    local function avoidGhostAim(
+        target: Player,
+        info: any,
+        muzzle: Vector3
+    ): (Vector3?, string?)
+        local character: Model? = target.Character
+        if not character or not info or typeof(info.endpoint) ~= "Vector3" then
+            return nil, nil
+        end
+        local ghost: any = ghostOnLine(muzzle, info.endpoint, character)
+        if not ghost then
+            return nil, nil
+        end
+        local captured: Vector3? = info.capturedPosition
+        local lead: Vector3 = captured and (info.endpoint - captured) or Vector3.zero
+        for _, partName: string in ipairs(AIM_BODY_PARTS) do
+            local part: Instance? = character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                local candidate: Vector3 = (part :: BasePart).Position + lead
+                if not ghostOnLine(muzzle, candidate, character) then
+                    return candidate, partName
+                end
+            end
+        end
+        return nil, nil
+    end
+
     -- v139.2: pick the aim point whose line is safest BEYOND the target.
     -- A shot that misses by a stud continues into whoever is standing behind;
     -- the aim is therefore chosen by what is behind it, not only by what is in
@@ -393,11 +468,7 @@ function Module.init(runtime: any): any
         local bestPoint: Vector3 = preferred
         local bestGap: number = near.gap
         local bestName: string = "torso"
-        for _, partName: string in ipairs({
-            "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-            "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
-            "Right Arm", "Left Arm", "Right Leg", "Left Leg",
-        }) do
+        for _, partName: string in ipairs(AIM_BODY_PARTS) do
             local part: Instance? = character:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
                 local candidate: Vector3 = (part :: BasePart).Position + lead
@@ -492,8 +563,11 @@ function Module.init(runtime: any): any
         local info: any = nil
         local reason: string? = nil
         if origin then
+            -- v161: tell the predictor which way this shot will be authored.
+            -- Bullet and CFrame keep separate measured lead corrections.
+            local aimMode: string = silent and "CFrame" or "Bullet"
             local ok: boolean, endpoint: any, aimInfo: any, aimReason: any =
-                pcall(prediction.gunAim, target, origin.Position)
+                pcall(prediction.gunAim, target, origin.Position, aimMode)
             if not ok then return reject("Aim or visibility check failed.") end
             if endpoint == nil then
                 reason = aimReason or "no samples"
@@ -532,6 +606,19 @@ function Module.init(runtime: any): any
                     leadCorrection = 0,
                     rootPosition = targetRoot.Position,
                 }
+            end
+        end
+
+        -- v161: the aim is final at this point; make sure its line does not
+        -- cross a ghost body part (transparent + non-colliding) that every
+        -- client wall check skips. Preference only: failure keeps the point.
+        if info and origin and targetCharacter then
+            local cleaner: Vector3?, cleanerPart: string? =
+                avoidGhostAim(target, info, origin.Position)
+            if cleaner then
+                info.endpoint = cleaner
+                info.targetPosition = cleaner
+                info.ghostAvoided = cleanerPart
             end
         end
 
@@ -777,7 +864,10 @@ function Module.init(runtime: any): any
                     occluder = lastGunOccluder,
                     echoSamples = info.echoSamples,
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                    leadCorrection = info.leadCorrection},
+                    leadCorrection = info.leadCorrection,
+                    leadCorrectionTarget = info.leadCorrectionTarget,
+                    leadSamples = info.leadSamples, aimMode = info.aimMode,
+                    ghostAvoided = info.ghostAvoided},
             })
             if not quiet and ShootFeature then
                 ShootFeature:SetStatus(experimental and "Experimental · CFrame · request sent" or nil)
@@ -820,7 +910,10 @@ function Module.init(runtime: any): any
                 occluder = lastGunOccluder,
                 echoSamples = info.echoSamples,
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                leadCorrection = info.leadCorrection},
+                leadCorrection = info.leadCorrection,
+                leadCorrectionTarget = info.leadCorrectionTarget,
+                leadSamples = info.leadSamples, aimMode = info.aimMode,
+                ghostAvoided = info.ghostAvoided},
         })
         if not quiet and ShootFeature then
             ShootFeature:SetStatus(experimental and "Experimental · Bullet · request sent" or nil)

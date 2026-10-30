@@ -139,9 +139,14 @@ type AimInfo = {
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
     echoSamples: number,
-    -- Seconds added to the horizon by the confirmed-shot feedback. Zero until
-    -- three confirmations have been measured.
+    -- Seconds added to the horizon by the confirmed-shot feedback for this
+    -- aim mode. Zero until three confirmations of that mode were measured.
     leadCorrection: number,
+    -- What the measured median asks for, before the per-sample slew limit.
+    -- Reporting only: the aim already uses `leadCorrection`.
+    leadCorrectionTarget: number?,
+    leadSamples: number?,
+    aimMode: string?,
     flightSeconds: number?,
 }
 
@@ -207,6 +212,16 @@ local TURN_RESIDUAL: number = 0.20
 -- Jumping at its apex has almost no vertical velocity; dropping the aim by a
 -- full ballistic term there is what put shot 6 2.3 studs under the target.
 local VERTICAL_MIN_SPEED: number = 8.0
+-- v161: how far the floor clamp is allowed to RAISE a downward prediction.
+-- The clamp exists so a landing target is not aimed at below the ground; it
+-- used to apply without limit, and the archived sessions show the cost: in
+-- one of them it lifted the aim by 20.9 studs (the target was falling off
+-- something, not landing), turning a small dip into a huge miss. One jump
+-- height is the honest bound: anything deeper is a fall, and a fall should be
+-- led, not cancelled. Replay over 411 airborne samples of the 13 saved
+-- sessions: 3.07 -> 2.55 studs of mean vertical error, and the worst session
+-- drops from 17.62 to 3.15.
+local MAX_FLOOR_LIFT_STUDS: number = 6
 -- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
 -- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
 local RTT_SAMPLES: number = 8
@@ -229,6 +244,12 @@ local LEAD_FEEDBACK_SAMPLE_LIMIT: number = 0.15
 -- systematic bias it removes (full round trip used as a one-way delay) is
 -- around half the echo, which is far larger than the cap.
 local MAX_LEAD_CORRECTION: number = 0.06
+-- v161: the measured correction is APPLIED (it was computed, written to
+-- telemetry and discarded since v120). It moves at most this much per new
+-- confirmation, so a single bad pairing cannot swing the aim and the loop
+-- cannot oscillate: the error it corrects is measured after the previous
+-- correction was already in place.
+local LEAD_SLEW_PER_SAMPLE: number = 0.02
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -900,7 +921,12 @@ function Module.init(runtime: any): any
                 for idx: number = #track.samples, 1, -1 do
                     local s: Sample = track.samples[idx]
                     if s.grounded then
-                        y = math.max(y, s.position.Y)
+                        -- Only inside one jump height (v161): a body deeper
+                        -- than that below the floor it left is falling, and
+                        -- the clamp must not cancel the fall.
+                        if s.position.Y - y <= MAX_FLOOR_LIFT_STUDS then
+                            y = math.max(y, s.position.Y)
+                        end
                         break
                     end
                 end
@@ -1040,7 +1066,36 @@ function Module.init(runtime: any): any
 
     -- Signed over/under-lead measurements, in seconds. Positive means the
     -- target was ahead of the point we aimed at when the server scored it.
-    local leadErrors: {number} = {}
+    --
+    -- v161: kept PER AIM MODE. Bullet and CFrame author different things (the
+    -- native gun ray versus an explicit origin/endpoint pair) and there is no
+    -- evidence the server scores them with the same rewind, so merging their
+    -- errors taught one mode the other's bias. CFrame had no feedback at all
+    -- until now.
+    local leadErrors: {[string]: {number}} = {}
+    local leadApplied: {[string]: number} = {}
+
+    local function modeKey(mode: any): string
+        local text: string = type(mode) == "string" and mode or ""
+        local lower: string = string.lower(text)
+        if lower == "normal" or lower == "bullet" then
+            return "Bullet"
+        end
+        if lower == "silent" or lower == "cframe" or lower == "silent aim" then
+            return "CFrame"
+        end
+        return "default"
+    end
+
+    local function leadBucket(mode: any): {number}
+        local key: string = modeKey(mode)
+        local bucket: {number}? = leadErrors[key]
+        if not bucket then
+            bucket = {}
+            leadErrors[key] = bucket
+        end
+        return bucket :: {number}
+    end
 
     local function medianOf(values: {number}): number?
         local count: number = #values
@@ -1055,28 +1110,68 @@ function Module.init(runtime: any): any
         return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
     end
 
-    local function noteLeadError(seconds: any): ()
+    local function noteLeadError(seconds: any, mode: any): ()
         if not finiteNumber(seconds) then
             return
         end
         if math.abs(seconds) > LEAD_FEEDBACK_SAMPLE_LIMIT then
             return
         end
-        table.insert(leadErrors, seconds)
-        while #leadErrors > LEAD_FEEDBACK_MAX_SAMPLES do
-            table.remove(leadErrors, 1)
+        local key: string = modeKey(mode)
+        local bucket: {number} = leadBucket(key)
+        table.insert(bucket, seconds)
+        while #bucket > LEAD_FEEDBACK_MAX_SAMPLES do
+            table.remove(bucket, 1)
         end
+        if #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
+            return
+        end
+        local median: number? = medianOf(bucket)
+        if not median then
+            return
+        end
+        local target: number = math.clamp(
+            median,
+            -MAX_LEAD_CORRECTION,
+            MAX_LEAD_CORRECTION
+        )
+        -- Slew-limited: one step per confirmation, toward the measured median.
+        local current: number = leadApplied[key] or 0
+        local step: number = math.clamp(
+            target - current,
+            -LEAD_SLEW_PER_SAMPLE,
+            LEAD_SLEW_PER_SAMPLE
+        )
+        leadApplied[key] = current + step
     end
 
-    local function leadCorrection(): number
-        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+    -- The correction currently in force for that aim mode, in seconds. It is
+    -- already bounded and slew-limited, so callers just add it.
+    local function leadCorrection(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
             return 0
         end
-        local median: number? = medianOf(leadErrors)
+        return leadApplied[modeKey(mode)] or 0
+    end
+
+    -- What the median asks for right now, before the slew limit. Reporting only;
+    -- the aim uses `leadCorrection`.
+    local function leadTarget(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local median: number? = medianOf(bucket)
         if not median then
             return 0
         end
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
+    local function leadSamples(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        return bucket and #bucket or 0
     end
 
     -- How far the recent shots were off, without their sign. Silent aim draws
@@ -1084,18 +1179,19 @@ function Module.init(runtime: any): any
     -- be as long as the lead's uncertainty: at 16 studs/s a 60 ms error is a
     -- whole stud, which is wider than the blade and most of a limb. Derived
     -- from the same confirmations as the correction, never from a constant.
-    local function leadUncertainty(): number
-        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+    local function leadUncertainty(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
             return 0
         end
         local absolute: {number} = {}
-        for _, seconds: number in ipairs(leadErrors) do
+        for _, seconds: number in ipairs(bucket) do
             table.insert(absolute, math.abs(seconds))
         end
         return medianOf(absolute) or 0
     end
 
-    local function gunHorizon(): (number, number, number?)
+    local function gunHorizon(mode: any): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         -- The echo is measured client-side from the activation to the
@@ -1118,9 +1214,15 @@ function Module.init(runtime: any): any
         -- the receive instant, so the server scores the shot as if it
         -- rewound by the shooter's whole ping. v85 halved this on a
         -- no-rewind theory and led systematically short.
+        --
+        -- v161: the measured lead error is added here. Until now it was only
+        -- recorded, so the loop that is supposed to correct a systematic
+        -- short/long lead never acted on anything. It is per aim mode and
+        -- already slew-limited, so this is a bounded nudge, not a new model.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
+            + leadCorrection(mode)
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
@@ -1142,9 +1244,13 @@ function Module.init(runtime: any): any
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).
+        -- The knife gets no measured feedback of its own (the captures only
+        -- score the gun), so it shares the "default" bucket instead of
+        -- borrowing the Bullet one.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
+            + leadCorrection("knife")
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
@@ -1153,8 +1259,14 @@ function Module.init(runtime: any): any
 
     local function gunAim(
         target: Player,
-        _muzzle: Vector3
+        _muzzle: Vector3,
+        mode: any
     ): (Vector3?, AimInfo?, string?)
+        -- v161: which way the shot will be authored. Bullet sends a CFrame
+        -- whose LookVector is the aim; CFrame/Silent sends origin+endpoint.
+        -- They keep separate measured corrections because there is no
+        -- evidence the server rewinds both identically.
+        local aimMode: string = modeKey(mode)
         -- v158: a fresh body check. A track survives the 0.5 s part refresh,
         -- so without this the solver kept leading a body that had just died.
         local humanoid: any = targetHumanoid(target)
@@ -1175,7 +1287,7 @@ function Module.init(runtime: any): any
         if not motion then
             return nil, nil, "stale sample"
         end
-        local pipeline: number, rtt: number, echo: number? = gunHorizon()
+        local pipeline: number, rtt: number, echo: number? = gunHorizon(aimMode)
         local rttEngine: number?, rttData: number? = nil, nil
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
@@ -1229,7 +1341,10 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
-            leadCorrection = leadCorrection(),
+            leadCorrection = leadCorrection(aimMode),
+            leadCorrectionTarget = leadTarget(aimMode),
+            leadSamples = leadSamples(aimMode),
+            aimMode = aimMode,
         }, nil
     end
 
@@ -1529,13 +1644,19 @@ function Module.init(runtime: any): any
         end,
         noteLeadError = noteLeadError,
         getLeadCorrection = leadCorrection,
+        getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,
+        getLeadSamples = leadSamples,
         reset = function(): ()
             table.clear(echoes)
             table.clear(echoTimes)
             table.clear(tracks)
             table.clear(rttSamples)
+            for _, bucket: {number} in pairs(leadErrors) do
+                table.clear(bucket)
+            end
             table.clear(leadErrors)
+            table.clear(leadApplied)
             lastRttSampleAt = -math.huge
         end,
     }

@@ -575,7 +575,8 @@ function Module.init(runtime: any): any
             local okAim: boolean, aimPt: any = pcall(
                 prediction.gunAim,
                 murderer,
-                originCF.Position
+                originCF.Position,
+                "Bullet"
             )
             if okAim and typeof(aimPt) == "Vector3" then
                 endpoint = aimPt

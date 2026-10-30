@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v160-20261029-perf-audit`**, con árbol base de
+> **`v161-20261030-prediction-shaders`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,38 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v160: 90 fuentes,
-     77 suites, auditoría de rendimiento, boot `failures=0`, menú 49/48).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v161: 91 fuentes,
+     78 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v161 — Prediction con lazo cerrado por vía + módulo Shaders (2026-10-30)
+
+Detalle, tablas y límites: `docs/FIXES-v161.md`.
+
+- **El lazo de plomo vuelve, con frenos.** Desde v120 `leadError` se medía y se
+  tiraba a la basura. Ahora se aplica con 3 muestras mínimas, tope ±60 ms
+  (`MAX_LEAD_CORRECTION`) y paso máximo de 20 ms por confirmación
+  (`LEAD_SLEW_PER_SAMPLE`) para no oscilar.
+- **Cubetas por vía.** Bullet y CFrame/Silent aprenden por separado
+  (`Prediction.gunAim(target, muzzle, mode)`); el cuchillo usa la cubeta neutra
+  y no hereda sesgo de pistola. Replay offline: error medio de plomo 15,4→9,3 ms
+  (sesión v159, 4 confirmaciones) y 39,6→26,7 ms (sesión v157, 10) con mediana
+  23,4→5,2 ms. Es el mecanismo, no hit-rate.
+- **Suelo:** el clamp vertical ya no puede levantar la puntería más de 6 studs
+  (`MAX_FLOOR_LIFT_STUDS`). Sobre 411 muestras aéreas de 13 sesiones: 3,07→2,55
+  studs de error vertical medio, y la peor sesión 17,62→4,62.
+- **Cuerpo fantasma:** si la línea de tiro cruza una parte invisible y sin
+  colisión (ragdoll/`CoinVisual`), se prefiere otro punto del mismo cuerpo
+  (`avoidGhostAim`, export `core.describeRayHit`); nunca se rechaza el disparo.
+- **Dos fallos de la sesión v159 no eran de plomo:** `4:12` terminó a 0,24 studs
+  del torso tapado por `Raggy.HumanoidRootPart` (transparency 1, canCollide
+  false) y `4:14` disparó a un objetivo en `Freefall` con `hitPart = CoinVisual`.
+- **Módulo universal nuevo `Shaders`** (Render): color grading + bloom + sun
+  rays solo con post-proceso del motor, sin bucle y con limpieza total al
+  apagar. Presets que se suman a los sliders, no los sobrescriben.
 
 ## v160 — Auditoría de rendimiento (2026-10-29)
 

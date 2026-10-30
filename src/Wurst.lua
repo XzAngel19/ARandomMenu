@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v160-20261029-perf-audit"
+local SOURCE_STAMP: string = "v161-20261030-prediction-shaders"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

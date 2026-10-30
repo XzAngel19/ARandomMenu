@@ -1,5 +1,5 @@
 return {
-    stamp = "v160-20261029-perf-audit",
+    stamp = "v161-20261030-prediction-shaders",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2085,6 +2085,7 @@ function Module.init(runtime: any): any
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
     local describeRayBeyond: any = core.describeRayBeyond
+    local describeRayHit: any = core.describeRayHit
     local mm2Settings: any = core.mm2Settings
     local validateGunShot: any = core.validateGunShot
 
@@ -2251,8 +2252,11 @@ function Module.init(runtime: any): any
         local uncertainty: number = 0
         if type(prediction) == "table"
             and type(prediction.getLeadUncertainty) == "function" then
+            -- v161: the silent path is the CFrame mode; its measurements are
+            -- the ones that size the sweep.
             local ok: boolean, seconds: any = pcall(
-                prediction.getLeadUncertainty
+                prediction.getLeadUncertainty,
+                "CFrame"
             )
             if ok and type(seconds) == "number" and seconds == seconds then
                 uncertainty = math.clamp(seconds, 0, 0.15)
@@ -2397,6 +2401,77 @@ function Module.init(runtime: any): any
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
+    -- The parts an aim may land on, best first. Shared by the corridor check
+    -- and the ghost check so both move the aim the same way.
+    local AIM_BODY_PARTS: {string} = {
+        "UpperTorso", "Torso", "HumanoidRootPart", "Head",
+        "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
+        "Right Arm", "Left Arm", "Right Leg", "Left Leg",
+    }
+
+    -- v161: the aim can be perfect and still be stopped by a GHOST part --
+    -- transparent AND non-colliding, which every client wall check skips. The
+    -- v159 session lost exactly that shot: 0.24 studs from the torso, occluder
+    -- "Workspace.Workplace.Raggy.HumanoidRootPart", transparency 1,
+    -- CanCollide false, 10.3 studs in front of the aim. What the server's own
+    -- weapon ray does with such a part is not known, so this never refuses a
+    -- shot: it only prefers another part of the same body whose line does not
+    -- cross the ghost. If every candidate crosses it, the original point stands.
+    local function ghostOnLine(
+        muzzle: Vector3,
+        endpoint: Vector3,
+        targetCharacter: Model?
+    ): any
+        if type(describeRayHit) ~= "function" then
+            return nil
+        end
+        local ok: boolean, hit: any = pcall(
+            describeRayHit,
+            muzzle,
+            endpoint,
+            targetCharacter
+        )
+        if not ok or type(hit) ~= "table" or hit.onTarget then
+            return nil
+        end
+        if hit.transparency ~= 1 or hit.canCollide ~= false then
+            return nil
+        end
+        local reach: number = (endpoint - muzzle).Magnitude
+        if type(hit.distance) ~= "number" or hit.distance >= reach - 0.5 then
+            return nil
+        end
+        return hit
+    end
+
+    -- Returns a cleaner endpoint and the part it moved to, or nil.
+    local function avoidGhostAim(
+        target: Player,
+        info: any,
+        muzzle: Vector3
+    ): (Vector3?, string?)
+        local character: Model? = target.Character
+        if not character or not info or typeof(info.endpoint) ~= "Vector3" then
+            return nil, nil
+        end
+        local ghost: any = ghostOnLine(muzzle, info.endpoint, character)
+        if not ghost then
+            return nil, nil
+        end
+        local captured: Vector3? = info.capturedPosition
+        local lead: Vector3 = captured and (info.endpoint - captured) or Vector3.zero
+        for _, partName: string in ipairs(AIM_BODY_PARTS) do
+            local part: Instance? = character:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                local candidate: Vector3 = (part :: BasePart).Position + lead
+                if not ghostOnLine(muzzle, candidate, character) then
+                    return candidate, partName
+                end
+            end
+        end
+        return nil, nil
+    end
+
     -- v139.2: pick the aim point whose line is safest BEYOND the target.
     -- A shot that misses by a stud continues into whoever is standing behind;
     -- the aim is therefore chosen by what is behind it, not only by what is in
@@ -2450,11 +2525,7 @@ function Module.init(runtime: any): any
         local bestPoint: Vector3 = preferred
         local bestGap: number = near.gap
         local bestName: string = "torso"
-        for _, partName: string in ipairs({
-            "UpperTorso", "Torso", "HumanoidRootPart", "Head",
-            "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
-            "Right Arm", "Left Arm", "Right Leg", "Left Leg",
-        }) do
+        for _, partName: string in ipairs(AIM_BODY_PARTS) do
             local part: Instance? = character:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
                 local candidate: Vector3 = (part :: BasePart).Position + lead
@@ -2549,8 +2620,11 @@ function Module.init(runtime: any): any
         local info: any = nil
         local reason: string? = nil
         if origin then
+            -- v161: tell the predictor which way this shot will be authored.
+            -- Bullet and CFrame keep separate measured lead corrections.
+            local aimMode: string = silent and "CFrame" or "Bullet"
             local ok: boolean, endpoint: any, aimInfo: any, aimReason: any =
-                pcall(prediction.gunAim, target, origin.Position)
+                pcall(prediction.gunAim, target, origin.Position, aimMode)
             if not ok then return reject("Aim or visibility check failed.") end
             if endpoint == nil then
                 reason = aimReason or "no samples"
@@ -2589,6 +2663,19 @@ function Module.init(runtime: any): any
                     leadCorrection = 0,
                     rootPosition = targetRoot.Position,
                 }
+            end
+        end
+
+        -- v161: the aim is final at this point; make sure its line does not
+        -- cross a ghost body part (transparent + non-colliding) that every
+        -- client wall check skips. Preference only: failure keeps the point.
+        if info and origin and targetCharacter then
+            local cleaner: Vector3?, cleanerPart: string? =
+                avoidGhostAim(target, info, origin.Position)
+            if cleaner then
+                info.endpoint = cleaner
+                info.targetPosition = cleaner
+                info.ghostAvoided = cleanerPart
             end
         end
 
@@ -2834,7 +2921,10 @@ function Module.init(runtime: any): any
                     occluder = lastGunOccluder,
                     echoSamples = info.echoSamples,
                     turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                    leadCorrection = info.leadCorrection},
+                    leadCorrection = info.leadCorrection,
+                    leadCorrectionTarget = info.leadCorrectionTarget,
+                    leadSamples = info.leadSamples, aimMode = info.aimMode,
+                    ghostAvoided = info.ghostAvoided},
             })
             if not quiet and ShootFeature then
                 ShootFeature:SetStatus(experimental and "Experimental · CFrame · request sent" or nil)
@@ -2877,7 +2967,10 @@ function Module.init(runtime: any): any
                 occluder = lastGunOccluder,
                 echoSamples = info.echoSamples,
                 turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                leadCorrection = info.leadCorrection},
+                leadCorrection = info.leadCorrection,
+                leadCorrectionTarget = info.leadCorrectionTarget,
+                leadSamples = info.leadSamples, aimMode = info.aimMode,
+                ghostAvoided = info.ghostAvoided},
         })
         if not quiet and ShootFeature then
             ShootFeature:SetStatus(experimental and "Experimental · Bullet · request sent" or nil)
@@ -3354,13 +3447,15 @@ function Module.init(runtime: any): any
     local function computeTargetEndpoint(
         target: Player,
         targetRoot: BasePart,
-        originPos: Vector3
+        originPos: Vector3,
+        aimMode: string?
     ): Vector3
         if type(prediction) == "table" and type(prediction.gunAim) == "function" then
             local ok: boolean, endpoint: any = pcall(
                 prediction.gunAim,
                 target,
-                originPos
+                originPos,
+                aimMode
             )
             if ok and typeof(endpoint) == "Vector3" then
                 return endpoint
@@ -3396,7 +3491,8 @@ function Module.init(runtime: any): any
         local endpoint: Vector3 = computeTargetEndpoint(
             target,
             targetRoot,
-            originCF.Position
+            originCF.Position,
+            "CFrame"
         )
         local capturedPos: Vector3 = targetRoot.Position
         local chordFlat: Vector3 = Vector3.new(
@@ -3503,7 +3599,8 @@ function Module.init(runtime: any): any
         local endpoint: Vector3 = computeTargetEndpoint(
             target,
             targetRoot,
-            originCF.Position
+            originCF.Position,
+            "Bullet"
         )
         if settings.wallCheck and type(isWeaponPathClear) == "function" then
             local okClear: boolean, clear: any = pcall(
@@ -5849,7 +5946,8 @@ function Module.init(_runtime: any): any
         local prediction: any = state.mm2Prediction
         if prediction and type(prediction.gunAim) == "function" then
             local ok: boolean, predicted: any = pcall(
-                prediction.gunAim, murderer, (origin :: CFrame).Position)
+                prediction.gunAim, murderer, (origin :: CFrame).Position,
+                "Bullet")
             if ok and predicted then
                 endpoint = predicted
             end
@@ -9591,7 +9689,8 @@ function Module.init(runtime: any): any
             local okAim: boolean, aimPt: any = pcall(
                 prediction.gunAim,
                 murderer,
-                originCF.Position
+                originCF.Position,
+                "Bullet"
             )
             if okAim and typeof(aimPt) == "Vector3" then
                 endpoint = aimPt
@@ -11636,9 +11735,14 @@ type AimInfo = {
     -- How many echoes back the recorded delay. Zero means the horizon used
     -- the ping, which the calibration can distinguish from a real median.
     echoSamples: number,
-    -- Seconds added to the horizon by the confirmed-shot feedback. Zero until
-    -- three confirmations have been measured.
+    -- Seconds added to the horizon by the confirmed-shot feedback for this
+    -- aim mode. Zero until three confirmations of that mode were measured.
     leadCorrection: number,
+    -- What the measured median asks for, before the per-sample slew limit.
+    -- Reporting only: the aim already uses `leadCorrection`.
+    leadCorrectionTarget: number?,
+    leadSamples: number?,
+    aimMode: string?,
     flightSeconds: number?,
 }
 
@@ -11704,6 +11808,16 @@ local TURN_RESIDUAL: number = 0.20
 -- Jumping at its apex has almost no vertical velocity; dropping the aim by a
 -- full ballistic term there is what put shot 6 2.3 studs under the target.
 local VERTICAL_MIN_SPEED: number = 8.0
+-- v161: how far the floor clamp is allowed to RAISE a downward prediction.
+-- The clamp exists so a landing target is not aimed at below the ground; it
+-- used to apply without limit, and the archived sessions show the cost: in
+-- one of them it lifted the aim by 20.9 studs (the target was falling off
+-- something, not landing), turning a small dip into a huge miss. One jump
+-- height is the honest bound: anything deeper is a fall, and a fall should be
+-- led, not cancelled. Replay over 411 airborne samples of the 13 saved
+-- sessions: 3.07 -> 2.55 studs of mean vertical error, and the worst session
+-- drops from 17.62 to 3.15.
+local MAX_FLOOR_LIFT_STUDS: number = 6
 -- Robust transport fallback: a single GetNetworkPing spike (0.31 s against a
 -- 0.107 s baseline in the 2026-10-18 session) must not move the next aim.
 local RTT_SAMPLES: number = 8
@@ -11726,6 +11840,12 @@ local LEAD_FEEDBACK_SAMPLE_LIMIT: number = 0.15
 -- systematic bias it removes (full round trip used as a one-way delay) is
 -- around half the echo, which is far larger than the cap.
 local MAX_LEAD_CORRECTION: number = 0.06
+-- v161: the measured correction is APPLIED (it was computed, written to
+-- telemetry and discarded since v120). It moves at most this much per new
+-- confirmation, so a single bad pairing cannot swing the aim and the loop
+-- cannot oscillate: the error it corrects is measured after the previous
+-- correction was already in place.
+local LEAD_SLEW_PER_SAMPLE: number = 0.02
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -12397,7 +12517,12 @@ function Module.init(runtime: any): any
                 for idx: number = #track.samples, 1, -1 do
                     local s: Sample = track.samples[idx]
                     if s.grounded then
-                        y = math.max(y, s.position.Y)
+                        -- Only inside one jump height (v161): a body deeper
+                        -- than that below the floor it left is falling, and
+                        -- the clamp must not cancel the fall.
+                        if s.position.Y - y <= MAX_FLOOR_LIFT_STUDS then
+                            y = math.max(y, s.position.Y)
+                        end
                         break
                     end
                 end
@@ -12537,7 +12662,36 @@ function Module.init(runtime: any): any
 
     -- Signed over/under-lead measurements, in seconds. Positive means the
     -- target was ahead of the point we aimed at when the server scored it.
-    local leadErrors: {number} = {}
+    --
+    -- v161: kept PER AIM MODE. Bullet and CFrame author different things (the
+    -- native gun ray versus an explicit origin/endpoint pair) and there is no
+    -- evidence the server scores them with the same rewind, so merging their
+    -- errors taught one mode the other's bias. CFrame had no feedback at all
+    -- until now.
+    local leadErrors: {[string]: {number}} = {}
+    local leadApplied: {[string]: number} = {}
+
+    local function modeKey(mode: any): string
+        local text: string = type(mode) == "string" and mode or ""
+        local lower: string = string.lower(text)
+        if lower == "normal" or lower == "bullet" then
+            return "Bullet"
+        end
+        if lower == "silent" or lower == "cframe" or lower == "silent aim" then
+            return "CFrame"
+        end
+        return "default"
+    end
+
+    local function leadBucket(mode: any): {number}
+        local key: string = modeKey(mode)
+        local bucket: {number}? = leadErrors[key]
+        if not bucket then
+            bucket = {}
+            leadErrors[key] = bucket
+        end
+        return bucket :: {number}
+    end
 
     local function medianOf(values: {number}): number?
         local count: number = #values
@@ -12552,28 +12706,68 @@ function Module.init(runtime: any): any
         return (sorted[count // 2] + sorted[count // 2 + 1]) * 0.5
     end
 
-    local function noteLeadError(seconds: any): ()
+    local function noteLeadError(seconds: any, mode: any): ()
         if not finiteNumber(seconds) then
             return
         end
         if math.abs(seconds) > LEAD_FEEDBACK_SAMPLE_LIMIT then
             return
         end
-        table.insert(leadErrors, seconds)
-        while #leadErrors > LEAD_FEEDBACK_MAX_SAMPLES do
-            table.remove(leadErrors, 1)
+        local key: string = modeKey(mode)
+        local bucket: {number} = leadBucket(key)
+        table.insert(bucket, seconds)
+        while #bucket > LEAD_FEEDBACK_MAX_SAMPLES do
+            table.remove(bucket, 1)
         end
+        if #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
+            return
+        end
+        local median: number? = medianOf(bucket)
+        if not median then
+            return
+        end
+        local target: number = math.clamp(
+            median,
+            -MAX_LEAD_CORRECTION,
+            MAX_LEAD_CORRECTION
+        )
+        -- Slew-limited: one step per confirmation, toward the measured median.
+        local current: number = leadApplied[key] or 0
+        local step: number = math.clamp(
+            target - current,
+            -LEAD_SLEW_PER_SAMPLE,
+            LEAD_SLEW_PER_SAMPLE
+        )
+        leadApplied[key] = current + step
     end
 
-    local function leadCorrection(): number
-        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+    -- The correction currently in force for that aim mode, in seconds. It is
+    -- already bounded and slew-limited, so callers just add it.
+    local function leadCorrection(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
             return 0
         end
-        local median: number? = medianOf(leadErrors)
+        return leadApplied[modeKey(mode)] or 0
+    end
+
+    -- What the median asks for right now, before the slew limit. Reporting only;
+    -- the aim uses `leadCorrection`.
+    local function leadTarget(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
+            return 0
+        end
+        local median: number? = medianOf(bucket)
         if not median then
             return 0
         end
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
+    local function leadSamples(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        return bucket and #bucket or 0
     end
 
     -- How far the recent shots were off, without their sign. Silent aim draws
@@ -12581,18 +12775,19 @@ function Module.init(runtime: any): any
     -- be as long as the lead's uncertainty: at 16 studs/s a 60 ms error is a
     -- whole stud, which is wider than the blade and most of a limb. Derived
     -- from the same confirmations as the correction, never from a constant.
-    local function leadUncertainty(): number
-        if #leadErrors < LEAD_FEEDBACK_MIN_SAMPLES then
+    local function leadUncertainty(mode: any): number
+        local bucket: {number}? = leadErrors[modeKey(mode)]
+        if not bucket or #bucket < LEAD_FEEDBACK_MIN_SAMPLES then
             return 0
         end
         local absolute: {number} = {}
-        for _, seconds: number in ipairs(leadErrors) do
+        for _, seconds: number in ipairs(bucket) do
             table.insert(absolute, math.abs(seconds))
         end
         return medianOf(absolute) or 0
     end
 
-    local function gunHorizon(): (number, number, number?)
+    local function gunHorizon(mode: any): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
         -- The echo is measured client-side from the activation to the
@@ -12615,9 +12810,15 @@ function Module.init(runtime: any): any
         -- the receive instant, so the server scores the shot as if it
         -- rewound by the shooter's whole ping. v85 halved this on a
         -- no-rewind theory and led systematically short.
+        --
+        -- v161: the measured lead error is added here. Until now it was only
+        -- recorded, so the loop that is supposed to correct a systematic
+        -- short/long lead never acted on anything. It is per aim mode and
+        -- already slew-limited, so this is a bounded nudge, not a new model.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
+            + leadCorrection(mode)
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
@@ -12639,9 +12840,13 @@ function Module.init(runtime: any): any
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).
+        -- The knife gets no measured feedback of its own (the captures only
+        -- score the gun), so it shares the "default" bucket instead of
+        -- borrowing the Bullet one.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
+            + leadCorrection("knife")
         if settings.autoLead then
             horizon = math.min(horizon, MAX_AUTO_LEAD)
         end
@@ -12650,8 +12855,14 @@ function Module.init(runtime: any): any
 
     local function gunAim(
         target: Player,
-        _muzzle: Vector3
+        _muzzle: Vector3,
+        mode: any
     ): (Vector3?, AimInfo?, string?)
+        -- v161: which way the shot will be authored. Bullet sends a CFrame
+        -- whose LookVector is the aim; CFrame/Silent sends origin+endpoint.
+        -- They keep separate measured corrections because there is no
+        -- evidence the server rewinds both identically.
+        local aimMode: string = modeKey(mode)
         -- v158: a fresh body check. A track survives the 0.5 s part refresh,
         -- so without this the solver kept leading a body that had just died.
         local humanoid: any = targetHumanoid(target)
@@ -12672,7 +12883,7 @@ function Module.init(runtime: any): any
         if not motion then
             return nil, nil, "stale sample"
         end
-        local pipeline: number, rtt: number, echo: number? = gunHorizon()
+        local pipeline: number, rtt: number, echo: number? = gunHorizon(aimMode)
         local rttEngine: number?, rttData: number? = nil, nil
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any = pcall(core.getLatencyReadings)
@@ -12726,7 +12937,10 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
-            leadCorrection = leadCorrection(),
+            leadCorrection = leadCorrection(aimMode),
+            leadCorrectionTarget = leadTarget(aimMode),
+            leadSamples = leadSamples(aimMode),
+            aimMode = aimMode,
         }, nil
     end
 
@@ -13026,13 +13240,19 @@ function Module.init(runtime: any): any
         end,
         noteLeadError = noteLeadError,
         getLeadCorrection = leadCorrection,
+        getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,
+        getLeadSamples = leadSamples,
         reset = function(): ()
             table.clear(echoes)
             table.clear(echoTimes)
             table.clear(tracks)
             table.clear(rttSamples)
+            for _, bucket: {number} in pairs(leadErrors) do
+                table.clear(bucket)
+            end
             table.clear(leadErrors)
+            table.clear(leadApplied)
             lastRttSampleAt = -math.huge
         end,
     }
@@ -17409,19 +17629,45 @@ local function createTrajectoryCalibration(): any
         end
         -- Feed the measured lead error back into the predictor before the
         -- record is written, so the event can show what the next shot used.
+        -- v161: the feedback is filed per aim mode. Bullet (native gun ray)
+        -- and CFrame (explicit origin+endpoint) are authored differently and
+        -- nothing proves the server scores both with the same rewind, so a
+        -- bias measured on one must not steer the other.
         local leadError: number? = measureLeadErrorSeconds(pending)
         if leadError and state.mm2Prediction
             and type(state.mm2Prediction.noteLeadError) == "function" then
-            pcall(state.mm2Prediction.noteLeadError, leadError)
+            pcall(state.mm2Prediction.noteLeadError, leadError, pending.shotMode)
         end
         local leadCorrection: number? = nil
-        if state.mm2Prediction
-            and type(state.mm2Prediction.getLeadCorrection) == "function" then
-            local ok: boolean, value: any = pcall(
-                state.mm2Prediction.getLeadCorrection
-            )
-            if ok and predictionMath.finite(value) then
-                leadCorrection = value
+        local leadCorrectionTarget: number? = nil
+        local leadFeedbackSamples: number? = nil
+        if state.mm2Prediction then
+            if type(state.mm2Prediction.getLeadCorrection) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadCorrection,
+                    pending.shotMode
+                )
+                if ok and predictionMath.finite(value) then
+                    leadCorrection = value
+                end
+            end
+            if type(state.mm2Prediction.getLeadCorrectionTarget) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadCorrectionTarget,
+                    pending.shotMode
+                )
+                if ok and predictionMath.finite(value) then
+                    leadCorrectionTarget = value
+                end
+            end
+            if type(state.mm2Prediction.getLeadSamples) == "function" then
+                local ok: boolean, value: any = pcall(
+                    state.mm2Prediction.getLeadSamples,
+                    pending.shotMode
+                )
+                if ok and type(value) == "number" then
+                    leadFeedbackSamples = value
+                end
             end
         end
         local endpointError: number? = measureEndpointErrorStuds(pending)
@@ -17480,9 +17726,14 @@ local function createTrajectoryCalibration(): any
             -- Signed lead error measured from this very confirmation, and the
             -- bounded correction the next shot will apply. Both are written in
             -- seconds so a saved session can be replayed and audited without
-            -- rerunning the shot.
+            -- rerunning the shot. v161 adds what the median asks for before
+            -- the slew limit and how many confirmations back it, so a session
+            -- can show whether the loop is moving and how fast.
             leadErrorSeconds = leadError,
             leadCorrectionSeconds = leadCorrection,
+            leadCorrectionTargetSeconds = leadCorrectionTarget,
+            leadFeedbackSamples = leadFeedbackSamples,
+            aimMode = pending.shotMode,
             endpointErrorStuds = endpointError,
             trajectoryPoints = #pending.targetTrajectory,
             trajectorySpanSeconds = (
@@ -19033,6 +19284,9 @@ state.mm2Core = {
 
     isWeaponPathClear = isWeaponPathClear,
     describeRayBeyond = describeRayBeyond,
+    -- v161: the untouched first hit of the muzzle line, so the aim can notice
+    -- a ghost (transparent, non-colliding) body part on its own line.
+    describeRayHit = describeRayHit,
     validateGunShot = validateGunShot,
     predictionMath = predictionMath,
     getEstimatedLatency = getEstimatedLatency,
@@ -38648,6 +38902,365 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Render/Shaders.lua"] = [[
+-- Shaders: colour grading and light bloom for the whole scene, built only on
+-- the engine's own post-processing effects. No executor functions, no image
+-- assets, nothing that writes to a remote: it is a camera/look module.
+--
+-- Everything it creates lives under one folder in Lighting and is destroyed
+-- when the module is turned off. Nothing else in Lighting is touched, and there
+-- is no loop: an option changes the effect objects once and stops.
+local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
+local card
+
+-- A look is an OFFSET on top of the manual sliders, never a value that
+-- overwrites them. Choosing "Neon" and then raising Saturation keeps both, and
+-- no widget has to be written to from code (which is what made the old
+-- preset-driven modules fight their own UI).
+local LOOKS = {
+    {name = "None", saturation = 0, contrast = 0, brightness = 0,
+        bloom = 0, rays = 0, tint = nil, tintWeight = 0},
+    {name = "Cinematic", saturation = -0.12, contrast = 0.16, brightness = -0.01,
+        bloom = 0.35, rays = 0.2, tint = Color3.fromRGB(255, 236, 214),
+        tintWeight = 0.45},
+    {name = "Vivid", saturation = 0.35, contrast = 0.1, brightness = 0.02,
+        bloom = 0.2, rays = 0.1, tint = nil, tintWeight = 0},
+    {name = "Neon", saturation = 0.6, contrast = 0.2, brightness = 0.04,
+        bloom = 1, rays = 0.5, tint = Color3.fromRGB(240, 250, 255),
+        tintWeight = 0.25},
+    {name = "Noir", saturation = -1, contrast = 0.28, brightness = -0.02,
+        bloom = 0.1, rays = 0, tint = nil, tintWeight = 0},
+    {name = "Warm", saturation = 0.1, contrast = 0.05, brightness = 0.03,
+        bloom = 0.25, rays = 0.3, tint = Color3.fromRGB(255, 214, 170),
+        tintWeight = 0.6},
+    {name = "Frost", saturation = -0.05, contrast = 0.12, brightness = 0.02,
+        bloom = 0.3, rays = 0.15, tint = Color3.fromRGB(190, 225, 255),
+        tintWeight = 0.55},
+    {name = "Dream", saturation = 0.15, contrast = -0.12, brightness = 0.06,
+        bloom = 1.4, rays = 0.7, tint = Color3.fromRGB(235, 225, 255),
+        tintWeight = 0.35},
+}
+
+local LOOK_NAMES: {string} = {}
+for _, look in ipairs(LOOKS) do
+    table.insert(LOOK_NAMES, look.name)
+end
+
+local function lookFor(name: any): any
+    for _, look in ipairs(LOOKS) do
+        if look.name == name then
+            return look
+        end
+    end
+    return LOOKS[1]
+end
+
+-- Colour grading is a look, so the values are clamped to the ranges the effect
+-- accepts: a slider at its limit plus a look must not be rejected by the
+-- engine and silently stop updating everything else.
+local function clamped(value: any, low: number, high: number): number
+    local number = tonumber(value) or 0
+    if number ~= number then
+        number = 0
+    end
+    return math.clamp(number, low, high)
+end
+
+function Module.init(context: any): any
+    local lighting = context.host.Lighting
+    local host = context.host
+    local folder: Instance? = nil
+    local color: any = nil
+    local bloom: any = nil
+    local rays: any = nil
+    local destroyed: boolean = false
+
+    local function createEffect(className: string, name: string): any
+        local parent: any = folder
+        if not parent then
+            return nil
+        end
+        local ok: boolean, effect: any = pcall(function(): any
+            local instance = Instance.new(className)
+            instance.Name = name
+            instance.Parent = parent
+            return instance
+        end)
+        if ok and effect then
+            return effect
+        end
+        return nil
+    end
+
+    local function cleanup(): ()
+        for _, effect in ipairs({color, bloom, rays}) do
+            if effect then
+                pcall(function(): ()
+                    effect.Enabled = false
+                end)
+            end
+        end
+        color, bloom, rays = nil, nil, nil
+        if folder then
+            pcall(function(): ()
+                folder:Destroy()
+            end)
+            folder = nil
+        end
+        destroyed = true
+    end
+
+    local function ensureEffects(): boolean
+        if color then
+            return true
+        end
+        destroyed = false
+        local ok: boolean, created: any = pcall(function(): any
+            local parent = Instance.new("Folder")
+            parent.Name = "ARandomMenuShaders"
+            parent.Parent = lighting
+            return parent
+        end)
+        if not ok or not created then
+            return false
+        end
+        folder = created
+        color = createEffect("ColorCorrectionEffect", "ARMShaderColor")
+        bloom = createEffect("BloomEffect", "ARMShaderBloom")
+        rays = createEffect("SunRaysEffect", "ARMShaderRays")
+        return color ~= nil
+    end
+
+    local function lerpColor(from: Color3, to: Color3, alpha: number): Color3
+        local weight: number = math.clamp(alpha, 0, 1)
+        return Color3.new(
+            from.R + (to.R - from.R) * weight,
+            from.G + (to.G - from.G) * weight,
+            from.B + (to.B - from.B) * weight
+        )
+    end
+
+    local function options(): any
+        return card and card.Options or {}
+    end
+
+    local function readOption(name: string, fallback: number): number
+        local option = options()[name]
+        if option == nil then
+            return fallback
+        end
+        return clamped(option.Value, -1e6, 1e6)
+    end
+
+    local function apply(): ()
+        if not card or not card.Enabled then
+            return
+        end
+        if not ensureEffects() then
+            card:SetStatus("Post-processing unavailable")
+            return
+        end
+        local look: any = lookFor(options().Look and options().Look.Value)
+        if color then
+            pcall(function(): ()
+                color.Saturation = clamped(
+                    readOption("Saturation", 0) + look.saturation,
+                    -1,
+                    1
+                )
+                color.Contrast = clamped(
+                    readOption("Contrast", 0) + look.contrast,
+                    -1,
+                    1
+                )
+                color.Brightness = clamped(
+                    readOption("Brightness", 0) + look.brightness,
+                    -1,
+                    1
+                )
+                local tint: Color3 = options().Tint and options().Tint.Value
+                    or Color3.new(1, 1, 1)
+                color.TintColor = look.tint
+                        and lerpColor(tint, look.tint, look.tintWeight)
+                    or tint
+            end)
+        end
+        if bloom then
+            pcall(function(): ()
+                local intensity: number = clamped(
+                    readOption("Bloom", 0) + look.bloom,
+                    0,
+                    10
+                )
+                bloom.Intensity = intensity
+                bloom.Size = clamped(readOption("Bloom size", 24), 0, 56)
+                bloom.Threshold = clamped(readOption("Bloom threshold", 1.1), 0, 5)
+                bloom.Enabled = intensity > 0.01
+            end)
+        end
+        if rays then
+            pcall(function(): ()
+                local intensity: number = clamped(
+                    readOption("Sun rays", 0) + look.rays,
+                    0,
+                    1
+                )
+                rays.Intensity = intensity
+                rays.Spread = clamped(readOption("Ray spread", 0.5), 0, 1)
+                rays.Enabled = intensity > 0.01
+            end)
+        end
+        card:SetStatus(look.name == "None" and nil or look.name)
+    end
+
+    card = context.framework.Categories.Render:CreateModule({
+        Name = "Shaders",
+        Category = "Render",
+        ConfigKey = "Universal.Shaders",
+        Tooltip = "Colour grading, bloom and sun rays for the whole scene. "
+            .. "Engine effects only: nothing is sent to the server.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                cleanup()
+                card:SetStatus(nil)
+                return
+            end
+            if not ensureEffects() then
+                card:SetStatus("Post-processing unavailable")
+                return
+            end
+            card:Clean(cleanup)
+            apply()
+        end,
+    })
+
+    card:CreateDropdown({
+        Name = "Look",
+        List = LOOK_NAMES,
+        Index = 1,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "A preset that is added on top of the sliders below. "
+            .. "None leaves only what you set yourself.",
+    })
+    card:CreateSlider({
+        Name = "Saturation",
+        Min = -1,
+        Max = 1,
+        Default = 0,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Negative drains colour, positive boosts it.",
+    })
+    card:CreateSlider({
+        Name = "Contrast",
+        Min = -0.5,
+        Max = 0.5,
+        Default = 0,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Separates dark from light; negative flattens the image.",
+    })
+    card:CreateSlider({
+        Name = "Brightness",
+        Min = -0.3,
+        Max = 0.3,
+        Default = 0,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Overall exposure of the colour pass.",
+    })
+    card:CreateColor({
+        Name = "Tint",
+        Default = Color3.fromRGB(255, 255, 255),
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Colour cast for the whole screen. Looks blend toward their "
+            .. "own tint on top of it.",
+    })
+    card:CreateSlider({
+        Name = "Bloom",
+        Min = 0,
+        Max = 2,
+        Default = 0.4,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Glow around bright surfaces. Zero disables the effect.",
+    })
+    card:CreateSlider({
+        Name = "Bloom threshold",
+        Min = 0,
+        Max = 3,
+        Default = 1.1,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "How bright a surface must be before it glows.",
+    })
+    card:CreateSlider({
+        Name = "Bloom size",
+        Min = 0,
+        Max = 56,
+        Default = 24,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Spread of the glow, in engine units.",
+    })
+    card:CreateSlider({
+        Name = "Sun rays",
+        Min = 0,
+        Max = 1,
+        Default = 0,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "Rays around the sun. Zero disables the effect.",
+    })
+    card:CreateSlider({
+        Name = "Ray spread",
+        Min = 0,
+        Max = 1,
+        Default = 0.5,
+        Decimal = 2,
+        Function = function(): ()
+            apply()
+        end,
+        Tooltip = "How wide the sun rays fan out.",
+    })
+    card:CreateNote(
+        "Colour grading and bloom are client-side post-processing: they change "
+            .. "what you see, not what the server or other players receive. "
+            .. "Fullbright also raises ambient light; this module does not."
+    )
+
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if card and card.Enabled then
+        card:Toggle(false)
+    end
+    card = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/universal/Render/Spectate.lua"] = [[
 -- Native player spectating; FreeCam pauses without losing its position.
 local Module = {Name="Spectate", Initialized=false}
@@ -54281,6 +54894,7 @@ local Manifest: Manifest = {
         ["Server Aura"] = "Combat",
         ["Server Miner"] = "Other",
         ["Server Scaffold"] = "Movement",
+        ["Shaders"] = "Render",
         ["Shoot Assist"] = "Combat",
         ["Silent Aim"] = "Combat",
         ["Silent Steps / Anti-Sound"] = "Movement",
@@ -54357,6 +54971,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
+        {path = "src/games/universal/Render/Shaders.lua", name = "Shaders", category = "Render"},
         {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
