@@ -62,13 +62,26 @@ local function clamped(value: any, low: number, high: number): number
 end
 
 function Module.init(context: any): any
-    local lighting = context.host.Lighting
-    local host = context.host
+    -- `host.Lighting` is the wrapper the rest of the menu uses; the service is
+    -- the fallback, because a module that silently creates nothing when the
+    -- environment table is missing one key looks exactly like "it does
+    -- nothing".
+    local lighting = context.host and context.host.Lighting
+    if not lighting then
+        pcall(function(): ()
+            lighting = game:GetService("Lighting")
+        end)
+    end
     local folder: Instance? = nil
     local color: any = nil
     local bloom: any = nil
     local rays: any = nil
     local destroyed: boolean = false
+    -- v162: apply() used to bail out when `card.Enabled` was false. The card is
+    -- not "enabled" until the toggle callback has returned, so the very first
+    -- apply did nothing and the module appeared dead until an option was
+    -- touched. This flag is set by the callback itself.
+    local active: boolean = false
 
     local function createEffect(className: string, name: string): any
         local parent: any = folder
@@ -148,7 +161,7 @@ function Module.init(context: any): any
     end
 
     local function apply(): ()
-        if not card or not card.Enabled then
+        if not card or not active then
             return
         end
         if not ensureEffects() then
@@ -215,6 +228,7 @@ function Module.init(context: any): any
         Tooltip = "Colour grading, bloom and sun rays for the whole scene. "
             .. "Engine effects only: nothing is sent to the server.",
         Function = function(enabled: boolean): ()
+            active = enabled == true
             if not enabled then
                 cleanup()
                 card:SetStatus(nil)
@@ -232,7 +246,10 @@ function Module.init(context: any): any
     card:CreateDropdown({
         Name = "Look",
         List = LOOK_NAMES,
-        Index = 1,
+        -- v162: "Cinematic" by default. "None" is neutral on every channel, so
+        -- turning the module on changed nothing at all and the only honest
+        -- report the player could make was "it does nothing".
+        Index = 2,
         Function = function(): ()
             apply()
         end,
@@ -285,7 +302,7 @@ function Module.init(context: any): any
         Name = "Bloom",
         Min = 0,
         Max = 2,
-        Default = 0.4,
+        Default = 0.6,
         Decimal = 2,
         Function = function(): ()
             apply()
@@ -317,7 +334,7 @@ function Module.init(context: any): any
         Name = "Sun rays",
         Min = 0,
         Max = 1,
-        Default = 0,
+        Default = 0.2,
         Decimal = 2,
         Function = function(): ()
             apply()

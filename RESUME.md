@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v161-20261030-prediction-shaders`**, con árbol base de
+> **`v162-20261030-shiftlock-shaders-fix`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,38 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v161: 91 fuentes,
-     78 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v162: 91 fuentes,
+     80 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v162 — Shift Lock, Shaders que no hacía nada, coste de los rayos (2026-10-30)
+
+Detalle y tablas: `docs/FIXES-v162.md`.
+
+- **Shift Lock / ratón libre (causa encontrada).** El menú pedía el cursor al
+  abrirse y al cerrarse **escribía siempre** un valor, pisando el `LockCenter`
+  que el juego acababa de poner (mismo atajo) y liberando a `Default` un
+  `LockCenter` capturado al entrar. Además peleaba con el juego cada frame.
+  Reglas nuevas: solo se deshace lo que escribió el menú, nunca se escribe
+  `LockCenter`, y tras 8 reafirmaciones en 1 s el menú cede. Test:
+  `tools/test_menu_cursor.py` (8 comprobaciones sobre el bloque real).
+- **Shaders no hacía nada (dos causas).** `apply()` salía en la primera línea
+  porque `card.Enabled` todavía es `false` dentro del callback del interruptor
+  (ahora usa un flag propio), y los valores por defecto eran neutros (Look
+  `None`, saturación/contraste/brillo 0). Ahora `Look = Cinematic`, bloom 0.6,
+  sun rays 0.2: se enciende y se ve. Test: `tools/test_shaders.py`.
+- **Lag spikes.** Lo único que v161 añadía por frame era el chequeo de cuerpo
+  fantasma (hasta 13 rayos/frame con Auto Shoot): ahora máximo 5 rayos cada
+  0.15 s. Para el resto, **UI Settings → Perf report** imprime el informe,
+  muestra un resumen y reinicia el contador de spikes: pulsar, jugar un minuto,
+  pulsar otra vez. Si dice `menu 0.30+0.10 ms`, el menú no es el culpable.
+- **Menu scale** (0.7–1.3) en UI Settings, guardado en `UI.MenuScale`. No había
+  ningún cambio de tamaño entre v139 y v161 (cardHeight, optionRowHeight,
+  WINDOW_WIDTH y shape.scale idénticos), así que la escala es ahora un número
+  en vez de una decisión de código.
 
 ## v161 — Prediction con lazo cerrado por vía + módulo Shaders (2026-10-30)
 

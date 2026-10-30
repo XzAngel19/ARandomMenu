@@ -387,6 +387,19 @@ function Module.init(runtime: any): any
         return hit
     end
 
+    -- The ghost probe is a preference, not a gate, so it is allowed to be
+    -- stale: what is cached is which body part was clean, never a position.
+    -- v162: Auto Shoot calls the aim path every frame; probing there cost up
+    -- to 13 raycasts per frame. Now it costs at most 5 every 0.15 s and the
+    -- cached answer is one FindFirstChild plus the same lead arithmetic.
+    local GHOST_PROBE_INTERVAL: number = 0.15
+    local GHOST_PROBE_CANDIDATES: number = 4
+    local ghostProbe: any = {
+        target = nil,
+        at = -math.huge,
+        partName = nil,
+    }
+
     -- Returns a cleaner endpoint and the part it moved to, or nil.
     local function avoidGhostAim(
         target: Player,
@@ -397,22 +410,47 @@ function Module.init(runtime: any): any
         if not character or not info or typeof(info.endpoint) ~= "Vector3" then
             return nil, nil
         end
-        local ghost: any = ghostOnLine(muzzle, info.endpoint, character)
-        if not ghost then
+        local now: number = os.clock()
+        if target ~= ghostProbe.target
+            or now - ghostProbe.at >= GHOST_PROBE_INTERVAL then
+            ghostProbe.target = target
+            ghostProbe.at = now
+            ghostProbe.partName = nil
+            if ghostOnLine(muzzle, info.endpoint, character) then
+                local captured: Vector3? = info.capturedPosition
+                local probeLead: Vector3 = captured
+                        and (info.endpoint - captured)
+                    or Vector3.zero
+                local tried: number = 0
+                for _, partName: string in ipairs(AIM_BODY_PARTS) do
+                    if tried >= GHOST_PROBE_CANDIDATES then
+                        break
+                    end
+                    local part: Instance? = character:FindFirstChild(partName)
+                    if part and part:IsA("BasePart") then
+                        tried += 1
+                        local candidate: Vector3 = (part :: BasePart).Position
+                            + probeLead
+                        if not ghostOnLine(muzzle, candidate, character) then
+                            ghostProbe.partName = partName
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        local partName: string? = ghostProbe.partName
+        if not partName then
+            return nil, nil
+        end
+        local part: Instance? = character:FindFirstChild(partName)
+        if not part or not part:IsA("BasePart") then
+            ghostProbe.partName = nil
             return nil, nil
         end
         local captured: Vector3? = info.capturedPosition
         local lead: Vector3 = captured and (info.endpoint - captured) or Vector3.zero
-        for _, partName: string in ipairs(AIM_BODY_PARTS) do
-            local part: Instance? = character:FindFirstChild(partName)
-            if part and part:IsA("BasePart") then
-                local candidate: Vector3 = (part :: BasePart).Position + lead
-                if not ghostOnLine(muzzle, candidate, character) then
-                    return candidate, partName
-                end
-            end
-        end
-        return nil, nil
+        return (part :: BasePart).Position + lead, partName
     end
 
     -- v139.2: pick the aim point whose line is safest BEYOND the target.

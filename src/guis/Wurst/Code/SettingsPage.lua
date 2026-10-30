@@ -2057,6 +2057,27 @@ function Module.init(context: any): any
 
     uiSettingsValues["Menu style"] = "Wurst"
 
+    -- v162: the menu's own scale, so "make it like the older build" is a
+    -- number and not a code change. It only touches the ClickGui UIScale; the
+    -- HUD, the dock and the tooltips keep their own sizes.
+    local themeShape: any = ThemeEngine and ThemeEngine.shape
+    local initialScale: number = themeShape and tonumber(themeShape.scale) or 1
+    uiSettingsValues["Menu scale"] = initialScale
+    addNumberOption(uiPanel, "Menu scale", initialScale, 0.7, 1.3,
+        function(value: number): ()
+            local shape: any = ThemeEngine and ThemeEngine.shape
+            if not shape then
+                return
+            end
+            shape.scale = value
+            uiSettingsValues["Menu scale"] = value
+            configData.values["UI.MenuScale"] = value
+            queueConfigSave()
+            if type(state.refreshLayout) == "function" then
+                state.refreshLayout(true)
+            end
+        end)
+
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value
         local persist: any = state.teleportPersist
@@ -2079,6 +2100,42 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    -- v162: what the menu itself costs, on demand. The overlay shows it live,
+    -- but the useful question after a hitch is "what was running", and that is
+    -- one press away here. It also restarts the counter, so the next press
+    -- describes the last minute and not the session.
+    host.addActionOption(uiPanel, "Perf report", function(): ()
+        local performance: any = state.performance or {}
+        local report: string = "no report"
+        if type(state.perfReport) == "function" then
+            local ok: boolean, text: any = pcall(state.perfReport)
+            if ok and type(text) == "string" then
+                report = text
+            end
+        end
+        print(report)
+        local worst: string = performance.spikeTask
+            and (" · " .. tostring(performance.spikeTask))
+            or ""
+        notify(string.format(
+            "FPS %.0f · menu %.2f+%.2f ms · spikes %d (worst %.0f ms%s)",
+            tonumber(performance.fps) or 0,
+            tonumber(performance.tasksMs) or 0,
+            tonumber(performance.renderMs) or 0,
+            tonumber(performance.spikeCount) or 0,
+            tonumber(performance.worstSpikeMs) or 0,
+            worst
+        ))
+        print("[" .. "perf" .. "] counter reset")
+        performance.spikeCount = 0
+        performance.worstSpikeMs = 0
+        performance.spikeTask = nil
+        performance.spikeAt = nil
+        performance.spikeMs = 0
+    end, "Prints FPS, the menu's own cost and the heaviest modules to the console, "
+        .. "then restarts the spike counter. Press it, play a minute, press it "
+        .. "again: the second line describes what just happened.")
 
     host.addActionOption(uiPanel, "Move dock", function(): ()
         if state.dock and state.dock.BeginMove then state.dock.BeginMove() end

@@ -1,5 +1,5 @@
 return {
-    stamp = "v161-20261030-prediction-shaders",
+    stamp = "v162-20261030-shiftlock-shaders-fix",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -2444,6 +2444,19 @@ function Module.init(runtime: any): any
         return hit
     end
 
+    -- The ghost probe is a preference, not a gate, so it is allowed to be
+    -- stale: what is cached is which body part was clean, never a position.
+    -- v162: Auto Shoot calls the aim path every frame; probing there cost up
+    -- to 13 raycasts per frame. Now it costs at most 5 every 0.15 s and the
+    -- cached answer is one FindFirstChild plus the same lead arithmetic.
+    local GHOST_PROBE_INTERVAL: number = 0.15
+    local GHOST_PROBE_CANDIDATES: number = 4
+    local ghostProbe: any = {
+        target = nil,
+        at = -math.huge,
+        partName = nil,
+    }
+
     -- Returns a cleaner endpoint and the part it moved to, or nil.
     local function avoidGhostAim(
         target: Player,
@@ -2454,22 +2467,47 @@ function Module.init(runtime: any): any
         if not character or not info or typeof(info.endpoint) ~= "Vector3" then
             return nil, nil
         end
-        local ghost: any = ghostOnLine(muzzle, info.endpoint, character)
-        if not ghost then
+        local now: number = os.clock()
+        if target ~= ghostProbe.target
+            or now - ghostProbe.at >= GHOST_PROBE_INTERVAL then
+            ghostProbe.target = target
+            ghostProbe.at = now
+            ghostProbe.partName = nil
+            if ghostOnLine(muzzle, info.endpoint, character) then
+                local captured: Vector3? = info.capturedPosition
+                local probeLead: Vector3 = captured
+                        and (info.endpoint - captured)
+                    or Vector3.zero
+                local tried: number = 0
+                for _, partName: string in ipairs(AIM_BODY_PARTS) do
+                    if tried >= GHOST_PROBE_CANDIDATES then
+                        break
+                    end
+                    local part: Instance? = character:FindFirstChild(partName)
+                    if part and part:IsA("BasePart") then
+                        tried += 1
+                        local candidate: Vector3 = (part :: BasePart).Position
+                            + probeLead
+                        if not ghostOnLine(muzzle, candidate, character) then
+                            ghostProbe.partName = partName
+                            break
+                        end
+                    end
+                end
+            end
+        end
+        local partName: string? = ghostProbe.partName
+        if not partName then
+            return nil, nil
+        end
+        local part: Instance? = character:FindFirstChild(partName)
+        if not part or not part:IsA("BasePart") then
+            ghostProbe.partName = nil
             return nil, nil
         end
         local captured: Vector3? = info.capturedPosition
         local lead: Vector3 = captured and (info.endpoint - captured) or Vector3.zero
-        for _, partName: string in ipairs(AIM_BODY_PARTS) do
-            local part: Instance? = character:FindFirstChild(partName)
-            if part and part:IsA("BasePart") then
-                local candidate: Vector3 = (part :: BasePart).Position + lead
-                if not ghostOnLine(muzzle, candidate, character) then
-                    return candidate, partName
-                end
-            end
-        end
-        return nil, nil
+        return (part :: BasePart).Position + lead, partName
     end
 
     -- v139.2: pick the aim point whose line is safest BEYOND the target.
@@ -38967,13 +39005,26 @@ local function clamped(value: any, low: number, high: number): number
 end
 
 function Module.init(context: any): any
-    local lighting = context.host.Lighting
-    local host = context.host
+    -- `host.Lighting` is the wrapper the rest of the menu uses; the service is
+    -- the fallback, because a module that silently creates nothing when the
+    -- environment table is missing one key looks exactly like "it does
+    -- nothing".
+    local lighting = context.host and context.host.Lighting
+    if not lighting then
+        pcall(function(): ()
+            lighting = game:GetService("Lighting")
+        end)
+    end
     local folder: Instance? = nil
     local color: any = nil
     local bloom: any = nil
     local rays: any = nil
     local destroyed: boolean = false
+    -- v162: apply() used to bail out when `card.Enabled` was false. The card is
+    -- not "enabled" until the toggle callback has returned, so the very first
+    -- apply did nothing and the module appeared dead until an option was
+    -- touched. This flag is set by the callback itself.
+    local active: boolean = false
 
     local function createEffect(className: string, name: string): any
         local parent: any = folder
@@ -39053,7 +39104,7 @@ function Module.init(context: any): any
     end
 
     local function apply(): ()
-        if not card or not card.Enabled then
+        if not card or not active then
             return
         end
         if not ensureEffects() then
@@ -39120,6 +39171,7 @@ function Module.init(context: any): any
         Tooltip = "Colour grading, bloom and sun rays for the whole scene. "
             .. "Engine effects only: nothing is sent to the server.",
         Function = function(enabled: boolean): ()
+            active = enabled == true
             if not enabled then
                 cleanup()
                 card:SetStatus(nil)
@@ -39137,7 +39189,10 @@ function Module.init(context: any): any
     card:CreateDropdown({
         Name = "Look",
         List = LOOK_NAMES,
-        Index = 1,
+        -- v162: "Cinematic" by default. "None" is neutral on every channel, so
+        -- turning the module on changed nothing at all and the only honest
+        -- report the player could make was "it does nothing".
+        Index = 2,
         Function = function(): ()
             apply()
         end,
@@ -39190,7 +39245,7 @@ function Module.init(context: any): any
         Name = "Bloom",
         Min = 0,
         Max = 2,
-        Default = 0.4,
+        Default = 0.6,
         Decimal = 2,
         Function = function(): ()
             apply()
@@ -39222,7 +39277,7 @@ function Module.init(context: any): any
         Name = "Sun rays",
         Min = 0,
         Max = 1,
-        Default = 0,
+        Default = 0.2,
         Decimal = 2,
         Function = function(): ()
             apply()
@@ -48658,6 +48713,27 @@ function Module.init(context: any): any
 
     uiSettingsValues["Menu style"] = "Wurst"
 
+    -- v162: the menu's own scale, so "make it like the older build" is a
+    -- number and not a code change. It only touches the ClickGui UIScale; the
+    -- HUD, the dock and the tooltips keep their own sizes.
+    local themeShape: any = ThemeEngine and ThemeEngine.shape
+    local initialScale: number = themeShape and tonumber(themeShape.scale) or 1
+    uiSettingsValues["Menu scale"] = initialScale
+    addNumberOption(uiPanel, "Menu scale", initialScale, 0.7, 1.3,
+        function(value: number): ()
+            local shape: any = ThemeEngine and ThemeEngine.shape
+            if not shape then
+                return
+            end
+            shape.scale = value
+            uiSettingsValues["Menu scale"] = value
+            configData.values["UI.MenuScale"] = value
+            queueConfigSave()
+            if type(state.refreshLayout) == "function" then
+                state.refreshLayout(true)
+            end
+        end)
+
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value
         local persist: any = state.teleportPersist
@@ -48680,6 +48756,42 @@ function Module.init(context: any): any
             end
         end)
     end
+
+    -- v162: what the menu itself costs, on demand. The overlay shows it live,
+    -- but the useful question after a hitch is "what was running", and that is
+    -- one press away here. It also restarts the counter, so the next press
+    -- describes the last minute and not the session.
+    host.addActionOption(uiPanel, "Perf report", function(): ()
+        local performance: any = state.performance or {}
+        local report: string = "no report"
+        if type(state.perfReport) == "function" then
+            local ok: boolean, text: any = pcall(state.perfReport)
+            if ok and type(text) == "string" then
+                report = text
+            end
+        end
+        print(report)
+        local worst: string = performance.spikeTask
+            and (" · " .. tostring(performance.spikeTask))
+            or ""
+        notify(string.format(
+            "FPS %.0f · menu %.2f+%.2f ms · spikes %d (worst %.0f ms%s)",
+            tonumber(performance.fps) or 0,
+            tonumber(performance.tasksMs) or 0,
+            tonumber(performance.renderMs) or 0,
+            tonumber(performance.spikeCount) or 0,
+            tonumber(performance.worstSpikeMs) or 0,
+            worst
+        ))
+        print("[" .. "perf" .. "] counter reset")
+        performance.spikeCount = 0
+        performance.worstSpikeMs = 0
+        performance.spikeTask = nil
+        performance.spikeAt = nil
+        performance.spikeMs = 0
+    end, "Prints FPS, the menu's own cost and the heaviest modules to the console, "
+        .. "then restarts the spike counter. Press it, play a minute, press it "
+        .. "again: the second line describes what just happened.")
 
     host.addActionOption(uiPanel, "Move dock", function(): ()
         if state.dock and state.dock.BeginMove then state.dock.BeginMove() end

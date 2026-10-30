@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v161-20261030-prediction-shaders"
+local SOURCE_STAMP: string = "v162-20261030-shiftlock-shaders-fix"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1046,6 +1046,16 @@ configData.ui.textScaleCalibrationVersion = 2
 
 state.menuStyle = "Wurst"
 
+-- v162: the menu's own scale is remembered. It is a plain number, applied to
+-- the same ThemeEngine.shape.scale the ClickGui already uses for its UIScale,
+-- so nothing else in the UI has to know about it.
+do
+    local savedScale: any = configData.values["UI.MenuScale"]
+    if type(savedScale) == "number" and savedScale == savedScale then
+        ThemeEngine.shape.scale = math.clamp(savedScale, 0.7, 1.3)
+    end
+end
+
 if configData.values["UI.CodeFaceMigration"] ~= 1 then
     configData.values["UI.CodeFaceMigration"] = 1
     if configData.values.interfaceFont ~= nil
@@ -1276,12 +1286,34 @@ local menuCursorState: any = {
     applying = false,
     behavior = nil,
     iconEnabled = nil,
+    -- v162: how many times this menu session has re-asserted the cursor. A
+    -- game that keeps setting it back (shift lock does exactly that, every
+    -- frame) is not a bug to fight, it is the player's own state.
+    fights = 0,
+    fightStart = 0,
+    yielded = false,
 }
+-- Re-assertions allowed before the menu lets the game own the cursor again.
+local CURSOR_FIGHT_LIMIT: number = 8
+local CURSOR_FIGHT_WINDOW: number = 1
+
+-- v162 — SHIFT LOCK. Two rules, both learned from a reported regression:
+--
+-- 1. Only undo OUR OWN write. The old release path always wrote a behavior
+--    back, so a shift lock the game had just enabled (pressing the same key
+--    that closes the menu) was overwritten with Default on the way out: the
+--    mouse stayed free and shift lock looked broken from then on.
+-- 2. Never write LockCenter. If the player was shift-locked when the menu
+--    opened, restoring that value would lock the camera without the game's own
+--    shift-lock state, which is worse than releasing to Default.
 local function setMenuCursorUnlocked(visible: boolean): ()
     if menuCursorState.applying then
         return
     end
     if visible then
+        if menuCursorState.yielded then
+            return
+        end
         if not menuCursorState.owned then
             menuCursorState.behavior = UserInputService.MouseBehavior
             menuCursorState.iconEnabled = UserInputService.MouseIconEnabled
@@ -1296,26 +1328,38 @@ local function setMenuCursorUnlocked(visible: boolean): ()
         return
     end
     if not menuCursorState.owned then
+        menuCursorState.yielded = false
         return
     end
     menuCursorState.applying = true
     pcall(function(): ()
-        local targetBehavior: Enum.MouseBehavior = Enum.MouseBehavior.Default
-
-        if menuCursorState.behavior and menuCursorState.behavior ~= Enum.MouseBehavior.LockCenter then
-            targetBehavior = menuCursorState.behavior
+        -- Rule 1: if the cursor is not where we left it, somebody else (the
+        -- game) moved it on purpose and that state stays.
+        if UserInputService.MouseBehavior == Enum.MouseBehavior.Default then
+            local saved: any = menuCursorState.behavior
+            if saved == Enum.MouseBehavior.LockCenter or saved == nil then
+                saved = Enum.MouseBehavior.Default
+            end
+            UserInputService.MouseBehavior = saved
         end
-        UserInputService.MouseBehavior = targetBehavior
-        UserInputService.MouseIconEnabled = true
+        if UserInputService.MouseIconEnabled == true
+            and menuCursorState.iconEnabled ~= nil then
+            UserInputService.MouseIconEnabled = menuCursorState.iconEnabled
+        end
     end)
     menuCursorState.applying = false
     menuCursorState.behavior = nil
     menuCursorState.iconEnabled = nil
     menuCursorState.owned = false
+    menuCursorState.fights = 0
+    menuCursorState.yielded = false
 end
 
 local function enforceMenuCursor(): ()
     if menuCursorState.applying then
+        return
+    end
+    if state.visible ~= true or not menuCursorState.owned then
         return
     end
 
@@ -1326,12 +1370,26 @@ local function enforceMenuCursor(): ()
     if rightClicking then
         return
     end
-    if state.visible == true
-        and menuCursorState.owned
-        and (UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default
-            or UserInputService.MouseIconEnabled ~= true) then
-        setMenuCursorUnlocked(true)
+    if UserInputService.MouseBehavior == Enum.MouseBehavior.Default
+        and UserInputService.MouseIconEnabled == true then
+        return
     end
+    -- Rule 3: a cursor that keeps being taken back is the player's shift lock.
+    -- Re-assert a few times (a camera script may lock it once on open) and then
+    -- stop, instead of fighting it sixty times a second for as long as the
+    -- menu is open.
+    local now: number = os.clock()
+    if now - menuCursorState.fightStart > CURSOR_FIGHT_WINDOW then
+        menuCursorState.fightStart = now
+        menuCursorState.fights = 0
+    end
+    menuCursorState.fights += 1
+    if menuCursorState.fights > CURSOR_FIGHT_LIMIT then
+        menuCursorState.yielded = true
+        menuCursorState.fights = 0
+        return
+    end
+    setMenuCursorUnlocked(true)
 end
 pcall(function(): ()
     trackUiConnection(UserInputService:GetPropertyChangedSignal("MouseBehavior"):Connect(enforceMenuCursor))
@@ -1345,6 +1403,18 @@ pcall(function(): ()
             end)
         end
     end))
+    -- v162: a teleport/respawn can reset the cursor under us; releasing is
+    -- always safe, holding a stale ownership is not.
+    if LocalPlayer then
+        pcall(function(): ()
+            trackUiConnection(LocalPlayer.CharacterAdded:Connect(function(): ()
+                if state.visible ~= true then
+                    menuCursorState.owned = false
+                    menuCursorState.yielded = false
+                end
+            end))
+        end)
+    end
 end)
 
 -- Roblox blurs the 3D scene, not GUI text; share the existing effect rather
