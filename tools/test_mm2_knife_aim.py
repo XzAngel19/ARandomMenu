@@ -80,10 +80,13 @@ local LocalPlayer = {Character = nil}
 local Player = {Name = 'Target', Character = body(Vector3.new(20, 0, 0))}
 local speedWithNoAttribute = 96
 local seenSpeed = nil
+local predictorCalls = 0
+local bodyAllowed = true
 local aimOffset = Vector3.new(0, 1.5, 0)   -- what the sampler reports (torso)
 local lead = Vector3.new(1.7, 0, 0)         -- 0.1 s at 17 studs/s
 local prediction = {
     knifeAim = function(target, origin, speed)
+        predictorCalls += 1
         seenSpeed = speed
         local root = target.Character.root.Position
         return root + aimOffset + lead, {
@@ -111,7 +114,7 @@ local function getEstimatedLatency() return 0.1 end
 -- v159: the shipped solver asks whether the body is visible before it aims.
 -- This harness owns line of sight (checkLineOfSight below), so the body check
 -- is satisfied and the solver's own picks are what the assertions read.
-local function bodyVisible() return true end
+local function bodyVisible() return bodyAllowed end
 local function getPlayerWeapon() return nil end
 local function isPlayerAlive() return true end
 local function isProtectedTarget() return false end
@@ -158,7 +161,39 @@ assert(math.abs(primary.X - (root.X + aimOffset.X + lead.X)) < 0.01
     'a visible primary point must be returned as-is')
 print('PASS\tknife aim: visible primary trajectory untouched')
 
-print('PASS knife aim: real speed, single torso offset')
+-- Occluded candidates do not pay for prediction or the knife floor probe.
+bodyAllowed = false
+local beforeHidden = predictorCalls
+assert(resolveKnifeAim(Player, Vector3.zero, knife, true) == nil)
+assert(predictorCalls == beforeHidden, 'hidden body must be rejected before prediction')
+bodyAllowed = true
+print('PASS\tknife selection: hidden body rejected before prediction')
+
+-- 5. If the shared predictor cannot solve, transport used to multiply the
+-- entire vertical velocity BEFORE clamping the flight term. At -120 Y and
+-- 500 ms this pointed 60+ studs under the target. The cap must cover both.
+local savedPrediction = prediction
+prediction = nil
+getEstimatedLatency = function() return 0.5 end
+local victim = Player.Character.root
+victim.AssemblyLinearVelocity = Vector3.new(0, -120, 0)
+local fallback = resolveKnifeAim(Player, Vector3.new(0, 20, 0), nil)
+near(fallback.Y, victim.Position.Y - 2)
+-- A genuinely lower body still yields a downward aim; never clamp to the
+-- thrower's Y or prevent shots from a balcony to the ground.
+victim.Position = Vector3.new(20, -30, 0)
+victim.AssemblyLinearVelocity = Vector3.zero
+fallback = resolveKnifeAim(Player, Vector3.new(0, 20, 0), nil)
+near(fallback.Y, -30)
+assert(fallback.Y < 20, 'a lower target must remain aimable downward')
+-- Malformed replicated velocity cannot manufacture a NaN endpoint.
+victim.AssemblyLinearVelocity = Vector3.new(0, 0/0, 0)
+fallback = resolveKnifeAim(Player, Vector3.new(0, 20, 0), nil)
+near(fallback.Y, -30)
+prediction = savedPrediction
+print('PASS\tknife fallback: whole vertical lead bounded, genuinely lower targets preserved')
+
+print('PASS knife aim: real speed, single torso offset, bounded fallback')
 '''
 
 

@@ -1,5 +1,5 @@
 return {
-    stamp = "v163-20261029-shaders-parent-perf",
+    stamp = "v164-20261029-knife-smooth-throw",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -4093,14 +4093,20 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    local originHandleTool: Tool? = nil
+    local originHandle: BasePart? = nil
     local function getThrowOriginCFrame(knife: Tool?): CFrame?
         local character: Model? = LocalPlayer and LocalPlayer.Character
         if not character then
             return nil
         end
-        local handle: Instance? = knife and knife:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") and knife and knife.Parent == character then
-            return (handle :: BasePart).CFrame
+        if knife and knife.Parent == character then
+            if originHandleTool ~= knife or not originHandle or originHandle.Parent ~= knife then
+                local handle: Instance? = knife:FindFirstChild("Handle")
+                originHandleTool = knife
+                originHandle = handle and handle:IsA("BasePart") and (handle :: BasePart) or nil
+            end
+            if originHandle then return originHandle.CFrame end
         end
         local hand: Instance? = character:FindFirstChild("RightHand")
             or character:FindFirstChild("Right Arm")
@@ -4248,6 +4254,11 @@ function Module.init(runtime: any): any
         if not root then
             return nil, nil
         end
+        -- Check the live body before doing the more expensive intercept/ground
+        -- work; hidden candidates cannot become speculative shots.
+        if not bodyVisible(originPos, root.Position, character) then
+            return nil, nil
+        end
 
         local speed: number = 96
         if knife then
@@ -4277,6 +4288,11 @@ function Module.init(runtime: any): any
 
         if not predicted then
             local velocity: Vector3 = root.AssemblyLinearVelocity
+            if velocity.X ~= velocity.X or velocity.Y ~= velocity.Y or velocity.Z ~= velocity.Z
+                or math.abs(velocity.X) == math.huge or math.abs(velocity.Y) == math.huge
+                or math.abs(velocity.Z) == math.huge then
+                velocity = Vector3.zero
+            end
             local latency: number = 0.06
             if type(getEstimatedLatency) == "function" then
                 local okLat: boolean, l: any = pcall(getEstimatedLatency)
@@ -4284,10 +4300,18 @@ function Module.init(runtime: any): any
                     latency = math.clamp(l, 0, 0.5)
                 end
             end
-            local observed: Vector3 = root.Position + velocity * latency
+            -- This is only the fallback when the shared predictor is absent or
+            -- cannot solve. Previously `velocity * latency` applied unbounded
+            -- vertical lead BEFORE the later 3.5 stud drop clamp: a replicated
+            -- -120 Y velocity at 0.5 s already aimed 60 studs below the body.
+            -- Keep horizontal transport and cap the *entire* vertical lead.
+            -- The body's actual height is never clamped against the thrower:
+            -- an enemy on a lower floor still produces a downward shot.
+            local horizVel: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+            local observed: Vector3 = root.Position + horizVel * latency
             local rel: Vector3 = observed - originPos
-            local a: number = velocity:Dot(velocity) - speed * speed
-            local b: number = 2 * rel:Dot(velocity)
+            local a: number = horizVel:Dot(horizVel) - speed * speed
+            local b: number = 2 * rel:Dot(horizVel)
             local c: number = rel:Dot(rel)
             local flight: number? = nil
             if c < 0.0025 then
@@ -4312,11 +4336,13 @@ function Module.init(runtime: any): any
             end
             if flight and flight == flight then
                 flight = math.clamp(flight, 0, 1.5)
-                local horizVel: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-                local yLead: number = math.clamp(velocity.Y * math.min(flight, 0.28), -3.5, 4.0)
+                local yLead: number = math.clamp(
+                    velocity.Y * math.min(latency + flight, 0.28), -2.0, 4.0
+                )
                 predicted = observed + horizVel * flight + Vector3.new(0, yLead, 0)
             else
-                predicted = observed
+                local yLead: number = math.clamp(velocity.Y * math.min(latency, 0.28), -2.0, 4.0)
+                predicted = observed + Vector3.new(0, yLead, 0)
             end
         end
 
@@ -4331,13 +4357,8 @@ function Module.init(runtime: any): any
             flight = (predicted - originPos).Magnitude / speed
         end
 
-        -- The body we aim at has to be visible right now. Without this a
-        -- corner-peeking predicted point made the throw look like it went
-        -- through the wall even when the corridor test passed.
-        if not bodyVisible(originPos, root.Position, character) then
-            return nil, nil
-        end
-
+        -- The current body was already checked before prediction: a future
+        -- point peeking around a corner cannot make a hidden body eligible.
         if cheap or checkLineOfSight(originPos, predicted, character) then
             return predicted, flight
         end
@@ -4428,54 +4449,147 @@ function Module.init(runtime: any): any
         return bestTarget
     end
 
-    local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
-        if not settings.enabled or not settings.knifeTracer or not originPos or not aimPos then
+    -- The solve is throttled, but its result used to jump at each update. This is
+    -- visual-only: the native redirects and throwKnife always solve separately
+    -- and never read this smoothed point.
+    local TRACER_SMOOTH_RATE: number = 26
+    local TRACER_SNAP_DISTANCE: number = 20
+    local tracerPoint: Vector3? = nil
+    local tracerTarget: Player? = nil
+    local tracerShown: boolean = false
+    local tracerOpacity: number = 0
+    local drawnOpacity: number = -1
+    local drawnOrigin: Vector3? = nil
+    local drawnPoint: Vector3? = nil
+
+    local function hideTracerParts(): ()
+        if tracerPart and tracerPart.Parent then tracerPart.Transparency = 1 end
+        if targetDotPart and targetDotPart.Parent then targetDotPart.Transparency = 1 end
+    end
+
+    local function hideTracerVisuals(): ()
+        -- Do not tween a stale point after the next visibility check fails.
+        -- Reuse the two invisible parts if a target reappears; destroy them
+        -- when the option/module is turned off.
+        if tracerShown then pcall(hideTracerParts) end
+        tracerShown = false
+        tracerOpacity = 0
+        drawnOpacity = -1
+        tracerPoint = nil
+        tracerTarget = nil
+        drawnOrigin = nil
+        drawnPoint = nil
+    end
+
+    local function drawTracerParts(
+        originPos: Vector3, point: Vector3, delta: Vector3, dist: number,
+        updateGeometry: boolean, opacity: number, updateOpacity: boolean
+    ): ()
+        if not tracerPart or not tracerPart.Parent then
+            local beamPart: Part = Instance.new("Part")
+            beamPart.Name = "WurstKnifeTracer"
+            beamPart.Anchored = true
+            beamPart.CanCollide = false
+            beamPart.CanQuery = false
+            beamPart.CanTouch = false
+            beamPart.Material = Enum.Material.Neon
+            beamPart.Color = Color3.fromRGB(255, 65, 65)
+            beamPart.Transparency = 1
+            beamPart.Parent = workspace
+            tracerPart = beamPart
+            tracerShown = false
+        end
+        if not targetDotPart or not targetDotPart.Parent then
+            local dot: Part = Instance.new("Part")
+            dot.Name = "WurstKnifeAimDot"
+            dot.Shape = Enum.PartType.Ball
+            dot.Size = Vector3.new(1.1, 1.1, 1.1)
+            dot.Anchored = true
+            dot.CanCollide = false
+            dot.CanQuery = false
+            dot.CanTouch = false
+            dot.Material = Enum.Material.Neon
+            dot.Color = Color3.fromRGB(255, 220, 60)
+            dot.Transparency = 1
+            dot.Parent = workspace
+            targetDotPart = dot
+            tracerShown = false
+        end
+        if updateGeometry then
+            tracerPart.Size = Vector3.new(0.14, 0.14, dist)
+            tracerPart.CFrame = CFrame.lookAt(originPos + delta * 0.5, point)
+            targetDotPart.CFrame = CFrame.new(point)
+        end
+        if updateOpacity or not tracerShown then
+            tracerPart.Transparency = 1 - 0.75 * opacity
+            targetDotPart.Transparency = 1 - 0.85 * opacity
+            tracerShown = true
+        end
+    end
+
+    local function updateTracerVisual(
+        originPos: Vector3?, aimPos: Vector3?, target: Player?, deltaTime: number?
+    ): ()
+        if not settings.enabled or not settings.knifeTracer then
+            hideTracerVisuals()
             destroyTracerVisuals()
             return
         end
-        local delta: Vector3 = aimPos - originPos
+        if not originPos or not aimPos or not target then
+            hideTracerVisuals()
+            return
+        end
+        local dt: number = tonumber(deltaTime) or (1 / 60)
+        if dt ~= dt then dt = 1 / 60 end
+        local alpha: number = 1 - math.exp(-TRACER_SMOOTH_RATE * math.clamp(dt, 0, 0.25))
+        local previous: Vector3? = tracerPoint
+        if not previous or tracerTarget ~= target
+            or (aimPos - previous).Magnitude > TRACER_SNAP_DISTANCE then
+            -- Never sweep a line across different players or a teleport. A
+            -- short fade-in still softens the appearance of the new point.
+            tracerPoint = aimPos
+            tracerOpacity = 0
+        else
+            local nextPoint: Vector3 = previous + (aimPos - previous) * alpha
+            tracerPoint = (aimPos - nextPoint).Magnitude < 0.002 and aimPos or nextPoint
+        end
+        tracerOpacity += (1 - tracerOpacity) * alpha
+        if tracerOpacity > 0.998 then tracerOpacity = 1 end
+        tracerTarget = target
+        local point: Vector3 = tracerPoint :: Vector3
+        local delta: Vector3 = point - originPos
         local dist: number = delta.Magnitude
         if dist < 0.25 or dist > 400 then
-            destroyTracerVisuals()
+            hideTracerVisuals()
             return
         end
-        pcall(function(): ()
-            if not tracerPart or not tracerPart.Parent then
-                local beamPart: Part = Instance.new("Part")
-                beamPart.Name = "WurstKnifeTracer"
-                beamPart.Anchored = true
-                beamPart.CanCollide = false
-                beamPart.CanQuery = false
-                beamPart.CanTouch = false
-                beamPart.Material = Enum.Material.Neon
-                beamPart.Color = Color3.fromRGB(255, 65, 65)
-                beamPart.Transparency = 0.25
-                beamPart.Parent = workspace
-                tracerPart = beamPart
+        local missing: boolean = not tracerPart or not tracerPart.Parent
+            or not targetDotPart or not targetDotPart.Parent
+        local geometryChanged: boolean = missing or not drawnOrigin or not drawnPoint
+            or (originPos - (drawnOrigin :: Vector3)).Magnitude >= 0.002
+            or (point - (drawnPoint :: Vector3)).Magnitude >= 0.002
+        local opacityChanged: boolean = missing or not tracerShown
+            or math.abs(tracerOpacity - drawnOpacity) >= 0.002
+        if not geometryChanged and not opacityChanged then return end
+        -- Named callback: unlike the old per-frame pcall(closure), this does
+        -- not allocate a fresh closure every frame. No raycasts/tweens here.
+        local ok: boolean = pcall(
+            drawTracerParts, originPos, point, delta, dist,
+            geometryChanged, tracerOpacity, opacityChanged
+        )
+        if ok then
+            if geometryChanged then
+                drawnOrigin = originPos
+                drawnPoint = point
             end
-            if not targetDotPart or not targetDotPart.Parent then
-                local dot: Part = Instance.new("Part")
-                dot.Name = "WurstKnifeAimDot"
-                dot.Shape = Enum.PartType.Ball
-                dot.Size = Vector3.new(1.1, 1.1, 1.1)
-                dot.Anchored = true
-                dot.CanCollide = false
-                dot.CanQuery = false
-                dot.CanTouch = false
-                dot.Material = Enum.Material.Neon
-                dot.Color = Color3.fromRGB(255, 220, 60)
-                dot.Transparency = 0.15
-                dot.Parent = workspace
-                targetDotPart = dot
-            end
-            if tracerPart then
-                tracerPart.Size = Vector3.new(0.14, 0.14, dist)
-                tracerPart.CFrame = CFrame.lookAt(originPos + delta * 0.5, aimPos)
-            end
-            if targetDotPart then
-                targetDotPart.CFrame = CFrame.new(aimPos)
-            end
-        end)
+            if opacityChanged then drawnOpacity = tracerOpacity end
+        else
+            pcall(hideTracerParts)
+            tracerShown = false
+            drawnOpacity = -1
+            drawnOrigin = nil
+            drawnPoint = nil
+        end
     end
 
     -- Throw knife at predicted target using MM2's Knife.Events.KnifeThrown remote
@@ -4649,23 +4763,39 @@ function Module.init(runtime: any): any
     -- against the map, then up to 8 more per body part when the first one is
     -- blocked. Ten players meant dozens of raycasts per frame for a number
     -- that only changes a few times per second. The solve is now cached for
-    -- 1/15 s, and the throw itself always re-solves so the blade leaves in the
-    -- direction the target is actually at right now.
+    -- 1/15 s when an automatic throw is due; a visual-only preview can use
+    -- 1/10 s because the displayed point follows the observed root between
+    -- solves. The actual throw always re-solves from the live handle.
     local AIM_CACHE_SECONDS: number = 1 / 15
+    local TRACER_CACHE_SECONDS: number = 1 / 10
     local cachedTarget: Player? = nil
     local cachedAim: Vector3? = nil
     local cachedOrigin: CFrame? = nil
+    local cachedVisualRoot: BasePart? = nil
+    local cachedVisualPosition: Vector3? = nil
     local cachedAt: number = -math.huge
 
-    local function solveAim(knife: Tool): (Player?, Vector3?, CFrame?)
+    local function solveAim(knife: Tool, throwDue: boolean): (Player?, Vector3?, CFrame?)
         local now: number = os.clock()
-        if now - cachedAt >= AIM_CACHE_SECONDS then
+        local interval: number = throwDue and AIM_CACHE_SECONDS or TRACER_CACHE_SECONDS
+        if now - cachedAt >= interval then
             cachedAt = now
             cachedTarget = findTarget()
             cachedAim = nil
+            cachedVisualRoot = nil
+            cachedVisualPosition = nil
             cachedOrigin = getThrowOriginCFrame(knife)
             if cachedOrigin and cachedTarget then
                 cachedAim = resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
+                if cachedAim and settings.knifeTracer then
+                    local character: Model? = cachedTarget.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if root then
+                        cachedVisualRoot = root
+                        cachedVisualPosition = root.Position
+                    end
+                end
             end
         elseif cachedOrigin then
             -- Origin only: the target's predicted point stays cached, but the
@@ -4680,12 +4810,72 @@ function Module.init(runtime: any): any
         cachedTarget = nil
         cachedAim = nil
         cachedOrigin = nil
+        cachedVisualRoot = nil
+        cachedVisualPosition = nil
+    end
+
+    -- getPlayerWeapon walks the character/backpack's children. A tracer-only
+    -- heartbeat must not do that 60-240 times a second just to keep the line
+    -- attached to an already equipped handle. Actual throws and native input
+    -- still use a fresh getKnife(), and parent changes invalidate this cache.
+    local loopKnife: Tool? = nil
+    local loopKnifeParent: Instance? = nil
+    local loopKnifeCharacter: Model? = nil
+    local loopKnifeAt: number = -math.huge
+    local function resetLoopKnife(): ()
+        loopKnife = nil
+        loopKnifeParent = nil
+        loopKnifeCharacter = nil
+        loopKnifeAt = -math.huge
+        originHandleTool = nil
+        originHandle = nil
+    end
+    local function getLoopKnife(now: number, throwDue: boolean): Tool?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if character ~= loopKnifeCharacter then resetLoopKnife() end
+        loopKnifeCharacter = character
+        if not throwDue then
+            if loopKnife and loopKnife.Parent == character and character then
+                return loopKnife
+            end
+            local age: number = now - loopKnifeAt
+            if age >= 0 and age < TRACER_CACHE_SECONDS then
+                if not loopKnife then return nil end
+                if loopKnifeParent and loopKnife.Parent == loopKnifeParent then
+                    return loopKnife
+                end
+            end
+        end
+        loopKnife = getKnife()
+        loopKnifeParent = loopKnife and loopKnife.Parent or nil
+        loopKnifeAt = now
+        return loopKnife
+    end
+
+    local function tracerGoal(target: Player?, aimPos: Vector3?): Vector3?
+        if not target or not aimPos then return nil end
+        local root: BasePart? = cachedVisualRoot
+        local captured: Vector3? = cachedVisualPosition
+        if not root or not captured then return aimPos end
+        if target ~= cachedTarget or root.Parent ~= target.Character then
+            invalidateAim()
+            return nil
+        end
+        -- Follow the already-observed root between the throttled solves. This is
+        -- only a visual offset, not another prediction or a per-frame raycast.
+        local moved: Vector3 = root.Position - captured
+        if moved.Magnitude > 8 then
+            invalidateAim()
+            return nil
+        end
+        return aimPos + moved
     end
 
     -- Main loop for Knife Tracer and Auto Knife Throw
-    local function knifeThrowLoop(): ()
+    local function knifeThrowLoop(deltaTime: number?): ()
         if not settings.enabled then
             setKnifeStatus(nil)
+            hideTracerVisuals()
             destroyTracerVisuals()
             invalidateAim()
             return
@@ -4701,6 +4891,7 @@ function Module.init(runtime: any): any
         -- Auto Knife Throw and the tracer are off. Likewise, without a tracer
         -- no preview is needed during a successful throw's cooldown.
         if not settings.knifeTracer and not wantThrow then
+            hideTracerVisuals()
             destroyTracerVisuals()
             if not settings.autoThrow then
                 setKnifeStatus(nil)
@@ -4709,28 +4900,28 @@ function Module.init(runtime: any): any
             return
         end
 
-        local knife: Tool? = getKnife()
+        local knife: Tool? = getLoopKnife(now, wantThrow)
         if not knife then
             setKnifeStatus("Waiting for knife")
-            destroyTracerVisuals()
+            hideTracerVisuals()
             invalidateAim()
             return
         end
 
-        -- The cached pick is at most 1/15 s old, which only decides WHO gets
-        -- the blade. throwKnife re-solves the aim from the live handle, so the
-        -- direction is always current even when this list is stale.
-        local target, aimPos, originCF = solveAim(knife)
+        -- The cached pick only decides WHO gets the blade. throwKnife
+        -- re-solves the aim from the live handle when it actually fires.
+        local target, aimPos, originCF = solveAim(knife, wantThrow)
         if not aimPos then
             setKnifeStatus(target and "Target blocked · WallCheck" or "No visible target")
-            destroyTracerVisuals()
+            hideTracerVisuals()
             return
         end
         setKnifeStatus("Predicted target")
 
-        if settings.knifeTracer and originCF and aimPos then
-            updateTracerVisual(originCF.Position, aimPos)
+        if settings.knifeTracer and originCF then
+            updateTracerVisual(originCF.Position, tracerGoal(target, aimPos), target, deltaTime)
         else
+            hideTracerVisuals()
             destroyTracerVisuals()
         end
 
@@ -4753,8 +4944,10 @@ function Module.init(runtime: any): any
         if not enabled then
             uninstallWeaponServiceRedirect()
             setKnifeStatus(nil)
+            hideTracerVisuals()
             destroyTracerVisuals()
             invalidateAim()
+            resetLoopKnife()
             return
         end
 
@@ -4821,10 +5014,11 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.knifeTracer = value == true
             if not settings.knifeTracer then
+                hideTracerVisuals()
                 destroyTracerVisuals()
             end
         end,
-        "Draws a live 3D trajectory tracer from your hand to the predicted knife impact point."
+        "Smooth 3D preview from your hand to the predicted point. The actual throw is re-solved separately; the preview hides when no target passes WallCheck."
     )
 
     activeCleanup = function(): ()
@@ -11674,10 +11868,11 @@ local Module = {
 
     What this model deliberately does NOT do:
 
-      * No unmeasured heuristics. The turn (chord) and braking terms are
-        computed from two weighted fits 0.10 s apart, gated on clean residuals
-        and a real speed, and capped at 45 degrees / the stop distance. A
-        straight run leaves both at zero; nothing here guesses.
+      * No speculative openings or unconstrained extrapolation. Turn and
+        braking terms come from weighted fits, capped at 45 degrees / the stop
+        distance. Knife landing additionally uses a bounded client-side support
+        probe; its cache, rig and slope thresholds are conservative estimates,
+        not measured server behaviour.
       * No unconstrained auto-tuned lead. Transport is the median of at least
         three fresh echoes inside sane pairing limits, with smoothed RTT as
         fallback; the separate residual correction is median-filtered and
@@ -11715,6 +11910,11 @@ type Track = {
     -- ~700 tables per second, which is exactly the kind of steady garbage that
     -- shows up later as a hitch when the collector catches up.
     spare: {Sample}?,
+    -- Up to two short-lived support probes for the knife only. These never
+    -- change the shared gun prediction or its historical floor clamp.
+    knifeFloorCache: {any}?,
+    knifeFloorNext: number?,
+    knifeFloorSerial: number?,
 }
 
 type Fit = {
@@ -12995,6 +13195,234 @@ function Module.init(runtime: any): any
         }, nil
     end
 
+    -- A historical "grounded" state is not always a real floor: the v162
+    -- capture contains Landed/Running samples while a body was still falling.
+    -- For the knife only, check the projected XZ against client geometry when
+    -- the ballistic prediction crosses below the current body. This is NOT a
+    -- visibility test and does not replace WallCheck. Unknown geometry leaves
+    -- the existing prediction alone; a clear ray permits an actual fall.
+    local KNIFE_FLOOR_DEPTH: number = 80
+    local KNIFE_FLOOR_CACHE_SECONDS: number = 0.10
+    local KNIFE_FLOOR_XZ_TOLERANCE: number = 0.35
+    local knifeFloorParams: RaycastParams? = nil
+    local knifeFloorParamsTried: boolean = false
+    local knifeFloorFilter: {Instance} = {}
+
+    local function knifeStandingHeight(track: Track): number?
+        local humanoid: Humanoid = track.humanoid
+        local root: BasePart = track.root
+        if not humanoid or not root then return nil end
+        local hip: number = humanoid.HipHeight
+        local size: Vector3 = root.Size
+        if not finiteNumber(hip) or not finiteVector(size) then return nil end
+        local height: number = hip + size.Y * 0.5
+        local rig: any = humanoid.RigType
+        if rig == Enum.HumanoidRigType.R6 then
+            local leg: Instance? = track.character:FindFirstChild("Left Leg")
+                or track.character:FindFirstChild("Right Leg")
+            if not leg or not leg:IsA("BasePart") then return nil end
+            height += (leg :: BasePart).Size.Y
+        elseif rig ~= Enum.HumanoidRigType.R15 then
+            return nil
+        end
+        if not finiteNumber(height) or height < 0.5 or height > 10 then return nil end
+        return height
+    end
+
+    local function makeKnifeFloorParams(): RaycastParams
+        local params: RaycastParams = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.RespectCanCollide = true
+        params.IgnoreWater = true
+        return params
+    end
+
+    local function castKnifeFloor(origin: Vector3, params: RaycastParams): RaycastResult?
+        return workspace:Raycast(origin, Vector3.new(0, -KNIFE_FLOOR_DEPTH, 0), params)
+    end
+
+    local function knifeFloorAt(track: Track, projected: Vector3, now: number): (boolean, number?)
+        -- Models/mocks without normal humanoid dimensions cannot provide a
+        -- trustworthy root-to-floor offset; fall back to the old model.
+        local okHeight: boolean, height: any = pcall(knifeStandingHeight, track)
+        if not okHeight or not finiteNumber(height) then return false, nil end
+        local last: Sample = track.samples[#track.samples]
+        -- Begin above the body, not inside a low step at the projected XZ.
+        -- A high obstruction is rejected below instead of becoming a floor.
+        local topY: number = last.position.Y + height
+        local cache: {any} = track.knifeFloorCache or {}
+        track.knifeFloorCache = cache
+        local newest: any = nil
+        for _, probe: any in ipairs(cache) do
+            local age: number = now - probe.at
+            local dx: number = projected.X - probe.x
+            local dz: number = projected.Z - probe.z
+            if age >= 0 and age <= KNIFE_FLOOR_CACHE_SECONDS
+                and dx * dx + dz * dz <= KNIFE_FLOOR_XZ_TOLERANCE ^ 2
+                and math.abs(topY - probe.topY) <= 0.25
+                and math.abs(height - probe.height) <= 0.05
+                and (probe.part == nil or (probe.part.Parent ~= nil
+                    and (probe.partFrame == nil or (probe.part.CFrame == probe.partFrame
+                        and probe.part.CanCollide == probe.partCanCollide))
+                    and (probe.partSize == nil or probe.part.Size == probe.partSize)))
+                and (not newest or probe.serial > newest.serial) then
+                newest = probe
+            end
+        end
+        if newest then return newest.known, newest.supportY end
+        if not knifeFloorParamsTried then
+            knifeFloorParamsTried = true
+            local okParams: boolean, params: any = pcall(makeKnifeFloorParams)
+            if okParams then knifeFloorParams = params end
+        end
+        local params: RaycastParams? = knifeFloorParams
+        if not params then return false, nil end
+        table.clear(knifeFloorFilter)
+        if LocalPlayer.Character then table.insert(knifeFloorFilter, LocalPlayer.Character) end
+        table.insert(knifeFloorFilter, track.character)
+        params.FilterDescendantsInstances = knifeFloorFilter
+        local from: Vector3 = Vector3.new(projected.X, topY, projected.Z)
+        local okRay: boolean, hit: any = pcall(castKnifeFloor, from, params)
+        local known: boolean = okRay
+        local supportY: number? = nil
+        local part: Instance? = nil
+        local partFrame: CFrame? = nil
+        local partSize: Vector3? = nil
+        local partCanCollide: boolean? = nil
+        if okRay and hit then
+            part = hit.Instance
+            -- Do not treat a character, a non-collidable part, or a steep
+            -- surface as evidence of a floor. Do not raycast repeatedly through
+            -- such objects; uncertainty falls back to the previous model.
+            local okHit: boolean, valid: boolean = pcall(function(): boolean
+                if not part or not finiteVector(hit.Position) or not finiteVector(hit.Normal)
+                    or hit.Normal.Y < 0.65 then return false end
+                if part:IsA("BasePart") then
+                    partFrame = (part :: BasePart).CFrame
+                    partSize = (part :: BasePart).Size
+                    partCanCollide = (part :: BasePart).CanCollide
+                    if not partCanCollide then return false end
+                end
+                local model: Model? = part:FindFirstAncestorOfClass("Model")
+                if model and model:FindFirstChildOfClass("Humanoid") then return false end
+                return true
+            end)
+            if not okHit or not valid then
+                known = false
+            else
+                local candidate: number = hit.Position.Y + height
+                -- A roof/obstacle at the projected XZ must not lift the aim
+                -- above the body that is actually visible right now.
+                if candidate > last.position.Y + 0.75 then
+                    known = false
+                else
+                    supportY = math.min(candidate, last.position.Y)
+                end
+            end
+        end
+        local index: number = track.knifeFloorNext or 1
+        local probe: any = cache[index] or {}
+        track.knifeFloorSerial = (track.knifeFloorSerial or 0) + 1
+        probe.serial = track.knifeFloorSerial
+        probe.at, probe.x, probe.z, probe.topY = now, projected.X, projected.Z, topY
+        probe.height, probe.known, probe.supportY, probe.part = height, known, supportY, part
+        probe.partFrame, probe.partSize, probe.partCanCollide = partFrame, partSize, partCanCollide
+        cache[index] = probe
+        track.knifeFloorNext = index == 1 and 2 or 1
+        return known, supportY
+    end
+
+    local function knifeRootAt(
+        track: Track, motion: Motion, span: number, floorKnown: boolean, floorY: number?
+    ): Vector3
+        if floorKnown and motion.verticalLead then
+            -- Ground is observed at the projected XZ, so do not reuse a
+            -- possibly stale historical "grounded" height from another ledge.
+            local last: Sample = track.samples[#track.samples]
+            local lead: Vector3 = leadHorizontal(motion, span)
+            local y: number = last.position.Y + motion.vertical * span
+                - 0.5 * workspace.Gravity * span * span
+            if floorY then y = math.max(y, floorY) end
+            return Vector3.new(last.position.X + lead.X, y, last.position.Z + lead.Z)
+        end
+        return predictedRoot(track, motion, span)
+    end
+
+    local function knifeFloorIntercept(
+        track: Track, motion: Motion, horizon: number, flight: number,
+        origin: Vector3, speed: number, floorY: number
+    ): (Vector3, number)
+        local last: Sample = track.samples[#track.samples]
+        local root: Vector3 = knifeRootAt(track, motion, horizon + flight, true, floorY)
+        for _ = 1, 5 do
+            local revised: number = (root + last.aimOffset - origin).Magnitude / speed
+            local delta: number = math.abs(revised - flight)
+            flight = revised
+            root = knifeRootAt(track, motion, horizon + flight, true, floorY)
+            if delta <= 1e-4 then break end
+        end
+        return root, (root + last.aimOffset - origin).Magnitude / speed
+    end
+
+    local function knifeAirborneIntercept(
+        track: Track, motion: Motion, horizon: number, origin: Vector3,
+        speed: number, floorKnown: boolean
+    ): (Vector3?, number?)
+        local last: Sample = track.samples[#track.samples]
+        local lowTime: number = 0
+        local highTime: number = 5 -- the same bound as interceptTime
+        if motion.verticalLead and workspace.Gravity > 0 then
+            -- Even with zero horizontal distance, the blade cannot intercept
+            -- after the target falls faster below it than speed * time. This
+            -- analytic bound keeps the numerical search short. The historical
+            -- clamp can raise at most six studs when geometry is unknown.
+            local gravity: number = workspace.Gravity
+            local allowance: number = floorKnown and 0 or MAX_FLOOR_LIFT_STUDS
+            local c: number = last.position.Y + last.aimOffset.Y - origin.Y
+                + motion.vertical * horizon - 0.5 * gravity * horizon * horizon + allowance
+            local b: number = motion.vertical - gravity * horizon + speed
+            local discriminant: number = b * b + 2 * gravity * c
+            if not finiteNumber(discriminant) or discriminant < 0 then return nil, nil end
+            local root: number = math.sqrt(discriminant)
+            lowTime = math.max(0, (b - root) / gravity)
+            highTime = math.min(highTime, (b + root) / gravity)
+        end
+        if highTime < lowTime or highTime <= 0 then return nil, nil end
+        local segments: number = math.clamp(math.ceil((highTime - lowTime) / 0.025), 1, 64)
+        local previous: number = lowTime
+        local previousRoot: Vector3 = knifeRootAt(track, motion, horizon + previous, floorKnown, nil)
+        local previousGap: number = (previousRoot + last.aimOffset - origin).Magnitude - speed * previous
+        if previousGap <= 1e-6 then
+            local actual: number = (previousRoot + last.aimOffset - origin).Magnitude / speed
+            if math.abs(actual - previous) > 0.002 then return nil, nil end
+            return previousRoot, actual
+        end
+        for index: number = 1, segments do
+            local time: number = lowTime + (highTime - lowTime) * index / segments
+            local root: Vector3 = knifeRootAt(track, motion, horizon + time, floorKnown, nil)
+            local gap: number = (root + last.aimOffset - origin).Magnitude - speed * time
+            if gap <= 0 then
+                local left: number, right: number = previous, time
+                -- The earliest bracketed intercept; no assumed hitbox or
+                -- automatic increase to the lead horizon.
+                for _ = 1, 12 do
+                    local middle: number = (left + right) * 0.5
+                    local midRoot: Vector3 = knifeRootAt(track, motion, horizon + middle, floorKnown, nil)
+                    local midGap: number = (midRoot + last.aimOffset - origin).Magnitude - speed * middle
+                    if midGap <= 0 then right = middle else left = middle end
+                end
+                local solved: Vector3 = knifeRootAt(track, motion, horizon + right, floorKnown, nil)
+                local solvedFlight: number = (solved + last.aimOffset - origin).Magnitude / speed
+                -- Reject a discontinuous historical-floor jump rather than
+                -- presenting it as a physically consistent intercept.
+                if math.abs(solvedFlight - right) > 0.002 then return nil, nil end
+                return solved, solvedFlight
+            end
+            previous = time
+        end
+        return nil, nil
+    end
+
     local function knifeAim(
         target: Player,
         origin: Vector3,
@@ -13006,6 +13434,11 @@ function Module.init(runtime: any): any
             return nil, nil, "dead target"
         end
         local track: Track? = tracks[target]
+        if track and track.character ~= target.Character then
+            -- Respawn can precede the next sampling heartbeat.
+            tracks[target] = nil
+            track = nil
+        end
         if not track then
             samplePlayer(target, os.clock())
             track = tracks[target]
@@ -13044,6 +13477,17 @@ function Module.init(runtime: any): any
             initial,
             resolvedSpeed
         )
+        local horizontalSeed: boolean = false
+        if not flight and motion.airborne and motion.vertical < 0 then
+            -- A fast descending body can be slower than the blade after it
+            -- lands. Use a horizontal seed ONLY if a real support probe below
+            -- later confirms that landing; otherwise keep "unreachable".
+            local lateral: Vector3 = Vector3.new(initial.X, 0, initial.Z)
+            flight = predictionMath.interceptTime(
+                aimStart + lateral * horizon - origin, lateral, resolvedSpeed
+            )
+            horizontalSeed = flight ~= nil
+        end
         if not flight then
             return nil, nil, "unreachable"
         end
@@ -13092,22 +13536,124 @@ function Module.init(runtime: any): any
         end
         local endpoint: Vector3 = aimStart + effective * (horizon + flight)
         if motion.airborne then
-            -- A straight blade cannot follow a ballistic arc; aim at the
-            -- root's projected position at impact instead of a linear Y.
-            endpoint = predictedRoot(track, motion, horizon + flight)
-                + last.aimOffset
-            -- v159: that point is not where the chord solve landed, so the
-            -- flight time it returned was for a different distance. A blade
-            -- travels straight at constant speed, so the honest number is the
-            -- distance left over the speed; the target scoring and the
-            -- telemetry both read it.
+            -- A straight blade aims at the body's projected impact position,
+            -- not at an arc for the blade itself. The old fixed-point pass
+            -- could diverge: each additional fall increased the flight time,
+            -- which then made the prediction fall even farther.
+            -- The old ballistic iteration can already have diverged by the
+            -- time we ask for a floor. Probe near a horizontal intercept, not
+            -- dozens of studs along that unreliable projected XZ.
+            local lateral: Vector3 = Vector3.new(initial.X, 0, initial.Z)
+            local lateralFlight: number? = predictionMath.interceptTime(
+                aimStart + lateral * horizon - origin, lateral, resolvedSpeed
+            )
+            local probeFlight: number = lateralFlight or flight
+            local spanAtProbe: number = horizon + probeFlight
+            local probePoint: Vector3 = predictedRoot(track, motion, spanAtProbe)
+            local possibleSpan: number = horizon + math.max(probeFlight, flight)
+            local rawY: number = last.position.Y + motion.vertical * possibleSpan
+                - 0.5 * workspace.Gravity * possibleSpan * possibleSpan
+            local known: boolean, floorY: number? = false, nil
+            local probes: number = 0
+            if motion.verticalLead and rawY < last.position.Y - 0.25 then
+                known, floorY = knifeFloorAt(track, probePoint, now)
+                probes = 1
+            end
+
+            local solvedRoot: Vector3? = nil
+            local solvedFlight: number? = nil
+            if known and floorY then
+                solvedRoot, solvedFlight = knifeFloorIntercept(
+                    track, motion, horizon, probeFlight, origin, resolvedSpeed, floorY
+                )
+                local dx: number = (solvedRoot :: Vector3).X - probePoint.X
+                local dz: number = (solvedRoot :: Vector3).Z - probePoint.Z
+                if dx * dx + dz * dz > KNIFE_FLOOR_XZ_TOLERANCE ^ 2 then
+                    -- The corrected flight can move a landing across an edge.
+                    -- Recheck once at the new XZ, never borrow the old floor.
+                    probePoint = solvedRoot :: Vector3
+                    known, floorY = knifeFloorAt(track, probePoint, now)
+                    probes += 1
+                    if known and floorY then
+                        solvedRoot, solvedFlight = knifeFloorIntercept(
+                            track, motion, horizon, solvedFlight :: number,
+                            origin, resolvedSpeed, floorY
+                        )
+                        dx = (solvedRoot :: Vector3).X - probePoint.X
+                        dz = (solvedRoot :: Vector3).Z - probePoint.Z
+                        if dx * dx + dz * dz > KNIFE_FLOOR_XZ_TOLERANCE ^ 2 then
+                            return nil, nil, "uncertain landing"
+                        end
+                    else
+                        solvedRoot, solvedFlight = nil, nil
+                    end
+                end
+            end
+
+            if not solvedRoot then
+                if horizontalSeed then return nil, nil, "unreachable" end
+                -- A clear downward ray means a genuine fall, not the previous
+                -- platform's height. If geometry is unknown, retain the old
+                -- bounded history model. Accept a cheap fixed-point result if
+                -- already consistent; otherwise bracket the earliest possible
+                -- intercept in a bounded search or fall back safely.
+                local first: Vector3 = knifeRootAt(track, motion, horizon + flight, known, nil)
+                local actual: number = (first + last.aimOffset - origin).Magnitude / resolvedSpeed
+                if finiteNumber(actual) and actual <= 5 and math.abs(actual - flight) <= 0.002 then
+                    solvedRoot, solvedFlight = first, actual
+                else
+                    solvedRoot, solvedFlight = knifeAirborneIntercept(
+                        track, motion, horizon, origin, resolvedSpeed, known
+                    )
+                end
+                if not solvedRoot or not solvedFlight then return nil, nil, "unreachable" end
+                if probes > 0 and known then
+                    local dx: number = solvedRoot.X - probePoint.X
+                    local dz: number = solvedRoot.Z - probePoint.Z
+                    if dx * dx + dz * dz > KNIFE_FLOOR_XZ_TOLERANCE ^ 2 then
+                        if probes >= 2 then return nil, nil, "uncertain landing" end
+                        probePoint = solvedRoot
+                        known, floorY = knifeFloorAt(track, probePoint, now)
+                        probes += 1
+                        if not known then return nil, nil, "uncertain landing" end
+                        if floorY then
+                            solvedRoot, solvedFlight = knifeFloorIntercept(
+                                track, motion, horizon, solvedFlight, origin, resolvedSpeed, floorY
+                            )
+                            dx = solvedRoot.X - probePoint.X
+                            dz = solvedRoot.Z - probePoint.Z
+                            if dx * dx + dz * dz > KNIFE_FLOOR_XZ_TOLERANCE ^ 2 then
+                                return nil, nil, "uncertain landing"
+                            end
+                        end
+                    end
+                end
+            end
+            if not solvedRoot or not solvedFlight or not finiteVector(solvedRoot)
+                or not finiteNumber(solvedFlight) or solvedFlight > 5 then
+                return nil, nil, "unreachable"
+            end
+            local consistentRoot: Vector3 = knifeRootAt(
+                track, motion, horizon + solvedFlight, known, floorY
+            )
+            if (consistentRoot - solvedRoot).Magnitude > 0.25 then
+                return nil, nil, "uncertain intercept"
+            end
+            if horizontalSeed then
+                local correctedSpan: number = horizon + solvedFlight
+                local unboundedY: number = last.position.Y + motion.vertical * correctedSpan
+                    - 0.5 * workspace.Gravity * correctedSpan * correctedSpan
+                if not floorY or unboundedY > floorY then return nil, nil, "unreachable" end
+            end
+            endpoint = solvedRoot + last.aimOffset
+            -- The score/telemetry must describe the point actually returned.
             flight = (endpoint - origin).Magnitude / resolvedSpeed
         end
         return endpoint, {
             endpoint = endpoint,
             targetPosition = endpoint,
             capturedPosition = aimStart,
-            rootPosition = predictedRoot(track, motion, horizon + flight),
+            rootPosition = endpoint - last.aimOffset,
             velocity = motion.velocity,
             leadSeconds = horizon,
             flightSeconds = flight,
@@ -13115,7 +13661,7 @@ function Module.init(runtime: any): any
             samples = motion.samples,
             residual = motion.residual,
             motionSource = motion.source,
-            model = "kinematic-v51",
+            model = "kinematic-v164-knife",
             rtt = rtt,
             rttEngine = rttEngine,
             rttData = rttData,

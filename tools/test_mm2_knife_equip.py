@@ -14,7 +14,7 @@ after one frame and asserts:
   * once the handle is in the character the throw fires with the handle origin,
   * the equipped path still works for a tool that was already in hand,
   * the idle manual-only loop does not solve; a live tracer remains capped at
-    15x/s; the solver also stays idle during a throw cooldown without a tracer;
+    10x/s; the solver also stays idle during a throw cooldown without a tracer;
   * auto throws remain on time, and native mouse/touch redirects still resolve.
 
 LUAU=/path/to/luau python3 tools/test_mm2_knife_equip.py
@@ -171,6 +171,7 @@ local target = {Name = 'MurdererTarget', Character = {
 }}
 local victimRoot = {Position = Vector3.new(6, 0, 0), AssemblyLinearVelocity = Vector3.zero,
     IsA = function(_, class) return class == 'BasePart' end}
+victimRoot.Parent = target.Character
 function target.Character:FindFirstChild(name)
     if name == 'HumanoidRootPart' then return victimRoot end
     return nil

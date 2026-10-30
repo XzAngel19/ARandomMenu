@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v163-20261029-shaders-parent-perf`**, con árbol base de
+> **`v164-20261029-knife-smooth-throw`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,42 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v163: 91 fuentes,
-     81 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v164: 91 fuentes,
+     83 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v164 — Knife Tracer smooth y corrección del apuntado descendente (2026-10-29)
+
+Detalle, cifras y límites: `docs/FIXES-v164.md`.
+
+- Captura v162 `8FEB9120…`: 12 activaciones Knife, 5 proyectiles observados,
+  sin aim/origen ni impacto Knife verificable. El evento `:15` tiene un error
+  balístico 3D de 7,38 studs y caída real de 0,394 studs en 0,173 s; no
+  demuestra la dirección enviada. Gun: 19 confirmaciones, 8 hits emparejados.
+- Tracer ahora interpola en cada frame con `deltaTime`, sigue el desplazamiento
+  de la raíz y hace fade-in en cambios de objetivo, sin barrer entre cuerpos.
+  Se oculta al fallar la siguiente comprobación de visibilidad; conserva y
+  reutiliza dos Parts, y los destruye al desactivar. Solo actualiza el preview
+  a 10 Hz y cachea arma/Handle; el lanzamiento e input nativo re-resuelven.
+- Knife, sin tocar Gun: consulta acotada de suelo local con dimensiones R6/R15
+  solo ante proyección vertical descendente; si cambia XZ reconsulta una vez.
+  Sin suelo se conserva una caída real pero se rechaza una solución divergente,
+  y el fallback limita el descenso completo a 2 studs **relativos al objetivo**,
+  sin impedir tiros a objetivos en pisos inferiores. WallCheck y selección por
+  vuelo preservados; no se reintroducen carriles especulativos.
+- En una reproducción sintética de la pose vertical de `:15` con origen y
+  distancia inventados, v163 apuntó de Y 273,21 a −195,18 por divergencia; v164
+  rechaza ese intercepto. El suelo hipotético de las pruebas no consta en el
+  JSON. `test_mm2_knife_ground.py` compara 36 casos balísticos sintéticos;
+  `test_mm2_knife_tracer.py` comprueba suavidad, lifecycle, WallCheck y coste.
+  Los mocks no prueban render, impacto, FPS, executor ni comportamiento servidor.
+- La nueva consulta suma hasta 2 rayos de suelo por resolución Knife en caída;
+  hay que probar en Roblox y comparar `Perf report` con trazador ON/OFF, sin
+  usar Gun Probe. Si vuelve el apuntado descendente, pedir vídeo (la captura
+  actual no incluye el aim real). Shaders/Shift Lock/spikes aún sin confirmar.
 
 ## v163 — Shaders de verdad y medición de picos sin atribuciones (2026-10-29)
 

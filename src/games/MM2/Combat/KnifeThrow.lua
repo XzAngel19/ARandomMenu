@@ -131,14 +131,20 @@ function Module.init(runtime: any): any
         return nil
     end
 
+    local originHandleTool: Tool? = nil
+    local originHandle: BasePart? = nil
     local function getThrowOriginCFrame(knife: Tool?): CFrame?
         local character: Model? = LocalPlayer and LocalPlayer.Character
         if not character then
             return nil
         end
-        local handle: Instance? = knife and knife:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") and knife and knife.Parent == character then
-            return (handle :: BasePart).CFrame
+        if knife and knife.Parent == character then
+            if originHandleTool ~= knife or not originHandle or originHandle.Parent ~= knife then
+                local handle: Instance? = knife:FindFirstChild("Handle")
+                originHandleTool = knife
+                originHandle = handle and handle:IsA("BasePart") and (handle :: BasePart) or nil
+            end
+            if originHandle then return originHandle.CFrame end
         end
         local hand: Instance? = character:FindFirstChild("RightHand")
             or character:FindFirstChild("Right Arm")
@@ -286,6 +292,11 @@ function Module.init(runtime: any): any
         if not root then
             return nil, nil
         end
+        -- Check the live body before doing the more expensive intercept/ground
+        -- work; hidden candidates cannot become speculative shots.
+        if not bodyVisible(originPos, root.Position, character) then
+            return nil, nil
+        end
 
         local speed: number = 96
         if knife then
@@ -315,6 +326,11 @@ function Module.init(runtime: any): any
 
         if not predicted then
             local velocity: Vector3 = root.AssemblyLinearVelocity
+            if velocity.X ~= velocity.X or velocity.Y ~= velocity.Y or velocity.Z ~= velocity.Z
+                or math.abs(velocity.X) == math.huge or math.abs(velocity.Y) == math.huge
+                or math.abs(velocity.Z) == math.huge then
+                velocity = Vector3.zero
+            end
             local latency: number = 0.06
             if type(getEstimatedLatency) == "function" then
                 local okLat: boolean, l: any = pcall(getEstimatedLatency)
@@ -322,10 +338,18 @@ function Module.init(runtime: any): any
                     latency = math.clamp(l, 0, 0.5)
                 end
             end
-            local observed: Vector3 = root.Position + velocity * latency
+            -- This is only the fallback when the shared predictor is absent or
+            -- cannot solve. Previously `velocity * latency` applied unbounded
+            -- vertical lead BEFORE the later 3.5 stud drop clamp: a replicated
+            -- -120 Y velocity at 0.5 s already aimed 60 studs below the body.
+            -- Keep horizontal transport and cap the *entire* vertical lead.
+            -- The body's actual height is never clamped against the thrower:
+            -- an enemy on a lower floor still produces a downward shot.
+            local horizVel: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+            local observed: Vector3 = root.Position + horizVel * latency
             local rel: Vector3 = observed - originPos
-            local a: number = velocity:Dot(velocity) - speed * speed
-            local b: number = 2 * rel:Dot(velocity)
+            local a: number = horizVel:Dot(horizVel) - speed * speed
+            local b: number = 2 * rel:Dot(horizVel)
             local c: number = rel:Dot(rel)
             local flight: number? = nil
             if c < 0.0025 then
@@ -350,11 +374,13 @@ function Module.init(runtime: any): any
             end
             if flight and flight == flight then
                 flight = math.clamp(flight, 0, 1.5)
-                local horizVel: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
-                local yLead: number = math.clamp(velocity.Y * math.min(flight, 0.28), -3.5, 4.0)
+                local yLead: number = math.clamp(
+                    velocity.Y * math.min(latency + flight, 0.28), -2.0, 4.0
+                )
                 predicted = observed + horizVel * flight + Vector3.new(0, yLead, 0)
             else
-                predicted = observed
+                local yLead: number = math.clamp(velocity.Y * math.min(latency, 0.28), -2.0, 4.0)
+                predicted = observed + Vector3.new(0, yLead, 0)
             end
         end
 
@@ -369,13 +395,8 @@ function Module.init(runtime: any): any
             flight = (predicted - originPos).Magnitude / speed
         end
 
-        -- The body we aim at has to be visible right now. Without this a
-        -- corner-peeking predicted point made the throw look like it went
-        -- through the wall even when the corridor test passed.
-        if not bodyVisible(originPos, root.Position, character) then
-            return nil, nil
-        end
-
+        -- The current body was already checked before prediction: a future
+        -- point peeking around a corner cannot make a hidden body eligible.
         if cheap or checkLineOfSight(originPos, predicted, character) then
             return predicted, flight
         end
@@ -466,54 +487,147 @@ function Module.init(runtime: any): any
         return bestTarget
     end
 
-    local function updateTracerVisual(originPos: Vector3?, aimPos: Vector3?): ()
-        if not settings.enabled or not settings.knifeTracer or not originPos or not aimPos then
+    -- The solve is throttled, but its result used to jump at each update. This is
+    -- visual-only: the native redirects and throwKnife always solve separately
+    -- and never read this smoothed point.
+    local TRACER_SMOOTH_RATE: number = 26
+    local TRACER_SNAP_DISTANCE: number = 20
+    local tracerPoint: Vector3? = nil
+    local tracerTarget: Player? = nil
+    local tracerShown: boolean = false
+    local tracerOpacity: number = 0
+    local drawnOpacity: number = -1
+    local drawnOrigin: Vector3? = nil
+    local drawnPoint: Vector3? = nil
+
+    local function hideTracerParts(): ()
+        if tracerPart and tracerPart.Parent then tracerPart.Transparency = 1 end
+        if targetDotPart and targetDotPart.Parent then targetDotPart.Transparency = 1 end
+    end
+
+    local function hideTracerVisuals(): ()
+        -- Do not tween a stale point after the next visibility check fails.
+        -- Reuse the two invisible parts if a target reappears; destroy them
+        -- when the option/module is turned off.
+        if tracerShown then pcall(hideTracerParts) end
+        tracerShown = false
+        tracerOpacity = 0
+        drawnOpacity = -1
+        tracerPoint = nil
+        tracerTarget = nil
+        drawnOrigin = nil
+        drawnPoint = nil
+    end
+
+    local function drawTracerParts(
+        originPos: Vector3, point: Vector3, delta: Vector3, dist: number,
+        updateGeometry: boolean, opacity: number, updateOpacity: boolean
+    ): ()
+        if not tracerPart or not tracerPart.Parent then
+            local beamPart: Part = Instance.new("Part")
+            beamPart.Name = "WurstKnifeTracer"
+            beamPart.Anchored = true
+            beamPart.CanCollide = false
+            beamPart.CanQuery = false
+            beamPart.CanTouch = false
+            beamPart.Material = Enum.Material.Neon
+            beamPart.Color = Color3.fromRGB(255, 65, 65)
+            beamPart.Transparency = 1
+            beamPart.Parent = workspace
+            tracerPart = beamPart
+            tracerShown = false
+        end
+        if not targetDotPart or not targetDotPart.Parent then
+            local dot: Part = Instance.new("Part")
+            dot.Name = "WurstKnifeAimDot"
+            dot.Shape = Enum.PartType.Ball
+            dot.Size = Vector3.new(1.1, 1.1, 1.1)
+            dot.Anchored = true
+            dot.CanCollide = false
+            dot.CanQuery = false
+            dot.CanTouch = false
+            dot.Material = Enum.Material.Neon
+            dot.Color = Color3.fromRGB(255, 220, 60)
+            dot.Transparency = 1
+            dot.Parent = workspace
+            targetDotPart = dot
+            tracerShown = false
+        end
+        if updateGeometry then
+            tracerPart.Size = Vector3.new(0.14, 0.14, dist)
+            tracerPart.CFrame = CFrame.lookAt(originPos + delta * 0.5, point)
+            targetDotPart.CFrame = CFrame.new(point)
+        end
+        if updateOpacity or not tracerShown then
+            tracerPart.Transparency = 1 - 0.75 * opacity
+            targetDotPart.Transparency = 1 - 0.85 * opacity
+            tracerShown = true
+        end
+    end
+
+    local function updateTracerVisual(
+        originPos: Vector3?, aimPos: Vector3?, target: Player?, deltaTime: number?
+    ): ()
+        if not settings.enabled or not settings.knifeTracer then
+            hideTracerVisuals()
             destroyTracerVisuals()
             return
         end
-        local delta: Vector3 = aimPos - originPos
+        if not originPos or not aimPos or not target then
+            hideTracerVisuals()
+            return
+        end
+        local dt: number = tonumber(deltaTime) or (1 / 60)
+        if dt ~= dt then dt = 1 / 60 end
+        local alpha: number = 1 - math.exp(-TRACER_SMOOTH_RATE * math.clamp(dt, 0, 0.25))
+        local previous: Vector3? = tracerPoint
+        if not previous or tracerTarget ~= target
+            or (aimPos - previous).Magnitude > TRACER_SNAP_DISTANCE then
+            -- Never sweep a line across different players or a teleport. A
+            -- short fade-in still softens the appearance of the new point.
+            tracerPoint = aimPos
+            tracerOpacity = 0
+        else
+            local nextPoint: Vector3 = previous + (aimPos - previous) * alpha
+            tracerPoint = (aimPos - nextPoint).Magnitude < 0.002 and aimPos or nextPoint
+        end
+        tracerOpacity += (1 - tracerOpacity) * alpha
+        if tracerOpacity > 0.998 then tracerOpacity = 1 end
+        tracerTarget = target
+        local point: Vector3 = tracerPoint :: Vector3
+        local delta: Vector3 = point - originPos
         local dist: number = delta.Magnitude
         if dist < 0.25 or dist > 400 then
-            destroyTracerVisuals()
+            hideTracerVisuals()
             return
         end
-        pcall(function(): ()
-            if not tracerPart or not tracerPart.Parent then
-                local beamPart: Part = Instance.new("Part")
-                beamPart.Name = "WurstKnifeTracer"
-                beamPart.Anchored = true
-                beamPart.CanCollide = false
-                beamPart.CanQuery = false
-                beamPart.CanTouch = false
-                beamPart.Material = Enum.Material.Neon
-                beamPart.Color = Color3.fromRGB(255, 65, 65)
-                beamPart.Transparency = 0.25
-                beamPart.Parent = workspace
-                tracerPart = beamPart
+        local missing: boolean = not tracerPart or not tracerPart.Parent
+            or not targetDotPart or not targetDotPart.Parent
+        local geometryChanged: boolean = missing or not drawnOrigin or not drawnPoint
+            or (originPos - (drawnOrigin :: Vector3)).Magnitude >= 0.002
+            or (point - (drawnPoint :: Vector3)).Magnitude >= 0.002
+        local opacityChanged: boolean = missing or not tracerShown
+            or math.abs(tracerOpacity - drawnOpacity) >= 0.002
+        if not geometryChanged and not opacityChanged then return end
+        -- Named callback: unlike the old per-frame pcall(closure), this does
+        -- not allocate a fresh closure every frame. No raycasts/tweens here.
+        local ok: boolean = pcall(
+            drawTracerParts, originPos, point, delta, dist,
+            geometryChanged, tracerOpacity, opacityChanged
+        )
+        if ok then
+            if geometryChanged then
+                drawnOrigin = originPos
+                drawnPoint = point
             end
-            if not targetDotPart or not targetDotPart.Parent then
-                local dot: Part = Instance.new("Part")
-                dot.Name = "WurstKnifeAimDot"
-                dot.Shape = Enum.PartType.Ball
-                dot.Size = Vector3.new(1.1, 1.1, 1.1)
-                dot.Anchored = true
-                dot.CanCollide = false
-                dot.CanQuery = false
-                dot.CanTouch = false
-                dot.Material = Enum.Material.Neon
-                dot.Color = Color3.fromRGB(255, 220, 60)
-                dot.Transparency = 0.15
-                dot.Parent = workspace
-                targetDotPart = dot
-            end
-            if tracerPart then
-                tracerPart.Size = Vector3.new(0.14, 0.14, dist)
-                tracerPart.CFrame = CFrame.lookAt(originPos + delta * 0.5, aimPos)
-            end
-            if targetDotPart then
-                targetDotPart.CFrame = CFrame.new(aimPos)
-            end
-        end)
+            if opacityChanged then drawnOpacity = tracerOpacity end
+        else
+            pcall(hideTracerParts)
+            tracerShown = false
+            drawnOpacity = -1
+            drawnOrigin = nil
+            drawnPoint = nil
+        end
     end
 
     -- Throw knife at predicted target using MM2's Knife.Events.KnifeThrown remote
@@ -687,23 +801,39 @@ function Module.init(runtime: any): any
     -- against the map, then up to 8 more per body part when the first one is
     -- blocked. Ten players meant dozens of raycasts per frame for a number
     -- that only changes a few times per second. The solve is now cached for
-    -- 1/15 s, and the throw itself always re-solves so the blade leaves in the
-    -- direction the target is actually at right now.
+    -- 1/15 s when an automatic throw is due; a visual-only preview can use
+    -- 1/10 s because the displayed point follows the observed root between
+    -- solves. The actual throw always re-solves from the live handle.
     local AIM_CACHE_SECONDS: number = 1 / 15
+    local TRACER_CACHE_SECONDS: number = 1 / 10
     local cachedTarget: Player? = nil
     local cachedAim: Vector3? = nil
     local cachedOrigin: CFrame? = nil
+    local cachedVisualRoot: BasePart? = nil
+    local cachedVisualPosition: Vector3? = nil
     local cachedAt: number = -math.huge
 
-    local function solveAim(knife: Tool): (Player?, Vector3?, CFrame?)
+    local function solveAim(knife: Tool, throwDue: boolean): (Player?, Vector3?, CFrame?)
         local now: number = os.clock()
-        if now - cachedAt >= AIM_CACHE_SECONDS then
+        local interval: number = throwDue and AIM_CACHE_SECONDS or TRACER_CACHE_SECONDS
+        if now - cachedAt >= interval then
             cachedAt = now
             cachedTarget = findTarget()
             cachedAim = nil
+            cachedVisualRoot = nil
+            cachedVisualPosition = nil
             cachedOrigin = getThrowOriginCFrame(knife)
             if cachedOrigin and cachedTarget then
                 cachedAim = resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
+                if cachedAim and settings.knifeTracer then
+                    local character: Model? = cachedTarget.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if root then
+                        cachedVisualRoot = root
+                        cachedVisualPosition = root.Position
+                    end
+                end
             end
         elseif cachedOrigin then
             -- Origin only: the target's predicted point stays cached, but the
@@ -718,12 +848,72 @@ function Module.init(runtime: any): any
         cachedTarget = nil
         cachedAim = nil
         cachedOrigin = nil
+        cachedVisualRoot = nil
+        cachedVisualPosition = nil
+    end
+
+    -- getPlayerWeapon walks the character/backpack's children. A tracer-only
+    -- heartbeat must not do that 60-240 times a second just to keep the line
+    -- attached to an already equipped handle. Actual throws and native input
+    -- still use a fresh getKnife(), and parent changes invalidate this cache.
+    local loopKnife: Tool? = nil
+    local loopKnifeParent: Instance? = nil
+    local loopKnifeCharacter: Model? = nil
+    local loopKnifeAt: number = -math.huge
+    local function resetLoopKnife(): ()
+        loopKnife = nil
+        loopKnifeParent = nil
+        loopKnifeCharacter = nil
+        loopKnifeAt = -math.huge
+        originHandleTool = nil
+        originHandle = nil
+    end
+    local function getLoopKnife(now: number, throwDue: boolean): Tool?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if character ~= loopKnifeCharacter then resetLoopKnife() end
+        loopKnifeCharacter = character
+        if not throwDue then
+            if loopKnife and loopKnife.Parent == character and character then
+                return loopKnife
+            end
+            local age: number = now - loopKnifeAt
+            if age >= 0 and age < TRACER_CACHE_SECONDS then
+                if not loopKnife then return nil end
+                if loopKnifeParent and loopKnife.Parent == loopKnifeParent then
+                    return loopKnife
+                end
+            end
+        end
+        loopKnife = getKnife()
+        loopKnifeParent = loopKnife and loopKnife.Parent or nil
+        loopKnifeAt = now
+        return loopKnife
+    end
+
+    local function tracerGoal(target: Player?, aimPos: Vector3?): Vector3?
+        if not target or not aimPos then return nil end
+        local root: BasePart? = cachedVisualRoot
+        local captured: Vector3? = cachedVisualPosition
+        if not root or not captured then return aimPos end
+        if target ~= cachedTarget or root.Parent ~= target.Character then
+            invalidateAim()
+            return nil
+        end
+        -- Follow the already-observed root between the throttled solves. This is
+        -- only a visual offset, not another prediction or a per-frame raycast.
+        local moved: Vector3 = root.Position - captured
+        if moved.Magnitude > 8 then
+            invalidateAim()
+            return nil
+        end
+        return aimPos + moved
     end
 
     -- Main loop for Knife Tracer and Auto Knife Throw
-    local function knifeThrowLoop(): ()
+    local function knifeThrowLoop(deltaTime: number?): ()
         if not settings.enabled then
             setKnifeStatus(nil)
+            hideTracerVisuals()
             destroyTracerVisuals()
             invalidateAim()
             return
@@ -739,6 +929,7 @@ function Module.init(runtime: any): any
         -- Auto Knife Throw and the tracer are off. Likewise, without a tracer
         -- no preview is needed during a successful throw's cooldown.
         if not settings.knifeTracer and not wantThrow then
+            hideTracerVisuals()
             destroyTracerVisuals()
             if not settings.autoThrow then
                 setKnifeStatus(nil)
@@ -747,28 +938,28 @@ function Module.init(runtime: any): any
             return
         end
 
-        local knife: Tool? = getKnife()
+        local knife: Tool? = getLoopKnife(now, wantThrow)
         if not knife then
             setKnifeStatus("Waiting for knife")
-            destroyTracerVisuals()
+            hideTracerVisuals()
             invalidateAim()
             return
         end
 
-        -- The cached pick is at most 1/15 s old, which only decides WHO gets
-        -- the blade. throwKnife re-solves the aim from the live handle, so the
-        -- direction is always current even when this list is stale.
-        local target, aimPos, originCF = solveAim(knife)
+        -- The cached pick only decides WHO gets the blade. throwKnife
+        -- re-solves the aim from the live handle when it actually fires.
+        local target, aimPos, originCF = solveAim(knife, wantThrow)
         if not aimPos then
             setKnifeStatus(target and "Target blocked · WallCheck" or "No visible target")
-            destroyTracerVisuals()
+            hideTracerVisuals()
             return
         end
         setKnifeStatus("Predicted target")
 
-        if settings.knifeTracer and originCF and aimPos then
-            updateTracerVisual(originCF.Position, aimPos)
+        if settings.knifeTracer and originCF then
+            updateTracerVisual(originCF.Position, tracerGoal(target, aimPos), target, deltaTime)
         else
+            hideTracerVisuals()
             destroyTracerVisuals()
         end
 
@@ -791,8 +982,10 @@ function Module.init(runtime: any): any
         if not enabled then
             uninstallWeaponServiceRedirect()
             setKnifeStatus(nil)
+            hideTracerVisuals()
             destroyTracerVisuals()
             invalidateAim()
+            resetLoopKnife()
             return
         end
 
@@ -859,10 +1052,11 @@ function Module.init(runtime: any): any
         function(value: boolean): ()
             settings.knifeTracer = value == true
             if not settings.knifeTracer then
+                hideTracerVisuals()
                 destroyTracerVisuals()
             end
         end,
-        "Draws a live 3D trajectory tracer from your hand to the predicted knife impact point."
+        "Smooth 3D preview from your hand to the predicted point. The actual throw is re-solved separately; the preview hides when no target passes WallCheck."
     )
 
     activeCleanup = function(): ()
