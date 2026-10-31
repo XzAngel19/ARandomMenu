@@ -1,5 +1,5 @@
 return {
-    stamp = "v165-20261031-native-shaders-simple",
+    stamp = "v166-20261031-shaders-black-module-cleanup",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -5452,18 +5452,9 @@ function Module.init(runtime: any): any
     -- gun worth chasing. Fail closed when the role or round state is not
     -- positively known.
     local function canAutoGetGun(): boolean
-        if type(getPlayerRole) ~= "function"
-            or getPlayerRole(LocalPlayer) ~= "Innocent" then
-            return false
-        end
-        if type(isRoundLifecycleActive) ~= "function"
-            or isRoundLifecycleActive() ~= true then
-            return false
-        end
-        if type(findMM2Map) ~= "function" or not findMM2Map() then
-            return false
-        end
-        return true
+        return getPlayerRole(LocalPlayer) == "Innocent"
+            and isRoundLifecycleActive() == true
+            and findMM2Map() ~= nil
     end
 
     -- Immediate pickup without moving the character: pulse the touch
@@ -5546,20 +5537,16 @@ function Module.init(runtime: any): any
     end
 
     local function moveCharacterTo(character: any, destination: CFrame): ()
-        local root: any = character:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function(): ()
-                root.Anchored = false
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
+        if root and root:IsA("BasePart") then
+            root.Anchored = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        else
+            root = nil
         end
         character:PivotTo(destination)
-        if root then
-            pcall(function(): ()
-                root.CFrame = destination
-            end)
-        end
+        if root then root.CFrame = destination end
     end
 
     local function teleportToMap()
@@ -5572,20 +5559,17 @@ function Module.init(runtime: any): any
         end
 
         local target = nil
-        if spawns and type(spawns.GetChildren) == "function" then
+        if spawns then
             local spawnList = spawns:GetChildren()
             target = spawnList[math.random(1, math.max(1, #spawnList))]
-            if target and not target:IsA("BasePart") and type(target.FindFirstChildWhichIsA) == "function" then
+            if target and not target:IsA("BasePart") then
                 target = target:FindFirstChildWhichIsA("BasePart", true)
             end
         end
-        if (not target or not target:IsA("BasePart"))
-            and spawns
-            and type(spawns.FindFirstChildWhichIsA) == "function" then
+        if (not target or not target:IsA("BasePart")) and spawns then
             target = spawns:FindFirstChildWhichIsA("BasePart", true)
         end
-        if (not target or not target:IsA("BasePart"))
-            and type(map.FindFirstChildWhichIsA) == "function" then
+        if not target or not target:IsA("BasePart") then
             target = map:FindFirstChildWhichIsA("BasePart", true)
         end
         if target and target:IsA("BasePart") then
@@ -5599,7 +5583,7 @@ function Module.init(runtime: any): any
         local lobby = workspace:FindFirstChild("Lobby")
             or workspace:FindFirstChild("MainLobby")
             or workspace:FindFirstChild("RegularLobby")
-        if not lobby and type(workspace.GetChildren) == "function" then
+        if not lobby then
             for _, child in ipairs(workspace:GetChildren()) do
                 local lowerName = string.lower(tostring(child.Name))
                 if string.find(lowerName, "lobby", 1, true) ~= nil
@@ -5615,55 +5599,29 @@ function Module.init(runtime: any): any
             local spawns = lobby:FindFirstChild("Spawns")
                 or lobby:FindFirstChild("Spawns", true)
             if spawns then
-                if type(spawns.FindFirstChildWhichIsA) == "function" then
-                    local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
-                        or spawns:FindFirstChildWhichIsA("BasePart")
-                        or spawns:FindFirstChildWhichIsA("BasePart", true)
-                    if spawn then
-                        return spawn
-                    end
-                end
-                if type(spawns.GetChildren) == "function" then
-                    for _, item in ipairs(spawns:GetChildren()) do
-                        if type(item.IsA) == "function" and item:IsA("BasePart") then
-                            return item
-                        end
-                    end
-                end
+                local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
+                    or spawns:FindFirstChildWhichIsA("BasePart")
+                    or spawns:FindFirstChildWhichIsA("BasePart", true)
+                if spawn then return spawn end
             end
-            if type(lobby.FindFirstChildWhichIsA) == "function" then
-                local directSpawn = lobby:FindFirstChildWhichIsA("SpawnLocation", true)
-                if directSpawn then
-                    return directSpawn
-                end
-            end
+            local directSpawn = lobby:FindFirstChildWhichIsA("SpawnLocation", true)
+            if directSpawn then return directSpawn end
             local votePads = lobby:FindFirstChild("VotePads", true)
                 or lobby:FindFirstChild("VotePad1", true)
-            if votePads and type(votePads.FindFirstChildWhichIsA) == "function" then
+            if votePads then
                 local padPart = votePads:FindFirstChildWhichIsA("BasePart", true)
-                if padPart then
-                    return padPart
-                end
+                if padPart then return padPart end
             end
-            if type(lobby.FindFirstChildWhichIsA) == "function" then
-                local anyPart = lobby:FindFirstChildWhichIsA("BasePart", true)
-                if anyPart then
-                    return anyPart
-                end
-            end
+            local anyPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+            if anyPart then return anyPart end
         end
         local worldSpawns = workspace:FindFirstChild("Spawns")
-        if worldSpawns and type(worldSpawns.FindFirstChildWhichIsA) == "function" then
+        if worldSpawns then
             local spawn = worldSpawns:FindFirstChildWhichIsA("SpawnLocation")
                 or worldSpawns:FindFirstChildWhichIsA("BasePart")
-            if spawn then
-                return spawn
-            end
+            if spawn then return spawn end
         end
-        if type(workspace.FindFirstChildWhichIsA) == "function" then
-            return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-        end
-        return nil
+        return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
     end
 
     local function teleportToLobby()
@@ -7950,10 +7908,7 @@ function Module.init(runtime: any): any
     ---------------------------------------------------------------
 
     local function familyFromWorkspace(): string?
-        local ok: boolean, value: any = pcall(function(): any
-            return workspace:GetAttribute("CurrentEvent")
-        end)
-        local eventName: string = ok and lower(tostring(value or "")) or ""
+        local eventName: string = lower(tostring(workspace:GetAttribute("CurrentEvent") or ""))
         if contains(eventName, "halloween") then
             return "Candy"
         elseif contains(eventName, "christmas") then
@@ -7972,10 +7927,7 @@ function Module.init(runtime: any): any
             IsSummer = "BeachBall",
             IsEaster = "Egg",
         }) do
-            local okAttr: boolean, flag: any = pcall(function(): any
-                return workspace:GetAttribute(attribute)
-            end)
-            if okAttr and flag == true then
+            if workspace:GetAttribute(attribute) == true then
                 return family
             end
         end
@@ -13981,20 +13933,11 @@ function Module.init(runtime: any): any
     end
 
     local function attribute(object: Instance, name: string): any
-        local ok: boolean, value: any = pcall(function(): any
-            return object:GetAttribute(name)
-        end)
-        if ok then
-            return value
-        end
-        return nil
+        return object:GetAttribute(name)
     end
 
     local function hasTag(object: Instance): boolean
-        local ok: boolean, tagged: boolean = pcall(function(): boolean
-            return collectionService:HasTag(object, COIN_TAG)
-        end)
-        return ok and tagged == true
+        return collectionService:HasTag(object, COIN_TAG)
     end
 
     -- The visible half of a pickup. A server part resolves to its
@@ -14011,28 +13954,15 @@ function Module.init(runtime: any): any
         return part
     end
 
-    -- Filters that are safe to fail open: if an engine call errors, the
-    -- signature that found the part is trusted instead of dropping it.
+    -- The volatile Collected/Delete flags are checked by passesFiltersCached;
+    -- this static half rejects anything outside the map or inside a character.
     local function passesFilters(part: Instance): boolean
-        if not part:IsA("BasePart") then
+        if not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then
             return false
         end
-        if attribute(part, "Collected") == true or attribute(part, "Delete") == true then
-            return false
-        end
-        local okDesc: boolean, inside: boolean = pcall(function(): boolean
-            return part:IsDescendantOf(workspace)
-        end)
-        if okDesc and not inside then
-            return false
-        end
-        -- A character is never a pickup, whatever it carries.
         local current: Instance? = part.Parent
         while current and current ~= workspace do
-            local okHum: boolean, humanoid: Instance? = pcall(function(): Instance?
-                return current:FindFirstChildOfClass("Humanoid")
-            end)
-            if okHum and humanoid then
+            if current:FindFirstChildOfClass("Humanoid") then
                 return false
             end
             current = current.Parent
@@ -14083,13 +14013,8 @@ function Module.init(runtime: any): any
             return cached
         end
         local names: {string} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return part:GetDescendants()
-        end)
-        if ok and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                table.insert(names, object.Name)
-            end
+        for _, object: Instance in ipairs(part:GetDescendants()) do
+            table.insert(names, object.Name)
         end
         local haystack: string = lower(table.concat(names, " "))
         -- A round pays a single kind of pickup, and event pickups are
@@ -14169,33 +14094,21 @@ function Module.init(runtime: any): any
         end
 
         -- Signature 1: the game's own tag list.
-        local okTagged: boolean, tagged: any = pcall(function(): any
-            return collectionService:GetTagged(COIN_TAG)
-        end)
-        if okTagged and type(tagged) == "table" then
-            lastRaw.tagged = #tagged
-            for _, object: Instance in ipairs(tagged) do
-                if object:IsA("BasePart") then
-                    consider(object)
-                end
-            end
+        local tagged: {Instance} = collectionService:GetTagged(COIN_TAG)
+        lastRaw.tagged = #tagged
+        for _, object: Instance in ipairs(tagged) do
+            if object:IsA("BasePart") then consider(object) end
         end
 
-        -- Signatures 2 and 3: the CoinID attribute and the exact spawn
-        -- part names, from one workspace scan.
-        local okScan: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
-        end)
-        if okScan and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                if object:IsA("BasePart") then
-                    if attribute(object, "CoinID") ~= nil then
-                        lastRaw.coinId += 1
-                        consider(object)
-                    elseif object.Name == VISUAL_NAME or object.Name == SERVER_NAME then
-                        lastRaw.named += 1
-                        consider(object)
-                    end
+        -- Signatures 2 and 3: CoinID and exact spawn names from one scan.
+        for _, object: Instance in ipairs(workspace:GetDescendants()) do
+            if object:IsA("BasePart") then
+                if attribute(object, "CoinID") ~= nil then
+                    lastRaw.coinId += 1
+                    consider(object)
+                elseif object.Name == VISUAL_NAME or object.Name == SERVER_NAME then
+                    lastRaw.named += 1
+                    consider(object)
                 end
             end
         end
@@ -14271,7 +14184,6 @@ function Module.init(runtime: any): any
             return
         end
 
-        local marked: {[Instance]: boolean} = {}
         local elapsed: number = 0
         local lastStatus: string? = nil
         local dirty: boolean = true
@@ -14293,22 +14205,12 @@ function Module.init(runtime: any): any
         -- part. The box takes THIS part's exact size, so the marker is
         -- as small as the candy on screen -- never the big invisible
         -- Coin_Server touch volume.
-        local function visualOf(part: Instance): Instance
-            local ok: boolean, found: any = pcall(function(): any
-                local main: Instance? = part:FindFirstChild("MainCoin", true)
-                if main and main:IsA("BasePart") then
-                    return main
-                end
-                local visual: Instance? = part:FindFirstChild("CoinVisual", true)
-                if visual and visual:IsA("BasePart") then
-                    return visual
-                end
-                return part
-            end)
-            if ok and found then
-                return found
-            end
-            return part
+        local function visualOf(part: Instance): BasePart
+            local main: Instance? = part:FindFirstChild("MainCoin", true)
+            if main and main:IsA("BasePart") then return main :: BasePart end
+            local visual: Instance? = part:FindFirstChild("CoinVisual", true)
+            if visual and visual:IsA("BasePart") then return visual :: BasePart end
+            return part :: BasePart
         end
 
         -- One small adornment per visible pickup. Creation happens
@@ -14325,28 +14227,17 @@ function Module.init(runtime: any): any
 
         -- Creates the box for one pickup. Called only when the pickups change.
         local function makeTag(part: Instance): any
-            local okMake: boolean, created: any = pcall(function(): any
-                local visual: Instance = visualOf(part)
-                local box: Instance = Instance.new("BoxHandleAdornment")
-                box.Name = "WurstCoinBox"
-                box.AlwaysOnTop = true
-                box.ZIndex = 5
-                box.Adornee = visual
-                box.Color3 = mm2Settings.coinColor
-                box.Transparency = markerTransparency()
-                local okSize: boolean, visualSize: any = pcall(function(): any
-                    return (visual :: any).Size
-                end)
-                if okSize and visualSize then
-                    box.Size = visualSize * 1.3
-                end
-                box.Parent = part
-                return {box = box}
-            end)
-            if okMake and created then
-                return created
-            end
-            return nil
+            local visual: BasePart = visualOf(part)
+            local box: BoxHandleAdornment = Instance.new("BoxHandleAdornment")
+            box.Name = "WurstCoinBox"
+            box.AlwaysOnTop = true
+            box.ZIndex = 5
+            box.Adornee = visual
+            box.Color3 = mm2Settings.coinColor
+            box.Transparency = markerTransparency()
+            box.Size = visual.Size * 1.3
+            box.Parent = part
+            return {box = box}
         end
 
         -- v139: reconciliation runs when the pickup set changes, not every
@@ -14357,11 +14248,8 @@ function Module.init(runtime: any): any
         local function syncTags(): ()
             for part: Instance in pairs(lastFamilies) do
                 if part.Parent and not coinTags[part] then
-                    local created: any = makeTag(part)
-                    if created then
-                        coinTags[part] = created
-                        tagsDirty = true
-                    end
+                    coinTags[part] = makeTag(part)
+                    tagsDirty = true
                 end
             end
             for part: Instance, entry: any in pairs(coinTags) do
@@ -14394,6 +14282,7 @@ function Module.init(runtime: any): any
             for part: Instance, entry: any in pairs(coinTags) do
                 if not part.Parent then
                     coinTags[part] = nil
+                    entry.box:Destroy()
                     tagsDirty = true
                 else
                     pcall(function(): ()
@@ -14439,21 +14328,6 @@ function Module.init(runtime: any): any
                     end
                 end
             end
-            local changed: boolean = false
-            for object: Instance in pairs(visible) do
-                if not marked[object] then
-                    marked[object] = true
-                    changed = true
-                end
-            end
-            for object: Instance in pairs(marked) do
-                if not visible[object] then
-                    marked[object] = nil
-                    changed = true
-                end
-            end
-            -- `changed` no longer drives any drawing: the adornments are
-            -- reconciled here (not per frame) from lastFamilies alone.
             refreshPickupCache(found)
             syncTags()
             local shown: number = 0
@@ -14680,25 +14554,20 @@ function Module.init(runtime: any): any
 
     local function restoreTrapTransparency(): ()
         for part: Instance, orig: number in pairs(savedTrapTransparency) do
-            pcall(function(): ()
-                (part :: BasePart).Transparency = orig
-            end)
+            (part :: BasePart).Transparency = orig
         end
         table.clear(savedTrapTransparency)
     end
 
     local function revealTrapPart(part: Instance): ()
-        pcall(function(): ()
-            if part:IsA("BasePart") then
-                local current: any = (part :: BasePart).Transparency
-                if type(current) == "number" and current >= 0.95 then
-                    if savedTrapTransparency[part] == nil then
-                        savedTrapTransparency[part] = current
-                    end
-                    ;(part :: BasePart).Transparency = 0.35
-                end
+        if not part:IsA("BasePart") then return end
+        local current: number = (part :: BasePart).Transparency
+        if current >= 0.95 then
+            if savedTrapTransparency[part] == nil then
+                savedTrapTransparency[part] = current
             end
-        end)
+            (part :: BasePart).Transparency = 0.35
+        end
     end
 
     local function toggleTrapEsp(enabled: boolean): ()
@@ -14724,13 +14593,9 @@ function Module.init(runtime: any): any
                 end
                 marked[object] = true
                 revealTrapPart(object)
-                pcall(function(): ()
-                    if type((object :: any).GetDescendants) == "function" then
-                        for _, child: Instance in ipairs((object :: any):GetDescendants()) do
-                            revealTrapPart(child)
-                        end
-                    end
-                end)
+                for _, child: Instance in ipairs(object:GetDescendants()) do
+                    revealTrapPart(child)
+                end
                 createMM2Cham(
                     TrapEffects,
                     object,
@@ -14744,8 +14609,8 @@ function Module.init(runtime: any): any
         for _, object in ipairs((map or workspace):GetDescendants()) do
             addTrap(object)
         end
-        if map and type((workspace :: any).GetChildren) == "function" then
-            for _, child: Instance in ipairs((workspace :: any):GetChildren()) do
+        if map then
+            for _, child: Instance in ipairs(workspace:GetChildren()) do
                 addTrap(child)
             end
         end
@@ -28296,12 +28161,14 @@ function Module.init(context: Runtime): any
     
     local jesus
 
-    local function toggleJesus(enabled)
-        if not enabled then
-            return
-        end
-        
-        jesus:Clean(host.RunService.PreSimulation:Connect(function(dt)
+    local function startJesus()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.RespectCanCollide = false
+        params.IgnoreWater = false
+        local filteredCharacter = nil
+
+        jesus:Clean(host.RunService.PreSimulation:Connect(function()
             local character = player.Character
             if not character then return end
             
@@ -28309,14 +28176,11 @@ function Module.init(context: Runtime): any
             local humanoid = character:FindFirstChild("Humanoid")
             if not root or not humanoid or humanoid.Health <= 0 then return end
 
-            -- Raycast down to detect water
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = {character}
-            params.RespectCanCollide = false
-            params.IgnoreWater = false
-
-            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
+            if filteredCharacter ~= character then
+                filteredCharacter = character
+                params.FilterDescendantsInstances = {character}
+            end
+            local rayResult = host.workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
             
             if rayResult and rayResult.Material == Enum.Material.Water then
                 local waterSurface = rayResult.Position.Y
@@ -28355,8 +28219,7 @@ function Module.init(context: Runtime): any
                 jesus:SetStatus(nil)
                 return
             end
-            jesus:Clean(function() end)
-            toggleJesus(true)
+            startJesus()
             jesus:SetStatus(settings.mode)
         end,
     })
@@ -28416,8 +28279,6 @@ function Module.init(context: Runtime): any
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local toggleNoclip: (boolean) -> ()
-    do
     local originalCollision = setmetatable({}, {__mode = "k"})
 
     local function restoreCollision()
@@ -28429,7 +28290,7 @@ function Module.init(context: Runtime): any
         originalCollision = setmetatable({}, {__mode = "k"})
     end
 
-    function toggleNoclip(enabled: boolean): ()
+    local function toggleNoclip(enabled: boolean): ()
         disconnectFeatureConnection("Noclip")
         -- v139: the DescendantAdded watcher must go too, or it keeps forcing
         -- CanCollide=false after the card is switched off.
@@ -28467,20 +28328,13 @@ function Module.init(context: Runtime): any
             end
             sweptCharacter = character
             if addConnection then
-                pcall(function(): ()
-                    addConnection:Disconnect()
-                end)
+                addConnection:Disconnect()
                 addConnection = nil
             end
             for _, descendant in ipairs(character:GetDescendants()) do
                 noClipPart(descendant)
             end
-            local okConnect, connection = pcall(function(): any
-                return character.DescendantAdded:Connect(noClipPart)
-            end)
-            if okConnect then
-                addConnection = connection
-            end
+            addConnection = character.DescendantAdded:Connect(noClipPart)
         end
 
         featureConnections.Noclip = TaskManager:Connect(function(): ()
@@ -28507,15 +28361,12 @@ function Module.init(context: Runtime): any
         featureConnections.NoclipDescendant = {
             Disconnect = function(): ()
                 if addConnection then
-                    pcall(function(): ()
-                        addConnection:Disconnect()
-                    end)
+                    addConnection:Disconnect()
                     addConnection = nil
                 end
                 sweptCharacter = nil
             end,
         }
-    end
     end
 
     local NoclipFeature = createUniversalFeature(
@@ -28529,7 +28380,6 @@ function Module.init(context: Runtime): any
         .. "Original collision states are restored when turned off.")
 
     activeCleanup = function(): ()
-
         toggleNoclip(false)
     end
     Module.Initialized = true
@@ -28538,7 +28388,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -28799,55 +28649,17 @@ local activeCleanup
 function Module.init(context: Runtime): any
     local host, framework = context.host, context.framework
     local player = host.LocalPlayer
-    
-    local terrain = workspace:FindFirstChildWhichIsA("Terrain")
-    local lastpos = nil
-    
+    local terrain = host.workspace:FindFirstChildWhichIsA("Terrain")
+    local lastpos: Region3? = nil
     local swim
 
-    local function toggleSwim(enabled)
-        if not enabled then
-            -- Restore terrain when disabled
-            if terrain and lastpos then
-                pcall(function()
-                    terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
-                end)
-                lastpos = nil
-            end
-            return
+    -- Vape's terrain-water method. This clears Water in the region, including
+    -- any water that was already there before the module was enabled.
+    local function restoreWater()
+        if terrain and lastpos then
+            terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
+            lastpos = nil
         end
-        
-        swim:Clean(host.RunService.PreSimulation:Connect(function(dt)
-            local character = player.Character
-            if not character then return end
-            
-            local root = character:FindFirstChild("HumanoidRootPart")
-            local humanoid = character:FindFirstChild("Humanoid")
-            if not root or not humanoid or humanoid.Health <= 0 then return end
-
-            local moving = humanoid.MoveDirection ~= Vector3.zero
-            local space = host.UserInputService:IsKeyDown(Enum.KeyCode.Space)
-
-            if terrain then
-                local factor = (moving or space) and Vector3.new(6, 6, 6) or Vector3.new(2, 1, 2)
-                local pos = root.Position - Vector3.new(0, 1, 0)
-                local newpos = Region3.new(pos - factor, pos + factor)
-                
-                -- Restore previous position
-                if lastpos then
-                    pcall(function()
-                        terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
-                    end)
-                end
-                
-                -- Create water at new position
-                pcall(function()
-                    terrain:ReplaceMaterial(newpos, 4, Enum.Material.Air, Enum.Material.Water)
-                end)
-                
-                lastpos = newpos
-            end
-        end))
     end
 
     swim = framework.Categories.Exploits:CreateModule({
@@ -28855,35 +28667,41 @@ function Module.init(context: Runtime): any
         Category = "Exploits",
         ConfigKey = "Universal.Swim",
         Order = 3,
-        Tooltip = "Lets you swim midair by converting terrain to water around your character.",
+        Tooltip = "Swim using local terrain water. Moving or turning off clears existing water in the affected region.",
         Function = function(enabled)
             if not enabled then
                 swim:SetStatus(nil)
                 return
             end
-            swim:Clean(function()
-                if terrain and lastpos then
-                    pcall(function()
-                        terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
-                    end)
-                    lastpos = nil
+            swim:Clean(restoreWater)
+            swim:Clean(host.RunService.PreSimulation:Connect(function()
+                local character = player.Character
+                if not character then return end
+                local root = character:FindFirstChild("HumanoidRootPart")
+                local humanoid = character:FindFirstChild("Humanoid")
+                if not root or not humanoid or humanoid.Health <= 0 or not terrain then return end
+
+                local moving = humanoid.MoveDirection ~= Vector3.zero
+                local space = host.UserInputService:IsKeyDown(Enum.KeyCode.Space)
+                local factor = (moving or space) and Vector3.new(6, 6, 6) or Vector3.new(2, 1, 2)
+                local pos = root.Position - Vector3.new(0, 1, 0)
+                local newpos = Region3.new(pos - factor, pos + factor):ExpandToGrid(4)
+                -- Do not rewrite the same voxels every physics frame.
+                if lastpos and lastpos.CFrame.Position == newpos.CFrame.Position and lastpos.Size == newpos.Size then
+                    return
                 end
-            end)
-            toggleSwim(true)
+                restoreWater()
+                terrain:ReplaceMaterial(newpos, 4, Enum.Material.Air, Enum.Material.Water)
+                lastpos = newpos
+            end))
             swim:SetStatus("Active")
         end,
     })
 
     activeCleanup = function()
         if swim.Enabled then swim:Toggle(false) end
-        if terrain and lastpos then
-            pcall(function()
-                terrain:ReplaceMaterial(lastpos, 4, Enum.Material.Water, Enum.Material.Air)
-            end)
-            lastpos = nil
-        end
+        restoreWater()
     end
-    
     Module.Initialized = true
     return swim
 end
@@ -30070,7 +29888,7 @@ function Module.init(context: Runtime): any
     local LocalPlayer: Player = host.LocalPlayer
     local UserInputService: UserInputService = host.UserInputService
     local RunService: RunService = host.RunService
-    local world: Workspace = host.workspace or workspace
+    local world: Workspace = host.workspace
     local create: any = host.create
 
     local platform: Part? = nil
@@ -30086,7 +29904,7 @@ function Module.init(context: Runtime): any
     local VERTICAL_SPEED: number = 22
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
-        local character: Model? = LocalPlayer and LocalPlayer.Character
+        local character: Model? = LocalPlayer.Character
         if not character then
             return nil, nil, nil
         end
@@ -30096,40 +29914,22 @@ function Module.init(context: Runtime): any
     end
 
     local function footOffsetOf(humanoid: Humanoid, root: BasePart): number
-        local hip: number = humanoid.HipHeight or 2
-        if hip <= 0 then
-            hip = 2
-        end
-        local rootHalfY: number = 1
-        pcall(function(): ()
-            rootHalfY = root.Size.Y * 0.5
-        end)
-        return hip + rootHalfY + 0.5
+        local hip: number = humanoid.HipHeight
+        if hip <= 0 then hip = 2 end
+        return hip + root.Size.Y * 0.5 + 0.5
     end
 
     local function destroyPlatform(): ()
-        if platform then
-            pcall(function(): ()
-                platform:Destroy()
-            end)
-            platform = nil
-        end
+        if platform then platform:Destroy(); platform = nil end
     end
 
     local function destroyGui(): ()
-        if gui then
-            pcall(function(): ()
-                gui:Destroy()
-            end)
-            gui = nil
-        end
+        if gui then gui:Destroy(); gui = nil end
     end
 
     local function clearConnections(): ()
         for _, conn: RBXScriptConnection in ipairs(connections) do
-            pcall(function(): ()
-                conn:Disconnect()
-            end)
+            conn:Disconnect()
         end
         table.clear(connections)
         table.clear(held.Up)
@@ -30149,28 +29949,20 @@ function Module.init(context: Runtime): any
         return bucket ~= nil and next(bucket) ~= nil
     end
 
-    local function ensurePlatform(): Part?
-        if platform and platform.Parent then
-            return platform
-        end
-        local ok: boolean, created: any = pcall(function(): any
-            local p: Part = Instance.new("Part")
-            p.Name = "Wurst_AirWalkPlatform"
-            p.Anchored = true
-            p.CanCollide = true
-            p.CanQuery = false
-            p.CanTouch = false
-            p.CastShadow = false
-            p.Size = Vector3.new(16, 1, 16)
-            p.Transparency = 1
-            p.Parent = world
-            return p
-        end)
-        if ok and created then
-            platform = created :: Part
-            return platform
-        end
-        return nil
+    local function ensurePlatform(): Part
+        if platform and platform.Parent then return platform end
+        local p: Part = Instance.new("Part")
+        p.Name = "Wurst_AirWalkPlatform"
+        p.Anchored = true
+        p.CanCollide = true
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Size = Vector3.new(16, 1, 16)
+        p.Transparency = 1
+        p.Parent = world
+        platform = p
+        return p
     end
 
     local airWalk: any
@@ -30195,9 +29987,7 @@ function Module.init(context: Runtime): any
             airWalk:SetStatus("Active")
 
             local function connect(signal: any, callback: any): ()
-                if signal and type(signal.Connect) == "function" then
-                    table.insert(connections, signal:Connect(callback))
-                end
+                table.insert(connections, signal:Connect(callback))
             end
 
             connect(UserInputService.InputBegan, function(event: InputObject, processed: boolean): ()
@@ -30315,61 +30105,34 @@ function Module.init(context: Runtime): any
 
                 local keyUp: boolean = false
                 local keyDown: boolean = false
-                if not UserInputService:GetFocusedTextBox()
-                    and type(UserInputService.IsKeyDown) == "function" then
-                    pcall(function(): ()
-                        keyUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-                        keyDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-                            or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-                    end)
+                if not UserInputService:GetFocusedTextBox() then
+                    keyUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+                    keyDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                        or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
                 end
 
                 local goingUp: boolean = keyUp or isDirectionHeld("Up")
                 local goingDown: boolean = keyDown or isDirectionHeld("Down")
 
-                local part: Part? = ensurePlatform()
-
+                local part: Part = ensurePlatform()
                 if goingDown and not goingUp then
                     airY = currentFootY - VERTICAL_SPEED * stepDt - 1.4
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
+                    local vel: Vector3 = root.AssemblyLinearVelocity
+                    if vel.Y > -VERTICAL_SPEED then
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, -VERTICAL_SPEED, vel.Z)
                     end
-                    pcall(function(): ()
-                        local vel: Vector3 = root.AssemblyLinearVelocity
-                        if vel.Y > -VERTICAL_SPEED then
-                            root.AssemblyLinearVelocity = Vector3.new(vel.X, -VERTICAL_SPEED, vel.Z)
-                        end
-                    end)
                 elseif goingUp and not goingDown then
                     airY = math.max(airY :: number, currentFootY) + VERTICAL_SPEED * stepDt
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
+                    local vel: Vector3 = root.AssemblyLinearVelocity
+                    if vel.Y < VERTICAL_SPEED then
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, VERTICAL_SPEED, vel.Z)
                     end
-                    pcall(function(): ()
-                        local vel: Vector3 = root.AssemblyLinearVelocity
-                        if vel.Y < VERTICAL_SPEED then
-                            root.AssemblyLinearVelocity = Vector3.new(vel.X, VERTICAL_SPEED, vel.Z)
-                        end
-                    end)
                 else
-                    -- Lock to the highest point reached on any jump so each
-                    -- jump leaves the player walking in mid-air at that height.
-                    if currentFootY > (airY :: number) then
-                        airY = currentFootY
-                    end
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
-                    end
+                    -- Lock to the highest point reached on any jump.
+                    if currentFootY > (airY :: number) then airY = currentFootY end
                 end
+                if not part.CanCollide then part.CanCollide = true end
+                part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
             end)
 
             airWalk:Clean(function(): ()
@@ -30397,7 +30160,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -30582,7 +30345,7 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local workspace: any = host.workspace or game:GetService("Workspace")
+    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local addToggleOption: any = host.addToggleOption
@@ -30604,75 +30367,37 @@ function Module.init(context: Runtime): any
     local PLATFORM_NAME: string = "Wurst_AntiVoidPlatform"
     local PLATFORM_SIZE: Vector3 = Vector3.new(14, 1, 14)
 
-    local function characterRoot(): (Model?, Humanoid?, BasePart?)
-        local ok: boolean, character, humanoid, root = pcall(function(): any
-            return host.getCharacterParts()
-        end)
-        if not ok then
-            character, humanoid, root = nil, nil, nil
-        end
-        if not character or not root then
-            return character, humanoid, root
-        end
-        return character, humanoid, root
-    end
-
     local function destroyPlatform(): ()
-        if platform then
-            pcall(function(): ()
-                platform:Destroy()
-            end)
-        end
-        platform = nil
+        if platform then platform:Destroy(); platform = nil end
         platformY = nil
         writtenPosition, writtenVisible = nil, nil
     end
 
     local function destroyHeightFloor(): number
-        local destroyHeight: any = nil
-        pcall(function(): ()
-            destroyHeight = workspace.FallenPartsDestroyHeight
-        end)
-        if type(destroyHeight) ~= "number"
-            or destroyHeight ~= destroyHeight
-            or math.abs(destroyHeight) == math.huge
-            or math.abs(destroyHeight) > 1e6 then
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        -- Fling can temporarily set this to infinity; keep the platform finite.
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
             return -500
         end
         return destroyHeight
     end
 
-    local function createPlatform(): BasePart?
-        local part: any = Instance.new("Part")
-        if not part then
-            return nil
-        end
-        pcall(function(): ()
-            part.Name = PLATFORM_NAME
-            part.Anchored = true
-            part.CanCollide = true
-            -- Client-only: `CanQuery`/`CanTouch` keep the platform out of every
-            -- raycast and touch event, so it never breaks detection or triggers
-            -- in-game traps. Transparency 1 means nobody sees it, including us,
-            -- unless "Show platform" is on.
-            part.CanQuery = false
-            part.CanTouch = false
-            part.CastShadow = false
-            part.Locked = true
-            part.Transparency = if visible then 0.4 else 1
-            part.Size = PLATFORM_SIZE
-            part.TopSurface = Enum.SurfaceType.Smooth
-            part.BottomSurface = Enum.SurfaceType.Smooth
-        end)
-        local ok: boolean = pcall(function(): ()
-            part.Parent = workspace
-        end)
-        if not ok then
-            pcall(function(): ()
-                part:Destroy()
-            end)
-            return nil
-        end
+    local function createPlatform(): BasePart
+        local part: BasePart = Instance.new("Part")
+        part.Name = PLATFORM_NAME
+        part.Anchored = true
+        part.CanCollide = true
+        -- CanQuery=false is ignored by the engine while CanCollide=true;
+        -- CanTouch=false prevents this part from producing touch events.
+        part.CanQuery = false
+        part.CanTouch = false
+        part.CastShadow = false
+        part.Locked = true
+        part.Transparency = if visible then 0.4 else 1
+        part.Size = PLATFORM_SIZE
+        part.TopSurface = Enum.SurfaceType.Smooth
+        part.BottomSurface = Enum.SurfaceType.Smooth
+        part.Parent = workspace
         return part
     end
 
@@ -30683,7 +30408,7 @@ function Module.init(context: Runtime): any
         if not enabled then
             return
         end
-        local _character: Model?, humanoid: Humanoid?, root: BasePart? = characterRoot()
+        local _character: Model?, humanoid: Humanoid?, root: BasePart? = host.getCharacterParts()
         if not root or not root.Parent or (humanoid and humanoid.Health <= 0) then
             destroyPlatform()
             return
@@ -30692,9 +30417,6 @@ function Module.init(context: Runtime): any
             destroyPlatform()
             platform = createPlatform()
             platformY = nil
-            if not platform then
-                return
-            end
         end
 
         local position: Vector3 = root.Position
@@ -30714,11 +30436,8 @@ function Module.init(context: Runtime): any
             return
         end
         writtenPosition, writtenVisible = target, visible
-        pcall(function(): ()
-            platform.Size = PLATFORM_SIZE
-            platform.CFrame = CFrame.new(target)
-            platform.Transparency = if visible then 0.4 else 1
-        end)
+        platform.CFrame = CFrame.new(target)
+        platform.Transparency = if visible then 0.4 else 1
     end
 
     local function toggleAntiVoid(state: boolean): ()
@@ -30759,26 +30478,21 @@ function Module.init(context: Runtime): any
         function(value: boolean): ()
             visible = value == true
             if platform then
-                pcall(function(): ()
-                    platform.Transparency = if visible then 0.4 else 1
-                end)
+                platform.Transparency = if visible then 0.4 else 1
             end
         end,
         "Draw the platform so you can confirm where it is. Only you can see it either way."
     )
     addFeatureTooltip(
         antiVoidFeature,
-        "Creates one anchored part, locally only (the server never knows), a few "
-            .. "studs below the character. It ignores every raycast and touch, so it "
-            .. "cannot trip traps or detection, and it stops descending while you fall "
-            .. "so you land on it instead of falling into the void."
+        "Creates one local anchored part a few studs below the character. "
+            .. "It stops descending while you fall so you can land on it. "
+            .. "Touch events are disabled; its collidable surface may still appear in raycasts."
     )
 
     activeCleanup = function(): ()
         enabled = false
-        if disconnectFeatureConnection then
-            disconnectFeatureConnection("AntiVoid")
-        end
+        disconnectFeatureConnection("AntiVoid")
         destroyPlatform()
     end
     Module.Initialized = true
@@ -30787,7 +30501,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -31856,23 +31570,29 @@ function Module.init(context: Runtime): any
     local workspace: any = host.workspace
     local gravitySettings = {value = 196.2}
     local GravityFeature: any = nil
-    local originalGravity = workspace.Gravity
+    local originalGravity: number? = nil
+
+    local function restoreGravity()
+        if originalGravity ~= nil then
+            workspace.Gravity = originalGravity
+            originalGravity = nil
+        end
+    end
 
     local function toggleGravity(enabled)
         disconnectFeatureConnection("Gravity")
-
         if not enabled then
-            if GravityFeature then
-                GravityFeature:SetStatus(nil)
-            end
-            workspace.Gravity = originalGravity
+            if GravityFeature then GravityFeature:SetStatus(nil) end
+            restoreGravity()
             return
         end
 
         GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
-        originalGravity = workspace.Gravity
+        if originalGravity == nil then originalGravity = workspace.Gravity end
         featureConnections.Gravity = TaskManager:Connect(function()
-            workspace.Gravity = gravitySettings.value
+            if workspace.Gravity ~= gravitySettings.value then
+                workspace.Gravity = gravitySettings.value
+            end
         end, nil, "Gravity")
     end
 
@@ -31892,8 +31612,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("Gravity")
-
-        workspace.Gravity = originalGravity
+        restoreGravity()
     end
     Module.Initialized = true
     return GravityFeature
@@ -31901,7 +31620,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -32880,19 +32599,12 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
 
-    -- Simulate one user input. The old build relied on a single legacy
-    -- call (VirtualUser:CaptureController + ClickButton2 at (0,0)):
-    -- on current clients the capture silently does nothing, so the
-    -- handler ran, "worked", and the idle kick landed anyway. Every
-    -- strategy is tried in order until one reports success, and a
-    -- failure is never mistaken for a success again.
+    -- Try the available executor input methods in order. A successful API
+    -- call alone does not prove that Roblox reset its server idle timer.
     local function pokeAfk(): boolean
-        local camera: any = nil
-        pcall(function(): ()
-            camera = (host.workspace :: any).CurrentCamera
-        end)
+        local camera: Camera? = host.workspace.CurrentCamera
         local centre: Vector2 = Vector2.new(400, 300)
-        if camera and camera.ViewportSize then
+        if camera then
             centre = camera.ViewportSize / 2
         end
 
@@ -32944,15 +32656,11 @@ function Module.init(context: Runtime): any
             return
         end
 
-        -- Reactive: Roblox warns through Idled shortly before the
-        -- 20-minute kick. Answer it.
+        -- Reactive: respond to the local Idled event.
         featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function(): ()
             pokeAfk()
         end)
-        -- Proactive: never let the idle timer get anywhere near the
-        -- kick in the first place. Simulated input every 150 s keeps
-        -- the session "active" even if the Idled event never fires
-        -- (it does not fire while some menus hold focus).
+        -- Also attempt input every 150 seconds if Idled is not raised.
         local elapsed: number = 0
         featureConnections.AntiAFKTimer = host.TaskManager:Connect(
             function(deltaTime: number): ()
@@ -32977,9 +32685,9 @@ function Module.init(context: Runtime): any
             categoryName = "World",
         }
     )
-    addFeatureTooltip(AntiAfkFeature, "Simulates a real input every ~150 seconds and "
-        .. "answers Roblox's idle warning, so the 20-minute idle kick never lands. "
-        .. "Tries VirtualUser first, then VirtualInputManager. Disconnects immediately when disabled.")
+    addFeatureTooltip(AntiAfkFeature, "Attempts input every ~150 seconds and on Idled. "
+        .. "Tries VirtualUser first, then VirtualInputManager; availability depends on the executor. "
+        .. "Disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("AntiAFK")
@@ -32991,7 +32699,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -36048,39 +35756,27 @@ function Module.init(context: Runtime): any
     local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
+    local function updatePrompt(prompt: ProximityPrompt, original: PromptState): ()
+        local distance: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+                and interactionSettings.distance or original.distance
+        local hold: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+                and interactionSettings.instantPrompts and 0 or original.holdDuration
+        if prompt.MaxActivationDistance ~= distance then prompt.MaxActivationDistance = distance end
+        if prompt.HoldDuration ~= hold then prompt.HoldDuration = hold end
+    end
+
+    local function updateDetector(detector: ClickDetector, original: number): ()
+        local distance: number = interactionExtenderEnabled and interactionSettings.clickDetectors
+                and interactionSettings.distance or original
+        if detector.MaxActivationDistance ~= distance then detector.MaxActivationDistance = distance end
+    end
+
     local function refreshInteractionExtender(): ()
         for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-            if not prompt.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            local wantedHold: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
-
-            if prompt.MaxActivationDistance ~= wantedDistance then
-                prompt.MaxActivationDistance = wantedDistance
-            end
-            if prompt.HoldDuration ~= wantedHold then
-                prompt.HoldDuration = wantedHold
-            end
+            if prompt.Parent then updatePrompt(prompt, original) end
         end
-        for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-            if not detector.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalDistance
-            if detector.MaxActivationDistance ~= wantedDistance then
-                detector.MaxActivationDistance = wantedDistance
-            end
+        for detector: ClickDetector, original: number in pairs(originalClickDetectors) do
+            if detector.Parent then updateDetector(detector, original) end
         end
     end
 
@@ -36095,21 +35791,12 @@ function Module.init(context: Runtime): any
                     holdDuration = instance.HoldDuration,
                 }
             end
-            local original: PromptState = originalPrompts[instance]
-            instance.MaxActivationDistance = interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            instance.HoldDuration = interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
+            updatePrompt(instance :: ProximityPrompt, originalPrompts[instance])
         elseif instance:IsA("ClickDetector") then
             if originalClickDetectors[instance] == nil then
                 originalClickDetectors[instance] = instance.MaxActivationDistance
             end
-            instance.MaxActivationDistance = interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalClickDetectors[instance]
+            updateDetector(instance :: ClickDetector, originalClickDetectors[instance])
         end
     end
 
@@ -36134,6 +35821,7 @@ function Module.init(context: Runtime): any
         featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
             applyInteractionExtension
         )
+        local scanConnection = featureConnections.InteractExtender
         featureConnections.InteractExtenderRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 interactionRefreshClock += deltaTime
@@ -36145,9 +35833,7 @@ function Module.init(context: Runtime): any
         , nil, "Interact Extender")
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if not interactionExtenderEnabled then
-                    return
-                end
+                if featureConnections.InteractExtender ~= scanConnection then return end
                 applyInteractionExtension(instance)
                 if index % 240 == 0 then
                     task.wait()
@@ -36220,7 +35906,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -39281,10 +38967,14 @@ function Module.init(context: any): any
         local opts: any = card.Options
         local look: any = LOOK_BY_NAME[opts.Look.Value] or LOOKS[1]
         local tint: Color3 = opts.Tint.Value
+        if look.tint then tint = tint:Lerp(look.tint, look.tintWeight) end
+        -- Saved/typed values can exceed slider ranges. Brightness -1 or a
+        -- black multiplicative tint makes the entire rendered world black.
         color.Saturation = math.clamp(opts.Saturation.Value + look.saturation, -1, 1)
-        color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -1, 1)
-        color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -1, 1)
-        color.TintColor = if look.tint then tint:Lerp(look.tint, look.tintWeight) else tint
+        color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -0.35, 0.25)
+        color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -0.05, 0.3)
+        color.TintColor = Color3.new(math.clamp(tint.R, 0.6, 1),
+            math.clamp(tint.G, 0.6, 1), math.clamp(tint.B, 0.6, 1))
         color.Enabled = true
 
         bloom.Intensity = math.clamp(opts.Bloom.Value + look.bloom, 0, 10)
@@ -39305,12 +38995,25 @@ function Module.init(context: any): any
             return
         end
         local text: string = string.format(
-            "[Shaders] Color: parent=%s enabled=%s; Bloom: parent=%s enabled=%s; Rays: parent=%s enabled=%s",
-            color.Parent and color.Parent.Name or "nil", tostring(color.Enabled),
-            bloom.Parent and bloom.Parent.Name or "nil", tostring(bloom.Enabled),
-            rays.Parent and rays.Parent.Name or "nil", tostring(rays.Enabled)
+            "[Shaders] Look=%s; Color: parent=%s enabled=%s brightness=%.2f contrast=%.2f saturation=%.2f tint=(%.2f,%.2f,%.2f); Bloom: parent=%s enabled=%s intensity=%.2f; Rays: parent=%s enabled=%s intensity=%.2f",
+            card.Options.Look.Value, color.Parent and color.Parent.Name or "nil", tostring(color.Enabled),
+            color.Brightness, color.Contrast, color.Saturation, color.TintColor.R, color.TintColor.G, color.TintColor.B,
+            bloom.Parent and bloom.Parent.Name or "nil", tostring(bloom.Enabled), bloom.Intensity,
+            rays.Parent and rays.Parent.Name or "nil", tostring(rays.Enabled), rays.Intensity
         )
         print(text)
+        local parents = {lighting}
+        local camera: Camera? = context.host.workspace.CurrentCamera
+        if camera then table.insert(parents, camera) end
+        for _, parent in ipairs(parents) do
+            for _, other in ipairs(parent:GetChildren()) do
+                if other ~= color and other:IsA("ColorCorrectionEffect") and other.Enabled then
+                    local tint: Color3 = other.TintColor
+                    print(string.format("[Shaders] Other color: parent=%s name=%s brightness=%.2f contrast=%.2f saturation=%.2f tint=(%.2f,%.2f,%.2f)",
+                        parent.Name, other.Name, other.Brightness, other.Contrast, other.Saturation, tint.R, tint.G, tint.B))
+                end
+            end
+        end
         card:Notify("Color enabled=" .. tostring(color.Enabled) .. " · details printed to console")
     end
 
@@ -39325,12 +39028,18 @@ function Module.init(context: any): any
                 return
             end
             cleanup()
-            -- Registered first so even an interrupted creation is cleaned on OFF.
             card:Clean(cleanup)
-            color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
-            bloom = makeEffect("BloomEffect", "ARMShaderBloom")
-            rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-            apply()
+            local ok, failure = pcall(function()
+                color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
+                bloom = makeEffect("BloomEffect", "ARMShaderBloom")
+                rays = makeEffect("SunRaysEffect", "ARMShaderRays")
+                apply()
+            end)
+            if not ok then
+                -- Config restoration may catch the error without sending OFF.
+                card:Toggle(false)
+                error(failure, 0)
+            end
         end,
     })
 
@@ -39345,10 +39054,10 @@ function Module.init(context: any): any
             Function = apply, Tooltip = tooltip})
     end
     slider("Saturation", -1, 1, 0, "Negative drains colour, positive boosts it.", true)
-    slider("Contrast", -0.5, 0.5, 0, "Separates dark from light.", true)
-    slider("Brightness", -0.3, 0.3, 0, "Brightness of the colour pass.", true)
+    slider("Contrast", -0.35, 0.25, 0, "Separates dark from light; limited to preserve detail.", true)
+    slider("Brightness", -0.05, 0.3, 0, "Applied brightness is limited to avoid a black screen.", true)
     card:CreateColor({Name = "Tint", Default = Color3.fromRGB(255, 255, 255),
-        Function = apply, Tooltip = "Colour cast blended with the selected look."})
+        Function = apply, Tooltip = "Colour cast blended with the look; very dark colours are lightened."})
     slider("Bloom", 0, 2, 0.6, "Glow around bright surfaces; zero disables it.", true)
     slider("Bloom threshold", 0, 3, 1.1, "Brightness needed for glow.", true)
     slider("Bloom size", 0, 56, 24, "Spread of the glow.", false)

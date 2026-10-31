@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v165-20261031-native-shaders-simple`**, con árbol base de
+> **`v166-20261031-shaders-black-module-cleanup`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,41 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v165: 91 fuentes,
-     84 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v166: 91 fuentes,
+     91 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v166 — Shaders negros y más módulos simplificados (2026-10-31)
+
+Detalle, fuentes, tests y límites: `docs/FIXES-v166.md`.
+
+- El usuario reportó modos que vuelven la pantalla negra; causa específica aún
+  desconocida. Una vía reproducida en mocks era el brillo guardado/escrito
+  fuera de rango, que v165 podía aplicar como `-1`, o un tinte negro. Se limitan
+  los valores aplicados de brillo `[-0.05, 0.3]`, contraste `[-0.35, 0.25]` y
+  canales Tint `[0.6, 1]`, sin sobrescribir config; se preservan ocho Looks.
+  Fallos al encender limpian efectos y apagan el módulo inmediatamente.
+  Diagnose muestra propiedades y efectos ColorCorrection ajenos en Lighting y
+  CurrentCamera, sin modificarlos. No garantiza imagen ni evita que el juego,
+  efectos ajenos o la GPU oscurezcan la pantalla: pedir Look, ajustes, captura
+  y salida de Diagnose si persiste. No se probó en Roblox/Delta.
+- Continuó la revisión de Noclip, AntiVoid, AirWalk, Swim, Jesus, Gravity,
+  AntiAfk, InteractExtender y MM2 RoundEsp, CoinEsp, AutoUnbox y Teleport. No
+  se ha auditado todo `src/games` ni son copias literales de Vape/YARHM.
+  AntiVoid colidable puede aparecer en raycasts; AntiAfk no garantiza que el
+  servidor reinicie el timer. Teleport Get Gun conserva touch sin desplazamiento.
+- Swim usa el `ExpandToGrid(4)` original y evita escrituras repetidas de voxels
+  en la misma región. **Como Vape, al moverse o apagar puede borrar agua natural
+  local** dentro de la región anterior; tooltip y documentación lo advierten.
+  No hay prueba de física o replicación de terreno. Jesus reutiliza parámetros
+  de raycast, Gravity ya no restaura un valor viejo sin activar y el escaneo de
+  InteractExtender se cancela al cambiar de sesión.
+- Bundle 89 archivos; 91 fuentes y 91 suites, auditoría, boot `failures=0`, 93
+  llamadas API y menú 50/49: PASS en entorno simulado. Sin evidencia real sobre
+  imagen, FPS, Delta, AntiAfk, servidor o replicación de terreno.
 
 ## v165 — Shaders nativos y primer pase de simplificación (2026-10-31)
 

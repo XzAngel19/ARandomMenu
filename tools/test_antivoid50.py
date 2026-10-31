@@ -2,7 +2,8 @@
 """Execute the real Anti Void (invisible platform) and Anti Fling modules.
 
 Anti Void: one local anchored part, `Distance` studs under the character, kept in
-place while falling so the fall lands on it, ignoring every raycast and touch.
+place while falling so the fall lands on it. CanTouch is false; in Roblox a
+collidable part can still be included in spatial queries despite CanQuery=false.
 Anti Fling: every frame removes fling-sized planar speed, rise, fall and spin
 while keeping the player's own input, and never fights our own flings.
 """
@@ -96,6 +97,7 @@ SCRIPT = PRELUDE + "\nlocal AntiVoid = (function()\n" + ANTIVOID + "\nend)()\n" 
 -- Anti Void: the invisible platform -----------------------------------------
 options = {}
 AntiVoid.init(context)
+assert(#objects == 0 and not tick, "injection with Anti Void OFF creates no platform or task")
 assert(feature.name == "Anti Void", "the card is Anti Void")
 assert(feature.configuration.categoryName == "Utilities", "Anti Void lives in Utilities")
 assert(feature.options["Anti fling"] == nil, "Anti Fling is not a sub-option any more")
@@ -112,7 +114,7 @@ end
 assert(platform ~= nil, "the platform must exist after enabling")
 assert(platform.Anchored == true, "the platform is anchored")
 assert(platform.CanCollide == true, "the platform stops the fall")
-assert(platform.CanQuery == false and platform.CanTouch == false, "it never enters raycasts or touches")
+assert(platform.CanQuery == false and platform.CanTouch == false, "the requested query/touch flags are set")
 assert(platform.Transparency == 1, "it is invisible by default")
 near(platform.CFrame.Position.X, 0)
 near(platform.CFrame.Position.Y, 96)     -- 100 - 4
@@ -148,8 +150,17 @@ world.FallenPartsDestroyHeight = -100
 rootProps.Position = Vector3.new(0, -40, 0)
 tick(0.016)
 assert(platform.CFrame.Position.Y >= -92, "the platform stops above the void layer")
+world.FallenPartsDestroyHeight = -math.huge
+rootProps.Position = Vector3.new(0, -600, 0)
+tick(0.016)
+assert(platform.CFrame.Position.Y >= -492, "infinite destroy height uses the finite fallback")
+world.FallenPartsDestroyHeight = 0 / 0
+tick(0.016)
+assert(platform.CFrame.Position.Y >= -492, "NaN destroy height uses the finite fallback")
 world.FallenPartsDestroyHeight = -500
-pass("the platform is clamped above the destroy layer")
+rootProps.Position = Vector3.new(0, 100, 0)
+tick(0.016)
+pass("the platform is clamped above the destroy layer, including non-finite heights")
 
 -- Show platform only changes transparency.
 options["Show platform"](true)
@@ -159,6 +170,17 @@ options["Show platform"](false)
 tick(0.016)
 near(platform.Transparency, 1)
 pass("Show platform is cosmetic only")
+
+humanoid.Health = 0
+tick(0.016)
+assert(platform.destroyed, "death removes the old platform")
+humanoid.Health = 100
+tick(0.016)
+for _, object in ipairs(objects) do
+    if object.Name == "Wurst_AntiVoidPlatform" and not object.destroyed then platform = object end
+end
+assert(platform and not platform.destroyed and platform.CanCollide, "respawn recreates the platform")
+pass("death and respawn rebuild the platform")
 
 feature.toggle(false)
 assert(platform.destroyed == true, "disabling destroys the platform")

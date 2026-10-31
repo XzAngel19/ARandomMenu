@@ -9,9 +9,12 @@ SOURCE=(ROOT/'src/games/MM2/Render/RoundEsp.lua').read_text()
 script=r'''
 local gunMarks,trapMarks={},{}
 local gun={Parent=true}
-local trap={Name='TrapVisual',IsA=function(_,c) return c=='Model' end}
+local hiddenPart={Name='Handle',Transparency=1,IsA=function(_,c) return c=='BasePart' end}
+local trap={Name='TrapVisual',IsA=function(_,c) return c=='Model' end,
+ GetDescendants=function() return {hiddenPart} end}
 local added
-local workspace={DescendantAdded={Connect=function(_,fn) added=fn;return {Disconnect=function() added=nil end} end}}
+local workspace={DescendantAdded={Connect=function(_,fn) added=fn;return {Disconnect=function() added=nil end} end},
+ GetChildren=function() return {} end}
 local loops={}
 local featureConnections={}
 local function disconnectFeatureConnection(key)
@@ -37,12 +40,15 @@ providers['Gun ESP'].setEnabled(true);loops.gun(.4);assert(#gunMarks==1 and gunM
 loops.gun(.4);assert(#gunMarks==1,'same gun is not rebuilt every scan')
 gun=nil;loops.gun(.4);assert(#gunMarks==0,'pickup removes dropped-gun marker')
 providers['Trap ESP'].setEnabled(true);assert(#trapMarks==1 and added)
+assert(hiddenPart.Transparency==0.35, 'invisible trap descendants are revealed')
 added(trap);assert(#trapMarks==1,'existing traps deduplicated')
-local nextTrap={Name='Trap',IsA=function(_,c) return c=='BasePart' end}
-added(nextTrap);assert(#trapMarks==2)
+local nextTrap={Name='Trap',Transparency=1,IsA=function(_,c) return c=='BasePart' end,
+ GetDescendants=function() return {} end}
+added(nextTrap);assert(#trapMarks==2 and nextTrap.Transparency==0.35)
 providers['Gun ESP'].setEnabled(false);assert(not loops.gun and #gunMarks==0)
 Module.destroy();assert(not added and not next(providers) and #trapMarks==0)
-print('PASS MM2 ItemESP: provider registration, dropped gun/pickup, existing/new traps, dedup, independent OFF, unregister/unload')
+assert(hiddenPart.Transparency==1 and nextTrap.Transparency==1, 'unload restores invisible traps')
+print('PASS MM2 ItemESP: provider registration, dropped gun/pickup, existing/new traps, reveal/restore, dedup, independent OFF, unregister/unload')
 '''
 with tempfile.TemporaryDirectory(prefix='item-providers-') as tmp:
     path=Path(tmp)/'test.luau';path.write_text(script)

@@ -20,7 +20,7 @@ function Module.init(context: Runtime): any
     local LocalPlayer: Player = host.LocalPlayer
     local UserInputService: UserInputService = host.UserInputService
     local RunService: RunService = host.RunService
-    local world: Workspace = host.workspace or workspace
+    local world: Workspace = host.workspace
     local create: any = host.create
 
     local platform: Part? = nil
@@ -36,7 +36,7 @@ function Module.init(context: Runtime): any
     local VERTICAL_SPEED: number = 22
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
-        local character: Model? = LocalPlayer and LocalPlayer.Character
+        local character: Model? = LocalPlayer.Character
         if not character then
             return nil, nil, nil
         end
@@ -46,40 +46,22 @@ function Module.init(context: Runtime): any
     end
 
     local function footOffsetOf(humanoid: Humanoid, root: BasePart): number
-        local hip: number = humanoid.HipHeight or 2
-        if hip <= 0 then
-            hip = 2
-        end
-        local rootHalfY: number = 1
-        pcall(function(): ()
-            rootHalfY = root.Size.Y * 0.5
-        end)
-        return hip + rootHalfY + 0.5
+        local hip: number = humanoid.HipHeight
+        if hip <= 0 then hip = 2 end
+        return hip + root.Size.Y * 0.5 + 0.5
     end
 
     local function destroyPlatform(): ()
-        if platform then
-            pcall(function(): ()
-                platform:Destroy()
-            end)
-            platform = nil
-        end
+        if platform then platform:Destroy(); platform = nil end
     end
 
     local function destroyGui(): ()
-        if gui then
-            pcall(function(): ()
-                gui:Destroy()
-            end)
-            gui = nil
-        end
+        if gui then gui:Destroy(); gui = nil end
     end
 
     local function clearConnections(): ()
         for _, conn: RBXScriptConnection in ipairs(connections) do
-            pcall(function(): ()
-                conn:Disconnect()
-            end)
+            conn:Disconnect()
         end
         table.clear(connections)
         table.clear(held.Up)
@@ -99,28 +81,20 @@ function Module.init(context: Runtime): any
         return bucket ~= nil and next(bucket) ~= nil
     end
 
-    local function ensurePlatform(): Part?
-        if platform and platform.Parent then
-            return platform
-        end
-        local ok: boolean, created: any = pcall(function(): any
-            local p: Part = Instance.new("Part")
-            p.Name = "Wurst_AirWalkPlatform"
-            p.Anchored = true
-            p.CanCollide = true
-            p.CanQuery = false
-            p.CanTouch = false
-            p.CastShadow = false
-            p.Size = Vector3.new(16, 1, 16)
-            p.Transparency = 1
-            p.Parent = world
-            return p
-        end)
-        if ok and created then
-            platform = created :: Part
-            return platform
-        end
-        return nil
+    local function ensurePlatform(): Part
+        if platform and platform.Parent then return platform end
+        local p: Part = Instance.new("Part")
+        p.Name = "Wurst_AirWalkPlatform"
+        p.Anchored = true
+        p.CanCollide = true
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Size = Vector3.new(16, 1, 16)
+        p.Transparency = 1
+        p.Parent = world
+        platform = p
+        return p
     end
 
     local airWalk: any
@@ -145,9 +119,7 @@ function Module.init(context: Runtime): any
             airWalk:SetStatus("Active")
 
             local function connect(signal: any, callback: any): ()
-                if signal and type(signal.Connect) == "function" then
-                    table.insert(connections, signal:Connect(callback))
-                end
+                table.insert(connections, signal:Connect(callback))
             end
 
             connect(UserInputService.InputBegan, function(event: InputObject, processed: boolean): ()
@@ -265,61 +237,34 @@ function Module.init(context: Runtime): any
 
                 local keyUp: boolean = false
                 local keyDown: boolean = false
-                if not UserInputService:GetFocusedTextBox()
-                    and type(UserInputService.IsKeyDown) == "function" then
-                    pcall(function(): ()
-                        keyUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-                        keyDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
-                            or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
-                    end)
+                if not UserInputService:GetFocusedTextBox() then
+                    keyUp = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+                    keyDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                        or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
                 end
 
                 local goingUp: boolean = keyUp or isDirectionHeld("Up")
                 local goingDown: boolean = keyDown or isDirectionHeld("Down")
 
-                local part: Part? = ensurePlatform()
-
+                local part: Part = ensurePlatform()
                 if goingDown and not goingUp then
                     airY = currentFootY - VERTICAL_SPEED * stepDt - 1.4
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
+                    local vel: Vector3 = root.AssemblyLinearVelocity
+                    if vel.Y > -VERTICAL_SPEED then
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, -VERTICAL_SPEED, vel.Z)
                     end
-                    pcall(function(): ()
-                        local vel: Vector3 = root.AssemblyLinearVelocity
-                        if vel.Y > -VERTICAL_SPEED then
-                            root.AssemblyLinearVelocity = Vector3.new(vel.X, -VERTICAL_SPEED, vel.Z)
-                        end
-                    end)
                 elseif goingUp and not goingDown then
                     airY = math.max(airY :: number, currentFootY) + VERTICAL_SPEED * stepDt
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
+                    local vel: Vector3 = root.AssemblyLinearVelocity
+                    if vel.Y < VERTICAL_SPEED then
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, VERTICAL_SPEED, vel.Z)
                     end
-                    pcall(function(): ()
-                        local vel: Vector3 = root.AssemblyLinearVelocity
-                        if vel.Y < VERTICAL_SPEED then
-                            root.AssemblyLinearVelocity = Vector3.new(vel.X, VERTICAL_SPEED, vel.Z)
-                        end
-                    end)
                 else
-                    -- Lock to the highest point reached on any jump so each
-                    -- jump leaves the player walking in mid-air at that height.
-                    if currentFootY > (airY :: number) then
-                        airY = currentFootY
-                    end
-                    if part then
-                        pcall(function(): ()
-                            part.CanCollide = true
-                            part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
-                        end)
-                    end
+                    -- Lock to the highest point reached on any jump.
+                    if currentFootY > (airY :: number) then airY = currentFootY end
                 end
+                if not part.CanCollide then part.CanCollide = true end
+                part.CFrame = CFrame.new(root.Position.X, airY :: number, root.Position.Z)
             end)
 
             airWalk:Clean(function(): ()
@@ -347,7 +292,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

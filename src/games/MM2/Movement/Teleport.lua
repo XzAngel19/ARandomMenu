@@ -26,18 +26,9 @@ function Module.init(runtime: any): any
     -- gun worth chasing. Fail closed when the role or round state is not
     -- positively known.
     local function canAutoGetGun(): boolean
-        if type(getPlayerRole) ~= "function"
-            or getPlayerRole(LocalPlayer) ~= "Innocent" then
-            return false
-        end
-        if type(isRoundLifecycleActive) ~= "function"
-            or isRoundLifecycleActive() ~= true then
-            return false
-        end
-        if type(findMM2Map) ~= "function" or not findMM2Map() then
-            return false
-        end
-        return true
+        return getPlayerRole(LocalPlayer) == "Innocent"
+            and isRoundLifecycleActive() == true
+            and findMM2Map() ~= nil
     end
 
     -- Immediate pickup without moving the character: pulse the touch
@@ -120,20 +111,16 @@ function Module.init(runtime: any): any
     end
 
     local function moveCharacterTo(character: any, destination: CFrame): ()
-        local root: any = character:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function(): ()
-                root.Anchored = false
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
-            end)
+        local root: BasePart? = character:FindFirstChild("HumanoidRootPart")
+        if root and root:IsA("BasePart") then
+            root.Anchored = false
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+        else
+            root = nil
         end
         character:PivotTo(destination)
-        if root then
-            pcall(function(): ()
-                root.CFrame = destination
-            end)
-        end
+        if root then root.CFrame = destination end
     end
 
     local function teleportToMap()
@@ -146,20 +133,17 @@ function Module.init(runtime: any): any
         end
 
         local target = nil
-        if spawns and type(spawns.GetChildren) == "function" then
+        if spawns then
             local spawnList = spawns:GetChildren()
             target = spawnList[math.random(1, math.max(1, #spawnList))]
-            if target and not target:IsA("BasePart") and type(target.FindFirstChildWhichIsA) == "function" then
+            if target and not target:IsA("BasePart") then
                 target = target:FindFirstChildWhichIsA("BasePart", true)
             end
         end
-        if (not target or not target:IsA("BasePart"))
-            and spawns
-            and type(spawns.FindFirstChildWhichIsA) == "function" then
+        if (not target or not target:IsA("BasePart")) and spawns then
             target = spawns:FindFirstChildWhichIsA("BasePart", true)
         end
-        if (not target or not target:IsA("BasePart"))
-            and type(map.FindFirstChildWhichIsA) == "function" then
+        if not target or not target:IsA("BasePart") then
             target = map:FindFirstChildWhichIsA("BasePart", true)
         end
         if target and target:IsA("BasePart") then
@@ -173,7 +157,7 @@ function Module.init(runtime: any): any
         local lobby = workspace:FindFirstChild("Lobby")
             or workspace:FindFirstChild("MainLobby")
             or workspace:FindFirstChild("RegularLobby")
-        if not lobby and type(workspace.GetChildren) == "function" then
+        if not lobby then
             for _, child in ipairs(workspace:GetChildren()) do
                 local lowerName = string.lower(tostring(child.Name))
                 if string.find(lowerName, "lobby", 1, true) ~= nil
@@ -189,55 +173,29 @@ function Module.init(runtime: any): any
             local spawns = lobby:FindFirstChild("Spawns")
                 or lobby:FindFirstChild("Spawns", true)
             if spawns then
-                if type(spawns.FindFirstChildWhichIsA) == "function" then
-                    local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
-                        or spawns:FindFirstChildWhichIsA("BasePart")
-                        or spawns:FindFirstChildWhichIsA("BasePart", true)
-                    if spawn then
-                        return spawn
-                    end
-                end
-                if type(spawns.GetChildren) == "function" then
-                    for _, item in ipairs(spawns:GetChildren()) do
-                        if type(item.IsA) == "function" and item:IsA("BasePart") then
-                            return item
-                        end
-                    end
-                end
+                local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
+                    or spawns:FindFirstChildWhichIsA("BasePart")
+                    or spawns:FindFirstChildWhichIsA("BasePart", true)
+                if spawn then return spawn end
             end
-            if type(lobby.FindFirstChildWhichIsA) == "function" then
-                local directSpawn = lobby:FindFirstChildWhichIsA("SpawnLocation", true)
-                if directSpawn then
-                    return directSpawn
-                end
-            end
+            local directSpawn = lobby:FindFirstChildWhichIsA("SpawnLocation", true)
+            if directSpawn then return directSpawn end
             local votePads = lobby:FindFirstChild("VotePads", true)
                 or lobby:FindFirstChild("VotePad1", true)
-            if votePads and type(votePads.FindFirstChildWhichIsA) == "function" then
+            if votePads then
                 local padPart = votePads:FindFirstChildWhichIsA("BasePart", true)
-                if padPart then
-                    return padPart
-                end
+                if padPart then return padPart end
             end
-            if type(lobby.FindFirstChildWhichIsA) == "function" then
-                local anyPart = lobby:FindFirstChildWhichIsA("BasePart", true)
-                if anyPart then
-                    return anyPart
-                end
-            end
+            local anyPart = lobby:FindFirstChildWhichIsA("BasePart", true)
+            if anyPart then return anyPart end
         end
         local worldSpawns = workspace:FindFirstChild("Spawns")
-        if worldSpawns and type(worldSpawns.FindFirstChildWhichIsA) == "function" then
+        if worldSpawns then
             local spawn = worldSpawns:FindFirstChildWhichIsA("SpawnLocation")
                 or worldSpawns:FindFirstChildWhichIsA("BasePart")
-            if spawn then
-                return spawn
-            end
+            if spawn then return spawn end
         end
-        if type(workspace.FindFirstChildWhichIsA) == "function" then
-            return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
-        end
-        return nil
+        return workspace:FindFirstChildWhichIsA("SpawnLocation", true)
     end
 
     local function teleportToLobby()

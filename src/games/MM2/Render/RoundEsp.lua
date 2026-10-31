@@ -62,25 +62,20 @@ function Module.init(runtime: any): any
 
     local function restoreTrapTransparency(): ()
         for part: Instance, orig: number in pairs(savedTrapTransparency) do
-            pcall(function(): ()
-                (part :: BasePart).Transparency = orig
-            end)
+            (part :: BasePart).Transparency = orig
         end
         table.clear(savedTrapTransparency)
     end
 
     local function revealTrapPart(part: Instance): ()
-        pcall(function(): ()
-            if part:IsA("BasePart") then
-                local current: any = (part :: BasePart).Transparency
-                if type(current) == "number" and current >= 0.95 then
-                    if savedTrapTransparency[part] == nil then
-                        savedTrapTransparency[part] = current
-                    end
-                    ;(part :: BasePart).Transparency = 0.35
-                end
+        if not part:IsA("BasePart") then return end
+        local current: number = (part :: BasePart).Transparency
+        if current >= 0.95 then
+            if savedTrapTransparency[part] == nil then
+                savedTrapTransparency[part] = current
             end
-        end)
+            (part :: BasePart).Transparency = 0.35
+        end
     end
 
     local function toggleTrapEsp(enabled: boolean): ()
@@ -106,13 +101,9 @@ function Module.init(runtime: any): any
                 end
                 marked[object] = true
                 revealTrapPart(object)
-                pcall(function(): ()
-                    if type((object :: any).GetDescendants) == "function" then
-                        for _, child: Instance in ipairs((object :: any):GetDescendants()) do
-                            revealTrapPart(child)
-                        end
-                    end
-                end)
+                for _, child: Instance in ipairs(object:GetDescendants()) do
+                    revealTrapPart(child)
+                end
                 createMM2Cham(
                     TrapEffects,
                     object,
@@ -126,8 +117,8 @@ function Module.init(runtime: any): any
         for _, object in ipairs((map or workspace):GetDescendants()) do
             addTrap(object)
         end
-        if map and type((workspace :: any).GetChildren) == "function" then
-            for _, child: Instance in ipairs((workspace :: any):GetChildren()) do
+        if map then
+            for _, child: Instance in ipairs(workspace:GetChildren()) do
                 addTrap(child)
             end
         end

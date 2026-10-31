@@ -310,10 +310,7 @@ function Module.init(runtime: any): any
     ---------------------------------------------------------------
 
     local function familyFromWorkspace(): string?
-        local ok: boolean, value: any = pcall(function(): any
-            return workspace:GetAttribute("CurrentEvent")
-        end)
-        local eventName: string = ok and lower(tostring(value or "")) or ""
+        local eventName: string = lower(tostring(workspace:GetAttribute("CurrentEvent") or ""))
         if contains(eventName, "halloween") then
             return "Candy"
         elseif contains(eventName, "christmas") then
@@ -332,10 +329,7 @@ function Module.init(runtime: any): any
             IsSummer = "BeachBall",
             IsEaster = "Egg",
         }) do
-            local okAttr: boolean, flag: any = pcall(function(): any
-                return workspace:GetAttribute(attribute)
-            end)
-            if okAttr and flag == true then
+            if workspace:GetAttribute(attribute) == true then
                 return family
             end
         end

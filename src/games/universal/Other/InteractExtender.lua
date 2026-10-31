@@ -42,39 +42,27 @@ function Module.init(context: Runtime): any
     local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
+    local function updatePrompt(prompt: ProximityPrompt, original: PromptState): ()
+        local distance: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+                and interactionSettings.distance or original.distance
+        local hold: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+                and interactionSettings.instantPrompts and 0 or original.holdDuration
+        if prompt.MaxActivationDistance ~= distance then prompt.MaxActivationDistance = distance end
+        if prompt.HoldDuration ~= hold then prompt.HoldDuration = hold end
+    end
+
+    local function updateDetector(detector: ClickDetector, original: number): ()
+        local distance: number = interactionExtenderEnabled and interactionSettings.clickDetectors
+                and interactionSettings.distance or original
+        if detector.MaxActivationDistance ~= distance then detector.MaxActivationDistance = distance end
+    end
+
     local function refreshInteractionExtender(): ()
         for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
-            if not prompt.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            local wantedHold: number = interactionExtenderEnabled
-                    and interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
-
-            if prompt.MaxActivationDistance ~= wantedDistance then
-                prompt.MaxActivationDistance = wantedDistance
-            end
-            if prompt.HoldDuration ~= wantedHold then
-                prompt.HoldDuration = wantedHold
-            end
+            if prompt.Parent then updatePrompt(prompt, original) end
         end
-        for detector: ClickDetector, originalDistance: number in pairs(originalClickDetectors) do
-            if not detector.Parent then
-                continue
-            end
-            local wantedDistance: number = interactionExtenderEnabled
-                    and interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalDistance
-            if detector.MaxActivationDistance ~= wantedDistance then
-                detector.MaxActivationDistance = wantedDistance
-            end
+        for detector: ClickDetector, original: number in pairs(originalClickDetectors) do
+            if detector.Parent then updateDetector(detector, original) end
         end
     end
 
@@ -89,21 +77,12 @@ function Module.init(context: Runtime): any
                     holdDuration = instance.HoldDuration,
                 }
             end
-            local original: PromptState = originalPrompts[instance]
-            instance.MaxActivationDistance = interactionSettings.proximityPrompts
-                    and interactionSettings.distance
-                or original.distance
-            instance.HoldDuration = interactionSettings.proximityPrompts
-                    and interactionSettings.instantPrompts
-                    and 0
-                or original.holdDuration
+            updatePrompt(instance :: ProximityPrompt, originalPrompts[instance])
         elseif instance:IsA("ClickDetector") then
             if originalClickDetectors[instance] == nil then
                 originalClickDetectors[instance] = instance.MaxActivationDistance
             end
-            instance.MaxActivationDistance = interactionSettings.clickDetectors
-                    and interactionSettings.distance
-                or originalClickDetectors[instance]
+            updateDetector(instance :: ClickDetector, originalClickDetectors[instance])
         end
     end
 
@@ -128,6 +107,7 @@ function Module.init(context: Runtime): any
         featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
             applyInteractionExtension
         )
+        local scanConnection = featureConnections.InteractExtender
         featureConnections.InteractExtenderRefresh = TaskManager:Connect(
             function(deltaTime: number): ()
                 interactionRefreshClock += deltaTime
@@ -139,9 +119,7 @@ function Module.init(context: Runtime): any
         , nil, "Interact Extender")
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if not interactionExtenderEnabled then
-                    return
-                end
+                if featureConnections.InteractExtender ~= scanConnection then return end
                 applyInteractionExtension(instance)
                 if index % 240 == 0 then
                     task.wait()
@@ -214,7 +192,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

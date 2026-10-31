@@ -369,6 +369,14 @@ assert(openCalls[#openCalls].currency == "SnowTokens2024",
     "the workspace family pays the matching currency")
 card.enabled = false
 card.onToggle(false)
+workspaceAttrs.CurrentEvent = nil
+workspaceAttrs.isChristmas = true
+card.enabled = true
+card.onToggle(true)
+assert(string.find(statuses[#statuses], "server coin: SnowToken"),
+    "the boolean workspace event attribute also names the family")
+card.enabled = false
+card.onToggle(false)
 
 -- Server returning `false` (not enough currency) must NEVER fire BoxController
 -- (no imaginary boxes or stuck dark screen) and must keep Auto Unbox ON waiting.

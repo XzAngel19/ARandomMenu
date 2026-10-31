@@ -165,20 +165,11 @@ function Module.init(runtime: any): any
     end
 
     local function attribute(object: Instance, name: string): any
-        local ok: boolean, value: any = pcall(function(): any
-            return object:GetAttribute(name)
-        end)
-        if ok then
-            return value
-        end
-        return nil
+        return object:GetAttribute(name)
     end
 
     local function hasTag(object: Instance): boolean
-        local ok: boolean, tagged: boolean = pcall(function(): boolean
-            return collectionService:HasTag(object, COIN_TAG)
-        end)
-        return ok and tagged == true
+        return collectionService:HasTag(object, COIN_TAG)
     end
 
     -- The visible half of a pickup. A server part resolves to its
@@ -195,28 +186,15 @@ function Module.init(runtime: any): any
         return part
     end
 
-    -- Filters that are safe to fail open: if an engine call errors, the
-    -- signature that found the part is trusted instead of dropping it.
+    -- The volatile Collected/Delete flags are checked by passesFiltersCached;
+    -- this static half rejects anything outside the map or inside a character.
     local function passesFilters(part: Instance): boolean
-        if not part:IsA("BasePart") then
+        if not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then
             return false
         end
-        if attribute(part, "Collected") == true or attribute(part, "Delete") == true then
-            return false
-        end
-        local okDesc: boolean, inside: boolean = pcall(function(): boolean
-            return part:IsDescendantOf(workspace)
-        end)
-        if okDesc and not inside then
-            return false
-        end
-        -- A character is never a pickup, whatever it carries.
         local current: Instance? = part.Parent
         while current and current ~= workspace do
-            local okHum: boolean, humanoid: Instance? = pcall(function(): Instance?
-                return current:FindFirstChildOfClass("Humanoid")
-            end)
-            if okHum and humanoid then
+            if current:FindFirstChildOfClass("Humanoid") then
                 return false
             end
             current = current.Parent
@@ -267,13 +245,8 @@ function Module.init(runtime: any): any
             return cached
         end
         local names: {string} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return part:GetDescendants()
-        end)
-        if ok and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                table.insert(names, object.Name)
-            end
+        for _, object: Instance in ipairs(part:GetDescendants()) do
+            table.insert(names, object.Name)
         end
         local haystack: string = lower(table.concat(names, " "))
         -- A round pays a single kind of pickup, and event pickups are
@@ -353,33 +326,21 @@ function Module.init(runtime: any): any
         end
 
         -- Signature 1: the game's own tag list.
-        local okTagged: boolean, tagged: any = pcall(function(): any
-            return collectionService:GetTagged(COIN_TAG)
-        end)
-        if okTagged and type(tagged) == "table" then
-            lastRaw.tagged = #tagged
-            for _, object: Instance in ipairs(tagged) do
-                if object:IsA("BasePart") then
-                    consider(object)
-                end
-            end
+        local tagged: {Instance} = collectionService:GetTagged(COIN_TAG)
+        lastRaw.tagged = #tagged
+        for _, object: Instance in ipairs(tagged) do
+            if object:IsA("BasePart") then consider(object) end
         end
 
-        -- Signatures 2 and 3: the CoinID attribute and the exact spawn
-        -- part names, from one workspace scan.
-        local okScan: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
-        end)
-        if okScan and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                if object:IsA("BasePart") then
-                    if attribute(object, "CoinID") ~= nil then
-                        lastRaw.coinId += 1
-                        consider(object)
-                    elseif object.Name == VISUAL_NAME or object.Name == SERVER_NAME then
-                        lastRaw.named += 1
-                        consider(object)
-                    end
+        -- Signatures 2 and 3: CoinID and exact spawn names from one scan.
+        for _, object: Instance in ipairs(workspace:GetDescendants()) do
+            if object:IsA("BasePart") then
+                if attribute(object, "CoinID") ~= nil then
+                    lastRaw.coinId += 1
+                    consider(object)
+                elseif object.Name == VISUAL_NAME or object.Name == SERVER_NAME then
+                    lastRaw.named += 1
+                    consider(object)
                 end
             end
         end
@@ -455,7 +416,6 @@ function Module.init(runtime: any): any
             return
         end
 
-        local marked: {[Instance]: boolean} = {}
         local elapsed: number = 0
         local lastStatus: string? = nil
         local dirty: boolean = true
@@ -477,22 +437,12 @@ function Module.init(runtime: any): any
         -- part. The box takes THIS part's exact size, so the marker is
         -- as small as the candy on screen -- never the big invisible
         -- Coin_Server touch volume.
-        local function visualOf(part: Instance): Instance
-            local ok: boolean, found: any = pcall(function(): any
-                local main: Instance? = part:FindFirstChild("MainCoin", true)
-                if main and main:IsA("BasePart") then
-                    return main
-                end
-                local visual: Instance? = part:FindFirstChild("CoinVisual", true)
-                if visual and visual:IsA("BasePart") then
-                    return visual
-                end
-                return part
-            end)
-            if ok and found then
-                return found
-            end
-            return part
+        local function visualOf(part: Instance): BasePart
+            local main: Instance? = part:FindFirstChild("MainCoin", true)
+            if main and main:IsA("BasePart") then return main :: BasePart end
+            local visual: Instance? = part:FindFirstChild("CoinVisual", true)
+            if visual and visual:IsA("BasePart") then return visual :: BasePart end
+            return part :: BasePart
         end
 
         -- One small adornment per visible pickup. Creation happens
@@ -509,28 +459,17 @@ function Module.init(runtime: any): any
 
         -- Creates the box for one pickup. Called only when the pickups change.
         local function makeTag(part: Instance): any
-            local okMake: boolean, created: any = pcall(function(): any
-                local visual: Instance = visualOf(part)
-                local box: Instance = Instance.new("BoxHandleAdornment")
-                box.Name = "WurstCoinBox"
-                box.AlwaysOnTop = true
-                box.ZIndex = 5
-                box.Adornee = visual
-                box.Color3 = mm2Settings.coinColor
-                box.Transparency = markerTransparency()
-                local okSize: boolean, visualSize: any = pcall(function(): any
-                    return (visual :: any).Size
-                end)
-                if okSize and visualSize then
-                    box.Size = visualSize * 1.3
-                end
-                box.Parent = part
-                return {box = box}
-            end)
-            if okMake and created then
-                return created
-            end
-            return nil
+            local visual: BasePart = visualOf(part)
+            local box: BoxHandleAdornment = Instance.new("BoxHandleAdornment")
+            box.Name = "WurstCoinBox"
+            box.AlwaysOnTop = true
+            box.ZIndex = 5
+            box.Adornee = visual
+            box.Color3 = mm2Settings.coinColor
+            box.Transparency = markerTransparency()
+            box.Size = visual.Size * 1.3
+            box.Parent = part
+            return {box = box}
         end
 
         -- v139: reconciliation runs when the pickup set changes, not every
@@ -541,11 +480,8 @@ function Module.init(runtime: any): any
         local function syncTags(): ()
             for part: Instance in pairs(lastFamilies) do
                 if part.Parent and not coinTags[part] then
-                    local created: any = makeTag(part)
-                    if created then
-                        coinTags[part] = created
-                        tagsDirty = true
-                    end
+                    coinTags[part] = makeTag(part)
+                    tagsDirty = true
                 end
             end
             for part: Instance, entry: any in pairs(coinTags) do
@@ -578,6 +514,7 @@ function Module.init(runtime: any): any
             for part: Instance, entry: any in pairs(coinTags) do
                 if not part.Parent then
                     coinTags[part] = nil
+                    entry.box:Destroy()
                     tagsDirty = true
                 else
                     pcall(function(): ()
@@ -623,21 +560,6 @@ function Module.init(runtime: any): any
                     end
                 end
             end
-            local changed: boolean = false
-            for object: Instance in pairs(visible) do
-                if not marked[object] then
-                    marked[object] = true
-                    changed = true
-                end
-            end
-            for object: Instance in pairs(marked) do
-                if not visible[object] then
-                    marked[object] = nil
-                    changed = true
-                end
-            end
-            -- `changed` no longer drives any drawing: the adornments are
-            -- reconciled here (not per frame) from lastFamilies alone.
             refreshPickupCache(found)
             syncTags()
             local shown: number = 0

@@ -115,7 +115,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v165-20261031-native-shaders-simple"
+local SOURCE_STAMP: string = "v166-20261031-shaders-black-module-cleanup"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

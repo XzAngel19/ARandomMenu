@@ -36,6 +36,8 @@ end
 
 local lighting = {Name = "Lighting", ClassName = "Lighting", children = {}}
 local camera = {Name = "Camera", ClassName = "Camera", children = {}}
+function lighting:GetChildren() return table.clone(self.children) end
+function camera:GetChildren() return table.clone(self.children) end
 local function children(parent, className)
     local result = {}
     for _, obj in ipairs(parent.children) do
@@ -50,7 +52,9 @@ Instance = {fail = {}}
 function Instance.new(className)
     if Instance.fail[className] then error("creation denied for " .. className) end
     local obj = {ClassName = className, Name = className, children = {}, destroyed = false}
-    local store = {Enabled = true}
+    local store = {Enabled = true, Brightness = 0, Contrast = 0, Saturation = 0,
+        TintColor = Color3.new(1, 1, 1)}
+    function obj:IsA(name) return self.ClassName == name end
     function obj:Destroy()
         self.Parent = nil
         self.destroyed = true
@@ -84,7 +88,7 @@ function settings() return {Rendering = {QualityLevel = "Manual10"}} end
 
 local notifications = {}
 local features = {}
-local host = {Lighting = lighting, state = {}, notify = function(text)
+local host = {Lighting = lighting, workspace = {CurrentCamera = camera}, state = {}, notify = function(text)
     table.insert(notifications, text)
 end}
 function host.createUniversalFeature(name, _, _, toggle, options)
@@ -132,7 +136,11 @@ pass("model rejects the old inert Folder/Lighting hierarchy")
 
 local gameEffect = Instance.new("ColorCorrectionEffect")
 gameEffect.Name = "GameOwned"
+gameEffect.Brightness = -0.2
 gameEffect.Parent = lighting
+local cameraEffect = Instance.new("ColorCorrectionEffect")
+cameraEffect.Name = "CameraOwned"
+cameraEffect.Parent = camera
 assert(#children(lighting) == 1, "no effects before enabling")
 
 -- Invoke the real UI onToggle path rather than a hand-written mock toggle.
@@ -151,6 +159,48 @@ assert(card.Options.Saturation.Metadata.step == 0.01 and card.Options.Saturation
 assert(color.Saturation ~= 0 or color.Contrast ~= 0, "default color pass is non-neutral")
 assert(bloom.Intensity > 0.3, "default bloom is non-neutral")
 pass("real Framework toggles three non-neutral direct Lighting effects")
+
+-- Previously, typed or restored slider values bypassed the visible slider
+-- range: Brightness -5 became -1 (documented by Roblox as entirely black), and
+-- a black Tint multiplied all three pixel channels by zero. Verify the actual
+-- effects of every preset, including old saved/extreme option values. This is
+-- a parameter test, not a GPU render or a promise about the game's own effects.
+local looks = {"None", "Cinematic", "Vivid", "Neon", "Noir", "Warm", "Frost", "Dream"}
+card.Options.Brightness.Metadata.callback(-20)
+assert(color.Brightness > -1, "a restored or typed value must not apply documented blackout brightness")
+card.Options.Brightness.Metadata.callback(0)
+local function assertVisibleParameters(name)
+    assert(color.Brightness >= -0.05 and color.Brightness <= 0.3,
+        name .. " must not use blackout/whiteout brightness")
+    assert(color.Contrast >= -0.35 and color.Contrast <= 0.25,
+        name .. " must keep contrast moderate")
+    assert(color.TintColor.R >= 0.6 and color.TintColor.G >= 0.6 and color.TintColor.B >= 0.6,
+        name .. " tint must not zero pixel channels")
+end
+for _, look in ipairs(looks) do
+    card.Options.Look.Metadata.callback(look)
+    assertVisibleParameters(look .. " with defaults")
+end
+card.Options.Brightness.Metadata.callback(-20)
+card.Options.Contrast.Metadata.callback(20)
+card.Options.Tint.Metadata.callback(Color3.new(0, 0, 0))
+for _, look in ipairs(looks) do
+    card.Options.Look.Metadata.callback(look)
+    assertVisibleParameters(look .. " with old extreme settings")
+end
+assert(card.Options.Brightness.Value == -20 and card.Options.Tint.Value == Color3.new(0, 0, 0),
+    "safe applied values must not overwrite saved option values")
+card.Options.Brightness.Metadata.callback(20)
+card.Options.Contrast.Metadata.callback(-20)
+for _, look in ipairs(looks) do
+    card.Options.Look.Metadata.callback(look)
+    assertVisibleParameters(look .. " with opposite extremes")
+end
+card.Options.Brightness.Metadata.callback(0)
+card.Options.Contrast.Metadata.callback(0)
+card.Options.Tint.Metadata.callback(Color3.new(1, 1, 1))
+card.Options.Look.Metadata.callback("Cinematic")
+pass("all eight presets bound brightness, contrast and tint even with old extreme settings")
 
 -- Use real Framework's option callbacks to prove changes reach the instances.
 card.Options.Look.Metadata.callback("Noir")
@@ -174,13 +224,21 @@ pass("options update actual color, clamp, bloom, rays and tint")
 
 -- A game script or optimization may disable the effect after it was applied.
 color.Enabled = false
+local lines = {}
+local oldPrint = print
+print = function(text) table.insert(lines, text) end
 card.Options.Diagnose.Metadata.callback()
+print = oldPrint
 assert(#notifications > 0 and notifications[#notifications]:find("enabled=false", 1, true),
     "diagnostic reports actual enabled flag")
+assert(#lines == 3 and lines[1]:find("brightness=", 1, true)
+    and lines[2]:find("name=GameOwned", 1, true) and lines[3]:find("name=CameraOwned", 1, true),
+    "diagnostic lists our values and existing enabled color effects on Lighting and Camera")
 assert(not renderable(color), "a disabled effect is not rendered")
+assert(gameEffect.Brightness == -0.2 and cameraEffect.Parent == camera, "diagnosis never modifies game effects")
 card.Options.Contrast.Metadata.callback(0.1)
 assert(color.Enabled == true, "an option change re-applies this module's color effect")
-pass("diagnostic reports an externally disabled effect without claiming pixels rendered")
+pass("diagnostic reports our values and other effects without claiming pixels rendered")
 
 -- No automatic repair/check loop: if a game moves an effect, OFF still cleans
 -- the owned instance and ON creates it again as a direct Lighting child.
@@ -199,18 +257,16 @@ assert(not gameEffect.destroyed and gameEffect.Parent == lighting,
 assert(#children(lighting) == 1, "only the game-owned effect remains")
 pass("disable destroys only this module's effects")
 
--- An interrupted creation bubbles up instead of silently retrying; the cleanup
--- was registered before construction, so turning the card off removes what was
--- created. Roblox normally provides all three built-in effect classes.
+-- During deferred config restoration the caller may catch an enable failure
+-- without sending OFF. The card must already be OFF and all partial effects
+-- removed, while the original error still reaches that caller.
 Instance.fail.BloomEffect = true
 local createdOK = pcall(features.Shaders.toggle, true)
 assert(not createdOK, "construction failure must reach the caller")
-local partialColor = byName("ARMShaderColor")
-assert(partialColor and not byName("ARMShaderBloom"), "creation stopped at the failing effect")
-features.Shaders.toggle(false)
-assert(partialColor.destroyed and #children(lighting) == 1, "partial creation is cleaned on OFF")
+assert(not card.Enabled and not byName("ARMShaderColor") and #children(lighting) == 1,
+    "failed enable cleans partial effects and resets state without a later OFF")
 Instance.fail.BloomEffect = nil
-pass("interrupted creation is not hidden and cleans up on OFF")
+pass("interrupted creation immediately cleans partial effects and resets state")
 
 features.Shaders.toggle(true)
 assert(renderable(byName("ARMShaderColor")), "can re-enable after a failure")
@@ -229,11 +285,15 @@ function fallbackHost.addCycleOption(_, name, list, index, callback)
     return {callback = callback}
 end
 function fallbackHost.addNumberOption(_, name, default, _, _, callback, _, step)
-    callback(name == "Saturation" and -0.30 or default)
+    local saved = if name == "Saturation" then -0.30
+        elseif name == "Brightness" then -20
+        elseif name == "Contrast" then 20
+        else default
+    callback(saved)
     return {callback = callback, step = step}
 end
-function fallbackHost.addColorOption(_, _, default, callback)
-    callback(default)
+function fallbackHost.addColorOption(_, _, _, callback)
+    callback(Color3.new(0, 0, 0))
     return {callback = callback}
 end
 local fallbackFramework = Framework.init(fallbackHost)
@@ -245,9 +305,14 @@ local savedColor = byName("ARMShaderColor")
 assert(renderable(savedColor), "restored settings still use direct Lighting parenting")
 assert(math.abs(savedColor.Saturation - (-0.35)) < 1e-6,
     "saved Saturation and Frost offset must be applied on enable")
+assert(savedCard.Options.Brightness.Value == -20 and savedCard.Options.Contrast.Value == 20,
+    "existing saved settings remain intact")
+assert(savedColor.Brightness == -0.05 and savedColor.Contrast == 0.25
+    and savedColor.TintColor.R >= 0.6 and savedColor.TintColor.G >= 0.6 and savedColor.TintColor.B >= 0.6,
+    "extreme saved values are made safe when the card is enabled")
 Shaders.destroy()
 assert(#children(lighting) == 1, "restored configuration is cleaned up")
-pass("saved options work through initial widget callbacks")
+pass("saved extreme options are bounded through initial widget callbacks")
 '''
 
 

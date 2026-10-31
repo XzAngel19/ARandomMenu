@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Static contract for Anti AFK.
 
-The old build made one legacy VirtualUser call when the Idled event
-fired; on current clients the capture silently does nothing, so the
-idle kick landed anyway. The rewrite simulates input proactively on
-a timer, keeps the Idled answer, and falls back across input
-services until one reports success.
+The module attempts input on a timer and on Idled, falling back across
+input services. This static check cannot verify that the executor supports
+the calls or that Roblox's idle timer actually resets.
 """
 from pathlib import Path
 

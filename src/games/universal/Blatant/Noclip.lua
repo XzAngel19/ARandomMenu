@@ -21,8 +21,6 @@ function Module.init(context: Runtime): any
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local toggleNoclip: (boolean) -> ()
-    do
     local originalCollision = setmetatable({}, {__mode = "k"})
 
     local function restoreCollision()
@@ -34,7 +32,7 @@ function Module.init(context: Runtime): any
         originalCollision = setmetatable({}, {__mode = "k"})
     end
 
-    function toggleNoclip(enabled: boolean): ()
+    local function toggleNoclip(enabled: boolean): ()
         disconnectFeatureConnection("Noclip")
         -- v139: the DescendantAdded watcher must go too, or it keeps forcing
         -- CanCollide=false after the card is switched off.
@@ -72,20 +70,13 @@ function Module.init(context: Runtime): any
             end
             sweptCharacter = character
             if addConnection then
-                pcall(function(): ()
-                    addConnection:Disconnect()
-                end)
+                addConnection:Disconnect()
                 addConnection = nil
             end
             for _, descendant in ipairs(character:GetDescendants()) do
                 noClipPart(descendant)
             end
-            local okConnect, connection = pcall(function(): any
-                return character.DescendantAdded:Connect(noClipPart)
-            end)
-            if okConnect then
-                addConnection = connection
-            end
+            addConnection = character.DescendantAdded:Connect(noClipPart)
         end
 
         featureConnections.Noclip = TaskManager:Connect(function(): ()
@@ -112,15 +103,12 @@ function Module.init(context: Runtime): any
         featureConnections.NoclipDescendant = {
             Disconnect = function(): ()
                 if addConnection then
-                    pcall(function(): ()
-                        addConnection:Disconnect()
-                    end)
+                    addConnection:Disconnect()
                     addConnection = nil
                 end
                 sweptCharacter = nil
             end,
         }
-    end
     end
 
     local NoclipFeature = createUniversalFeature(
@@ -134,7 +122,6 @@ function Module.init(context: Runtime): any
         .. "Original collision states are restored when turned off.")
 
     activeCleanup = function(): ()
-
         toggleNoclip(false)
     end
     Module.Initialized = true
@@ -143,7 +130,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

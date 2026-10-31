@@ -14,12 +14,14 @@ function Module.init(context: Runtime): any
     
     local jesus
 
-    local function toggleJesus(enabled)
-        if not enabled then
-            return
-        end
-        
-        jesus:Clean(host.RunService.PreSimulation:Connect(function(dt)
+    local function startJesus()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.RespectCanCollide = false
+        params.IgnoreWater = false
+        local filteredCharacter = nil
+
+        jesus:Clean(host.RunService.PreSimulation:Connect(function()
             local character = player.Character
             if not character then return end
             
@@ -27,14 +29,11 @@ function Module.init(context: Runtime): any
             local humanoid = character:FindFirstChild("Humanoid")
             if not root or not humanoid or humanoid.Health <= 0 then return end
 
-            -- Raycast down to detect water
-            local params = RaycastParams.new()
-            params.FilterType = Enum.RaycastFilterType.Exclude
-            params.FilterDescendantsInstances = {character}
-            params.RespectCanCollide = false
-            params.IgnoreWater = false
-
-            local rayResult = workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
+            if filteredCharacter ~= character then
+                filteredCharacter = character
+                params.FilterDescendantsInstances = {character}
+            end
+            local rayResult = host.workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
             
             if rayResult and rayResult.Material == Enum.Material.Water then
                 local waterSurface = rayResult.Position.Y
@@ -73,8 +72,7 @@ function Module.init(context: Runtime): any
                 jesus:SetStatus(nil)
                 return
             end
-            jesus:Clean(function() end)
-            toggleJesus(true)
+            startJesus()
             jesus:SetStatus(settings.mode)
         end,
     })

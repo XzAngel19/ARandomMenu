@@ -23,23 +23,29 @@ function Module.init(context: Runtime): any
     local workspace: any = host.workspace
     local gravitySettings = {value = 196.2}
     local GravityFeature: any = nil
-    local originalGravity = workspace.Gravity
+    local originalGravity: number? = nil
+
+    local function restoreGravity()
+        if originalGravity ~= nil then
+            workspace.Gravity = originalGravity
+            originalGravity = nil
+        end
+    end
 
     local function toggleGravity(enabled)
         disconnectFeatureConnection("Gravity")
-
         if not enabled then
-            if GravityFeature then
-                GravityFeature:SetStatus(nil)
-            end
-            workspace.Gravity = originalGravity
+            if GravityFeature then GravityFeature:SetStatus(nil) end
+            restoreGravity()
             return
         end
 
         GravityFeature:SetStatus(tostring(math.round(gravitySettings.value)))
-        originalGravity = workspace.Gravity
+        if originalGravity == nil then originalGravity = workspace.Gravity end
         featureConnections.Gravity = TaskManager:Connect(function()
-            workspace.Gravity = gravitySettings.value
+            if workspace.Gravity ~= gravitySettings.value then
+                workspace.Gravity = gravitySettings.value
+            end
         end, nil, "Gravity")
     end
 
@@ -59,8 +65,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("Gravity")
-
-        workspace.Gravity = originalGravity
+        restoreGravity()
     end
     Module.Initialized = true
     return GravityFeature
@@ -68,7 +73,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

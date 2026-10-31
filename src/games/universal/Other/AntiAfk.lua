@@ -21,19 +21,12 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
 
-    -- Simulate one user input. The old build relied on a single legacy
-    -- call (VirtualUser:CaptureController + ClickButton2 at (0,0)):
-    -- on current clients the capture silently does nothing, so the
-    -- handler ran, "worked", and the idle kick landed anyway. Every
-    -- strategy is tried in order until one reports success, and a
-    -- failure is never mistaken for a success again.
+    -- Try the available executor input methods in order. A successful API
+    -- call alone does not prove that Roblox reset its server idle timer.
     local function pokeAfk(): boolean
-        local camera: any = nil
-        pcall(function(): ()
-            camera = (host.workspace :: any).CurrentCamera
-        end)
+        local camera: Camera? = host.workspace.CurrentCamera
         local centre: Vector2 = Vector2.new(400, 300)
-        if camera and camera.ViewportSize then
+        if camera then
             centre = camera.ViewportSize / 2
         end
 
@@ -85,15 +78,11 @@ function Module.init(context: Runtime): any
             return
         end
 
-        -- Reactive: Roblox warns through Idled shortly before the
-        -- 20-minute kick. Answer it.
+        -- Reactive: respond to the local Idled event.
         featureConnections.AntiAFK = LocalPlayer.Idled:Connect(function(): ()
             pokeAfk()
         end)
-        -- Proactive: never let the idle timer get anywhere near the
-        -- kick in the first place. Simulated input every 150 s keeps
-        -- the session "active" even if the Idled event never fires
-        -- (it does not fire while some menus hold focus).
+        -- Also attempt input every 150 seconds if Idled is not raised.
         local elapsed: number = 0
         featureConnections.AntiAFKTimer = host.TaskManager:Connect(
             function(deltaTime: number): ()
@@ -118,9 +107,9 @@ function Module.init(context: Runtime): any
             categoryName = "World",
         }
     )
-    addFeatureTooltip(AntiAfkFeature, "Simulates a real input every ~150 seconds and "
-        .. "answers Roblox's idle warning, so the 20-minute idle kick never lands. "
-        .. "Tries VirtualUser first, then VirtualInputManager. Disconnects immediately when disabled.")
+    addFeatureTooltip(AntiAfkFeature, "Attempts input every ~150 seconds and on Idled. "
+        .. "Tries VirtualUser first, then VirtualInputManager; availability depends on the executor. "
+        .. "Disconnects immediately when disabled.")
 
     activeCleanup = function(): ()
         disconnectFeatureConnection("AntiAFK")
@@ -132,7 +121,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

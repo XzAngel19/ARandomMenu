@@ -15,7 +15,7 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local workspace: any = host.workspace or game:GetService("Workspace")
+    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addNumberOption: any = host.addNumberOption
     local addToggleOption: any = host.addToggleOption
@@ -37,75 +37,37 @@ function Module.init(context: Runtime): any
     local PLATFORM_NAME: string = "Wurst_AntiVoidPlatform"
     local PLATFORM_SIZE: Vector3 = Vector3.new(14, 1, 14)
 
-    local function characterRoot(): (Model?, Humanoid?, BasePart?)
-        local ok: boolean, character, humanoid, root = pcall(function(): any
-            return host.getCharacterParts()
-        end)
-        if not ok then
-            character, humanoid, root = nil, nil, nil
-        end
-        if not character or not root then
-            return character, humanoid, root
-        end
-        return character, humanoid, root
-    end
-
     local function destroyPlatform(): ()
-        if platform then
-            pcall(function(): ()
-                platform:Destroy()
-            end)
-        end
-        platform = nil
+        if platform then platform:Destroy(); platform = nil end
         platformY = nil
         writtenPosition, writtenVisible = nil, nil
     end
 
     local function destroyHeightFloor(): number
-        local destroyHeight: any = nil
-        pcall(function(): ()
-            destroyHeight = workspace.FallenPartsDestroyHeight
-        end)
-        if type(destroyHeight) ~= "number"
-            or destroyHeight ~= destroyHeight
-            or math.abs(destroyHeight) == math.huge
-            or math.abs(destroyHeight) > 1e6 then
+        local destroyHeight: number = workspace.FallenPartsDestroyHeight
+        -- Fling can temporarily set this to infinity; keep the platform finite.
+        if destroyHeight ~= destroyHeight or math.abs(destroyHeight) > 1e6 then
             return -500
         end
         return destroyHeight
     end
 
-    local function createPlatform(): BasePart?
-        local part: any = Instance.new("Part")
-        if not part then
-            return nil
-        end
-        pcall(function(): ()
-            part.Name = PLATFORM_NAME
-            part.Anchored = true
-            part.CanCollide = true
-            -- Client-only: `CanQuery`/`CanTouch` keep the platform out of every
-            -- raycast and touch event, so it never breaks detection or triggers
-            -- in-game traps. Transparency 1 means nobody sees it, including us,
-            -- unless "Show platform" is on.
-            part.CanQuery = false
-            part.CanTouch = false
-            part.CastShadow = false
-            part.Locked = true
-            part.Transparency = if visible then 0.4 else 1
-            part.Size = PLATFORM_SIZE
-            part.TopSurface = Enum.SurfaceType.Smooth
-            part.BottomSurface = Enum.SurfaceType.Smooth
-        end)
-        local ok: boolean = pcall(function(): ()
-            part.Parent = workspace
-        end)
-        if not ok then
-            pcall(function(): ()
-                part:Destroy()
-            end)
-            return nil
-        end
+    local function createPlatform(): BasePart
+        local part: BasePart = Instance.new("Part")
+        part.Name = PLATFORM_NAME
+        part.Anchored = true
+        part.CanCollide = true
+        -- CanQuery=false is ignored by the engine while CanCollide=true;
+        -- CanTouch=false prevents this part from producing touch events.
+        part.CanQuery = false
+        part.CanTouch = false
+        part.CastShadow = false
+        part.Locked = true
+        part.Transparency = if visible then 0.4 else 1
+        part.Size = PLATFORM_SIZE
+        part.TopSurface = Enum.SurfaceType.Smooth
+        part.BottomSurface = Enum.SurfaceType.Smooth
+        part.Parent = workspace
         return part
     end
 
@@ -116,7 +78,7 @@ function Module.init(context: Runtime): any
         if not enabled then
             return
         end
-        local _character: Model?, humanoid: Humanoid?, root: BasePart? = characterRoot()
+        local _character: Model?, humanoid: Humanoid?, root: BasePart? = host.getCharacterParts()
         if not root or not root.Parent or (humanoid and humanoid.Health <= 0) then
             destroyPlatform()
             return
@@ -125,9 +87,6 @@ function Module.init(context: Runtime): any
             destroyPlatform()
             platform = createPlatform()
             platformY = nil
-            if not platform then
-                return
-            end
         end
 
         local position: Vector3 = root.Position
@@ -147,11 +106,8 @@ function Module.init(context: Runtime): any
             return
         end
         writtenPosition, writtenVisible = target, visible
-        pcall(function(): ()
-            platform.Size = PLATFORM_SIZE
-            platform.CFrame = CFrame.new(target)
-            platform.Transparency = if visible then 0.4 else 1
-        end)
+        platform.CFrame = CFrame.new(target)
+        platform.Transparency = if visible then 0.4 else 1
     end
 
     local function toggleAntiVoid(state: boolean): ()
@@ -192,26 +148,21 @@ function Module.init(context: Runtime): any
         function(value: boolean): ()
             visible = value == true
             if platform then
-                pcall(function(): ()
-                    platform.Transparency = if visible then 0.4 else 1
-                end)
+                platform.Transparency = if visible then 0.4 else 1
             end
         end,
         "Draw the platform so you can confirm where it is. Only you can see it either way."
     )
     addFeatureTooltip(
         antiVoidFeature,
-        "Creates one anchored part, locally only (the server never knows), a few "
-            .. "studs below the character. It ignores every raycast and touch, so it "
-            .. "cannot trip traps or detection, and it stops descending while you fall "
-            .. "so you land on it instead of falling into the void."
+        "Creates one local anchored part a few studs below the character. "
+            .. "It stops descending while you fall so you can land on it. "
+            .. "Touch events are disabled; its collidable surface may still appear in raycasts."
     )
 
     activeCleanup = function(): ()
         enabled = false
-        if disconnectFeatureConnection then
-            disconnectFeatureConnection("AntiVoid")
-        end
+        disconnectFeatureConnection("AntiVoid")
         destroyPlatform()
     end
     Module.Initialized = true
@@ -220,7 +171,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

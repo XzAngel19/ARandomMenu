@@ -56,10 +56,14 @@ function Module.init(context: any): any
         local opts: any = card.Options
         local look: any = LOOK_BY_NAME[opts.Look.Value] or LOOKS[1]
         local tint: Color3 = opts.Tint.Value
+        if look.tint then tint = tint:Lerp(look.tint, look.tintWeight) end
+        -- Saved/typed values can exceed slider ranges. Brightness -1 or a
+        -- black multiplicative tint makes the entire rendered world black.
         color.Saturation = math.clamp(opts.Saturation.Value + look.saturation, -1, 1)
-        color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -1, 1)
-        color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -1, 1)
-        color.TintColor = if look.tint then tint:Lerp(look.tint, look.tintWeight) else tint
+        color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -0.35, 0.25)
+        color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -0.05, 0.3)
+        color.TintColor = Color3.new(math.clamp(tint.R, 0.6, 1),
+            math.clamp(tint.G, 0.6, 1), math.clamp(tint.B, 0.6, 1))
         color.Enabled = true
 
         bloom.Intensity = math.clamp(opts.Bloom.Value + look.bloom, 0, 10)
@@ -80,12 +84,25 @@ function Module.init(context: any): any
             return
         end
         local text: string = string.format(
-            "[Shaders] Color: parent=%s enabled=%s; Bloom: parent=%s enabled=%s; Rays: parent=%s enabled=%s",
-            color.Parent and color.Parent.Name or "nil", tostring(color.Enabled),
-            bloom.Parent and bloom.Parent.Name or "nil", tostring(bloom.Enabled),
-            rays.Parent and rays.Parent.Name or "nil", tostring(rays.Enabled)
+            "[Shaders] Look=%s; Color: parent=%s enabled=%s brightness=%.2f contrast=%.2f saturation=%.2f tint=(%.2f,%.2f,%.2f); Bloom: parent=%s enabled=%s intensity=%.2f; Rays: parent=%s enabled=%s intensity=%.2f",
+            card.Options.Look.Value, color.Parent and color.Parent.Name or "nil", tostring(color.Enabled),
+            color.Brightness, color.Contrast, color.Saturation, color.TintColor.R, color.TintColor.G, color.TintColor.B,
+            bloom.Parent and bloom.Parent.Name or "nil", tostring(bloom.Enabled), bloom.Intensity,
+            rays.Parent and rays.Parent.Name or "nil", tostring(rays.Enabled), rays.Intensity
         )
         print(text)
+        local parents = {lighting}
+        local camera: Camera? = context.host.workspace.CurrentCamera
+        if camera then table.insert(parents, camera) end
+        for _, parent in ipairs(parents) do
+            for _, other in ipairs(parent:GetChildren()) do
+                if other ~= color and other:IsA("ColorCorrectionEffect") and other.Enabled then
+                    local tint: Color3 = other.TintColor
+                    print(string.format("[Shaders] Other color: parent=%s name=%s brightness=%.2f contrast=%.2f saturation=%.2f tint=(%.2f,%.2f,%.2f)",
+                        parent.Name, other.Name, other.Brightness, other.Contrast, other.Saturation, tint.R, tint.G, tint.B))
+                end
+            end
+        end
         card:Notify("Color enabled=" .. tostring(color.Enabled) .. " · details printed to console")
     end
 
@@ -100,12 +117,18 @@ function Module.init(context: any): any
                 return
             end
             cleanup()
-            -- Registered first so even an interrupted creation is cleaned on OFF.
             card:Clean(cleanup)
-            color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
-            bloom = makeEffect("BloomEffect", "ARMShaderBloom")
-            rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-            apply()
+            local ok, failure = pcall(function()
+                color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
+                bloom = makeEffect("BloomEffect", "ARMShaderBloom")
+                rays = makeEffect("SunRaysEffect", "ARMShaderRays")
+                apply()
+            end)
+            if not ok then
+                -- Config restoration may catch the error without sending OFF.
+                card:Toggle(false)
+                error(failure, 0)
+            end
         end,
     })
 
@@ -120,10 +143,10 @@ function Module.init(context: any): any
             Function = apply, Tooltip = tooltip})
     end
     slider("Saturation", -1, 1, 0, "Negative drains colour, positive boosts it.", true)
-    slider("Contrast", -0.5, 0.5, 0, "Separates dark from light.", true)
-    slider("Brightness", -0.3, 0.3, 0, "Brightness of the colour pass.", true)
+    slider("Contrast", -0.35, 0.25, 0, "Separates dark from light; limited to preserve detail.", true)
+    slider("Brightness", -0.05, 0.3, 0, "Applied brightness is limited to avoid a black screen.", true)
     card:CreateColor({Name = "Tint", Default = Color3.fromRGB(255, 255, 255),
-        Function = apply, Tooltip = "Colour cast blended with the selected look."})
+        Function = apply, Tooltip = "Colour cast blended with the look; very dark colours are lightened."})
     slider("Bloom", 0, 2, 0.6, "Glow around bright surfaces; zero disables it.", true)
     slider("Bloom threshold", 0, 3, 1.1, "Brightness needed for glow.", true)
     slider("Bloom size", 0, 56, 24, "Spread of the glow.", false)

@@ -44,6 +44,8 @@ assert "pickupCache" in SOURCE
 assert "refreshPickupCache(found)" in SOURCE
 
 script = r'''
+local clock = 100
+local os = {clock = function() return clock end}
 local workspace = {}
 local workspaceAttrs = {}
 function workspace:GetAttribute(name) return workspaceAttrs[name] end
@@ -55,10 +57,15 @@ workspace.DescendantAdded = {Connect = function(_, fn)
     return {Disconnect = function() descendantAdded = nil end}
 end}
 
+local sizeMeta = {}
+sizeMeta.__mul = function(size, factor)
+    return setmetatable({X = size.X * factor, Y = size.Y * factor, Z = size.Z * factor}, sizeMeta)
+end
+local function size(x, y, z) return setmetatable({X = x, Y = y, Z = z}, sizeMeta) end
 local function base(name, tags, attrs, children)
     local object = {Name = name, Parent = workspace, tags = tags or {},
         attrs = attrs or {}, children = children or {}, Transparency = 0,
-        Position = {}}
+        Size = size(1, 2, 0.25), Position = {}}
     function object:IsA(class)
         return class == "BasePart" or class == "Instance"
     end
@@ -73,10 +80,16 @@ local function base(name, tags, attrs, children)
         copy.Color = self.Color
         return copy
     end
-    function object:Destroy() self.Parent = nil end
-    function object:FindFirstChild(childName)
+    function object:Destroy() self.Parent = nil; self.destroyed = true end
+    function object:FindFirstChild(childName, recursive)
         for _, child in ipairs(self.children) do
             if child.Name == childName then return child end
+        end
+        if recursive then
+            for _, child in ipairs(self.children) do
+                local found = child:FindFirstChild(childName, true)
+                if found then return found end
+            end
         end
         return nil
     end
@@ -267,9 +280,11 @@ local function addInformationOption(feature, text)
 end
 local notices = {}
 local function notify(message) notices[#notices + 1] = message end
+local boxes = {}
 local Instance = {new = function(class)
     local object = base("WurstCoinChams")
     object.ClassName = class
+    if class == "BoxHandleAdornment" then table.insert(boxes, object) end
     return object
 end}
 local UDim2 = {fromOffset = function(x, y) return {x, y} end,
@@ -324,6 +339,21 @@ for _ in pairs(state.mm2CoinTagParts or {}) do tagCount += 1 end
 assert(tagCount >= 5, "every pickup carries a billboard tag: " .. tagCount)
 assert(state.mm2CoinTagParts[coinPart] and state.mm2CoinTagParts[candyPart],
     "the tags sit on the pickup parts themselves")
+local coinBox
+for _, box in ipairs(boxes) do if box.Parent == coinPart then coinBox = box end end
+assert(coinBox and coinBox.Adornee == coinMesh, "the box targets the visible MainCoin mesh")
+assert(math.abs(coinBox.Size.X - coinMesh.Size.X * 1.3) < 1e-6
+    and math.abs(coinBox.Size.Y - coinMesh.Size.Y * 1.3) < 1e-6,
+    "the box is sized from the visible mesh, not the server holder")
+coinPart.Parent = nil
+clock += 1
+loops.coin(0.01)
+assert(coinBox.destroyed and not highlighted(coinPart),
+    "an unparented pickup cannot keep an orphaned marker between scans")
+coinPart.Parent = workspace
+tagAdded:fire(coinPart)
+loops.coin(0.01)
+assert(highlighted(coinPart), "a returning pickup can receive a new marker")
 
 -- Selector: Candy only.
 callbacks["Coin in use"]("Candy")
