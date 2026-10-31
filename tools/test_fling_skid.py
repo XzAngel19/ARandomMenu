@@ -142,7 +142,12 @@ local Instance = {new=function(class) return newInstance(class) end}
 local writes = {maxVelocity=0, maxRotVelocity=0, poses=0, primaries=0,
     assemblyWrites=0, customPhysicsWrites=0, cframeWrites=0, positions={}}
 
+local failNextPose = false
 local function track(name, props, value)
+    if name == "CFrame" and failNextPose then
+        failNextPose = false
+        error("simulated pose failure")
+    end
     if name == "Velocity" and type(value) == "table" then
         if value.Magnitude > writes.maxVelocity then writes.maxVelocity = value.Magnitude end
         writes.poses += 1
@@ -405,18 +410,16 @@ pump(600)
 assert(#notifications == 1, "exactly one notification when it ends, got " .. #notifications)
 assert(string.find(notifications[1], "did not move") ~= nil,
     "a target that never moved is reported as such, got: " .. notifications[1])
-assert(string.find(notifications[1], "rescue used") ~= nil,
-    "the rescue is reported instead of hidden, got: " .. notifications[1])
 assert(state.mm2LastFling and state.mm2LastFling.poses >= 12, "diagnostics are published")
 assert(activityService.flags["fling"] == false, "activity released after the full run")
-local rescueParts = 0
 for _, object in ipairs(created) do
+    assert(object.Name ~= "Wurst_RescueSpin" and object.Name ~= "Wurst_RescuePush",
+        "the extra, non-YARHM impulse must not be applied to the target")
     if object.ClassName == "BodyAngularVelocity" or object.ClassName == "BodyVelocity" then
-        if object.Parent ~= nil and object.destroyed == false then rescueParts += 1 end
+        assert(object.Parent == nil or object.destroyed, "no body mover may be left alive")
     end
 end
-assert(rescueParts == 0, "the rescue leaves nothing behind, found " .. rescueParts)
-pass("the loop survives cloneref (Parent ~= Players) and reports the real outcome")
+pass("cloneref-safe loop reports failure without the extra rescue impulse")
 
 -- A target without a character fails closed --------------------------------
 notifications = {}
@@ -455,6 +458,27 @@ assert(#notifications == 1 and string.find(notifications[1], "Murder Mystery 2")
     "role actions must explain that they need MM2")
 state.mm2Core = savedCore
 pass("MM2 role actions degrade cleanly outside MM2")
+
+-- A failed YARHM pose still restores the local body, pin and void setting.
+notifications = {}
+victimSpeed = 0
+options["Retries"](0)
+options["Duration"](1)
+failNextPose = true
+options["Target player"]("Victim")
+options["Fling"]()
+pump(10)
+assert(#notifications == 1 and notifications[1]:find("fling failed", 1, true),
+    "pose errors must be reported")
+assert(world.FallenPartsDestroyHeight == -500, "void height must be restored after pose error")
+assert(humanoid.seated_Seated == true and activityService.flags["fling"] == false,
+    "seated state and activity must be restored after pose error")
+for _, object in ipairs(created) do
+    if object.Name == "EpixVel" then
+        assert(object.destroyed, "a pose error must not leave the pin active")
+    end
+end
+pass("a pose error cleans the pin and restores local state")
 
 -- Ping prediction: the pose is written where the victim WILL be ------------
 -- 300 ms of ping means the server works on a copy of the victim that is 150 ms

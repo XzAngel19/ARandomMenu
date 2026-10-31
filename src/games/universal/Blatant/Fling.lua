@@ -36,19 +36,12 @@ function Module.init(context: Runtime): any
     local configData: any = host.configData
 
     local workspace: any = host.workspace
-    local RunService: any = host.RunService
 
     -- The MM2 core only exists while Murder Mystery 2 is loaded; every role call
     -- is resolved lazily so the card works everywhere and never errors outside
     -- MM2.
     local function mm2Core(): any
-        local ok: boolean, core: any = pcall(function(): any
-            return state.mm2Core
-        end)
-        if ok and type(core) == "table" then
-            return core
-        end
-        return nil
+        return state.mm2Core
     end
 
     local function coreFunction(name: string): any
@@ -87,8 +80,9 @@ function Module.init(context: Runtime): any
     -- into the sky. That enormous velocity exists just long enough for the
     -- contact solver to hand it to the victim, which is why this version actually
     -- launches people and the old CFrame-lock one did not.
-    -- SkidFling, copied line by line from the YARHM hub the user supplied
+    -- SkidFling adapted from the YARHM hub the user supplied
     -- (YARHM_Hub_KEYLESS_2026.txt, "Fling" -> SkidFling, originally by zqyDSUWX).
+    -- The menu also retains its own targeting, power, prediction and retries.
     --
     -- The parts that matter and that our own port had wrong:
     --
@@ -147,24 +141,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- task.wait(), like the original: it resumes on Heartbeat, one physics step
-    -- after the pose was written.
-    local function waitFrame(): ()
-        if type(task) == "table" and type(task.wait) == "function" then
-            task.wait()
-        end
-    end
-
-    local function moveCharacter(character: Model, cframe: CFrame): ()
-        -- SetPrimaryPartCFrame is what the original calls; PivotTo is the modern
-        -- equivalent when the executor/engine no longer exposes the old one.
-        if type(character.SetPrimaryPartCFrame) == "function" then
-            character:SetPrimaryPartCFrame(cframe)
-        elseif type(character.PivotTo) == "function" then
-            character:PivotTo(cframe)
-        end
-    end
-
     local function targetParts(targetPlayer: Player?): (Model?, Humanoid?, BasePart?, BasePart?, BasePart?)
         local targetCharacter: Model? = targetPlayer and targetPlayer.Character
         if not targetCharacter then
@@ -191,12 +167,10 @@ function Module.init(context: Runtime): any
             origin = origin + lead
         end
         local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
-        pcall(function(): ()
-            root.CFrame = targetCFrame
-            moveCharacter(character, targetCFrame)
-            root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
-            root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
-        end)
+        root.CFrame = targetCFrame
+        character:SetPrimaryPartCFrame(targetCFrame)
+        root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
+        root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
     end
 
     -- Round trip / 2: how stale the server's copy of the victim is by the time it
@@ -263,62 +237,19 @@ function Module.init(context: Runtime): any
         return character, humanoid, root, head
     end
 
-    local function nowSeconds(): number
-        -- YARHM times the loop with tick(). os.clock() is the fallback and 0 the
-        -- last resort; the pose counter below keeps the loop bounded either way.
-        local ok: boolean, value: any = pcall(function(): any
-            return tick()
-        end)
-        if ok and type(value) == "number" then
-            return value
-        end
-        ok, value = pcall(function(): any
-            return os.clock()
-        end)
-        if ok and type(value) == "number" then
-            return value
-        end
-        return 0
-    end
-
-    -- Vector3 is userdata in the client and a table in the harness: read the
-    -- magnitude through pcall instead of type() so both work.
     local function partSpeed(part: BasePart?): number
-        if not part then
-            return 0
-        end
-        local ok: boolean, velocity: any = pcall(function(): any
-            return part.Velocity
-        end)
-        if not ok or not velocity then
-            return 0
-        end
-        local okMagnitude: boolean, magnitude: any = pcall(function(): any
-            return velocity.Magnitude
-        end)
-        if okMagnitude and type(magnitude) == "number" then
-            return magnitude
-        end
-        return 0
+        return if part then part.Velocity.Magnitude else 0
     end
 
     -- cloneReference() gives the host a DIFFERENT reference for the same
-    -- service, so "targetPlayer.Parent ~= Players" is true even for a player who
-    -- is in the game. That checked true on every frame and killed the loop after
-    -- a single pose set (the "finished in half a second" bug). Ask the service
-    -- instead, and never stop the loop when the answer is unknown.
+    -- service, so "targetPlayer.Parent ~= Players" can stop the fling early.
+    -- Resolve the player through the service instead.
     local function playerStillHere(player: Player): boolean
-        local ok: boolean, found: any = pcall(function(): any
-            return Players:FindFirstChild(player.Name)
-        end)
-        if not ok then
-            return true
-        end
-        return found ~= nil
+        return Players:FindFirstChild(player.Name) ~= nil
     end
 
-    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, nine
-    -- while it is already moving), hardened for lag and for fast victims:
+    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, ten
+    -- while it is already moving), with the menu's adaptations:
     --
     --   * MIN_POSES before the "it is flying, stop" check, so one stale
     --     replication frame does not end the fling early;
@@ -340,7 +271,7 @@ function Module.init(context: Runtime): any
         shouldStop: (() -> boolean)?,
         stats: any
     ): ()
-        local startedAt: number = nowSeconds()
+        local startedAt: number = os.clock()
         local angle: number = 0
         local liveBase: BasePart = basePart
 
@@ -374,7 +305,7 @@ function Module.init(context: Runtime): any
             end
             fpos(character, root, part, offset, angles, leadFor(part))
             stats.poses += 1
-            waitFrame()
+            task.wait()
             return true
         end
 
@@ -425,89 +356,21 @@ function Module.init(context: Runtime): any
             or not playerStillHere(targetPlayer)
             or (targetHumanoid ~= nil and targetHumanoid.Sit)
             or humanoid.Health <= 0
-            or nowSeconds() > startedAt + timeToWait
+            or os.clock() > startedAt + timeToWait
             or stats.poses >= 600
     end
 
-    -- Only used if SkidFling could not move the target at all: spin and push the
-    -- victim's own part for two frames. Everything created here is destroyed and
-    -- the result is reported in the notification, so it can never be silent.
-    local RESCUE_SPIN: Vector3 = Vector3.new(1000, 1000, 1000)
-    local RESCUE_PUSH: Vector3 = Vector3.new(0, 500, 0)
-
-    local function rescueImpulse(targetCharacter: Model, targetRoot: BasePart?, targetHead: BasePart?): boolean
-        local target: BasePart? = targetRoot or targetHead
-        if not target then
-            return false
-        end
-        local created: {any} = {}
-        local ok: boolean = pcall(function(): ()
-            local spin: any = Instance.new("BodyAngularVelocity")
-            spin.Name = "Wurst_RescueSpin"
-            spin.AngularVelocity = RESCUE_SPIN
-            spin.MaxTorque = PIN_FORCE
-            spin.Parent = target
-            table.insert(created, spin)
-            local push: any = Instance.new("BodyVelocity")
-            push.Name = "Wurst_RescuePush"
-            push.Velocity = RESCUE_PUSH
-            push.MaxForce = PIN_FORCE
-            push.Parent = target
-            table.insert(created, push)
-            for _, part: Instance in ipairs(targetCharacter:GetChildren()) do
-                if part:IsA("BasePart") then
-                    local bodyPart: BasePart = part :: BasePart
-                    bodyPart.Velocity = RESCUE_PUSH
-                    bodyPart.RotVelocity = RESCUE_SPIN
-                end
-            end
-        end)
-        waitFrame()
-        waitFrame()
-        for _, item: any in ipairs(created) do
-            pcall(function(): ()
-                item:Destroy()
-            end)
-        end
-        return ok and #created > 0
-    end
-
     local function createPin(root: BasePart): any
-        local pinVelocity: Vector3 = scaledVelocity(PIN_VELOCITY_BASE)
-        local ok: boolean, pin: any = pcall(function(): any
-            local bodyVelocity: any = Instance.new("BodyVelocity")
-            bodyVelocity.Name = "EpixVel"
-            bodyVelocity.Parent = root
-            bodyVelocity.Velocity = pinVelocity
-            bodyVelocity.MaxForce = PIN_FORCE
-            return bodyVelocity
-        end)
-        if ok and pin then
-            return pin
-        end
-        -- Some executors reject math.huge in a Vector3. 1e9 is the same catapult
-        -- for every practical purpose, so the fling still lands.
-        local okFallback: boolean, fallback: any = pcall(function(): any
-            local bodyVelocity: any = Instance.new("BodyVelocity")
-            bodyVelocity.Name = "EpixVel"
-            bodyVelocity.Parent = root
-            bodyVelocity.Velocity = pinVelocity
-            bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-            return bodyVelocity
-        end)
-        if okFallback then
-            return fallback
-        end
-        return nil
+        local pin: any = Instance.new("BodyVelocity")
+        pin.Name = "EpixVel"
+        pin.Velocity = scaledVelocity(PIN_VELOCITY_BASE)
+        pin.MaxForce = PIN_FORCE
+        pin.Parent = root
+        return pin
     end
 
     local function destroyPin(pin: any): ()
-        if not pin then
-            return
-        end
-        pcall(function(): ()
-            pin:Destroy()
-        end)
+        if pin then pin:Destroy() end
     end
 
     -- Per-frame caller (Auto Win's Fling Sheriff). Same FPos pose, with a pin
@@ -546,17 +409,15 @@ function Module.init(context: Runtime): any
         end
         stepPinToken += 1
         local myToken: number = stepPinToken
-        if type(task) == "table" and type(task.delay) == "function" then
-            task.delay(0.5, function(): ()
-                if myToken == stepPinToken then
-                    destroyPin(stepPin)
-                    stepPin = nil
-                    if not flingRunning and activity and type(activity.set) == "function" then
-                        activity.set("fling", false)
-                    end
+        task.delay(0.5, function(): ()
+            if myToken == stepPinToken then
+                destroyPin(stepPin)
+                stepPin = nil
+                if not flingRunning and activity and type(activity.set) == "function" then
+                    activity.set("fling", false)
                 end
-            end)
-        end
+            end
+        end)
         stepAngle = (stepAngle + 100) % 360
         local speed: number = 0
         pcall(function(): ()
@@ -608,7 +469,7 @@ function Module.init(context: Runtime): any
 
         setFlingRunning(true)
 
-        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false, retries = 0}
+        local stats: any = {poses = 0, speed = 0, pinned = false, retries = 0}
 
         local function runFling(): boolean
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
@@ -648,6 +509,7 @@ function Module.init(context: Runtime): any
             end)
             local camera: Camera? = workspace.CurrentCamera
 
+            local pin: any = nil
             local success: boolean, errorMessage: any = pcall(function(): ()
                 if camera then
                     pcall(function(): ()
@@ -664,8 +526,8 @@ function Module.init(context: Runtime): any
                     workspace.FallenPartsDestroyHeight = 0 / 0
                 end)
 
-                local pin: any = createPin(root)
-                stats.pinned = pin ~= nil
+                pin = createPin(root)
+                stats.pinned = true
                 pcall(function(): ()
                     humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
                 end)
@@ -683,10 +545,8 @@ function Module.init(context: Runtime): any
                     basePart = targetHead
                 end
 
-                -- Pass 1 is YARHM as written. If the victim did not move, the
-                -- remaining passes switch to its other part with a temporary 1.5x
-                -- boost: on a bad connection the first contact is often applied
-                -- after the victim has already left the pose.
+                -- The poses follow YARHM; the menu's optional retries can
+                -- switch to another part and temporarily boost the force.
                 local maxPasses: number = math.clamp(
                     math.floor(tonumber(flingRetries) or 0),
                     0,
@@ -757,17 +617,15 @@ function Module.init(context: Runtime): any
                     partSpeed(targetRoot),
                     partSpeed(targetHead)
                 )
-                if stats.speed <= 100 then
-                    stats.rescued = rescueImpulse(targetCharacter, targetRoot, targetHead)
-                    stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead), stats.speed)
-                end
-
-                destroyPin(pin)
-                pcall(function(): ()
-                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-                end)
             end)
 
+            -- The pin and temporary world state must be restored even if a pose
+            -- failed. No secondary impulse is applied to the target.
+            flingBoost = 1
+            destroyPin(pin)
+            pcall(function(): ()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+            end)
             pcall(function(): ()
                 workspace.FallenPartsDestroyHeight = savedDestroyHeight
             end)
@@ -785,7 +643,7 @@ function Module.init(context: Runtime): any
                     attempts += 1
                     pcall(function(): ()
                         finalRoot.CFrame = oldPos * CFrame.new(0, 0.5, 0)
-                        moveCharacter(finalCharacter, oldPos * CFrame.new(0, 0.5, 0))
+                        finalCharacter:SetPrimaryPartCFrame(oldPos * CFrame.new(0, 0.5, 0))
                         if finalHumanoid then
                             pcall(function(): ()
                                 finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
@@ -799,7 +657,7 @@ function Module.init(context: Runtime): any
                             end
                         end
                     end)
-                    waitFrame()
+                    task.wait()
                 until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60
             end
 
@@ -811,7 +669,6 @@ function Module.init(context: Runtime): any
                     poses = stats.poses,
                     speed = stats.speed,
                     pinned = stats.pinned,
-                    rescued = stats.rescued,
                     retries = stats.retries,
                     power = powerScale(),
                     ok = success,
@@ -836,11 +693,10 @@ function Module.init(context: Runtime): any
                     ))
                 else
                     notify(string.format(
-                        "fling: %s did not move (%d poses, %s studs/s%s)",
+                        "fling: %s did not move (%d poses, %s studs/s)",
                         tostring(targetPlayer.Name),
                         stats.poses,
-                        speedText,
-                        stats.rescued and ", rescue used" or ""
+                        speedText
                     ))
                 end
             end

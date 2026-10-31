@@ -49,22 +49,14 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function rememberGunPartState(part: BasePart): {cframe: CFrame, canCollide: boolean}?
+    local function rememberGunPartState(part: BasePart): {cframe: CFrame, canCollide: boolean}
         local existing = savedGunStates[part]
         if existing then
             return existing
         end
-        local ok: boolean, snap: any = pcall(function(): any
-            return {
-                cframe = part.CFrame,
-                canCollide = part.CanCollide,
-            }
-        end)
-        if ok and type(snap) == "table" then
-            savedGunStates[part] = snap
-            return snap
-        end
-        return nil
+        local snap = {cframe = part.CFrame, canCollide = part.CanCollide}
+        savedGunStates[part] = snap
+        return snap
     end
 
     local function restoreGunPartState(part: BasePart): ()
@@ -88,18 +80,9 @@ function Module.init(runtime: any): any
         table.clear(savedGunStates)
     end
 
-    local function trueGunPartPosition(part: BasePart): Vector3?
+    local function trueGunPartPosition(part: BasePart): Vector3
         local snap = savedGunStates[part]
-        if snap and snap.cframe then
-            return snap.cframe.Position
-        end
-        local okPos: boolean, pos: any = pcall(function(): any
-            return part.Position
-        end)
-        if okPos and typeof(pos) == "Vector3" then
-            return pos :: Vector3
-        end
-        return nil
+        return if snap then snap.cframe.Position else part.Position
     end
 
     local function canGrabGun(): boolean

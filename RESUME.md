@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v164-20261029-knife-smooth-throw`**, con árbol base de
+> **`v165-20261031-native-shaders-simple`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,39 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v164: 91 fuentes,
-     83 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v165: 91 fuentes,
+     84 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v165 — Shaders nativos y primer pase de simplificación (2026-10-31)
+
+Detalle, fuentes y límites: `docs/FIXES-v165.md`.
+
+- El usuario eligió efectos nativos de Roblox, conservar los códigos Vape/YARHM
+  pertinentes y simplificar el proyecto actual. No se restauró otra rama.
+- `Shaders.lua` pasó de 425 a 146 líneas: ColorCorrection/Bloom/SunRays como
+  hijos directos de Lighting, sin bucle ni destrucción de efectos del juego.
+  Presets/controles guardados se mantienen; Cinematic ahora tiene saturación y
+  contraste moderados con tono cálido. No hay recuperación automática si otro
+  script mueve o destruye los efectos: apagar y encender los recrea. Diagnose
+  informa estado, no comprueba el render. Calidad baja puede ocultar efectos.
+- Fling conserva el mecanismo YARHM y las adaptaciones del menú; se retiró el
+  impulso adicional `rescueImpulse`, se simplificó el acceso a APIs nativas y
+  el cleanup devuelve pin, estado y altura incluso tras error de pose. Power,
+  Prediction y Retries siguen, por lo que no es una copia byte a byte de YARHM.
+  Walk Fling espera directamente los eventos nativos y Anti Fling usa el
+  contrato del Framework. No se prueba eficacia ni ownership en Roblox.
+- MM2: lecturas directas en Coins/Gun Aura, Auto Vote, Auto Win y lobby; se quitó
+  una restauración duplicada de moneda. Prediction conserva exactamente las
+  reglas de muerte, Dead, WallCheck, tiempos y cálculos, con menos `pcall` sobre
+  propiedades garantizadas de Humanoid.
+- Este es un **primer pase**: se inventariaron 67 archivos de `src/games`, pero
+  solo se modificaron diez; NO afirmar que todos los módulos son originales al
+  100 % ni que todos han sido revisados y simplificados. El resto sigue
+  pendiente. Mocks no prueban FPS, imagen, ejecutores ni servidor.
 
 ## v164 — Knife Tracer smooth y corrección del apuntado descendente (2026-10-29)
 

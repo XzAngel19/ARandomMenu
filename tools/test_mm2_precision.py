@@ -86,7 +86,8 @@ end
 do
     local workspace={Gravity=196.2}
     local LocalPlayer={Character={}}
-    local humanoid={Health=100,GetState=function() return "Running" end}
+    local humanoid={Health=100,GetState=function() return "Running" end,
+        GetAttribute=function() return nil end}
     local root={Position=Vector3.zero,AssemblyLinearVelocity=Vector3.zero}
     local torso={Position=Vector3.new(0,1,0),IsA=function() return true end}
     local character={FindFirstChild=function(_,name)
@@ -258,6 +259,15 @@ do
     assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,
         "a ragdoll in the Physics state must not be aimed at")
     humanoid.GetState=function() return "Freefall" end
+    humanoid.GetAttribute=function(_,name) return name=="Dead" end
+    assert(prediction.knifeAim(target,Vector3.new(0,0,-30),96)==nil,
+        "a Humanoid marked Dead must not be aimed at")
+    humanoid.GetAttribute=function() return nil end
+    character.GetAttribute=function(_,name) return name=="Dead" end
+    humanoid.Parent=character
+    assert(prediction.gunAim(target,Vector3.new(0,0,-30))==nil,
+        "a character marked Dead must not be aimed at")
+    humanoid.Parent=nil
     for i=1,12 do
         now=now+1/60
         sampleTick(1/60)
@@ -576,7 +586,8 @@ do
     local LocalPlayer={Character={}}
     local latency=0.10
     local humanoidState="Running"
-    local humanoid={Health=100,GetState=function() return humanoidState end}
+    local humanoid={Health=100,GetState=function() return humanoidState end,
+        GetAttribute=function() return nil end}
     local root={Position=Vector3.zero,AssemblyLinearVelocity=Vector3.zero}
     local torso={Position=Vector3.new(0,1,0),IsA=function() return true end}
     local character={FindFirstChild=function(_,name)

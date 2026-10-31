@@ -356,14 +356,8 @@ function Module.init(runtime: any): any
     end
 
     local function rememberDetectorPart(part: BasePart): ()
-        if savedDetectorCFrames[part] then
-            return
-        end
-        local ok: boolean, cf: any = pcall(function(): any
-            return part.CFrame
-        end)
-        if ok and cf then
-            savedDetectorCFrames[part] = cf
+        if not savedDetectorCFrames[part] then
+            savedDetectorCFrames[part] = part.CFrame
         end
     end
 
@@ -513,29 +507,23 @@ function Module.init(runtime: any): any
     local function pulseVotePad(root: BasePart, detectors: {BasePart}): ()
         local primaryPad: BasePart? = detectors[1]
         if primaryPad then
-            local okPos: boolean, padPos: any = pcall(function(): any
-                local saved: CFrame? = savedDetectorCFrames[primaryPad]
-                return saved and saved.Position or primaryPad.Position
+            local saved: CFrame? = savedDetectorCFrames[primaryPad]
+            local padPos: Vector3 = if saved then saved.Position else primaryPad.Position
+            pcall(function(): ()
+                local currentCF: CFrame = root.CFrame
+                local rotOnly: CFrame = currentCF - currentCF.Position
+                root.CFrame = CFrame.new(padPos) * rotOnly
+                root.AssemblyLinearVelocity = Vector3.zero
             end)
-            if okPos and typeof(padPos) == "Vector3" then
-                pcall(function(): ()
-                    local currentCF: CFrame = root.CFrame
-                    local rotOnly: CFrame = currentCF - currentCF.Position
-                    root.CFrame = CFrame.new(padPos) * rotOnly
-                    root.AssemblyLinearVelocity = Vector3.zero
-                end)
-            end
         end
 
         local fireTouch: any = state.fireTouchInterest
-        local rootCF: CFrame? = root.CFrame
+        local rootCF: CFrame = root.CFrame
         for _, part: BasePart in ipairs(detectors) do
             rememberDetectorPart(part)
             pcall(function(): ()
                 part.CanCollide = false
-                if rootCF then
-                    part.CFrame = rootCF
-                end
+                part.CFrame = rootCF
             end)
             if type(fireTouch) == "function" then
                 pcall(fireTouch, root, part, 0)

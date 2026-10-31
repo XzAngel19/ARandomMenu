@@ -1556,22 +1556,8 @@ local function lobbyReferencePart(lobby: Instance): BasePart?
 end
 
 local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
-    local okRoot: boolean, rootPos: any = pcall(function(): any
-        return root.Position
-    end)
-    if not okRoot or typeof(rootPos) ~= "Vector3" then
-        return false
-    end
     local refPart: BasePart? = lobbyReferencePart(lobby)
-    if refPart then
-        local okDist: boolean, dist: any = pcall(function(): any
-            return (rootPos - refPart.Position).Magnitude
-        end)
-        if okDist and type(dist) == "number" and dist <= 350 then
-            return true
-        end
-    end
-    return false
+    return refPart ~= nil and (root.Position - refPart.Position).Magnitude <= 350
 end
 
 local function detectRoundPhase(): string

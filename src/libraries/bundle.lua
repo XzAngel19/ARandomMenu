@@ -1,5 +1,5 @@
 return {
-    stamp = "v164-20261029-knife-smooth-throw",
+    stamp = "v165-20261031-native-shaders-simple",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -8889,14 +8889,8 @@ function Module.init(runtime: any): any
     end
 
     local function rememberDetectorPart(part: BasePart): ()
-        if savedDetectorCFrames[part] then
-            return
-        end
-        local ok: boolean, cf: any = pcall(function(): any
-            return part.CFrame
-        end)
-        if ok and cf then
-            savedDetectorCFrames[part] = cf
+        if not savedDetectorCFrames[part] then
+            savedDetectorCFrames[part] = part.CFrame
         end
     end
 
@@ -9046,29 +9040,23 @@ function Module.init(runtime: any): any
     local function pulseVotePad(root: BasePart, detectors: {BasePart}): ()
         local primaryPad: BasePart? = detectors[1]
         if primaryPad then
-            local okPos: boolean, padPos: any = pcall(function(): any
-                local saved: CFrame? = savedDetectorCFrames[primaryPad]
-                return saved and saved.Position or primaryPad.Position
+            local saved: CFrame? = savedDetectorCFrames[primaryPad]
+            local padPos: Vector3 = if saved then saved.Position else primaryPad.Position
+            pcall(function(): ()
+                local currentCF: CFrame = root.CFrame
+                local rotOnly: CFrame = currentCF - currentCF.Position
+                root.CFrame = CFrame.new(padPos) * rotOnly
+                root.AssemblyLinearVelocity = Vector3.zero
             end)
-            if okPos and typeof(padPos) == "Vector3" then
-                pcall(function(): ()
-                    local currentCF: CFrame = root.CFrame
-                    local rotOnly: CFrame = currentCF - currentCF.Position
-                    root.CFrame = CFrame.new(padPos) * rotOnly
-                    root.AssemblyLinearVelocity = Vector3.zero
-                end)
-            end
         end
 
         local fireTouch: any = state.fireTouchInterest
-        local rootCF: CFrame? = root.CFrame
+        local rootCF: CFrame = root.CFrame
         for _, part: BasePart in ipairs(detectors) do
             rememberDetectorPart(part)
             pcall(function(): ()
                 part.CanCollide = false
-                if rootCF then
-                    part.CFrame = rootCF
-                end
+                part.CFrame = rootCF
             end)
             if type(fireTouch) == "function" then
                 pcall(fireTouch, root, part, 0)
@@ -9524,20 +9512,10 @@ function Module.init(runtime: any): any
         if not map then
             return false, nil
         end
-        local okRoot: boolean, rootPos: any = pcall(function(): any
-            return root.Position
-        end)
-        if not okRoot or typeof(rootPos) ~= "Vector3" then
-            return false, nil
-        end
+        local rootPos: Vector3 = root.Position
         local lobbyPart: BasePart? = findLobbyReferencePart()
-        if lobbyPart then
-            local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
-                return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude
-            end)
-            if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
-                return false, nil
-            end
+        if lobbyPart and (rootPos - lobbyPart.Position).Magnitude <= 350 then
+            return false, nil
         end
         local refPart: BasePart? = nil
         local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
@@ -9554,15 +9532,12 @@ function Module.init(runtime: any): any
             refPart = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
         end
         if refPart then
-            local okMapDist: boolean, mapDist: any = pcall(function(): any
-                return ((rootPos :: Vector3) - refPart.Position).Magnitude
-            end)
-            if okMapDist and type(mapDist) == "number" and mapDist > 1500 then
+            if (rootPos - refPart.Position).Magnitude > 1500 then
                 return false, nil
             end
             return true, refPart.Position
         end
-        return true, rootPos :: Vector3
+        return true, rootPos
     end
 
     local function restoreVictims(): ()
@@ -10653,16 +10628,10 @@ function Module.init(runtime: any): any
         if pos then
             return pos
         end
-        local ok: boolean, cf: any = pcall(function(): any
-            return serverPart.CFrame
-        end)
-        if ok and cf then
-            savedCFrames[serverPart] = cf
-            local p: Vector3 = cf.Position
-            savedPositions[serverPart] = p
-            return p
-        end
-        return nil
+        local cf: CFrame = serverPart.CFrame
+        savedCFrames[serverPart] = cf
+        savedPositions[serverPart] = cf.Position
+        return cf.Position
     end
 
     local function restoreCoin(serverPart: BasePart?): ()
@@ -10681,9 +10650,6 @@ function Module.init(runtime: any): any
     end
 
     local function restoreAllCoins(): ()
-        if activeCoin then
-            restoreCoin(activeCoin)
-        end
         for serverPart, cf in pairs(savedCFrames) do
             if serverPart and serverPart.Parent then
                 pcall(function(): ()
@@ -10725,7 +10691,7 @@ function Module.init(runtime: any): any
         local vPart: BasePart = visual :: BasePart
         vPart.Anchored = true
         local weld: Instance? = vPart:FindFirstChildOfClass("WeldConstraint")
-        if weld and weld:IsA("WeldConstraint") then
+        if weld then
             (weld :: WeldConstraint).Enabled = false
         end
     end
@@ -10734,10 +10700,7 @@ function Module.init(runtime: any): any
         rememberCoin(serverPart)
         detachVisualWeld(serverPart)
         serverPart.CanCollide = false
-        local rootCF: CFrame? = root.CFrame
-        if rootCF then
-            serverPart.CFrame = rootCF
-        end
+        serverPart.CFrame = root.CFrame
         local fireTouch: any = state.fireTouchInterest
         if type(fireTouch) == "function" then
             pcall(fireTouch, root, serverPart, 0)
@@ -11314,22 +11277,14 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function rememberGunPartState(part: BasePart): {cframe: CFrame, canCollide: boolean}?
+    local function rememberGunPartState(part: BasePart): {cframe: CFrame, canCollide: boolean}
         local existing = savedGunStates[part]
         if existing then
             return existing
         end
-        local ok: boolean, snap: any = pcall(function(): any
-            return {
-                cframe = part.CFrame,
-                canCollide = part.CanCollide,
-            }
-        end)
-        if ok and type(snap) == "table" then
-            savedGunStates[part] = snap
-            return snap
-        end
-        return nil
+        local snap = {cframe = part.CFrame, canCollide = part.CanCollide}
+        savedGunStates[part] = snap
+        return snap
     end
 
     local function restoreGunPartState(part: BasePart): ()
@@ -11353,18 +11308,9 @@ function Module.init(runtime: any): any
         table.clear(savedGunStates)
     end
 
-    local function trueGunPartPosition(part: BasePart): Vector3?
+    local function trueGunPartPosition(part: BasePart): Vector3
         local snap = savedGunStates[part]
-        if snap and snap.cframe then
-            return snap.cframe.Position
-        end
-        local okPos: boolean, pos: any = pcall(function(): any
-            return part.Position
-        end)
-        if okPos and typeof(pos) == "Vector3" then
-            return pos :: Vector3
-        end
-        return nil
+        return if snap then snap.cframe.Position else part.Position
     end
 
     local function canGrabGun(): boolean
@@ -12124,17 +12070,8 @@ local function finiteVector(value: any): boolean
 end
 
 local function humanoidStateName(humanoid: Humanoid): string
-    -- pcall(method, self) instead of pcall(closure): the old form allocated a
-    -- closure per sample, 60 times a second per player.
-    local ok: boolean, state: any = pcall(humanoid.GetState, humanoid)
-    if not ok or state == nil then
-        return ""
-    end
-    local name: any = state.Name
-    if type(name) == "string" then
-        return name
-    end
-    return tostring(state)
+    local state: any = humanoid:GetState()
+    return state.Name or tostring(state)
 end
 
 -- v158: the predictor is asked only about live bodies. A ragdoll on the floor
@@ -12142,51 +12079,16 @@ end
 -- happily solved a lead for a corpse that cannot move. This is the same test
 -- base.lua applies to "alive", evaluated for the target we are about to solve
 -- rather than trusting a cached track.
-local function bodyIsAlive(humanoid: any): boolean
-    if humanoid == nil then
+local function bodyIsAlive(humanoid: Humanoid?): boolean
+    if not humanoid or humanoid.Health <= 0 then return false end
+    local currentState: Enum.HumanoidStateType = humanoid:GetState()
+    if currentState == Enum.HumanoidStateType.Dead
+        or currentState == Enum.HumanoidStateType.Physics then
         return false
     end
-    local okHealth: boolean, health: any = pcall(function(): any
-        return humanoid.Health
-    end)
-    if okHealth and type(health) == "number" and health <= 0 then
-        return false
-    end
-    local okState: boolean, currentState: any = pcall(function(): any
-        return humanoid:GetState()
-    end)
-    if okState and currentState ~= nil then
-        local deadState: any = nil
-        local physicsState: any = nil
-        pcall(function(): ()
-            deadState = Enum.HumanoidStateType.Dead
-            physicsState = Enum.HumanoidStateType.Physics
-        end)
-        if currentState == deadState or currentState == physicsState then
-            return false
-        end
-    end
-    -- The flag may sit on the Humanoid or on the character model, depending on
-    -- who wrote it; either one retires the body.
-    local function deadAttribute(instance: any): boolean
-        if instance == nil then
-            return false
-        end
-        local ok: boolean, dead: any = pcall(function(): any
-            return instance:GetAttribute("Dead")
-        end)
-        return ok and dead == true
-    end
-    if deadAttribute(humanoid) then
-        return false
-    end
-    local okParent: boolean, parent: any = pcall(function(): any
-        return humanoid.Parent
-    end)
-    if okParent and deadAttribute(parent) then
-        return false
-    end
-    return true
+    if humanoid:GetAttribute("Dead") == true then return false end
+    local parent: Instance? = humanoid.Parent
+    return not parent or parent:GetAttribute("Dead") ~= true
 end
 
 local function targetHumanoid(target: Player): any
@@ -16449,22 +16351,8 @@ local function lobbyReferencePart(lobby: Instance): BasePart?
 end
 
 local function isRootNearLobby(root: BasePart, lobby: Instance): boolean
-    local okRoot: boolean, rootPos: any = pcall(function(): any
-        return root.Position
-    end)
-    if not okRoot or typeof(rootPos) ~= "Vector3" then
-        return false
-    end
     local refPart: BasePart? = lobbyReferencePart(lobby)
-    if refPart then
-        local okDist: boolean, dist: any = pcall(function(): any
-            return (rootPos - refPart.Position).Magnitude
-        end)
-        if okDist and type(dist) == "number" and dist <= 350 then
-            return true
-        end
-    end
-    return false
+    return refPart ~= nil and (root.Position - refPart.Position).Magnitude <= 350
 end
 
 local function detectRoundPhase(): string
@@ -26517,19 +26405,12 @@ function Module.init(context: Runtime): any
     local configData: any = host.configData
 
     local workspace: any = host.workspace
-    local RunService: any = host.RunService
 
     -- The MM2 core only exists while Murder Mystery 2 is loaded; every role call
     -- is resolved lazily so the card works everywhere and never errors outside
     -- MM2.
     local function mm2Core(): any
-        local ok: boolean, core: any = pcall(function(): any
-            return state.mm2Core
-        end)
-        if ok and type(core) == "table" then
-            return core
-        end
-        return nil
+        return state.mm2Core
     end
 
     local function coreFunction(name: string): any
@@ -26568,8 +26449,9 @@ function Module.init(context: Runtime): any
     -- into the sky. That enormous velocity exists just long enough for the
     -- contact solver to hand it to the victim, which is why this version actually
     -- launches people and the old CFrame-lock one did not.
-    -- SkidFling, copied line by line from the YARHM hub the user supplied
+    -- SkidFling adapted from the YARHM hub the user supplied
     -- (YARHM_Hub_KEYLESS_2026.txt, "Fling" -> SkidFling, originally by zqyDSUWX).
+    -- The menu also retains its own targeting, power, prediction and retries.
     --
     -- The parts that matter and that our own port had wrong:
     --
@@ -26628,24 +26510,6 @@ function Module.init(context: Runtime): any
         end
     end
 
-    -- task.wait(), like the original: it resumes on Heartbeat, one physics step
-    -- after the pose was written.
-    local function waitFrame(): ()
-        if type(task) == "table" and type(task.wait) == "function" then
-            task.wait()
-        end
-    end
-
-    local function moveCharacter(character: Model, cframe: CFrame): ()
-        -- SetPrimaryPartCFrame is what the original calls; PivotTo is the modern
-        -- equivalent when the executor/engine no longer exposes the old one.
-        if type(character.SetPrimaryPartCFrame) == "function" then
-            character:SetPrimaryPartCFrame(cframe)
-        elseif type(character.PivotTo) == "function" then
-            character:PivotTo(cframe)
-        end
-    end
-
     local function targetParts(targetPlayer: Player?): (Model?, Humanoid?, BasePart?, BasePart?, BasePart?)
         local targetCharacter: Model? = targetPlayer and targetPlayer.Character
         if not targetCharacter then
@@ -26672,12 +26536,10 @@ function Module.init(context: Runtime): any
             origin = origin + lead
         end
         local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
-        pcall(function(): ()
-            root.CFrame = targetCFrame
-            moveCharacter(character, targetCFrame)
-            root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
-            root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
-        end)
+        root.CFrame = targetCFrame
+        character:SetPrimaryPartCFrame(targetCFrame)
+        root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
+        root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
     end
 
     -- Round trip / 2: how stale the server's copy of the victim is by the time it
@@ -26744,62 +26606,19 @@ function Module.init(context: Runtime): any
         return character, humanoid, root, head
     end
 
-    local function nowSeconds(): number
-        -- YARHM times the loop with tick(). os.clock() is the fallback and 0 the
-        -- last resort; the pose counter below keeps the loop bounded either way.
-        local ok: boolean, value: any = pcall(function(): any
-            return tick()
-        end)
-        if ok and type(value) == "number" then
-            return value
-        end
-        ok, value = pcall(function(): any
-            return os.clock()
-        end)
-        if ok and type(value) == "number" then
-            return value
-        end
-        return 0
-    end
-
-    -- Vector3 is userdata in the client and a table in the harness: read the
-    -- magnitude through pcall instead of type() so both work.
     local function partSpeed(part: BasePart?): number
-        if not part then
-            return 0
-        end
-        local ok: boolean, velocity: any = pcall(function(): any
-            return part.Velocity
-        end)
-        if not ok or not velocity then
-            return 0
-        end
-        local okMagnitude: boolean, magnitude: any = pcall(function(): any
-            return velocity.Magnitude
-        end)
-        if okMagnitude and type(magnitude) == "number" then
-            return magnitude
-        end
-        return 0
+        return if part then part.Velocity.Magnitude else 0
     end
 
     -- cloneReference() gives the host a DIFFERENT reference for the same
-    -- service, so "targetPlayer.Parent ~= Players" is true even for a player who
-    -- is in the game. That checked true on every frame and killed the loop after
-    -- a single pose set (the "finished in half a second" bug). Ask the service
-    -- instead, and never stop the loop when the answer is unknown.
+    -- service, so "targetPlayer.Parent ~= Players" can stop the fling early.
+    -- Resolve the player through the service instead.
     local function playerStillHere(player: Player): boolean
-        local ok: boolean, found: any = pcall(function(): any
-            return Players:FindFirstChild(player.Name)
-        end)
-        if not ok then
-            return true
-        end
-        return found ~= nil
+        return Players:FindFirstChild(player.Name) ~= nil
     end
 
-    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, nine
-    -- while it is already moving), hardened for lag and for fast victims:
+    -- SFBasePart: YARHM's choreography (six poses while the victim is slow, ten
+    -- while it is already moving), with the menu's adaptations:
     --
     --   * MIN_POSES before the "it is flying, stop" check, so one stale
     --     replication frame does not end the fling early;
@@ -26821,7 +26640,7 @@ function Module.init(context: Runtime): any
         shouldStop: (() -> boolean)?,
         stats: any
     ): ()
-        local startedAt: number = nowSeconds()
+        local startedAt: number = os.clock()
         local angle: number = 0
         local liveBase: BasePart = basePart
 
@@ -26855,7 +26674,7 @@ function Module.init(context: Runtime): any
             end
             fpos(character, root, part, offset, angles, leadFor(part))
             stats.poses += 1
-            waitFrame()
+            task.wait()
             return true
         end
 
@@ -26906,89 +26725,21 @@ function Module.init(context: Runtime): any
             or not playerStillHere(targetPlayer)
             or (targetHumanoid ~= nil and targetHumanoid.Sit)
             or humanoid.Health <= 0
-            or nowSeconds() > startedAt + timeToWait
+            or os.clock() > startedAt + timeToWait
             or stats.poses >= 600
     end
 
-    -- Only used if SkidFling could not move the target at all: spin and push the
-    -- victim's own part for two frames. Everything created here is destroyed and
-    -- the result is reported in the notification, so it can never be silent.
-    local RESCUE_SPIN: Vector3 = Vector3.new(1000, 1000, 1000)
-    local RESCUE_PUSH: Vector3 = Vector3.new(0, 500, 0)
-
-    local function rescueImpulse(targetCharacter: Model, targetRoot: BasePart?, targetHead: BasePart?): boolean
-        local target: BasePart? = targetRoot or targetHead
-        if not target then
-            return false
-        end
-        local created: {any} = {}
-        local ok: boolean = pcall(function(): ()
-            local spin: any = Instance.new("BodyAngularVelocity")
-            spin.Name = "Wurst_RescueSpin"
-            spin.AngularVelocity = RESCUE_SPIN
-            spin.MaxTorque = PIN_FORCE
-            spin.Parent = target
-            table.insert(created, spin)
-            local push: any = Instance.new("BodyVelocity")
-            push.Name = "Wurst_RescuePush"
-            push.Velocity = RESCUE_PUSH
-            push.MaxForce = PIN_FORCE
-            push.Parent = target
-            table.insert(created, push)
-            for _, part: Instance in ipairs(targetCharacter:GetChildren()) do
-                if part:IsA("BasePart") then
-                    local bodyPart: BasePart = part :: BasePart
-                    bodyPart.Velocity = RESCUE_PUSH
-                    bodyPart.RotVelocity = RESCUE_SPIN
-                end
-            end
-        end)
-        waitFrame()
-        waitFrame()
-        for _, item: any in ipairs(created) do
-            pcall(function(): ()
-                item:Destroy()
-            end)
-        end
-        return ok and #created > 0
-    end
-
     local function createPin(root: BasePart): any
-        local pinVelocity: Vector3 = scaledVelocity(PIN_VELOCITY_BASE)
-        local ok: boolean, pin: any = pcall(function(): any
-            local bodyVelocity: any = Instance.new("BodyVelocity")
-            bodyVelocity.Name = "EpixVel"
-            bodyVelocity.Parent = root
-            bodyVelocity.Velocity = pinVelocity
-            bodyVelocity.MaxForce = PIN_FORCE
-            return bodyVelocity
-        end)
-        if ok and pin then
-            return pin
-        end
-        -- Some executors reject math.huge in a Vector3. 1e9 is the same catapult
-        -- for every practical purpose, so the fling still lands.
-        local okFallback: boolean, fallback: any = pcall(function(): any
-            local bodyVelocity: any = Instance.new("BodyVelocity")
-            bodyVelocity.Name = "EpixVel"
-            bodyVelocity.Parent = root
-            bodyVelocity.Velocity = pinVelocity
-            bodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-            return bodyVelocity
-        end)
-        if okFallback then
-            return fallback
-        end
-        return nil
+        local pin: any = Instance.new("BodyVelocity")
+        pin.Name = "EpixVel"
+        pin.Velocity = scaledVelocity(PIN_VELOCITY_BASE)
+        pin.MaxForce = PIN_FORCE
+        pin.Parent = root
+        return pin
     end
 
     local function destroyPin(pin: any): ()
-        if not pin then
-            return
-        end
-        pcall(function(): ()
-            pin:Destroy()
-        end)
+        if pin then pin:Destroy() end
     end
 
     -- Per-frame caller (Auto Win's Fling Sheriff). Same FPos pose, with a pin
@@ -27027,17 +26778,15 @@ function Module.init(context: Runtime): any
         end
         stepPinToken += 1
         local myToken: number = stepPinToken
-        if type(task) == "table" and type(task.delay) == "function" then
-            task.delay(0.5, function(): ()
-                if myToken == stepPinToken then
-                    destroyPin(stepPin)
-                    stepPin = nil
-                    if not flingRunning and activity and type(activity.set) == "function" then
-                        activity.set("fling", false)
-                    end
+        task.delay(0.5, function(): ()
+            if myToken == stepPinToken then
+                destroyPin(stepPin)
+                stepPin = nil
+                if not flingRunning and activity and type(activity.set) == "function" then
+                    activity.set("fling", false)
                 end
-            end)
-        end
+            end
+        end)
         stepAngle = (stepAngle + 100) % 360
         local speed: number = 0
         pcall(function(): ()
@@ -27089,7 +26838,7 @@ function Module.init(context: Runtime): any
 
         setFlingRunning(true)
 
-        local stats: any = {poses = 0, speed = 0, pinned = false, rescued = false, retries = 0}
+        local stats: any = {poses = 0, speed = 0, pinned = false, retries = 0}
 
         local function runFling(): boolean
             local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
@@ -27129,6 +26878,7 @@ function Module.init(context: Runtime): any
             end)
             local camera: Camera? = workspace.CurrentCamera
 
+            local pin: any = nil
             local success: boolean, errorMessage: any = pcall(function(): ()
                 if camera then
                     pcall(function(): ()
@@ -27145,8 +26895,8 @@ function Module.init(context: Runtime): any
                     workspace.FallenPartsDestroyHeight = 0 / 0
                 end)
 
-                local pin: any = createPin(root)
-                stats.pinned = pin ~= nil
+                pin = createPin(root)
+                stats.pinned = true
                 pcall(function(): ()
                     humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
                 end)
@@ -27164,10 +26914,8 @@ function Module.init(context: Runtime): any
                     basePart = targetHead
                 end
 
-                -- Pass 1 is YARHM as written. If the victim did not move, the
-                -- remaining passes switch to its other part with a temporary 1.5x
-                -- boost: on a bad connection the first contact is often applied
-                -- after the victim has already left the pose.
+                -- The poses follow YARHM; the menu's optional retries can
+                -- switch to another part and temporarily boost the force.
                 local maxPasses: number = math.clamp(
                     math.floor(tonumber(flingRetries) or 0),
                     0,
@@ -27238,17 +26986,15 @@ function Module.init(context: Runtime): any
                     partSpeed(targetRoot),
                     partSpeed(targetHead)
                 )
-                if stats.speed <= 100 then
-                    stats.rescued = rescueImpulse(targetCharacter, targetRoot, targetHead)
-                    stats.speed = math.max(partSpeed(targetRoot), partSpeed(targetHead), stats.speed)
-                end
-
-                destroyPin(pin)
-                pcall(function(): ()
-                    humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
-                end)
             end)
 
+            -- The pin and temporary world state must be restored even if a pose
+            -- failed. No secondary impulse is applied to the target.
+            flingBoost = 1
+            destroyPin(pin)
+            pcall(function(): ()
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+            end)
             pcall(function(): ()
                 workspace.FallenPartsDestroyHeight = savedDestroyHeight
             end)
@@ -27266,7 +27012,7 @@ function Module.init(context: Runtime): any
                     attempts += 1
                     pcall(function(): ()
                         finalRoot.CFrame = oldPos * CFrame.new(0, 0.5, 0)
-                        moveCharacter(finalCharacter, oldPos * CFrame.new(0, 0.5, 0))
+                        finalCharacter:SetPrimaryPartCFrame(oldPos * CFrame.new(0, 0.5, 0))
                         if finalHumanoid then
                             pcall(function(): ()
                                 finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
@@ -27280,7 +27026,7 @@ function Module.init(context: Runtime): any
                             end
                         end
                     end)
-                    waitFrame()
+                    task.wait()
                 until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60
             end
 
@@ -27292,7 +27038,6 @@ function Module.init(context: Runtime): any
                     poses = stats.poses,
                     speed = stats.speed,
                     pinned = stats.pinned,
-                    rescued = stats.rescued,
                     retries = stats.retries,
                     power = powerScale(),
                     ok = success,
@@ -27317,11 +27062,10 @@ function Module.init(context: Runtime): any
                     ))
                 else
                     notify(string.format(
-                        "fling: %s did not move (%d poses, %s studs/s%s)",
+                        "fling: %s did not move (%d poses, %s studs/s)",
                         tostring(targetPlayer.Name),
                         stats.poses,
-                        speedText,
-                        stats.rescued and ", rescue used" or ""
+                        speedText
                     ))
                 end
             end
@@ -29172,7 +28916,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local LocalPlayer: any = host.LocalPlayer
     local RunService: any = host.RunService or game:GetService("RunService")
-    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local configData: any = host.configData
@@ -29205,18 +28948,6 @@ function Module.init(context: Runtime): any
             return character, humanoid, nil
         end
         return character, humanoid, root
-    end
-
-    local function waitSignal(signal: any): ()
-        if signal and type(signal.Wait) == "function" then
-            local ok: boolean = pcall(function(): ()
-                signal:Wait()
-            end)
-            if ok then
-                return
-            end
-        end
-        task.wait()
     end
 
     local function rememberCollision(character: Model): ()
@@ -29280,7 +29011,7 @@ function Module.init(context: Runtime): any
 
         task.spawn(function(): ()
             while enabled and session == mySession and Module.Initialized do
-                waitSignal(RunService and RunService.Heartbeat)
+                RunService.Heartbeat:Wait()
                 if not enabled or session ~= mySession then
                     break
                 end
@@ -29298,7 +29029,7 @@ function Module.init(context: Runtime): any
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
-                    waitSignal(RunService and RunService.RenderStepped)
+                    RunService.RenderStepped:Wait()
                     -- A toggle-off that lands in the middle of an iteration must
                     -- not re-apply the spike after stop() already parked the body.
                     local stillRunning: boolean = enabled and session == mySession
@@ -29308,7 +29039,7 @@ function Module.init(context: Runtime): any
                             root.AssemblyLinearVelocity = savedVelocity
                         end)
                     end
-                    waitSignal(RunService and RunService.Stepped)
+                    RunService.Stepped:Wait()
                     if stillRunning and enabled and session == mySession
                         and character.Parent and root.Parent then
                         pcall(function(): ()
@@ -30693,7 +30424,6 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
@@ -30718,14 +30448,9 @@ function Module.init(context: Runtime): any
     end
 
     local function speedModuleWalkSpeed(): number
-        local ok: boolean, feature: any = pcall(function(): any
-            return framework and framework.GetModule and framework:GetModule("Speed")
-        end)
-        if ok and feature and feature.Enabled and feature.Options and feature.Options.Speed then
-            local value: any = feature.Options.Speed.Value
-            if type(value) == "number" and value > 0 then
-                return value
-            end
+        local feature: any = framework:GetModule("Speed")
+        if feature and feature.Enabled and feature.Options.Speed then
+            return math.max(0, feature.Options.Speed.Value)
         end
         return 0
     end
@@ -30822,9 +30547,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         enabled = false
-        if disconnectFeatureConnection then
-            disconnectFeatureConnection("AntiFling")
-        end
+        disconnectFeatureConnection("AntiFling")
     end
     Module.Initialized = true
     return antiFlingFeature
@@ -39500,426 +39223,147 @@ return Module
 
 ]],
         ["src/games/universal/Render/Shaders.lua"] = [[
--- Client-side colour grading, bloom and sun rays. Roblox PostEffects must be
--- DIRECT children of Lighting or CurrentCamera: a Folder under Lighting does
--- not render them. We keep our own references and destroy only those effects.
--- No Lighting properties, game-owned effects, or remotes are changed. Rendering
--- still depends on device graphics quality and other modules/game scripts.
+-- Roblox's native post-processing effects run as direct children of Lighting.
+-- They affect only this client; the game's own effects are left alone.
 local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
 local card
 
--- A look is an OFFSET on top of the manual sliders, never a value that
--- overwrites them. Choosing "Neon" and then raising Saturation keeps both, and
--- no widget has to be written to from code (which is what made the old
--- preset-driven modules fight their own UI).
+-- Presets are added to the manual sliders, so changing a look never overwrites
+-- the user's saved controls.
 local LOOKS = {
     {name = "None", saturation = 0, contrast = 0, brightness = 0,
-        bloom = 0, rays = 0, tint = nil, tintWeight = 0},
-    {name = "Cinematic", saturation = -0.12, contrast = 0.16, brightness = -0.01,
-        bloom = 0.35, rays = 0.2, tint = Color3.fromRGB(255, 236, 214),
-        tintWeight = 0.45},
+        bloom = 0, rays = 0},
+    {name = "Cinematic", saturation = 0.10, contrast = 0.12, brightness = 0.01,
+        bloom = 0, rays = 0, tint = Color3.fromRGB(255, 240, 226), tintWeight = 0.25},
     {name = "Vivid", saturation = 0.35, contrast = 0.1, brightness = 0.02,
-        bloom = 0.2, rays = 0.1, tint = nil, tintWeight = 0},
+        bloom = 0.2, rays = 0.1},
     {name = "Neon", saturation = 0.6, contrast = 0.2, brightness = 0.04,
-        bloom = 1, rays = 0.5, tint = Color3.fromRGB(240, 250, 255),
-        tintWeight = 0.25},
+        bloom = 1, rays = 0.5, tint = Color3.fromRGB(240, 250, 255), tintWeight = 0.25},
     {name = "Noir", saturation = -1, contrast = 0.28, brightness = -0.02,
-        bloom = 0.1, rays = 0, tint = nil, tintWeight = 0},
+        bloom = 0.1, rays = 0},
     {name = "Warm", saturation = 0.1, contrast = 0.05, brightness = 0.03,
-        bloom = 0.25, rays = 0.3, tint = Color3.fromRGB(255, 214, 170),
-        tintWeight = 0.6},
+        bloom = 0.25, rays = 0.3, tint = Color3.fromRGB(255, 214, 170), tintWeight = 0.6},
     {name = "Frost", saturation = -0.05, contrast = 0.12, brightness = 0.02,
-        bloom = 0.3, rays = 0.15, tint = Color3.fromRGB(190, 225, 255),
-        tintWeight = 0.55},
+        bloom = 0.3, rays = 0.15, tint = Color3.fromRGB(190, 225, 255), tintWeight = 0.55},
     {name = "Dream", saturation = 0.15, contrast = -0.12, brightness = 0.06,
-        bloom = 1.4, rays = 0.7, tint = Color3.fromRGB(235, 225, 255),
-        tintWeight = 0.35},
+        bloom = 1.4, rays = 0.7, tint = Color3.fromRGB(235, 225, 255), tintWeight = 0.35},
 }
 
-local LOOK_NAMES: {string} = {}
+local LOOK_NAMES = {}
+local LOOK_BY_NAME = {}
 for _, look in ipairs(LOOKS) do
     table.insert(LOOK_NAMES, look.name)
-end
-
-local function lookFor(name: any): any
-    for _, look in ipairs(LOOKS) do
-        if look.name == name then
-            return look
-        end
-    end
-    return LOOKS[1]
-end
-
--- Colour grading is a look, so the values are clamped to the ranges the effect
--- accepts: a slider at its limit plus a look must not be rejected by the
--- engine and silently stop updating everything else.
-local function clamped(value: any, low: number, high: number): number
-    local number = tonumber(value) or 0
-    if number ~= number then
-        number = 0
-    end
-    return math.clamp(number, low, high)
+    LOOK_BY_NAME[look.name] = look
 end
 
 function Module.init(context: any): any
-    -- `host.Lighting` is the wrapper the rest of the menu uses; the service is
-    -- the fallback, because a module that silently creates nothing when the
-    -- environment table is missing one key looks exactly like "it does
-    -- nothing".
-    local lighting = context.host and context.host.Lighting
-    if not lighting then
-        pcall(function(): ()
-            lighting = game:GetService("Lighting")
-        end)
-    end
-    local color: any = nil
-    local bloom: any = nil
-    local rays: any = nil
-    local active: boolean = false
-    local effectErrors: {[string]: string} = {}
-
-    local function destroyEffect(effect: any): ()
-        if effect then
-            pcall(function(): ()
-                effect:Destroy()
-            end)
-        end
-    end
+    local lighting: Lighting = context.host.Lighting
+    local color: ColorCorrectionEffect? = nil
+    local bloom: BloomEffect? = nil
+    local rays: SunRaysEffect? = nil
 
     local function cleanup(): ()
-        -- Do not use ipairs({color, bloom, rays}): a failed first creation
-        -- makes a hole that would leak the other two instances.
-        destroyEffect(color)
-        destroyEffect(bloom)
-        destroyEffect(rays)
-        color, bloom, rays = nil, nil, nil
-        table.clear(effectErrors)
+        if color then color:Destroy(); color = nil end
+        if bloom then bloom:Destroy(); bloom = nil end
+        if rays then rays:Destroy(); rays = nil end
     end
 
-    local function ensureEffect(effect: any, className: string, name: string): any
-        if effect then
-            local ok: boolean, valid: any = pcall(function(): boolean
-                local parent: any = effect.Parent
-                -- ClassName also handles executor-cloned service references.
-                return parent ~= nil and (parent == lighting or parent.ClassName == "Lighting")
-            end)
-            if ok and valid then
-                return effect
-            end
-            -- A game may have removed/reparented it since the last option
-            -- change. Dispose only the instance this module created.
-            destroyEffect(effect)
-        end
-        if not lighting then
-            effectErrors[className] = "Lighting unavailable"
-            return nil
-        end
-        local instance: any = nil
-        local ok: boolean, err: any = pcall(function(): ()
-            instance = Instance.new(className)
-            instance.Name = name
-            -- Direct parent is essential; a folder below Lighting is inert.
-            instance.Parent = lighting
-        end)
-        if not ok then
-            destroyEffect(instance)
-            effectErrors[className] = tostring(err)
-            return nil
-        end
-        effectErrors[className] = nil
-        return instance
-    end
-
-    local function ensureEffects(): ()
-        color = ensureEffect(color, "ColorCorrectionEffect", "ARMShaderColor")
-        bloom = ensureEffect(bloom, "BloomEffect", "ARMShaderBloom")
-        rays = ensureEffect(rays, "SunRaysEffect", "ARMShaderRays")
-    end
-
-    local function lerpColor(from: Color3, to: Color3, alpha: number): Color3
-        local weight: number = math.clamp(alpha, 0, 1)
-        return Color3.new(
-            from.R + (to.R - from.R) * weight,
-            from.G + (to.G - from.G) * weight,
-            from.B + (to.B - from.B) * weight
-        )
-    end
-
-    local function options(): any
-        return card and card.Options or {}
-    end
-
-    local function readOption(name: string, fallback: number): number
-        local option = options()[name]
-        if option == nil then
-            return fallback
-        end
-        return clamped(option.Value, -1e6, 1e6)
+    local function makeEffect(className: string, name: string): any
+        local effect: any = Instance.new(className)
+        effect.Name = name
+        effect.Parent = lighting
+        return effect
     end
 
     local function apply(): ()
-        if not card or not active then
-            return
-        end
-        ensureEffects()
-        local look: any = lookFor(options().Look and options().Look.Value)
-        local failures: {string} = {}
-        if color then
-            local ok: boolean, err: any = pcall(function(): ()
-                color.Saturation = clamped(readOption("Saturation", 0) + look.saturation, -1, 1)
-                color.Contrast = clamped(readOption("Contrast", 0) + look.contrast, -1, 1)
-                color.Brightness = clamped(readOption("Brightness", 0) + look.brightness, -1, 1)
-                local tint: Color3 = options().Tint and options().Tint.Value
-                    or Color3.new(1, 1, 1)
-                color.TintColor = look.tint
-                        and lerpColor(tint, look.tint, look.tintWeight)
-                    or tint
-                color.Enabled = true
-            end)
-            if not ok then
-                effectErrors.ColorCorrectionEffect = tostring(err)
-                table.insert(failures, "color")
-            else
-                effectErrors.ColorCorrectionEffect = nil
-            end
-        else
-            table.insert(failures, "color")
-        end
-        if bloom then
-            local ok: boolean, err: any = pcall(function(): ()
-                local intensity: number = clamped(readOption("Bloom", 0) + look.bloom, 0, 10)
-                bloom.Intensity = intensity
-                bloom.Size = clamped(readOption("Bloom size", 24), 0, 56)
-                bloom.Threshold = clamped(readOption("Bloom threshold", 1.1), 0, 5)
-                bloom.Enabled = intensity > 0.01
-            end)
-            if not ok then
-                effectErrors.BloomEffect = tostring(err)
-                table.insert(failures, "bloom")
-            else
-                effectErrors.BloomEffect = nil
-            end
-        else
-            table.insert(failures, "bloom")
-        end
-        if rays then
-            local ok: boolean, err: any = pcall(function(): ()
-                local intensity: number = clamped(readOption("Sun rays", 0) + look.rays, 0, 1)
-                rays.Intensity = intensity
-                rays.Spread = clamped(readOption("Ray spread", 0.5), 0, 1)
-                rays.Enabled = intensity > 0.01
-            end)
-            if not ok then
-                effectErrors.SunRaysEffect = tostring(err)
-                table.insert(failures, "rays")
-            else
-                effectErrors.SunRaysEffect = nil
-            end
-        else
-            table.insert(failures, "rays")
-        end
-        if #failures > 0 then
-            card:SetStatus("Unavailable: " .. table.concat(failures, ", "))
-        elseif look.name == "None" then
-            card:SetStatus(nil)
-        else
-            card:SetStatus(look.name)
-        end
+        -- Widget restoration can call this while the card is being built.
+        if not card or not card.Enabled or not color or not bloom or not rays then return end
+        local opts: any = card.Options
+        local look: any = LOOK_BY_NAME[opts.Look.Value] or LOOKS[1]
+        local tint: Color3 = opts.Tint.Value
+        color.Saturation = math.clamp(opts.Saturation.Value + look.saturation, -1, 1)
+        color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -1, 1)
+        color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -1, 1)
+        color.TintColor = if look.tint then tint:Lerp(look.tint, look.tintWeight) else tint
+        color.Enabled = true
+
+        bloom.Intensity = math.clamp(opts.Bloom.Value + look.bloom, 0, 10)
+        bloom.Size = math.clamp(opts["Bloom size"].Value, 0, 56)
+        bloom.Threshold = math.clamp(opts["Bloom threshold"].Value, 0, 5)
+        bloom.Enabled = bloom.Intensity > 0.01
+
+        rays.Intensity = math.clamp(opts["Sun rays"].Value + look.rays, 0, 1)
+        rays.Spread = math.clamp(opts["Ray spread"].Value, 0, 1)
+        rays.Enabled = rays.Intensity > 0.01
+        card:SetStatus(if look.name == "None" then nil else look.name)
     end
 
-    -- The diagnostic reports actual instances and state, not whether the GPU
-    -- visibly rendered them. Other scripts and Improve FPS can disable them.
     local function diagnose(): ()
-        local function describe(label: string, effect: any): string
-            if not effect then
-                return label .. ": missing"
-            end
-            local ok: boolean, result: any = pcall(function(): string
-                local parent: any = effect.Parent
-                return string.format("%s: parent=%s enabled=%s", label,
-                    parent and tostring(parent.Name) or "nil", tostring(effect.Enabled))
-            end)
-            return ok and result or (label .. ": unreadable")
+        if not color or not bloom or not rays then
+            print("[Shaders] off")
+            card:Notify("Shaders is off")
+            return
         end
-        local quality: any = "unavailable"
-        pcall(function(): ()
-            quality = tostring(settings().Rendering.QualityLevel)
-        end)
-        local lines: {string} = {
-            "[Shaders] active=" .. tostring(active)
-                .. " look=" .. tostring(options().Look and options().Look.Value or "unknown")
-                .. " quality=" .. tostring(quality),
-            describe("Color", color),
-            describe("Bloom", bloom),
-            describe("Rays", rays),
-        }
-        if color then
-            pcall(function(): ()
-                table.insert(lines, string.format("Color: saturation=%.2f contrast=%.2f brightness=%.2f",
-                    color.Saturation, color.Contrast, color.Brightness))
-            end)
-        end
-        for className: string, message: string in pairs(effectErrors) do
-            table.insert(lines, className .. " error: " .. message)
-        end
-        table.insert(lines, "Rendering can be affected by graphics quality and Disable post effects.")
-        print(table.concat(lines, "\n"))
-        card:Notify(describe("Color", color) .. " · details printed to console")
+        local text: string = string.format(
+            "[Shaders] Color: parent=%s enabled=%s; Bloom: parent=%s enabled=%s; Rays: parent=%s enabled=%s",
+            color.Parent and color.Parent.Name or "nil", tostring(color.Enabled),
+            bloom.Parent and bloom.Parent.Name or "nil", tostring(bloom.Enabled),
+            rays.Parent and rays.Parent.Name or "nil", tostring(rays.Enabled)
+        )
+        print(text)
+        card:Notify("Color enabled=" .. tostring(color.Enabled) .. " · details printed to console")
     end
 
     card = context.framework.Categories.Render:CreateModule({
         Name = "Shaders",
         Category = "Render",
         ConfigKey = "Universal.Shaders",
-        Tooltip = "Colour grading, bloom and sun rays for the whole scene. "
-            .. "Engine effects only: nothing is sent to the server.",
+        Tooltip = "Native Roblox colour grading, bloom and sun rays on this client.",
         Function = function(enabled: boolean): ()
-            active = enabled == true
             if not enabled then
-                cleanup()
                 card:SetStatus(nil)
                 return
             end
-            -- Register cleanup even when an effect cannot be created.
+            cleanup()
+            -- Registered first so even an interrupted creation is cleaned on OFF.
             card:Clean(cleanup)
+            color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
+            bloom = makeEffect("BloomEffect", "ARMShaderBloom")
+            rays = makeEffect("SunRaysEffect", "ARMShaderRays")
             apply()
         end,
     })
 
-    card:CreateDropdown({
-        Name = "Look",
-        List = LOOK_NAMES,
-        -- A preset that is visibly non-neutral when post effects are rendered.
-        -- Existing user configuration is not reset.
-        Index = 2,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "A preset that is added on top of the sliders below. "
-            .. "None leaves only what you set yourself.",
-    })
-    card:CreateSlider({
-        Name = "Saturation",
-        Min = -1,
-        Max = 1,
-        Default = 0,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Negative drains colour, positive boosts it.",
-    })
-    card:CreateSlider({
-        Name = "Contrast",
-        Min = -0.5,
-        Max = 0.5,
-        Default = 0,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Separates dark from light; negative flattens the image.",
-    })
-    card:CreateSlider({
-        Name = "Brightness",
-        Min = -0.3,
-        Max = 0.3,
-        Default = 0,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Overall exposure of the colour pass.",
-    })
-    card:CreateColor({
-        Name = "Tint",
-        Default = Color3.fromRGB(255, 255, 255),
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Colour cast for the whole screen. Looks blend toward their "
-            .. "own tint on top of it.",
-    })
-    card:CreateSlider({
-        Name = "Bloom",
-        Min = 0,
-        Max = 2,
-        Default = 0.6,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Glow around bright surfaces. Zero disables the effect.",
-    })
-    card:CreateSlider({
-        Name = "Bloom threshold",
-        Min = 0,
-        Max = 3,
-        Default = 1.1,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "How bright a surface must be before it glows.",
-    })
-    card:CreateSlider({
-        Name = "Bloom size",
-        Min = 0,
-        Max = 56,
-        Default = 24,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Spread of the glow, in engine units.",
-    })
-    card:CreateSlider({
-        Name = "Sun rays",
-        Min = 0,
-        Max = 1,
-        Default = 0.2,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "Rays around the sun. Zero disables the effect.",
-    })
-    card:CreateSlider({
-        Name = "Ray spread",
-        Min = 0,
-        Max = 1,
-        Default = 0.5,
-        Decimal = 2,
-        Step = 0.01,
-        Function = function(): ()
-            apply()
-        end,
-        Tooltip = "How wide the sun rays fan out.",
-    })
-    card:CreateButton({
-        Name = "Diagnose",
-        Function = diagnose,
-        Tooltip = "Print actual effect parents and enabled states to the console.",
-    })
-    card:CreateNote(
-        "Client-side post-processing; appearance depends on graphics quality. "
-            .. "Improve FPS > Disable post effects can suppress these effects. "
-            .. "Try Noir with Saturation 0 to check the colour pass."
-    )
+    card:CreateDropdown({Name = "Look", List = LOOK_NAMES, Index = 2, Function = apply,
+        Tooltip = "Preset added to the sliders below. None uses only your sliders."})
+
+    local function slider(name: string, min: number, max: number, default: number,
+        tooltip: string, fractional: boolean): ()
+        card:CreateSlider({Name = name, Min = min, Max = max, Default = default,
+            Decimal = if fractional then 2 else nil,
+            Step = if fractional then 0.01 else nil,
+            Function = apply, Tooltip = tooltip})
+    end
+    slider("Saturation", -1, 1, 0, "Negative drains colour, positive boosts it.", true)
+    slider("Contrast", -0.5, 0.5, 0, "Separates dark from light.", true)
+    slider("Brightness", -0.3, 0.3, 0, "Brightness of the colour pass.", true)
+    card:CreateColor({Name = "Tint", Default = Color3.fromRGB(255, 255, 255),
+        Function = apply, Tooltip = "Colour cast blended with the selected look."})
+    slider("Bloom", 0, 2, 0.6, "Glow around bright surfaces; zero disables it.", true)
+    slider("Bloom threshold", 0, 3, 1.1, "Brightness needed for glow.", true)
+    slider("Bloom size", 0, 56, 24, "Spread of the glow.", false)
+    slider("Sun rays", 0, 1, 0.2, "Rays around the sun; zero disables them.", true)
+    slider("Ray spread", 0, 1, 0.5, "Width of the sun rays.", true)
+    card:CreateButton({Name = "Diagnose", Function = diagnose,
+        Tooltip = "Print the effects' actual parents and enabled states."})
+    card:CreateNote("Client-side effects depend on graphics quality. Improve FPS > Disable post effects can suppress them.")
 
     Module.Initialized = true
     return card
 end
 
 function Module.destroy(): ()
-    if card and card.Enabled then
-        card:Toggle(false)
-    end
+    if card and card.Enabled then card:Toggle(false) end
     card = nil
     Module.Initialized = false
 end

@@ -30,16 +30,10 @@ function Module.init(runtime: any): any
         if pos then
             return pos
         end
-        local ok: boolean, cf: any = pcall(function(): any
-            return serverPart.CFrame
-        end)
-        if ok and cf then
-            savedCFrames[serverPart] = cf
-            local p: Vector3 = cf.Position
-            savedPositions[serverPart] = p
-            return p
-        end
-        return nil
+        local cf: CFrame = serverPart.CFrame
+        savedCFrames[serverPart] = cf
+        savedPositions[serverPart] = cf.Position
+        return cf.Position
     end
 
     local function restoreCoin(serverPart: BasePart?): ()
@@ -58,9 +52,6 @@ function Module.init(runtime: any): any
     end
 
     local function restoreAllCoins(): ()
-        if activeCoin then
-            restoreCoin(activeCoin)
-        end
         for serverPart, cf in pairs(savedCFrames) do
             if serverPart and serverPart.Parent then
                 pcall(function(): ()
@@ -102,7 +93,7 @@ function Module.init(runtime: any): any
         local vPart: BasePart = visual :: BasePart
         vPart.Anchored = true
         local weld: Instance? = vPart:FindFirstChildOfClass("WeldConstraint")
-        if weld and weld:IsA("WeldConstraint") then
+        if weld then
             (weld :: WeldConstraint).Enabled = false
         end
     end
@@ -111,10 +102,7 @@ function Module.init(runtime: any): any
         rememberCoin(serverPart)
         detachVisualWeld(serverPart)
         serverPart.CanCollide = false
-        local rootCF: CFrame? = root.CFrame
-        if rootCF then
-            serverPart.CFrame = rootCF
-        end
+        serverPart.CFrame = root.CFrame
         local fireTouch: any = state.fireTouchInterest
         if type(fireTouch) == "function" then
             pcall(fireTouch, root, serverPart, 0)

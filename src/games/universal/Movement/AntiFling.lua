@@ -15,7 +15,6 @@ local activeCleanup: (() -> ())? = nil
 
 function Module.init(context: Runtime): any
     local host: any = context.host
-    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local disconnectFeatureConnection: any = host.disconnectFeatureConnection
@@ -40,14 +39,9 @@ function Module.init(context: Runtime): any
     end
 
     local function speedModuleWalkSpeed(): number
-        local ok: boolean, feature: any = pcall(function(): any
-            return framework and framework.GetModule and framework:GetModule("Speed")
-        end)
-        if ok and feature and feature.Enabled and feature.Options and feature.Options.Speed then
-            local value: any = feature.Options.Speed.Value
-            if type(value) == "number" and value > 0 then
-                return value
-            end
+        local feature: any = framework:GetModule("Speed")
+        if feature and feature.Enabled and feature.Options.Speed then
+            return math.max(0, feature.Options.Speed.Value)
         end
         return 0
     end
@@ -144,9 +138,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         enabled = false
-        if disconnectFeatureConnection then
-            disconnectFeatureConnection("AntiFling")
-        end
+        disconnectFeatureConnection("AntiFling")
     end
     Module.Initialized = true
     return antiFlingFeature

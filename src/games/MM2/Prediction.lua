@@ -283,17 +283,8 @@ local function finiteVector(value: any): boolean
 end
 
 local function humanoidStateName(humanoid: Humanoid): string
-    -- pcall(method, self) instead of pcall(closure): the old form allocated a
-    -- closure per sample, 60 times a second per player.
-    local ok: boolean, state: any = pcall(humanoid.GetState, humanoid)
-    if not ok or state == nil then
-        return ""
-    end
-    local name: any = state.Name
-    if type(name) == "string" then
-        return name
-    end
-    return tostring(state)
+    local state: any = humanoid:GetState()
+    return state.Name or tostring(state)
 end
 
 -- v158: the predictor is asked only about live bodies. A ragdoll on the floor
@@ -301,51 +292,16 @@ end
 -- happily solved a lead for a corpse that cannot move. This is the same test
 -- base.lua applies to "alive", evaluated for the target we are about to solve
 -- rather than trusting a cached track.
-local function bodyIsAlive(humanoid: any): boolean
-    if humanoid == nil then
+local function bodyIsAlive(humanoid: Humanoid?): boolean
+    if not humanoid or humanoid.Health <= 0 then return false end
+    local currentState: Enum.HumanoidStateType = humanoid:GetState()
+    if currentState == Enum.HumanoidStateType.Dead
+        or currentState == Enum.HumanoidStateType.Physics then
         return false
     end
-    local okHealth: boolean, health: any = pcall(function(): any
-        return humanoid.Health
-    end)
-    if okHealth and type(health) == "number" and health <= 0 then
-        return false
-    end
-    local okState: boolean, currentState: any = pcall(function(): any
-        return humanoid:GetState()
-    end)
-    if okState and currentState ~= nil then
-        local deadState: any = nil
-        local physicsState: any = nil
-        pcall(function(): ()
-            deadState = Enum.HumanoidStateType.Dead
-            physicsState = Enum.HumanoidStateType.Physics
-        end)
-        if currentState == deadState or currentState == physicsState then
-            return false
-        end
-    end
-    -- The flag may sit on the Humanoid or on the character model, depending on
-    -- who wrote it; either one retires the body.
-    local function deadAttribute(instance: any): boolean
-        if instance == nil then
-            return false
-        end
-        local ok: boolean, dead: any = pcall(function(): any
-            return instance:GetAttribute("Dead")
-        end)
-        return ok and dead == true
-    end
-    if deadAttribute(humanoid) then
-        return false
-    end
-    local okParent: boolean, parent: any = pcall(function(): any
-        return humanoid.Parent
-    end)
-    if okParent and deadAttribute(parent) then
-        return false
-    end
-    return true
+    if humanoid:GetAttribute("Dead") == true then return false end
+    local parent: Instance? = humanoid.Parent
+    return not parent or parent:GetAttribute("Dead") ~= true
 end
 
 local function targetHumanoid(target: Player): any

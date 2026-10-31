@@ -24,6 +24,15 @@ function Color3.new(r, g, b)
     return setmetatable({R = r or 0, G = g or 0, B = b or 0}, colorMeta)
 end
 function Color3.fromRGB(r, g, b) return Color3.new(r / 255, g / 255, b / 255) end
+function colorMeta.__index(color, key)
+    if key == "Lerp" then
+        return function(from, to, alpha)
+            return Color3.new(from.R + (to.R - from.R) * alpha,
+                from.G + (to.G - from.G) * alpha,
+                from.B + (to.B - from.B) * alpha)
+        end
+    end
+end
 
 local lighting = {Name = "Lighting", ClassName = "Lighting", children = {}}
 local camera = {Name = "Camera", ClassName = "Camera", children = {}}
@@ -173,37 +182,35 @@ card.Options.Contrast.Metadata.callback(0.1)
 assert(color.Enabled == true, "an option change re-applies this module's color effect")
 pass("diagnostic reports an externally disabled effect without claiming pixels rendered")
 
--- If the game reparents or removes one effect, the next apply repairs just it.
-color.Parent = inertFolder -- a detached folder: not a valid rendering parent
+-- No automatic repair/check loop: if a game moves an effect, OFF still cleans
+-- the owned instance and ON creates it again as a direct Lighting child.
+color.Parent = inertFolder
 card.Options.Contrast.Metadata.callback(0.2)
-local replacement = byName("ARMShaderColor")
-assert(replacement and replacement ~= color and color.destroyed and renderable(replacement),
-    "reparented owned effect is replaced on next apply")
-assert(byName("ARMShaderBloom") == bloom and byName("ARMShaderRays") == rays,
-    "other effects are not duplicated")
-pass("removed or reparented effects are rebuilt on next option change")
+assert(not renderable(color) and not byName("ARMShaderColor"),
+    "an option change does not secretly replace a moved instance")
+assert(byName("ARMShaderBloom") == bloom and byName("ARMShaderRays") == rays)
+pass("no replacement machinery or polling when the game moves an effect")
 
 features.Shaders.toggle(false)
-assert(not card.Enabled and replacement.destroyed and bloom.destroyed and rays.destroyed,
+assert(not card.Enabled and color.destroyed and bloom.destroyed and rays.destroyed,
     "all owned effects are destroyed on disable")
 assert(not gameEffect.destroyed and gameEffect.Parent == lighting,
     "a game-owned post effect must not be changed")
 assert(#children(lighting) == 1, "only the game-owned effect remains")
 pass("disable destroys only this module's effects")
 
--- A partial creation failure must not leak Bloom/Rays because color is nil.
-Instance.fail.ColorCorrectionEffect = true
-features.Shaders.toggle(true)
-assert(card.Status:find("color", 1, true), "partial failure must be visible")
-local partialBloom, partialRays = byName("ARMShaderBloom"), byName("ARMShaderRays")
-assert(partialBloom and partialRays and not byName("ARMShaderColor"), "partial creation")
-card.Options.Diagnose.Metadata.callback()
-assert(notifications[#notifications]:find("missing", 1, true), "missing color is reported")
+-- An interrupted creation bubbles up instead of silently retrying; the cleanup
+-- was registered before construction, so turning the card off removes what was
+-- created. Roblox normally provides all three built-in effect classes.
+Instance.fail.BloomEffect = true
+local createdOK = pcall(features.Shaders.toggle, true)
+assert(not createdOK, "construction failure must reach the caller")
+local partialColor = byName("ARMShaderColor")
+assert(partialColor and not byName("ARMShaderBloom"), "creation stopped at the failing effect")
 features.Shaders.toggle(false)
-assert(partialBloom.destroyed and partialRays.destroyed and #children(lighting) == 1,
-    "partial creation must be cleaned up without ipairs holes")
-Instance.fail.ColorCorrectionEffect = nil
-pass("partial creation reports failure and cleans up every surviving effect")
+assert(partialColor.destroyed and #children(lighting) == 1, "partial creation is cleaned on OFF")
+Instance.fail.BloomEffect = nil
+pass("interrupted creation is not hidden and cleans up on OFF")
 
 features.Shaders.toggle(true)
 assert(renderable(byName("ARMShaderColor")), "can re-enable after a failure")
@@ -212,9 +219,9 @@ assert(#children(lighting) == 1 and not card.Enabled, "module destroy performs f
 assert(gameEffect.Parent == lighting and not gameEffect.destroyed)
 pass("re-enable and module destroy are reusable and preserve game effects")
 
--- Fallback to game:GetService when the host did not supply Lighting.
+-- The real host supplies Lighting. Restore saved options while the widgets
+-- construct themselves, before their entries have been registered.
 local fallbackHost = table.clone(host)
-fallbackHost.Lighting = nil
 fallbackHost.state = {}
 -- Widgets restore stored values during construction, before option registration.
 function fallbackHost.addCycleOption(_, name, list, index, callback)
@@ -235,12 +242,12 @@ assert(savedCard.Options.Look.Value == "Frost" and savedCard.Options.Saturation.
     "saved options must survive widget callbacks before registration")
 features.Shaders.toggle(true)
 local savedColor = byName("ARMShaderColor")
-assert(renderable(savedColor), "Lighting fallback must be direct")
+assert(renderable(savedColor), "restored settings still use direct Lighting parenting")
 assert(math.abs(savedColor.Saturation - (-0.35)) < 1e-6,
     "saved Saturation and Frost offset must be applied on enable")
 Shaders.destroy()
-assert(#children(lighting) == 1, "fallback is also cleaned up")
-pass("saved options and Lighting service fallback work through initial widget callbacks")
+assert(#children(lighting) == 1, "restored configuration is cleaned up")
+pass("saved options work through initial widget callbacks")
 '''
 
 

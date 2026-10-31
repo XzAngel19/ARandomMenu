@@ -165,20 +165,10 @@ function Module.init(runtime: any): any
         if not map then
             return false, nil
         end
-        local okRoot: boolean, rootPos: any = pcall(function(): any
-            return root.Position
-        end)
-        if not okRoot or typeof(rootPos) ~= "Vector3" then
-            return false, nil
-        end
+        local rootPos: Vector3 = root.Position
         local lobbyPart: BasePart? = findLobbyReferencePart()
-        if lobbyPart then
-            local okLobbyDist: boolean, lobbyDist: any = pcall(function(): any
-                return ((rootPos :: Vector3) - lobbyPart.Position).Magnitude
-            end)
-            if okLobbyDist and type(lobbyDist) == "number" and lobbyDist <= 350 then
-                return false, nil
-            end
+        if lobbyPart and (rootPos - lobbyPart.Position).Magnitude <= 350 then
+            return false, nil
         end
         local refPart: BasePart? = nil
         local spawns: Instance? = (map :: Instance):FindFirstChild("Spawns")
@@ -195,15 +185,12 @@ function Module.init(runtime: any): any
             refPart = (map :: Instance):FindFirstChildWhichIsA("BasePart", true)
         end
         if refPart then
-            local okMapDist: boolean, mapDist: any = pcall(function(): any
-                return ((rootPos :: Vector3) - refPart.Position).Magnitude
-            end)
-            if okMapDist and type(mapDist) == "number" and mapDist > 1500 then
+            if (rootPos - refPart.Position).Magnitude > 1500 then
                 return false, nil
             end
             return true, refPart.Position
         end
-        return true, rootPos :: Vector3
+        return true, rootPos
     end
 
     local function restoreVictims(): ()

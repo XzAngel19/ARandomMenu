@@ -26,11 +26,13 @@ end
 local LocalPlayer = {Character = {Name = 'Local'}}
 local currentState = 'Freefall'
 local humanoid = {Health = 100, HipHeight = 2, RigType = Enum.HumanoidRigType.R15,
-    MoveDirection = Vector3.zero, GetState = function() return currentState end}
+    MoveDirection = Vector3.zero, GetState = function() return currentState end,
+    GetAttribute = function() return nil end}
 local root = {Position = Vector3.zero, AssemblyLinearVelocity = Vector3.zero, Size = Vector3.new(2, 2, 1)}
 local torso = {Position = Vector3.zero, IsA = function(_, class) return class == 'BasePart' end}
 local leg = {Size = Vector3.new(1, 2, 1), IsA = function(_, class) return class == 'BasePart' end}
 local character = {Name = 'TargetCharacter'}
+function character:GetAttribute() return nil end
 function character:FindFirstChild(name)
     if name == 'HumanoidRootPart' then return root end
     if name == 'UpperTorso' then return torso end
@@ -300,6 +302,7 @@ print('PASS support recheck: changed landing XZ, bounded to two raycasts')
 -- Respawn can replace the model between sampler ticks. The next knife solve
 -- must immediately discard the old body's track and sample the new one.
 local replacement = {Name = 'Respawned'}
+function replacement:GetAttribute() return nil end
 function replacement:FindFirstChild(name)
     if name == 'HumanoidRootPart' then return root end
     if name == 'UpperTorso' then return torso end

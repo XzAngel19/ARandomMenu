@@ -235,6 +235,20 @@ near(rootProps.AssemblyLinearVelocity.X, 150)
 humanoid.WalkSpeed = savedWalkSpeed
 pass("Anti Fling thresholds scale with WalkSpeed, no options to tune")
 
+-- The common Framework supplies a Speed module and numeric slider value.
+-- Its higher configured speed must not be mistaken for an external fling.
+context.framework.GetModule = function(_, name)
+    if name == "Speed" then return {Enabled=true, Options={Speed={Value=120}}} end
+end
+rootProps.AssemblyLinearVelocity = Vector3.new(200, 0, 0)
+tick(0.016)
+near(rootProps.AssemblyLinearVelocity.X, 200)
+context.framework.GetModule = function() return nil end
+rootProps.AssemblyLinearVelocity = Vector3.new(200, 0, 0)
+tick(0.016)
+assert(rootProps.AssemblyLinearVelocity.X < 100)
+pass("Anti Fling honours the enabled Speed setting")
+
 feature.toggle(false)
 assert(tick == nil, "disabling releases the frame step")
 AntiFling.destroy()

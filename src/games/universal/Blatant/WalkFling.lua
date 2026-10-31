@@ -17,7 +17,6 @@ function Module.init(context: Runtime): any
     local host: any = context.host
     local LocalPlayer: any = host.LocalPlayer
     local RunService: any = host.RunService or game:GetService("RunService")
-    local workspace: any = host.workspace
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
     local configData: any = host.configData
@@ -50,18 +49,6 @@ function Module.init(context: Runtime): any
             return character, humanoid, nil
         end
         return character, humanoid, root
-    end
-
-    local function waitSignal(signal: any): ()
-        if signal and type(signal.Wait) == "function" then
-            local ok: boolean = pcall(function(): ()
-                signal:Wait()
-            end)
-            if ok then
-                return
-            end
-        end
-        task.wait()
     end
 
     local function rememberCollision(character: Model): ()
@@ -125,7 +112,7 @@ function Module.init(context: Runtime): any
 
         task.spawn(function(): ()
             while enabled and session == mySession and Module.Initialized do
-                waitSignal(RunService and RunService.Heartbeat)
+                RunService.Heartbeat:Wait()
                 if not enabled or session ~= mySession then
                     break
                 end
@@ -143,7 +130,7 @@ function Module.init(context: Runtime): any
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
-                    waitSignal(RunService and RunService.RenderStepped)
+                    RunService.RenderStepped:Wait()
                     -- A toggle-off that lands in the middle of an iteration must
                     -- not re-apply the spike after stop() already parked the body.
                     local stillRunning: boolean = enabled and session == mySession
@@ -153,7 +140,7 @@ function Module.init(context: Runtime): any
                             root.AssemblyLinearVelocity = savedVelocity
                         end)
                     end
-                    waitSignal(RunService and RunService.Stepped)
+                    RunService.Stepped:Wait()
                     if stillRunning and enabled and session == mySession
                         and character.Parent and root.Parent then
                         pcall(function(): ()

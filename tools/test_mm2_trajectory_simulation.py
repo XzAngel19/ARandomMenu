@@ -23,7 +23,8 @@ code = PRELUDE + '\n' + section(BASE, 'local predictionMath = {}', 'local lastLa
 local workspace = {Gravity=196.2}
 local LocalPlayer = {Character={}}
 local currentState='Running'
-local humanoid = {Health=100, GetState=function() return currentState end}
+local humanoid = {Health=100, GetState=function() return currentState end,
+    GetAttribute=function() return nil end}
 local root = {Position=Vector3.zero, AssemblyLinearVelocity=Vector3.zero}
 local torso = {Position=Vector3.zero, IsA=function(_,class) return class=='BasePart' end}
 local character = {FindFirstChild=function(_,name)
