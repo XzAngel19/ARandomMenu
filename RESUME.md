@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v167-20261031-menu-mm2-module-audit`**, con árbol base de
+> **`v168-20261031-destruct-teleport-lifecycle`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,32 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v167: 91 fuentes,
-     107 suites, auditoría estática, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v168: 91 fuentes,
+     108 suites, auditoría estática, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v168 — Destruct, teleport y ownership del runtime (2026-10-31)
+
+Detalle, reproducción y límites: `docs/FIXES-v168.md`.
+
+- La cola se arma solo al iniciar el teleport. Con archivos persistentes entre
+  entornos, usa un token por universo y sesión que Destruct y Keep OFF revocan;
+  Keep ON sigue funcionando en mocks y una inyección manual posterior sigue
+  permitida. Se comprueba la autorización tras la espera y la descarga.
+- Una cola **ya encolada por v167** no conoce el token y no puede cancelarse
+  genéricamente. Sin `readfile`/`writefile` compartidos no se garantiza parar
+  una cola ya enviada si `getgenv` cambia. Se avisa en consola; autoexecute
+  externo también queda fuera de control. No hay prueba real de Delta/Roblox.
+- Al reinjectar, el runtime anterior se retira antes de leer el perfil. Sus
+  callbacks tardíos no deben sobrescribir la config ni calibración MM2 del
+  nuevo runtime cuando puede verificarse ownership. Se retiró una exposición
+  accidental de estado interno de test desde el código de producción.
+- Bundle 89 archivos; **91 fuentes y 108 suites PASS**, boot `failures=0`,
+  90 llamadas API y menú 50/49 en simulación. Sigue pendiente la auditoría
+  exhaustiva de módulos y no hay medición real de FPS, física o servidor.
 
 ## v167 — Menú, MM2 y continuación de la auditoría (2026-10-31)
 

@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v167-20261031-menu-mm2-module-audit"
+local SOURCE_STAMP: string = "v168-20261031-destruct-teleport-lifecycle"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -650,6 +650,8 @@ local configData: any = {
     ui = {},
 }
 local configSaveQueued = false
+local configSaveClosed = false
+local configWriteAllowed: any = nil
 
 local function serializeLuaValue(value: any, depth: number): string
     local kind: string = typeof(value)
@@ -759,7 +761,8 @@ local function loadConfig()
 end
 
 local function saveConfigNow()
-    if type(writefile) ~= "function" then
+    if configSaveClosed or type(writefile) ~= "function"
+        or (type(configWriteAllowed) == "function" and not configWriteAllowed()) then
         return
     end
 
@@ -802,13 +805,16 @@ local function saveConfigNow()
                 end
             end
         end
+        if type(configWriteAllowed) == "function" and not configWriteAllowed() then
+            return
+        end
         writefile(CONFIG_FILE_LUA, payload)
     end)
 end
 
 local configSaveGeneration: number = 0
 local function queueConfigSave()
-    if configSaveQueued then
+    if configSaveClosed or configSaveQueued then
         return
     end
     configSaveQueued = true
@@ -827,6 +833,16 @@ local function flushConfigSave()
     configSaveGeneration += 1
     configSaveQueued = false
     saveConfigNow()
+end
+
+-- Retired runtimes must not write an old profile from a delayed task or their
+-- still-registered BindToClose callback after a manual reinjection.
+local function closeConfigSave()
+    if configSaveClosed then
+        return
+    end
+    flushConfigSave()
+    configSaveClosed = true
 end
 
 pcall(function(): ()
@@ -854,7 +870,24 @@ local function colorToConfig(color)
     }
 end
 
-loadConfig()
+local function sharedRuntimeGenv(): any
+    local getGenv: any = (getfenv() :: any).getgenv
+    if type(getGenv) == "function" then
+        local ok: boolean, genv: any = pcall(getGenv)
+        if ok and type(genv) == "table" then
+            return genv
+        end
+    end
+    return nil
+end
+
+-- Tear down the previous instance synchronously, before reading its profile.
+-- This also works when Roblox defers AncestryChanged delivery.
+local previousGenv: any = sharedRuntimeGenv()
+local previousRuntime: any = previousGenv and previousGenv.WURST_RUNTIME
+if type(previousRuntime) == "table" and type(previousRuntime.Destruct) == "function" then
+    pcall(previousRuntime.Destruct)
+end
 
 local function findExistingGui()
     local locations = {PlayerGui}
@@ -885,6 +918,7 @@ local function findExistingGui()
 end
 
 findExistingGui()
+loadConfig()
 
 local oldBlur = Lighting:FindFirstChild(BLUR_NAME)
 if oldBlur then
@@ -1071,113 +1105,313 @@ end
 state.fontPack = "Code"
 
 local persistenceEnvironment: any = getfenv()
+local persistenceGenv = sharedRuntimeGenv
 
-local function persistenceGenv(): any
-    local getGenv: any = persistenceEnvironment.getgenv
-    if type(getGenv) == "function" then
-        local ok: boolean, genv: any = pcall(getGenv)
-        if ok and type(genv) == "table" then
-            return genv
-        end
-    end
-    return nil
+-- These failures affect Destruct/Keep even in a release build, whose normal
+-- debug warnings are muted. Keep them visible in the executor console.
+local function teleportWarn(message: string): ()
+    local logger: any = type(realWarn) == "function" and realWarn or warn
+    logger("[" .. PRODUCT.logPrefix .. "] " .. message)
 end
 
 local function resolveTeleportQueue(): any
-    local direct: any = persistenceEnvironment.queue_on_teleport
-    if type(direct) == "function" then
-        return direct
+    for _, name: string in ipairs({"queue_on_teleport", "queueonteleport"}) do
+        local queue: any = persistenceEnvironment[name]
+        if type(queue) == "function" then
+            return queue
+        end
     end
     for _, providerName: string in ipairs({"syn", "fluxus"}) do
         local provider: any = persistenceEnvironment[providerName]
         if type(provider) == "table"
             and type(provider.queue_on_teleport) == "function" then
-            local queue: any = provider.queue_on_teleport
-            return function(source: string): ()
-                queue(source)
-            end
+            return provider.queue_on_teleport
         end
     end
     return nil
 end
 
-local function buildTeleportSnippet(): string
+-- The authorization lives beside the per-universe profile, not in getgenv:
+-- executor environments may be recreated during a teleport. When storage
+-- works, each boot/toggle gets a new token for its guarded queued snippet.
+local teleportTokenPath: string = CONFIG_PROFILE_FOLDER
+    .. "/Teleport_" .. CONFIG_GAME_ID .. ".txt"
+local function newTeleportOwner(): string
+    local ok: boolean, guid: any = pcall(function(): string
+        return HttpService:GenerateGUID(false)
+    end)
+    if ok and type(guid) == "string" and #guid > 0 then
+        return guid
+    end
+    return tostring(os.time()) .. ":" .. tostring(os.clock()) .. ":"
+        .. tostring(math.random(1, 1073741824)) .. ":" .. tostring({})
+end
 
-    -- Arm on the universe (GameId), not the place: games that teleport you
-    -- to their own instanced places (new servers, event places, private
-    -- instances) keep the same GameId but a different PlaceId, and the menu
-    -- must follow them all.
+local teleportOwner: string = newTeleportOwner()
+local teleportSerial: number = 0
+local teleportToken: string = ""
+local teleportGuarded: boolean = false
+local function writeTeleportToken(value: string): boolean
+    if type(readfile) ~= "function" or type(writefile) ~= "function" then
+        return false
+    end
+    local ok: boolean = pcall(function(): ()
+        if type(isfolder) == "function" and type(makefolder) == "function" then
+            if not isfolder(CONFIG_FOLDER) then
+                makefolder(CONFIG_FOLDER)
+            end
+            if not isfolder(CONFIG_PROFILE_FOLDER) then
+                makefolder(CONFIG_PROFILE_FOLDER)
+            end
+        end
+        writefile(teleportTokenPath, value)
+    end)
+    if not ok then
+        return false
+    end
+    local readOk: boolean, stored: any = pcall(readfile, teleportTokenPath)
+    return readOk and stored == value
+end
+
+local function claimTeleportToken(): ()
+    teleportSerial += 1
+    teleportToken = teleportOwner .. ":" .. tostring(teleportSerial)
+    teleportGuarded = writeTeleportToken(teleportToken)
+end
+
+local function revokeTeleportToken(): ()
+    if not teleportGuarded then
+        return
+    end
+    if type(readfile) ~= "function" then
+        teleportWarn("could not read the teleport token; revocation is unverified")
+        return
+    end
+    local ok: boolean, stored: any = pcall(readfile, teleportTokenPath)
+    if not ok then
+        teleportWarn("could not read the teleport token; revocation is unverified")
+        return
+    end
+    if stored ~= teleportToken then
+        return -- A newer runtime already owns this universe's authorization.
+    end
+    if not writeTeleportToken("stopped:" .. teleportToken) then
+        -- If overwriting stopped working, try deleting only our own token.
+        local checked: boolean, current: any = pcall(readfile, teleportTokenPath)
+        local removed: boolean = false
+        if checked and current == teleportToken and type(delfile) == "function" then
+            local deleted: boolean, result: any = pcall(delfile, teleportTokenPath)
+            removed = deleted and result ~= false
+        end
+        local stillOk: boolean, remaining: any = pcall(readfile, teleportTokenPath)
+        if (stillOk and remaining == teleportToken) or (not stillOk and not removed) then
+            teleportWarn("could not revoke the teleport token")
+        end
+    end
+end
+
+local function buildTeleportSnippet(token: string, guarded: boolean): string
+    -- Arm on GameId, not PlaceId: instanced places in one game share a universe.
     local armedGameId: number = game.GameId
-
+    local guardLines: {string} = guarded and {
+        "    if type(readfile) ~= \"function\" then return false end",
+        "    local ok, value = pcall(readfile, " .. string.format("%q", teleportTokenPath) .. ")",
+        "    return ok and value == " .. string.format("%q", token),
+    } or {"    return true"}
     return table.concat({
         "local genv = (type(getgenv) == \"function\" and getgenv()) or {}",
-        "genv.WURST_TP_QUEUED = false",
-        "if genv.WURST_STOPPED == true then return end",
-        "if game.GameId ~= " .. tostring(armedGameId) .. " then return end",
-        "genv.WURST_BRANCH = \"" .. RUNTIME_BRANCH .. "\"",
-
-        "if not game:IsLoaded() then",
-        "    game.Loaded:Wait()",
+        "local function authorized()",
+        table.concat(guardLines, "\n"),
         "end",
+        "local function allowed()",
+        "    return genv.WURST_STOPPED ~= true and game.GameId == "
+            .. tostring(armedGameId) .. " and authorized()",
+        "end",
+        "if genv.WURST_STOPPED == true or not authorized() then return end",
+        "if not game:IsLoaded() then game.Loaded:Wait() end",
+        "if not allowed() then return end",
         "task.wait(1)",
+        "if not allowed() then return end",
         "local ok, err = pcall(function()",
-        "    loadstring(game:HttpGet(",
-        "        \"" .. RUNTIME_RAW_BASE
-            .. "src/Wurst.lua?t=\" .. tostring(os.time())",
-        "    ))()",
+        "    local source = game:HttpGet("
+            .. string.format("%q", RUNTIME_RAW_BASE .. "src/Wurst.lua?t=")
+            .. " .. tostring(os.time()))",
+        "    if not allowed() then return end",
+        "    genv.WURST_BRANCH = " .. string.format("%q", RUNTIME_BRANCH),
+        "    loadstring(source)()",
         "end)",
-        "if not ok then",
-        "    warn(\"[Wurst] teleport reinject failed: \" .. tostring(err))",
-        "end",
+        "if not ok then warn(\"[Wurst] teleport reinject failed: \" .. tostring(err)) end",
     }, "\n")
 end
 
-state.teleportPersist = {
-    supported = resolveTeleportQueue() ~= nil,
-
-    enabled = configData.states["ClickGUI.Keepafterteleport"] ~= false,
+local queueTeleport: any = resolveTeleportQueue()
+local contract: any = {
+    supported = type(queueTeleport) == "function",
+    enabled = false,
+    closed = false,
+    queued = false,
 }
+state.teleportPersist = contract
+local teleportConnection: any = nil
+local appliedTeleportSetting: boolean? = nil
+local initialGenv: any = persistenceGenv()
+if initialGenv then
+    initialGenv.WURST_TP_OWNER = teleportOwner
+end
+claimTeleportToken()
 
-state.teleportPersist.Sync = function(): ()
-    local contract: any = state.teleportPersist
+local function ownsTeleportSession(): boolean
     local genv: any = persistenceGenv()
-    if genv then
+    return not genv or genv.WURST_TP_OWNER == teleportOwner
+end
 
-        genv.WURST_STOPPED = contract.enabled ~= true
+-- A previous VM can still have delayed profile/telemetry writers even when
+-- getgenv was replaced. Do not let them overwrite the new universe owner.
+local function ownsRuntimeData(): boolean
+    local genv: any = persistenceGenv()
+    if genv and genv.WURST_TP_OWNER ~= nil
+        and genv.WURST_TP_OWNER ~= teleportOwner then
+        return false
     end
-    if contract.enabled ~= true then
+    if teleportGuarded and type(readfile) == "function" then
+        local ok: boolean, value: any = pcall(readfile, teleportTokenPath)
+        if ok then
+            return value == teleportToken or value == "stopped:" .. teleportToken
+        end
+    end
+    -- If the storage API becomes unreadable, ownership cannot be verified
+    -- across VMs; retain the existing best-effort getgenv behaviour.
+    return true
+end
+configWriteAllowed = ownsRuntimeData
+state.ownsRuntimeData = ownsRuntimeData
+
+local function disconnectTeleport(): ()
+    if teleportConnection then
+        pcall(function(): ()
+            teleportConnection:Disconnect()
+        end)
+        teleportConnection = nil
+    end
+end
+local function markTeleportStopped(): ()
+    local genv: any = persistenceGenv()
+    if genv and genv.WURST_TP_OWNER == teleportOwner then
+        genv.WURST_STOPPED = true
+        genv.WURST_TP_OWNER = nil
+    end
+end
+
+local function warnUnguardedTeleport(): ()
+    if not teleportGuarded and not contract._unguardedSaid then
+        contract._unguardedSaid = true
+        teleportWarn("teleport token storage unavailable; "
+            .. "a queue already submitted during teleport may not be revocable")
+    end
+end
+
+local function onTeleport(status: any): ()
+    if contract.closed or not contract.enabled or not ownsTeleportSession() then
         return
     end
-    local queue: any = resolveTeleportQueue()
-    if type(queue) ~= "function" then
-        if not contract._unsupportedSaid then
-            contract._unsupportedSaid = true
-            warn("[" .. PRODUCT.logPrefix .. "] queue_on_teleport is not "
-                .. "available on this executor; the menu cannot follow "
-                .. "teleports here")
+    if status == Enum.TeleportState.Failed then
+        if contract.queued then
+            -- A failed teleport may leave its old source in an executor queue.
+            contract.queued = false
+            revokeTeleportToken()
+            claimTeleportToken()
         end
         return
     end
-    if genv and genv.WURST_TP_QUEUED == true then
-
+    if status ~= Enum.TeleportState.Started
+        and status ~= Enum.TeleportState.WaitingForServer
+        and status ~= Enum.TeleportState.InProgress then
         return
     end
-    local armed: boolean = pcall(queue, buildTeleportSnippet())
-    if armed and genv then
-        genv.WURST_TP_QUEUED = true
+    if contract.queued then
+        return
     end
-    if armed then
-        print("[" .. PRODUCT.logPrefix .. "] Teleport persistence armed — "
-            .. "the menu follows the next teleport")
+    warnUnguardedTeleport()
+    local ok: boolean, result: any = pcall(
+        queueTeleport,
+        buildTeleportSnippet(teleportToken, teleportGuarded)
+    )
+    if ok and result ~= false then
+        contract.queued = true
+    else
+        teleportWarn("teleport queue failed: " .. tostring(result))
     end
 end
 
-state.teleportPersist.SetEnabled = function(enabled: boolean): ()
-    state.teleportPersist.enabled = enabled == true
-    state.teleportPersist.Sync()
+contract.SetEnabled = function(enabled: boolean): ()
+    if contract.closed or not ownsTeleportSession() then
+        return
+    end
+    local wanted: boolean = enabled == true
+    contract.enabled = wanted
+    if appliedTeleportSetting == wanted then
+        return
+    end
+    if appliedTeleportSetting ~= nil then
+        revokeTeleportToken()
+        claimTeleportToken()
+    end
+    appliedTeleportSetting = wanted
+    contract.queued = false
+    disconnectTeleport()
+    local genv: any = persistenceGenv()
+    if genv and genv.WURST_TP_OWNER == teleportOwner then
+        genv.WURST_STOPPED = not wanted
+    end
+    if not wanted then
+        return
+    end
+    if not contract.supported then
+        if not contract._unsupportedSaid then
+            contract._unsupportedSaid = true
+            teleportWarn("queue_on_teleport is not available; "
+                .. "the menu cannot follow teleports here")
+        end
+        return
+    end
+    warnUnguardedTeleport()
+    local connected: boolean, result: any = pcall(function(): any
+        return LocalPlayer.OnTeleport:Connect(onTeleport)
+    end)
+    if connected then
+        teleportConnection = result
+    else
+        contract.supported = false
+        teleportWarn("could not observe teleport: " .. tostring(result))
+    end
+end
+contract.Sync = function(): ()
+    contract.SetEnabled(contract.enabled)
 end
 
-state.teleportPersist.Sync()
+-- Ordinary GUI teardown during a teleport must leave the submitted token
+-- intact. Explicit Destruct always revokes it, including after teardown.
+contract.Close = function(): ()
+    if contract.closed then
+        return
+    end
+    local preserve: boolean = contract.queued and contract.enabled and ownsTeleportSession()
+    contract.closed = true
+    disconnectTeleport()
+    if not preserve then
+        revokeTeleportToken()
+        markTeleportStopped()
+    end
+    contract.enabled = false
+end
+contract.Stop = function(): ()
+    contract.closed = true
+    contract.enabled = false
+    disconnectTeleport()
+    revokeTeleportToken()
+    markTeleportStopped()
+end
+contract.SetEnabled(configData.states["ClickGUI.Keepafterteleport"] ~= false)
 
 state.menuStyleListeners = {} :: {(string) -> ()}
 
@@ -5809,7 +6043,6 @@ end
 do
 (function(): ()
 local diagnostics: ModuleDiagnostics = {uiBindings = 0, taskBindings = 0}
-do local __g = getgenv() if type(__g) == "table" then __g.__expose = {ThemeEngine = ThemeEngine, Theme = Theme, state = state, configData = configData, TaskManager = TaskManager, featureConnections = featureConnections, allFeatures = allFeatures} end end
 state.frameworkEnvironment = createGameModuleEnvironment(diagnostics)
 
 type OwnershipService = {
@@ -6450,6 +6683,8 @@ end)
 end
 
 local runtimeCleaned: boolean = false
+local runtimeDestructed: boolean = false
+local runtimeHandoff: any = nil
 
 local function cleanupStep(label: string, step: () -> ()): ()
     local ok: boolean, failure: any = pcall(step)
@@ -6466,7 +6701,7 @@ local function cleanupRuntime(): ()
 
     cleanupStep("teleport persistence", function(): ()
         if state.teleportPersist then
-            state.teleportPersist.enabled = false
+            state.teleportPersist.Close()
         end
     end)
     cleanupStep("blur", function(): ()
@@ -6576,58 +6811,43 @@ local function cleanupRuntime(): ()
             cleanupStep(key, cleanup)
         end
     end
-    cleanupStep("config", saveConfigNow)
-
+    cleanupStep("config", closeConfigSave)
+    local genv: any = persistenceGenv()
+    if genv and genv.WURST_RUNTIME == runtimeHandoff then
+        genv.WURST_RUNTIME = nil
+    end
 end
 
 state.destruct = function(): ()
-    cleanupStep("runtime", cleanupRuntime)
-
+    if runtimeDestructed then
+        return
+    end
+    runtimeDestructed = true
+    -- Revoke before any other cleanup can yield. Stop is still useful after
+    -- ordinary GUI teardown has preserved a queued teleport.
     cleanupStep("session kill switch", function(): ()
-        local environment: any = getfenv()
-        local getGenv: any = environment.getgenv
-        if type(getGenv) == "function" then
-            local ok: boolean, genv: any = pcall(getGenv)
-            if ok and type(genv) == "table" then
-                genv.WURST_STOPPED = true
-            end
+        if state.teleportPersist then
+            state.teleportPersist.Stop()
         end
     end)
+    if runtimeCleaned then
+        return
+    end
+    cleanupStep("runtime", cleanupRuntime)
     cleanupStep("screen gui", function(): ()
         if ScreenGui.Parent then
             ScreenGui:Destroy()
         end
     end)
 
-    cleanupStep("leftovers", function(): ()
-        local containers: {Instance} = {PlayerGui}
-        if type(gethui) == "function" then
-            local hiddenOk: boolean, hidden: any = pcall(gethui)
-            if hiddenOk and typeof(hidden) == "Instance" then
-                table.insert(containers, hidden)
-            end
-        end
-        local coreOk: boolean, coreGui: any = pcall(function(): Instance
-            return game:GetService("CoreGui")
-        end)
-        if coreOk and coreGui then
-            table.insert(containers, coreGui)
-        end
-        for _, container: Instance in ipairs(containers) do
-            for _, child: Instance in ipairs(container:GetChildren()) do
-                if child.Name == GUI_NAME then
-                    child:Destroy()
-                end
-            end
-        end
-        local lighting: Instance? = Lighting:FindFirstChild(BLUR_NAME)
-        if lighting then
-            lighting:Destroy()
-        end
-    end)
     print("[" .. PRODUCT.name .. "] Destruct complete.")
 end
 
+runtimeHandoff = {Destruct = state.destruct}
+local activeGenv: any = persistenceGenv()
+if activeGenv then
+    activeGenv.WURST_RUNTIME = runtimeHandoff
+end
 ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
     if not parent then
         cleanupRuntime()

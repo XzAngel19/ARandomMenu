@@ -1,5 +1,5 @@
 return {
-    stamp = "v167-20261031-menu-mm2-module-audit",
+    stamp = "v168-20261031-destruct-teleport-lifecycle",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -17342,7 +17342,10 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
-        if runtime.persistenceBlocked then return false end
+        if runtime.persistenceBlocked
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return false
+        end
         if type(environment.writefile) ~= "function" then
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
@@ -17480,6 +17483,9 @@ local function createTrajectoryCalibration(): any
         if type(environment.makefolder) == "function" then
             pcall(environment.makefolder, OUTPUT_ROOT)
             pcall(environment.makefolder, OUTPUT_FOLDER)
+        end
+        if type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData() then
+            return false
         end
         local writeOk: boolean, writeError: any = pcall(
             environment.writefile,
@@ -18473,6 +18479,11 @@ local function createTrajectoryCalibration(): any
     end
 
     function controller:save(reason: string?): boolean
+        -- BindToClose callbacks outlive a reinjected menu. Once this
+        -- calibration is retired, it must not overwrite the newer session.
+        if not runtime.active then
+            return false
+        end
         return saveSnapshot(reason or "manual")
     end
 
