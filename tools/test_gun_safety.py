@@ -175,12 +175,11 @@ local aimInfo={endpoint=endpoint,targetPosition=endpoint,capturedPosition=endpoi
 local function gunAim() return aimEndpoint,aimInfo,nil end
 local prediction={gunAim=gunAim}
 local function buildSilentShot() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5,0.5,'Front' end
-local function bystanderOnSegment() return false end
 local nearPathClear=true
 local function isWeaponPathClear() return nearPathClear end
 local state={mm2ShotFeedback={queue=function() queues+=1 end,shootActive=true}}
 local trajectoryCalibration={noteAuthoredShot=function(_,info) notes+=1;lastAuthored=info end}
-''' + section(S, '    local SILENT_ORIGIN_STUDS', '    local MAX_AUTO_LEAD_SAFE') \
+''' + section(S, '    local SILENT_ORIGIN_STUDS', '    -- The Top/fallback origin lift belongs') \
     + section(S, '    type FireOptions', '    local shootFeatureActive:') + r'''
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==1 and queues==1 and notes==1,'normal shot sends one packet and queues feedback')

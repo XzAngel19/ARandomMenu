@@ -14,6 +14,7 @@ local Module = {
 }
 
 local activeCard: any = nil
+local activeInputConnection: RBXScriptConnection? = nil
 
 local STANDARD_PART_NAMES: {[string]: boolean} = {
     head = true,
@@ -233,6 +234,9 @@ function Module.init(context: Runtime): any
     end
 
     local function scan(): ()
+        -- A rescan can remove formerly forced matches; discard their drawings
+        -- before replacing the tracked set.
+        render:ReleaseAll(layer)
         table.clear(bots)
         for _, object: Instance in ipairs(currentWorkspace:GetDescendants()) do
             if object:IsA("Model") then
@@ -412,29 +416,40 @@ function Module.init(context: Runtime): any
     card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
+    local pendingName: string = ""
     local addBox: any
+    local function addForcedName(): ()
+        local trimmed: string = string.match(pendingName, "^%s*(.-)%s*$") or pendingName
+        if trimmed == "" then return end
+        local needle: string = string.lower(trimmed)
+        if not table.find(forcedNames, needle) then
+            table.insert(forcedNames, needle)
+        end
+        table.clear(verdicts)
+        table.clear(rigInfo)
+        if card.Enabled then scan() end
+        addBox:Set("")
+    end
     addBox = card:CreateTextBox({
         Name = "Force by name",
         Default = "",
-        Tooltip = "Type a model name and it is always treated as an NPC rig, "
-            .. "whatever it is built from. Partial names match, so statue "
-            .. "catches CreatorStatue.",
+        Tooltip = "Type a model name and press Enter or Add forced name. Partial names match, so statue catches CreatorStatue.",
         Function = function(value: string): ()
-            local trimmed: string = string.match(value, "^%s*(.-)%s*$") or value
-            if trimmed == "" then
-                return
-            end
-            local needle: string = string.lower(trimmed)
-            if not table.find(forcedNames, needle) then
-                table.insert(forcedNames, needle)
-            end
-            table.clear(verdicts)
-            table.clear(rigInfo)
-            if card.Enabled then
-                scan()
-            end
-            addBox:Set("")
+            pendingName = value
         end,
+    })
+    -- Widgets call the text callback before CreateTextBox returns. Apply a
+    -- previously saved value only after the option itself exists.
+    if pendingName ~= "" then addForcedName() end
+    if addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+        activeInputConnection = addBox.Object.FocusLost:Connect(function(enterPressed: boolean): ()
+            if enterPressed then addForcedName() end
+        end)
+    end
+    card:CreateButton({
+        Name = "Add forced name",
+        Tooltip = "Add the name typed above, including on touch devices.",
+        Function = addForcedName,
     })
 
     card:CreateButton({
@@ -457,6 +472,10 @@ end
 function Module.destroy(): ()
     if activeCard and activeCard.Enabled then
         activeCard:Toggle(false)
+    end
+    if activeInputConnection then
+        activeInputConnection:Disconnect()
+        activeInputConnection = nil
     end
     activeCard = nil
     Module.Initialized = false

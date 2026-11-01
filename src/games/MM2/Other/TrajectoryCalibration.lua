@@ -5,8 +5,6 @@ local Module = {
     Runtime = nil :: any,
 }
 
-local activeCleanup: () -> () = function(): () end
-
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -60,9 +58,6 @@ function Module.init(runtime: any): any
         "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
     )
 
-    activeCleanup = function(): ()
-
-    end
     Module.Events = featureConnections
     Module.Initialized = true
     return Module
@@ -73,8 +68,6 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
 end

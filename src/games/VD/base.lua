@@ -71,13 +71,16 @@ local function buildVDFeatures(): ()
         lastHit = 0,
         lastVaultInput = 0,
         lastVaultPoint = nil :: BasePart?,
-        killerBaseWalkSpeed = nil :: number?,
-        walkSpeedBase = nil :: number?,
+        killerSpeedRecord = nil :: any,
+        walkSpeedRecord = nil :: any,
         damageBoostToken = 0,
         damageBoostUntil = 0,
         damageOriginalSpeed = nil :: number?,
+        damageAppliedSpeed = nil :: number?,
+        damageSpeedHumanoid = nil :: Humanoid?,
         trackedHumanoid = nil :: Humanoid?,
         actionAnimator = nil :: Animator?,
+        actionTracks = {} :: {[AnimationTrack]: any},
         selectiveCollisions = {} :: {[BasePart]: CollisionState},
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
@@ -832,19 +835,19 @@ local function buildVDFeatures(): ()
         return best
     end
 
+    local function restoreKillerSpeed(): ()
+        local record: any = runtime.killerSpeedRecord
+        if record and record.applied ~= nil and record.humanoid.Parent
+            and not runtime.walkSpeedEnabled and record.humanoid.WalkSpeed == record.applied then
+            record.humanoid.WalkSpeed = record.restore
+        end
+        runtime.killerSpeedRecord = nil
+    end
+
     local function toggleKillerHitAura(enabled: boolean): ()
         disconnectFeatureConnection("VDKillerHitAura")
-        if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            if humanoid and runtime.killerBaseWalkSpeed and not runtime.walkSpeedEnabled then
-                humanoid.WalkSpeed = runtime.killerBaseWalkSpeed
-            end
-            runtime.killerBaseWalkSpeed = nil
-            return
-        end
+        restoreKillerSpeed()
+        if not enabled then return end
         local attackRemote: RemoteEvent? = findRemoteEvent("Attacks", "BasicAttack")
         assert(attackRemote, "VD Remotes.Attacks.BasicAttack is unavailable")
         featureConnections.VDKillerHitAura = TaskManager:Connect(function(): ()
@@ -859,18 +862,28 @@ local function buildVDFeatures(): ()
                 or lower(team.Name) ~= "killer"
                 or not localRoot
                 or not humanoid then
+                restoreKillerSpeed()
                 return
             end
-            if runtime.killerBaseWalkSpeed == nil then
-                runtime.killerBaseWalkSpeed = humanoid.WalkSpeed
+            local preventSlowdown: boolean = not runtime.walkSpeedEnabled
+                and (settings.hitAuraMode == "Blatant" or settings.hitAuraRun == true)
+            local record: any = runtime.killerSpeedRecord
+            if not preventSlowdown or (record and record.humanoid ~= humanoid) then
+                restoreKillerSpeed()
+                record = nil
             end
-            local preventSlowdown: boolean = settings.hitAuraMode == "Blatant"
-                or settings.hitAuraRun == true
             if preventSlowdown then
-                humanoid.WalkSpeed = math.max(
-                    humanoid.WalkSpeed,
-                    runtime.killerBaseWalkSpeed :: number
-                )
+                if not record then
+                    local floor: number = if runtime.damageSpeedHumanoid == humanoid
+                        then runtime.damageOriginalSpeed else humanoid.WalkSpeed
+                    record = {humanoid = humanoid, floor = floor}
+                    runtime.killerSpeedRecord = record
+                end
+                if humanoid.WalkSpeed < record.floor then
+                    record.restore = humanoid.WalkSpeed
+                    record.applied = record.floor
+                    humanoid.WalkSpeed = record.floor
+                end
             end
             local attackRange: number = if settings.hitAuraMode == "Blatant"
                 then settings.hitAuraBlatantReach
@@ -1193,11 +1206,35 @@ local function buildVDFeatures(): ()
             or track.Priority == Enum.AnimationPriority.Action4
     end
 
+    local function restoreActionTracks(): ()
+        for track: AnimationTrack, record: any in pairs(runtime.actionTracks) do
+            -- A track can already have been destroyed during respawn.
+            pcall(function(): ()
+                if track.Speed == record.applied then track:AdjustSpeed(record.base) end
+            end)
+            runtime.actionTracks[track] = nil
+        end
+    end
+
+    local function accelerateAction(track: AnimationTrack): ()
+        if not isAcceleratedAction(track) then return end
+        local record: any = runtime.actionTracks[track]
+        if not record then
+            record = {base = track.Speed}
+            runtime.actionTracks[track] = record
+        elseif track.Speed ~= record.applied then
+            record.base = track.Speed
+        end
+        if track.Speed ~= settings.actionSpeed then track:AdjustSpeed(settings.actionSpeed) end
+        record.applied = settings.actionSpeed
+    end
+
     local function bindActionAnimator(animator: Animator?): ()
         if runtime.actionAnimator == animator then
             return
         end
         disconnectFeatureConnection("VDCooldownAnimation")
+        restoreActionTracks()
         runtime.actionAnimator = animator
         if not animator then
             return
@@ -1205,14 +1242,10 @@ local function buildVDFeatures(): ()
         featureConnections.VDCooldownAnimation = animator.AnimationPlayed:Connect(function(
             track: AnimationTrack
         ): ()
-            if runtime.cooldownModifierEnabled and isAcceleratedAction(track) then
-                track:AdjustSpeed(settings.actionSpeed)
-            end
+            if runtime.cooldownModifierEnabled then accelerateAction(track) end
         end)
         for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-            if isAcceleratedAction(track) then
-                track:AdjustSpeed(settings.actionSpeed)
-            end
+            accelerateAction(track)
         end
     end
 
@@ -1221,23 +1254,8 @@ local function buildVDFeatures(): ()
         disconnectFeatureConnection("VDCooldownAnimation")
         runtime.cooldownModifierEnabled = enabled
         runtime.actionAnimator = nil
-        if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            local animator: Animator? = if humanoid
-                then humanoid:FindFirstChildOfClass("Animator")
-                else nil
-            if animator then
-                for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                    if isAcceleratedAction(track) then
-                        track:AdjustSpeed(1)
-                    end
-                end
-            end
-            return
-        end
+        restoreActionTracks()
+        if not enabled then return end
         featureConnections.VDCooldownModifier = TaskManager:Connect(function(): ()
             local character: Model? = LocalPlayer.Character
             local humanoid: Humanoid? = if character
@@ -1250,11 +1268,31 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    local function restoreDamageSpeed(): ()
+        local humanoid: Humanoid? = runtime.damageSpeedHumanoid
+        if humanoid and humanoid.Parent and humanoid.WalkSpeed == runtime.damageAppliedSpeed then
+            local walk: any = runtime.walkSpeedRecord
+            if runtime.walkSpeedEnabled then
+                if walk and walk.humanoid == humanoid and walk.applied ~= nil then
+                    humanoid.WalkSpeed = walk.applied
+                end
+            else
+                humanoid.WalkSpeed = runtime.damageOriginalSpeed
+            end
+        end
+        runtime.damageSpeedHumanoid = nil
+        runtime.damageOriginalSpeed = nil
+        runtime.damageAppliedSpeed = nil
+    end
+
     local function bindDamageHumanoid(humanoid: Humanoid?): ()
         if runtime.trackedHumanoid == humanoid then
             return
         end
         disconnectFeatureConnection("VDDamageHealth")
+        runtime.damageBoostToken += 1
+        runtime.damageBoostUntil = 0
+        restoreDamageSpeed()
         runtime.trackedHumanoid = humanoid
         if not humanoid then
             return
@@ -1266,20 +1304,22 @@ local function buildVDFeatures(): ()
             if runtime.damageBoostEnabled and health < previousHealth and health > 0 then
                 runtime.damageBoostToken += 1
                 local boostToken: number = runtime.damageBoostToken
-                local originalSpeed: number = humanoid.WalkSpeed
-                runtime.damageOriginalSpeed = originalSpeed
+                if runtime.damageSpeedHumanoid ~= humanoid then
+                    runtime.damageSpeedHumanoid = humanoid
+                    runtime.damageOriginalSpeed = humanoid.WalkSpeed
+                elseif not runtime.walkSpeedEnabled and humanoid.WalkSpeed ~= runtime.damageAppliedSpeed then
+                    runtime.damageOriginalSpeed = humanoid.WalkSpeed
+                end
                 runtime.damageBoostUntil = os.clock() + settings.damageBoostDuration
-                humanoid.WalkSpeed = math.max(
-                    humanoid.WalkSpeed,
-                    originalSpeed + settings.damageBoost
-                )
+                local base: number = if runtime.walkSpeedEnabled
+                    then settings.walkSpeed else runtime.damageOriginalSpeed
+                local boosted: number = math.max(humanoid.WalkSpeed, base + settings.damageBoost)
+                if humanoid.WalkSpeed ~= boosted then humanoid.WalkSpeed = boosted end
+                runtime.damageAppliedSpeed = boosted
                 task.delay(settings.damageBoostDuration, function(): ()
-                    if runtime.damageBoostEnabled
-                        and runtime.damageBoostToken == boostToken
-                        and humanoid.Parent
-                        and not runtime.walkSpeedEnabled then
-                        humanoid.WalkSpeed = originalSpeed
-                        runtime.damageOriginalSpeed = nil
+                    if runtime.damageBoostEnabled and runtime.damageBoostToken == boostToken then
+                        runtime.damageBoostUntil = 0
+                        restoreDamageSpeed()
                     end
                 end)
             end
@@ -1295,14 +1335,7 @@ local function buildVDFeatures(): ()
         runtime.damageBoostToken += 1
         runtime.damageBoostUntil = 0
         if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            if humanoid and runtime.damageOriginalSpeed and not runtime.walkSpeedEnabled then
-                humanoid.WalkSpeed = runtime.damageOriginalSpeed
-            end
-            runtime.damageOriginalSpeed = nil
+            restoreDamageSpeed()
             return
         end
         featureConnections.VDDamageBoost = TaskManager:Connect(function(): ()
@@ -1387,31 +1420,63 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    local function restoreWalkSpeed(keepDamage: boolean): ()
+        local record: any = runtime.walkSpeedRecord
+        if not record then return end
+        local humanoid: Humanoid = record.humanoid
+        local ownsDamage: boolean = runtime.damageSpeedHumanoid == humanoid
+            and humanoid.WalkSpeed == runtime.damageAppliedSpeed
+        if humanoid.Parent and (humanoid.WalkSpeed == record.applied or ownsDamage) then
+            local restored: number = record.base
+            if keepDamage and ownsDamage and os.clock() < runtime.damageBoostUntil then
+                runtime.damageOriginalSpeed = restored
+                restored += settings.damageBoost
+                runtime.damageAppliedSpeed = restored
+            end
+            if humanoid.WalkSpeed ~= restored then humanoid.WalkSpeed = restored end
+        end
+        runtime.walkSpeedRecord = nil
+    end
+
     local function toggleWalkSpeed(enabled: boolean): ()
         disconnectFeatureConnection("VDWalkSpeed")
         runtime.walkSpeedEnabled = enabled
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = if character
-            then character:FindFirstChildOfClass("Humanoid")
-            else nil
         if not enabled then
-            if humanoid and runtime.walkSpeedBase then
-                humanoid.WalkSpeed = runtime.walkSpeedBase
-            end
-            runtime.walkSpeedBase = nil
+            restoreWalkSpeed(true)
             return
         end
-        runtime.walkSpeedBase = if humanoid then humanoid.WalkSpeed else settings.walkSpeed
         featureConnections.VDWalkSpeed = TaskManager:Connect(function(): ()
             local currentCharacter: Model? = LocalPlayer.Character
             local currentHumanoid: Humanoid? = if currentCharacter
                 then currentCharacter:FindFirstChildOfClass("Humanoid")
                 else nil
-            if currentHumanoid and isRoundActive() then
-                local activeBoost: number = if os.clock() < runtime.damageBoostUntil
-                    then settings.damageBoost
-                    else 0
-                currentHumanoid.WalkSpeed = settings.walkSpeed + activeBoost
+            local record: any = runtime.walkSpeedRecord
+            if not currentHumanoid or not isRoundActive() then
+                restoreWalkSpeed(false)
+                return
+            end
+            if record and record.humanoid ~= currentHumanoid then
+                restoreWalkSpeed(false)
+                record = nil
+            end
+            if not record then
+                local base: number = if runtime.damageSpeedHumanoid == currentHumanoid
+                    then runtime.damageOriginalSpeed else currentHumanoid.WalkSpeed
+                record = {humanoid = currentHumanoid, base = base}
+                runtime.walkSpeedRecord = record
+            elseif currentHumanoid.WalkSpeed ~= record.applied
+                and not (runtime.damageSpeedHumanoid == currentHumanoid
+                    and currentHumanoid.WalkSpeed == runtime.damageAppliedSpeed) then
+                record.base = currentHumanoid.WalkSpeed
+            end
+            local activeBoost: number = if runtime.damageSpeedHumanoid == currentHumanoid
+                    and os.clock() < runtime.damageBoostUntil
+                then settings.damageBoost else 0
+            local target: number = settings.walkSpeed + activeBoost
+            if currentHumanoid.WalkSpeed ~= target then currentHumanoid.WalkSpeed = target end
+            record.applied = target
+            if runtime.damageSpeedHumanoid == currentHumanoid and activeBoost > 0 then
+                runtime.damageAppliedSpeed = target
             end
         end)
     end
@@ -1557,7 +1622,7 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    registerRoleProvider({
+    local roleProvider: any = {
         Name = "VD",
         Roles = {"Killer", "Survivor"},
         Colors = {
@@ -1571,7 +1636,8 @@ local function buildVDFeatures(): ()
             end
             return isKillerCharacter(character) and "Killer" or "Survivor"
         end,
-    })
+    }
+    registerRoleProvider(roleProvider)
 
     registerEspExtra({
         Name = "Generators",
@@ -1829,6 +1895,7 @@ local function buildVDFeatures(): ()
     )
 
     state.cleanupVDRuntime = function(): ()
+        if type(state.unregisterRoleProvider) == "function" then state.unregisterRoleProvider(roleProvider) end
         disconnectFeatureConnection("VDProximityVisibility")
         toggleGeneratorESP(false)
         toggleAutoGeneratorAura(false)

@@ -6,9 +6,11 @@ function Module.init(context)
     local original, applied = {}, {}
     local originalTime, appliedTime, elapsed
     local function write(key, value)
-        if applied[key] ~= nil and lighting[key] ~= applied[key] then original[key] = lighting[key] end
-        if original[key] == nil then original[key] = lighting[key] end
-        lighting[key], applied[key] = value, value
+        local current = lighting[key]
+        if applied[key] ~= nil and current ~= applied[key] then original[key] = current end
+        if original[key] == nil then original[key] = current end
+        if current ~= value then lighting[key] = value end
+        applied[key] = value
     end
     local function restoreTime()
         if appliedTime ~= nil and lighting.ClockTime == appliedTime then lighting.ClockTime = originalTime end
@@ -35,7 +37,7 @@ function Module.init(context)
             if originalTime == nil then originalTime = lighting.ClockTime end
             elapsed = (elapsed + math.max(0,dt or 0)) % 4
             appliedTime = (card.Options["Fast time"].Value and elapsed * 6 or card.Options.Time.Value) % 24
-            lighting.ClockTime = appliedTime
+            if lighting.ClockTime ~= appliedTime then lighting.ClockTime = appliedTime end
         else restoreTime() end
     end
     card = context.framework.Categories.Render:CreateModule({Name="Fullbright",Category="Render",ConfigKey="Universal.Fullbright",

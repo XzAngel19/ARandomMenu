@@ -24,14 +24,18 @@ local surface={IsA=function() return true end}
 local wall={Instance=surface,Normal=Vector3.new(0,0,1),Position=Vector3.new(0,10,-1)}
 local ceiling={Distance=4,Instance=surface,Normal=Vector3.new(0,-1,0),Position=Vector3.new(0,13,0)}
 local ceilingOnly=false
-local world={CurrentCamera={CFrame=CFrame.new()},Raycast=function(_,p,d)
+local lastFilter
+local world={CurrentCamera={CFrame=CFrame.new()},Raycast=function(_,p,d,params)
+    lastFilter=params.FilterDescendantsInstances
     if d.Y>0 then return ceiling end
     if d.Z<-.1 and not ceilingOnly then return wall end
 end}
 local tick,handler,feature,mode
 local options,rows={},{}
 local connections={}
-local host={workspace=world,Players={GetPlayers=function() return {} end},LocalPlayer={},
+local localPlayer={}
+local otherCharacter={}
+local host={workspace=world,Players={GetPlayers=function() return {localPlayer,{Character=otherCharacter,Name='Other'}} end},LocalPlayer=localPlayer,
     getCharacterParts=function() return character,humanoid,root end,
     TaskManager={Connect=function(_,fn) tick=fn;return {Disconnect=function() tick=nil end} end},
     featureConnections=connections,
@@ -48,6 +52,9 @@ assert(not rows['Ceiling Walk'] and rows['Climb state'].Visible and not rows['Im
 feature.enabled=true;handler(true)
 mode('Velocity');root.AssemblyLinearVelocity=Vector3.new(3,-5,4);tick(1/60)
 assert(root.AssemblyLinearVelocity.Y==30 and root.AssemblyLinearVelocity.X==3)
+assert(lastFilter[1]==character and lastFilter[2]==otherCharacter, 'ray ignores both player characters')
+character={};now=.1;tick(1/60)
+assert(lastFilter[1]==character, 'respawn updates the local ray filter without waiting 0.5 seconds')
 assert(not rows['Ceiling Walk'] and rows['Climb state'].Visible)
 mode('Impulse');root.AssemblyLinearVelocity=Vector3.zero;tick(1/60)
 assert(impulses==1 and root.AssemblyLinearVelocity.Y==30 and rows['Impulse interval'].Visible)

@@ -77,7 +77,7 @@ function Module.init(context)
                     if not record then record={base=current};records[part]=record
                     elseif current~=record.applied then record.base=current end
                     record.applied=math.max(record.base,card.Options.Transparency.Value)
-                    part.LocalTransparencyModifier=record.applied
+                    if current~=record.applied then part.LocalTransparencyModifier=record.applied end
                 else restore(part) end
                 cursor+=1
             end

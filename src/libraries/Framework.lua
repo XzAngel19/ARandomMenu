@@ -115,14 +115,14 @@ local Module = {
 }
 
 local KNOWN_CATEGORIES: {string} = {
-    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
+    "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
 local activeFramework: Framework? = nil
 local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
 end
 local CATEGORY_ALIASES: {[string]: string} = {
-    Blatant = "Exploits", Movement = "World", Other = "Utilities",
+    Combat = "Exploits", Blatant = "Exploits", Movement = "World", Other = "Utilities",
     Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
     Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
 }
@@ -191,6 +191,7 @@ function Module.init(context: any): Framework
             playeresp = "playeresp",
             itemesp = "itemesp",
             autoclicker = "autoclicker",
+            aimassist = "aimbot",
             killaura = "killaura",
             fly = "flight",
             speed = "speedhack",
@@ -370,6 +371,9 @@ function Module.init(context: any): Framework
 
     local function createModule(category: any, definition: any): Module
         local moduleName: string = definition.Name
+        -- Keep a stable internal module/config identity when a game adapts the
+        -- visible card. This also names its mobile shortcut correctly at boot.
+        local displayName: string = definition.DisplayName or moduleName
         local categoryName: string = definition.Category or category.Name
         local created: any = {
             Name = moduleName,
@@ -400,7 +404,7 @@ function Module.init(context: any): Framework
             or (definition.Action == true and "action")
             or "toggle"
         local feature: any = host.createUniversalFeature(
-            moduleName,
+            displayName,
             definition.Tooltip or definition.Description or "",
             definition.Order or (#category.Modules + 1),
             kind == "action" and function(): ()

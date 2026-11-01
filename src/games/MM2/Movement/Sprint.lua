@@ -104,7 +104,7 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
+    activeCleanup()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil

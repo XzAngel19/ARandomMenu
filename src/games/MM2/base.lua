@@ -63,7 +63,6 @@ local mm2Settings = {
     -- another player's HumanoidRootPart because the server ray kept going past
     -- the murderer. Shooting an innocent costs the sheriff the gun, so the
     -- shot is moved to a body part whose line is clear -- or skipped.
-    avoidInnocents = true,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
@@ -217,96 +216,6 @@ local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?
             info.distance = (position - origin).Magnitude
         end
     end)
-    if part:IsA("BasePart") then
-        info.transparency = part.Transparency
-        info.canCollide = part.CanCollide
-    end
-    return info
-end
-
--- v139.2: the server does NOT stop its ray at the endpoint we author. MM2's
--- gun fires a long raycast in the aim direction and the thrown knife is a
--- physical projectile, so both keep going past the target. The saved v139.1
--- session shows what that costs: of 10 confirmed shots, 4 hit the murderer,
--- 2 stopped on map geometry and 2 landed on ANOTHER player's HumanoidRootPart
--- (the shot was 1-4 studs behind/ahead and the ray carried on). This probe
--- answers "what is behind the target on this exact line", which the 12-stud
--- overshoot check could not: a lobby is not 12 studs deep.
---
--- Only bodies are interesting here (a wall behind the target is a good thing:
--- it stops a miss). `exclude` must contain the local character and the target.
-local function describeRayBeyond(
-    origin: Vector3,
-    endpoint: Vector3,
-    beyondStuds: number,
-    exclude: {Instance}?
-): any
-    local segment: Vector3 = endpoint - origin
-    local length: number = segment.Magnitude
-    if length < 0.05 then
-        return nil
-    end
-    local reach: number = math.max(1, math.min(beyondStuds or 200, 500))
-    local direction: Vector3 = segment.Unit * reach
-    local params: RaycastParams = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.IgnoreWater = true
-    params.RespectCanCollide = false
-    local excluded: {Instance} = {}
-    for _, object: Instance in ipairs(exclude or {}) do
-        table.insert(excluded, object)
-    end
-    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
-        table.insert(excluded, object)
-    end
-    params.FilterDescendantsInstances = excluded
-    local hit: RaycastResult? = workspace:Raycast(endpoint, direction, params)
-    if not hit then
-        return nil
-    end
-    local part: Instance = hit.Instance
-    local info: any = {
-        name = string.sub(part:GetFullName(), 1, 160),
-        className = part.ClassName,
-        isBody = false,
-        player = nil :: Player?,
-        gap = math.huge,
-    }
-    pcall(function(): ()
-        info.gap = (hit.Position - endpoint).Magnitude
-    end)
-    -- Walk up to the model: every character hangs from a Model whose parent is
-    -- the Workspace, and Players:GetPlayerFromCharacter is the only identity
-    -- that is safe to compare (no cloneref equality games).
-    local current: Instance? = part
-    for _ = 1, 8 do
-        if not current then
-            break
-        end
-        local ok: boolean, owner: any = pcall(Players.GetPlayerFromCharacter, Players, current)
-        if ok and owner then
-            info.isBody = true
-            info.player = owner
-            break
-        end
-        if current:IsA("Model") then
-            local humanoid: Humanoid? = current:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                info.isBody = true
-                -- v139.3: a body without an owner is only dangerous while it is
-                -- ALIVE. A corpse lying behind the murderer used to count as
-                -- "an innocent behind" and refused the shot.
-                pcall(function(): ()
-                    info.health = humanoid.Health
-                end)
-                break
-            end
-        end
-        if current == workspace then
-            break
-        end
-        current = current.Parent
-    end
     if part:IsA("BasePart") then
         info.transparency = part.Transparency
         info.canCollide = part.CanCollide
@@ -1276,8 +1185,16 @@ local function getPlayerPerk(player: Player): string?
     return nil
 end
 
+local mm2BridgeProvider: any = nil
+local function unregisterMM2Roles(): ()
+    if mm2BridgeProvider and type(state.unregisterRoleProvider) == "function" then
+        state.unregisterRoleProvider(mm2BridgeProvider)
+    end
+    mm2BridgeProvider = nil
+end
+
 local function registerMM2Roles(): ()
-    registerRoleProvider({
+    mm2BridgeProvider = {
         Name = "MM2",
         ReplacesTeams = true,
         DeadRoles = {"Dead"},
@@ -1316,7 +1233,8 @@ local function registerMM2Roles(): ()
                 mm2Settings.deadColor = colour
             end
         end,
-    })
+    }
+    registerRoleProvider(mm2BridgeProvider)
 end
 
 local primeRoundState: () -> ()
@@ -4198,7 +4116,7 @@ local function createTrajectoryCalibration(): any
             phase = "blocked",
             serverTime = workspace:GetServerTimeNow(),
             pingMs = getPingMilliseconds(),
-            -- v139.3: the refusal carries its own reason ("wall", "corridor"),
+            -- v139.3: the refusal carries its own reason (such as "wall"),
             -- so a calibration session can tell a real barrier apart from a
             -- policy decision that cost a shot.
             reason = type(blocker.reason) == "string" and blocker.reason or "wall",
@@ -4840,6 +4758,7 @@ end
 state.gameRoleProvider = mm2RoleProvider
 state.gameTargetProvider = mm2TargetProvider
 moduleCleanup = function(): ()
+    unregisterMM2Roles()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end
@@ -4973,7 +4892,6 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
-    describeRayBeyond = describeRayBeyond,
     -- v161: the untouched first hit of the muzzle line, so the aim can notice
     -- a ghost (transparent, non-colliding) body part on its own line.
     describeRayHit = describeRayHit,
@@ -4990,7 +4908,7 @@ state.mm2Core = {
 }
 
 cleanupMM2Runtime = function()
-
+    unregisterMM2Roles()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end

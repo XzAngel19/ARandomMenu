@@ -1,5 +1,8 @@
 local Module = {Name = "HP", Initialized = false}
 local activeCard, cleanup, hud, roleBinding
+local LOW_HEALTH = Color3.fromRGB(255,70,70)
+local MID_HEALTH = Color3.fromRGB(255,220,60)
+local HIGH_HEALTH = Color3.fromRGB(85,255,85)
 
 -- Shared by world bars and Self HP; finite/max-health guards avoid NaN UI sizes.
 local function healthValues(health, maximum)
@@ -9,8 +12,8 @@ local function healthValues(health, maximum)
     return health, maximum, math.clamp(health / maximum, 0, 1)
 end
 local function healthColour(fraction)
-    local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
-    return fraction < 0.5 and low:Lerp(mid, fraction * 2) or mid:Lerp(high, (fraction - 0.5) * 2)
+    return fraction < 0.5 and LOW_HEALTH:Lerp(MID_HEALTH, fraction * 2)
+        or MID_HEALTH:Lerp(HIGH_HEALTH, (fraction - 0.5) * 2)
 end
 
 function Module.init(context: any): any
@@ -28,6 +31,7 @@ function Module.init(context: any): any
         BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=20,
         Text="",Font=Enum.Font.Arial,TextSize=18,TextStrokeTransparency=1,TextColor3=healthColour(1)})
     local scale = create("UIScale", {Parent=hud,Scale=1})
+    local centerPosition, bottomPosition = UDim2.new(0.5,6,0.5,30), UDim2.new(0.5,0,1,-110)
     local card
     local function clear()
         render:ReleaseAll(layer); table.clear(tracked); layer.Visible = false
@@ -59,18 +63,21 @@ function Module.init(context: any): any
                     end
                 end
                 for player in pairs(tracked) do if not seen[player] then render:Release(layer,player); tracked[player] = nil end end
-                hud.Visible = options["Self HP"].Value
-                if hud.Visible then
+                local showSelf = options["Self HP"].Value
+                if hud.Visible ~= showSelf then hud.Visible = showSelf end
+                if showSelf then
                     local character = host.LocalPlayer.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     local health, maximum, fraction = healthValues(humanoid and humanoid.Health, humanoid and humanoid.MaxHealth)
                     local wanted = humanoid and humanoid.Health > 0 and tostring(math.ceil(health)) .. " ❤️" or ""
                     if hud.Text ~= wanted then hud.Text = wanted end
-                    hud.TextColor3 = healthColour(fraction)
-                    hud.Position = options["Self HP position"].Value == "Bottom" and UDim2.new(0.5,0,1,-110) or UDim2.new(0.5,6,0.5,30)
+                    local colour = healthColour(fraction)
+                    if hud.TextColor3 ~= colour then hud.TextColor3 = colour end
+                    local position = options["Self HP position"].Value == "Bottom" and bottomPosition or centerPosition
+                    if hud.Position ~= position then hud.Position = position end
                     local wantedScale = options["Self HP scale"].Value
                     if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 140)) end
-                    scale.Scale = wantedScale
+                    if scale.Scale ~= wantedScale then scale.Scale = wantedScale end
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))
             end)

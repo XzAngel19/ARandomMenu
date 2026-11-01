@@ -43,6 +43,16 @@ function Module.init(context)
         end
         clearGhost();state.character=nil;activity(false)
     end
+    local function turnOff()
+        local feature=card and card.Feature
+        if feature and feature.enabled and type(feature.activate)=="function" then
+            feature.activate()
+        elseif card and card.Enabled then
+            card:Toggle(false)
+        else
+            stop()
+        end
+    end
     local function spawnGhost(character,root)
         clearGhost()
         local archivable = character.Archivable
@@ -120,9 +130,13 @@ function Module.init(context)
         local humanoid, root=parts(character)
         if not humanoid or not root or humanoid.Health<=0 then return end
         if state.character~=character then
-            if not spawnGhost(character,root) then return end
+            if not spawnGhost(character,root) then
+                turnOff()
+                card:Notify("Could not create a live character.")
+                return
+            end
         end
-        if not state.model.Parent or not state.root.Parent or state.humanoid.Health<=0 then card:Toggle(false);return end
+        if not state.model.Parent or not state.root.Parent or state.humanoid.Health<=0 then turnOff();return end
         local ghostRoot, ghostHumanoid=state.root,state.humanoid
         if state.flyMode~=settings.fly then
             state.flyMode=settings.fly
@@ -171,7 +185,9 @@ function Module.init(context)
             local character=player.Character
             local humanoid,root=parts(character)
             if not humanoid or not root or humanoid.Health<=0 or not spawnGhost(character,root) then
-                card:Notify("Ghost could not create a live character.");return
+                -- Let the card activation/restore path record OFF as well.
+                card:Toggle(false)
+                error("Ghost could not create a live character.",0)
             end
             activity(true)
             table.insert(state.connections,run.PreSimulation:Connect(step))
@@ -191,7 +207,8 @@ function Module.init(context)
             if part:IsA("BasePart") then part.Transparency=settings.transparency end
         end end
     end})
-    cleanup=stop;Module.Initialized=true;return card
+    cleanup=turnOff
+    Module.Initialized=true;return card
 end
 function Module.destroy()
     if cleanup then cleanup() end

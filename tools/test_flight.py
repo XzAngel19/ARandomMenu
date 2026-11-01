@@ -30,7 +30,8 @@ function cf.new(x,y,z)
 end
 cf.lookAt=function(p) return cf.new(p) end
 CFrame=cf
-local RaycastParams={new=function() return {} end}
+local paramsCount=0
+local RaycastParams={new=function() paramsCount+=1;return {} end}
 local allocated={}
 local Instance={new=function(class)
     local o={ClassName=class}
@@ -39,14 +40,18 @@ local Instance={new=function(class)
 end}
 local humanoid={Parent=true,WalkSpeed=16,HipHeight=2,ChangeState=function() end}
 local function makeRoot()
-    return {Parent=true,Position=Vector3.new(0,10,0),CFrame=cf.new(0,10,0),AssemblyLinearVelocity=Vector3.zero,
+    return {Parent={},Position=Vector3.new(0,10,0),CFrame=cf.new(0,10,0),AssemblyLinearVelocity=Vector3.zero,
         AssemblyMass=1,FindFirstChild=function(self,name)
             for _,o in ipairs(allocated) do if o.Parent==self and o.Name==name then return o end end
         end,ApplyImpulse=function(self,v) self.AssemblyLinearVelocity+=v end}
 end
 local root=makeRoot()
 local camera={CFrame=cf.new()}
-local world={CurrentCamera=camera,Raycast=function() return nil end}
+local lastParams
+local world={CurrentCamera=camera,Raycast=function(_,_,_,params)
+    lastParams=params;assert(params.FilterType=='Exclude' and params.FilterDescendantsInstances[1]==root.Parent)
+    return nil
+end}
 local owner,applied=nil,nil
 local platform={set=function(_,v) owner=v end,apply=function() applied=owner end}
 local callbacks={}
@@ -65,12 +70,18 @@ local framework={Categories={Exploits={CreateModule=function(_,definition)
 end}}}
 local userInput={KeyboardEnabled=true,IsKeyDown=function() return false end,GetFocusedTextBox=function() return nil end}
 local host={workspace=world,UserInputService=userInput,getCharacterParts=function() return nil,humanoid,root end}
+local forward=0
 local context={framework=framework,host=host,services={platformStandOwnership=platform,mobileActions={},
-    movementInput={getVector=function() return 0,0 end,isJumpHeld=function() return false end}}}
+    movementInput={getVector=function() return forward,0 end,isJumpHeld=function() return false end}}}
 '''+'\nlocal Module=(function()\n'+source+'\nend)()\n'+r'''
 Module.init(context)
 callbacks['Face camera'](false)
 feature:Toggle(true);loop(1/60)
+forward=1
+for _=1,120 do loop(1/60) end
+assert(paramsCount==1 and lastParams.FilterDescendantsInstances[1]==root.Parent,
+    'Fly must reuse its raycast parameters while preserving character exclusion')
+forward=0
 assert(owner==nil and applied==nil,'Fly must never request PlatformStand')
 assert(callbacks.PlatformStand==nil,'no PlatformStand option')
 callbacks.Method('WalkSpeed');loop(1/60)
@@ -79,9 +90,11 @@ callbacks.Method('Velocity');loop(1/60)
 assert(humanoid.WalkSpeed==16,'switching out of WalkSpeed restores it immediately')
 callbacks.Method('WalkSpeed');loop(1/60)
 local previous=humanoid
-humanoid={Parent=true,WalkSpeed=22,HipHeight=2,ChangeState=function() end};root=makeRoot();loop(1/60)
-assert(previous.WalkSpeed==16 and humanoid.WalkSpeed==70)
-feature:Toggle(false);assert(humanoid.WalkSpeed==22 and owner==nil)
+humanoid={Parent=true,WalkSpeed=22,HipHeight=2,ChangeState=function() end};root=makeRoot();forward=1;loop(1/60);forward=0
+assert(previous.WalkSpeed==16 and humanoid.WalkSpeed==70 and paramsCount==1
+    and lastParams.FilterDescendantsInstances[1]==root.Parent, 'respawn refreshes the existing raycast filter')
+feature:Toggle(false);assert(humanoid.WalkSpeed==22 and owner==nil
+    and #lastParams.FilterDescendantsInstances==0, 'OFF releases the cached character filter')
 callbacks.Method('Velocity');callbacks.Float('Floor');feature:Toggle(true);loop(1/60)
 local floor=allocated[#allocated];assert(floor.Name=='Wurst_FlyPlatform' and floor.Parent==camera)
 callbacks.Method('Constraint');loop(1/60)

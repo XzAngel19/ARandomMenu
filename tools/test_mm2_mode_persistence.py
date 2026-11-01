@@ -39,7 +39,7 @@ do
         and cfg.values['MM2.AutoShoot.Aura'] == 88,
         'Auto Shoot CFrame settings were overwritten during startup')
     local aim = ex.state.valueControls['MM2.Shoot.Aimmethod']
-    aim.apply('Bullet')
+    aim.apply('Normal(Bullet)')
     assert(mm.shootWallCheck == true and mm.shootMode == 'Murder', 'saved Bullet state was lost')
     aim.apply('Experimental')
     assert(mm.shootWallCheck == false and mm.shootTarget == 'SavedPlayer', 'Experimental restore failed')
@@ -52,7 +52,7 @@ do
     -- Let the ordinary harness run with the defaults it expects.
     ex.state.toggleControls['MM2.Shoot.WallCheck'].setChecked(true)
     ex.state.valueControls['MM2.Shoot.Target'].apply('Murder')
-    aim.apply('Bullet')
+    aim.apply('Normal(Bullet)')
     ex.state.toggleControls['MM2.AutoShoot.WallCheck'].setChecked(true)
     ex.state.toggleControls['MM2.AutoShoot.Proximity'].setChecked(false)
     ex.state.valueControls['MM2.AutoShoot.Aura'].apply(25)

@@ -1339,7 +1339,7 @@ local function buildX2Duels(runtime: any): ()
             end
             refreshAutoShootMode()
         end,
-        "Combat"
+        "Exploits"
     )
     local autoShootOptionLabel: TextLabel? = nil
     refreshAutoShootMode = function(): ()
@@ -1469,7 +1469,7 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.nextAuraAt = 0
             if not enabled then restoreCamera() end
         end,
-        "Combat"
+        "Exploits"
     )
     host.addNumberOption(auraCard, "Reach", 12, 3, 25, function(value: number): ()
         settings.killAuraRange = value

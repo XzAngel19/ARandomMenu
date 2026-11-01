@@ -122,9 +122,9 @@ function Module.init(context: Runtime): any
         return runtime.lockedTarget
     end
 
-    card = framework.Categories.Combat:CreateModule({
-        Name = "Aim Assist",
-        Category = "Combat",
+    card = framework.Categories.Exploits:CreateModule({
+        Name = "Aimbot",
+        Category = "Exploits",
         ConfigKey = "Universal.AimAssist",
         Order = 4,
         Tooltip = "Eases the local camera toward a valid target; no raycast or "

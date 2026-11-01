@@ -1001,7 +1001,7 @@ function Module.init(runtime: any): any
         15,
         toggleKnifeThrow,
         {
-            categoryName = "Combat",
+            categoryName = "Exploits",
             parent = MM2Scroll,
             registry = mm2Features,
         }

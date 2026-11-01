@@ -14,7 +14,7 @@ assert 'createUniversalFeature' in SOURCE
 assert '"Knife Throw"' in SOURCE
 assert '"WallCheck"' in SOURCE
 assert '"Delay"' in SOURCE
-assert 'categoryName = "Combat"' in SOURCE
+assert 'categoryName = "Exploits"' in SOURCE
 
 # Verify it invokes the Remote directly (natural throw)
 assert 'remote:FireServer' in SOURCE or 'FireServer' in SOURCE
@@ -37,4 +37,4 @@ assert '"Knife Tracer"' in SOURCE
 assert '"KnifeThrown"' in SOURCE
 assert '"WeaponService"' in SOURCE
 
-print('PASS Independent KnifeThrow: Remote-based throw, WallCheck, user-controlled Delay, Combat category')
+print('PASS Independent KnifeThrow: Remote-based throw, WallCheck, user-controlled Delay, Exploits category')

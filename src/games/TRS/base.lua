@@ -68,8 +68,8 @@ local function buildTRSFeatures()
     local landingMarker = nil
     local lastGoalkeeperAction = 0
     local lastHeaderAction = 0
-    local autoTackleEnabled = false
-    local autoPickupEnabled = false
+    local tackleGeneration = 0
+    local pickupGeneration = 0
     local goalVisualObjects = {}
 
     local function getWorldBools()
@@ -454,7 +454,8 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoTackle(enabled)
-        autoTackleEnabled = enabled
+        tackleGeneration += 1
+        local generation = tackleGeneration
         disconnectFeatureConnection("TRSAutoTackle")
         clearTackleBox()
         if not enabled then
@@ -520,7 +521,7 @@ local function buildTRSFeatures()
             if disarm and disarm:IsA("RemoteEvent") then
                 for _, delayTime in ipairs({0.06, 0.16}) do
                     task.delay(delayTime, function()
-                        if not autoTackleEnabled then
+                        if generation ~= tackleGeneration then
                             return
                         end
                         local currentOwner, currentBall = getBallOwner()
@@ -586,6 +587,7 @@ local function buildTRSFeatures()
     end
 
     local uninstallShotHook: () -> () = function(): () end
+    local releaseShotHookIfIdle: () -> () = function(): () end
 
     local function installShotHook()
         if shotHookInstalled then
@@ -634,6 +636,7 @@ local function buildTRSFeatures()
                     else
                         nativeHeaderContext = nil
                     end
+                    task.defer(releaseShotHookIfIdle)
                 elseif settings.power and getBallOwner() == LocalPlayer then
                     arguments[3] = settings.powerValue
                 end
@@ -674,7 +677,7 @@ local function buildTRSFeatures()
         end
     end
 
-    local function releaseShotHookIfIdle(): ()
+    releaseShotHookIfIdle = function(): ()
         if not settings.power
             and nativeShotContext == nil
             and nativeHeaderContext == nil then
@@ -803,6 +806,7 @@ local function buildTRSFeatures()
             and getMobileButton("JumpButton")
             or getMobileButton("PowerShoot")
         if not button then
+            releaseShotHookIfIdle()
             if showFailure then
                 notify("TRS MobileCTRL shot button was not found.")
             end
@@ -832,6 +836,7 @@ local function buildTRSFeatures()
         end
         if not fired then
             nativeShotContext = nil
+            releaseShotHookIfIdle()
             if showFailure then
                 notify("The executor cannot fire native GUI signals.")
             end
@@ -842,6 +847,7 @@ local function buildTRSFeatures()
             if nativeShotContext == context then
                 nativeShotContext = nil
             end
+            releaseShotHookIfIdle()
         end)
         return true
     end
@@ -1222,8 +1228,9 @@ local function buildTRSFeatures()
         )
 
         if settings.pickupDeke then
+            local generation = pickupGeneration
             task.delay(0.06, function()
-                if not autoPickupEnabled then
+                if generation ~= pickupGeneration then
                     return
                 end
                 local owner = getBallOwner()
@@ -1245,7 +1252,7 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoPickup(enabled)
-        autoPickupEnabled = enabled
+        pickupGeneration += 1
         disconnectFeatureConnection("TRSPickupKey")
         disconnectFeatureConnection("TRSPickupLoop")
         if not enabled then
@@ -1552,6 +1559,7 @@ local function buildTRSFeatures()
             local button = getMobileButton("Header")
             if not button or not fireNativeSignal(button.MouseButton1Click) then
                 nativeHeaderContext = nil
+                releaseShotHookIfIdle()
                 return
             end
             lastHeaderAction = os.clock()
@@ -1560,6 +1568,7 @@ local function buildTRSFeatures()
                 if nativeHeaderContext == context then
                     nativeHeaderContext = nil
                 end
+                releaseShotHookIfIdle()
             end)
         end)
     end
@@ -1854,8 +1863,8 @@ local function buildTRSFeatures()
 
     state.cleanupTRSRuntime = function()
         settings.power = false
-        autoTackleEnabled = false
-        autoPickupEnabled = false
+        tackleGeneration += 1
+        pickupGeneration += 1
         nativeShotContext = nil
         nativeHeaderContext = nil
         uninstallShotHook()

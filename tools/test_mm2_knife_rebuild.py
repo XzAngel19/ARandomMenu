@@ -7,7 +7,7 @@ SOURCE=(ROOT/'src/games/MM2/Combat/KnifeThrow.lua').read_text()
 # The new KnifeThrow is independent, not a rebuild of the old complex module
 assert 'createUniversalFeature' in SOURCE
 assert '"Knife Throw"' in SOURCE
-assert 'categoryName = "Combat"' in SOURCE
+assert 'categoryName = "Exploits"' in SOURCE
 
 # Verify required options
 assert '"WallCheck"' in SOURCE

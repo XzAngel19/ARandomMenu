@@ -24,7 +24,7 @@ local function option(self,d)
  local o={Value=d.Default,definition=d};if d.List then o.Value=d.List[d.Index or 1] end
  self.Options[d.Name]=o;return o
 end
-local framework={Categories={Combat={CreateModule=function(_,d)
+local framework={Categories={Exploits={CreateModule=function(_,d)
  card={Options={},cleanups={}}
  card.CreateSlider=option;card.CreateDropdown=option;card.CreateToggle=option
  function card:CreateNote() end

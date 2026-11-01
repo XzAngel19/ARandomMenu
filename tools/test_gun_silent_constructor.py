@@ -131,7 +131,7 @@ local ShootFeature = {SetStatus = function(_, m) statusMessage = m end}
 SHOOT_MOCKS = r'''
 local muzzlePosition = Vector3.new(0.5, 0, 0)
 local mm2Settings = {silentAim = true, shootWallCheck = true,
-    silentSpawn = 'Through', silentSweep = 0, avoidInnocents = true,
+    silentSpawn = 'Through', silentSweep = 0,
     shootRaw = false}
 local remote = {IsA = function() return true end, sends = 0,
     FireServer = function(self) self.sends += 1 end}
@@ -261,7 +261,7 @@ print('PASS gun silent constructor: options honoured, walls checked from the gun
 '''
 
 shoot_section = section(
-    SHOOT, "    local function bystanderOnSegment(", "    local shootFeatureActive:"
+    SHOOT, "    local SILENT_ORIGIN_STUDS:", "    local shootFeatureActive:"
 )
 shoot_section = shoot_section.replace("local ShootFeature: any = nil", "-- injected")
 # The real published wrapper, so the suite cannot drift from the module.
@@ -274,8 +274,6 @@ shoot_section += "\n" + section(
 code = (
     PRELUDE
     + MOCKS
-    + section(BASE, "local function describeRayHit(", "local function describeRayBeyond(")
-    + section(BASE, "local function describeRayBeyond(", "local function getWeaponFromContainer(")
     + section(BASE, "local function isWeaponPathClear(", "local function getWeaponFromContainer(")
     + section(BASE, "local function validateGunShot(", "local function disconnectGunFiredObserver")
     + SHOOT_MOCKS

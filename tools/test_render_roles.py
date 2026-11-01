@@ -19,13 +19,15 @@ end
 Vector3.zero=Vector3.new(0,0,0)
 local CFrame={new=function(pos) return setmetatable({Position=pos},{__mul=function(a,b) return a.Position+b end}) end}
 local Color3={};Color3.__index=Color3
+Color3.__eq=function(a,b) return a.R==b.R and a.G==b.G and a.B==b.B end
 function Color3.new(r,g,b) return setmetatable({R=r or 0,G=g or 0,B=b or 0},Color3) end
 function Color3.fromRGB(r,g,b) return Color3.new(r/255,g/255,b/255) end
 function Color3:Lerp(b,t) return Color3.new(self.R+(b.R-self.R)*t,self.G+(b.G-self.G)*t,self.B+(b.B-self.B)*t) end
 local function typeof(v) return getmetatable(v)==Color3 and 'Color3' or type(v) end
 local Enum=setmetatable({}, {__index=function(t,k) local e=setmetatable({}, {__index=function(s,n) rawset(s,n,n);return n end});t[k]=e;return e end})
 local UDim={new=function(s,o) return {Scale=s,Offset=o} end}
-local UDim2={new=function(xs,xo,ys,yo) return {X={Scale=xs,Offset=xo},Y={Scale=ys,Offset=yo}} end}
+local udim2Mt={__eq=function(a,b) return a.X.Scale==b.X.Scale and a.X.Offset==b.X.Offset and a.Y.Scale==b.Y.Scale and a.Y.Offset==b.Y.Offset end}
+local UDim2={new=function(xs,xo,ys,yo) return setmetatable({X={Scale=xs,Offset=xo},Y={Scale=ys,Offset=yo}},udim2Mt) end}
 function UDim2.fromOffset(x,y) return UDim2.new(0,x,0,y) end
 function UDim2.fromScale(x,y) return UDim2.new(x,0,y,0) end
 local objects={}
@@ -39,9 +41,10 @@ function Instance.new(class)
   props.Position=UDim2.fromOffset(0,0)
   props.Size=UDim2.fromOffset(0,0)
  end
- local obj=setmetatable({props=props,children={}}, {
+ local obj=setmetatable({props=props,children={},writes={}}, {
   __index=function(o,k) return methods[k] or o.props[k] end,
   __newindex=function(o,k,v)
+   o.writes[k]=(o.writes[k] or 0)+1
    if k=='Parent' then
     local prev=o.props.Parent;if prev then local i=table.find(prev.children,o);if i then table.remove(prev.children,i) end end
     if v then table.insert(v.children,o) end
@@ -80,7 +83,7 @@ local function emit(kind,p) for _,fn in ipairs(table.clone(listeners)) do fn(kin
 bridge.registerRoles=function(p) provider=p;emit('roles',p) end
 bridge.unregisterRoles=function(p) if provider==p then provider=nil;emit('roles',nil) end end
 bridge.playerRole=function(p) return provider and provider.Get(p) end
-local host={Players={GetPlayers=function() return {localPlayer,player} end,PlayerRemoving={Connect=function() return {Disconnect=function() end} end}},create=create,ScreenGui=screen,workspace=workspace,LocalPlayer=localPlayer,state={activeGameName='MM2'},
+local host={Players={GetPlayers=function() return {localPlayer,player} end,PlayerRemoving={Connect=function() return {Disconnect=function() end} end}},create=create,ScreenGui=screen,workspace=workspace,LocalPlayer=localPlayer,state={activeGameName=nil},
  configData={states={},values={}},services={gameBridge=bridge}}
 local framework={Modules={},Categories={Visuals={}}}
 function framework.Categories.Visuals:CreateModule(def)
@@ -119,11 +122,14 @@ assert(not esp.Options['Name tags'] and not esp.Options['Health bar'] and not es
 emit('extra',{Name='Future extra',Default=false})
 assert(esp.Options['Future extra'],'generic ESP extras still register')
 assert(not chams.Options.Nametags and not chams.Options['Nametag distance'])
+assert(chams.Options['Show Perk'] and not chams.Options['Show Perk'].Visible,
+ 'perk option must exist but stay hidden before a late MM2 provider')
 assert(not chams.Options['Murderer colour'],'universal has no MM2 rows without a provider')
 local red,green=Color3.fromRGB(255,20,40),Color3.fromRGB(20,255,40)
 local role='Murderer'
 local mm2={Name='MM2',DeadRoles={'Dead'},ReplacesTeams=true,Roles={'Murderer','Sheriff','Hero','Innocent','Dead'},Colors={Murderer=red},Get=function() return role end}
 local unregister=roles:Register(mm2)
+assert(chams.Options['Show Perk'].Visible, 'late MM2 role provider must reveal its existing perk option')
 assert(not chams.Options.Teammates.Visible and not hp.Options.Teammates.Visible and not names.Options.Teammates.Visible)
 assert(not hp.Options['Role colours'],'HP colour is health, not role')
 for _,name in ipairs(mm2.Roles) do assert(chams.Options[name..' colour'] and chams.Options[name..' ESP']) end
@@ -181,6 +187,12 @@ releaseFuture();assert(provider==nil and not chams.Options['Medic colour'].Visib
 chams:Toggle(false);names:Toggle(false);hp:Toggle(true)
 hp.Options.Players.Value=false;hp.Options['Self HP'].Value=true;hp.render(1/60)
 local hud=screen:FindFirstChild('SelfHP');assert(hud.Visible and hud.Text=='100 ❤️')
+local hudScale=hud:FindFirstChildOfClass('UIScale')
+local before={visible=hud.writes.Visible,colour=hud.writes.TextColor3,position=hud.writes.Position,scale=hudScale.writes.Scale}
+for _=1,30 do hp.render(1/60) end
+assert(hud.writes.Visible==before.visible and hud.writes.TextColor3==before.colour
+ and hud.writes.Position==before.position and hudScale.writes.Scale==before.scale,
+ 'unchanged Self HP should not rewrite UI properties every frame')
 assert(hud.ClassName=='TextLabel' and hud.BackgroundTransparency==1 and hud.Font=='Arial' and hud.TextSize==18)
 assert(not hud:FindFirstChild('Track') and not hud:FindFirstChild('Heart'),'Self HP is text, not a decorated dashboard')
 self.Humanoid.Health=23;hp.render(.1);assert(hud.Text=='23 ❤️')

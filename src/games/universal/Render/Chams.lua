@@ -307,9 +307,9 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = false})
-    if host.state and host.state.activeGameName == "MM2" then
-        card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
-    end
+    -- The role provider can arrive after the universal cards are built.
+    -- Keep this row hidden in other games via OptionFilter below.
+    card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
     roles = context.services.gameRoles:Bind(card, {filters = true})
     card.OptionFilter = function(name)
         if roles.provider and roles.provider.ReplacesTeams and (name == "Teammates" or name == "Team colours") then return false end

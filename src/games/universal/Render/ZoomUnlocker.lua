@@ -8,12 +8,13 @@ function Module.init(context)
     local original, feature
     local function bounds(minimum,maximum)
         if player.CameraMinZoomDistance > maximum then player.CameraMinZoomDistance = minimum end
-        player.CameraMaxZoomDistance = maximum
-        player.CameraMinZoomDistance = minimum
+        if player.CameraMaxZoomDistance ~= maximum then player.CameraMaxZoomDistance = maximum end
+        if player.CameraMinZoomDistance ~= minimum then player.CameraMinZoomDistance = minimum end
     end
     local function apply()
         bounds(math.min(settings.minimum,settings.maximum),math.max(settings.minimum,settings.maximum))
-        player.CameraMode = settings.firstPerson and Enum.CameraMode.Classic or original.mode
+        local mode = settings.firstPerson and Enum.CameraMode.Classic or original.mode
+        if player.CameraMode ~= mode then player.CameraMode = mode end
         local walls = access:ThroughWalls(settings.walls)
         feature:SetStatus(settings.walls and (walls and tostring(math.round(settings.maximum)) .. " / walls" or "walls unavailable")
             or tostring(math.round(settings.maximum)) .. " studs")
@@ -46,7 +47,7 @@ function Module.init(context)
     return feature
 end
 function Module.destroy()
-    if cleanup then pcall(cleanup); cleanup = nil end
+    if cleanup then cleanup(); cleanup = nil end
     Module.Initialized = false
 end
 return Module

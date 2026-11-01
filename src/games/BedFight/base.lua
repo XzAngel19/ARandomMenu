@@ -6,23 +6,34 @@ local Module = {
 }
 
 local runtimeState: any = {
-    connections = {} :: {[string]: any},
-    bedMarks = {} :: {[Instance]: any},
+    bedMarks = {} :: {[Instance]: boolean},
+    bedLayer = nil :: Frame?,
+    bedRender = nil :: any,
     generatorMarks = {} :: {[Instance]: any},
-    infoPanel = nil :: any,
-    voidPanel = nil :: any,
-    lastSafe = nil :: Vector3?,
+    voidPanel = nil :: Frame?,
 }
 
-local mapCache: any = {beds = {}, generators = {}, at = -1}
+local mapCache: any = {beds = {}, generators = {}, at = -math.huge}
 
 local function clearMarks(store: {[Instance]: any}): ()
     for instance: Instance, mark: any in pairs(store) do
-        pcall(function(): ()
-            mark:Destroy()
-        end)
+        mark:Destroy()
         store[instance] = nil
     end
+end
+
+local function clearBeds(): ()
+    local layer: Frame? = runtimeState.bedLayer
+    local library: any = runtimeState.bedRender
+    if library and layer then
+        for bed: Instance in pairs(runtimeState.bedMarks) do
+            library:Release(layer, bed)
+        end
+        layer.Visible = false
+    end
+    table.clear(runtimeState.bedMarks)
+    runtimeState.bedLayer = nil
+    runtimeState.bedRender = nil
 end
 
 local remoteCache: any = {}
@@ -205,10 +216,6 @@ function Module.init(runtime: any): any
         maxDistance = 2000,
     }
 
-    local function clearBeds(): ()
-        clearMarks(runtimeState.bedMarks)
-    end
-
     local function renderLibrary(): any
         return state.renderLibrary
     end
@@ -229,6 +236,8 @@ function Module.init(runtime: any): any
             return
         end
         local resolvedLayer: Frame = layer :: Frame
+        runtimeState.bedLayer = resolvedLayer
+        runtimeState.bedRender = library
         resolvedLayer.Visible = true
         local root: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -277,12 +286,6 @@ function Module.init(runtime: any): any
     local function setBedEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightBeds")
         clearBeds()
-        local library: any = renderLibrary()
-        local layer: Frame? = worldLayer("BedFightEspLayer")
-        if library and layer and not enabled then
-            library:ReleaseAll(layer)
-            layer.Visible = false
-        end
         if not enabled then
             return
         end
@@ -325,13 +328,6 @@ function Module.init(runtime: any): any
 
     local function setGeneratorEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightGenerators")
-        local library: any = renderLibrary()
-        local layer: Frame? = worldLayer("BedFightEspLayer")
-        if library and layer then
-            for generator: Instance in pairs(runtimeState.generatorMarks) do
-                library:Release(layer, generator)
-            end
-        end
         clearMarks(runtimeState.generatorMarks)
         if not enabled then
             return
@@ -393,9 +389,7 @@ function Module.init(runtime: any): any
 
                 for generator: Instance, mark: any in pairs(runtimeState.generatorMarks) do
                     if not seen[generator] or not generator.Parent then
-                        pcall(function(): ()
-                            mark:Destroy()
-                        end)
+                        mark:Destroy()
                         runtimeState.generatorMarks[generator] = nil
                     end
                 end
@@ -529,7 +523,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addNumberOption(
         NukerFeature,
@@ -627,6 +621,10 @@ function Module.init(runtime: any): any
                 return
             end
             local nextAt: number = 0
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
             host.featureConnections.BedFightScaffold =
                 TaskManager:Connect(function(): ()
                     local character: Model? = LocalPlayer.Character
@@ -640,10 +638,10 @@ function Module.init(runtime: any): any
                     local resolvedRoot: BasePart = root :: BasePart
                     local resolvedHumanoid: Humanoid = humanoid :: Humanoid
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {character :: any}
+                    if character ~= lastCharacter then
+                        lastCharacter = character
+                        parameters.FilterDescendantsInstances = {character :: any}
+                    end
                     local below: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
                         Vector3.new(0, -(resolvedHumanoid.HipHeight + scaffoldSettings.reach), 0),
@@ -728,14 +726,19 @@ function Module.init(runtime: any): any
         function(enabled: boolean): ()
             host.disconnectFeatureConnection("BedFightVoid")
             if runtimeState.voidPanel then
-                pcall(function(): ()
-                    runtimeState.voidPanel:Destroy()
-                end)
+                runtimeState.voidPanel:Destroy()
                 runtimeState.voidPanel = nil
             end
             if not enabled then
                 return
             end
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
+            local lastRoot: BasePart? = nil
+            local lastSafe: Vector3? = nil
+            local lastGround: Instance? = nil
             local warning: Frame = create("Frame", {
                 Parent = host.ScreenGui,
                 Name = "BedFightVoidWarning",
@@ -763,9 +766,16 @@ function Module.init(runtime: any): any
                         and info:FindFirstChild("DeathBarrierInfo")
                     local heightValue: Instance? = barrier
                         and barrier:FindFirstChild("MaxHeight")
-                    local root: BasePart? = LocalPlayer.Character
-                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if character ~= lastCharacter or root ~= lastRoot then
+                        lastCharacter, lastRoot = character, root
+                        lastSafe, lastGround = nil, nil
+                        parameters.FilterDescendantsInstances = character and {character} or {}
+                    end
                     if not root or not heightValue or not heightValue:IsA("NumberValue") then
+                        lastSafe, lastGround = nil, nil
                         warning.Visible = false
                         return
                     end
@@ -773,17 +783,13 @@ function Module.init(runtime: any): any
                     local floor: number = (heightValue :: NumberValue).Value
                     local drop: number = resolvedRoot.Position.Y - floor
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {LocalPlayer.Character :: any}
                     local ground: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
                         Vector3.new(0, -12, 0),
                         parameters
                     )
                     if ground then
-                        runtimeState.lastSafe = resolvedRoot.Position
+                        lastSafe, lastGround = resolvedRoot.Position, ground.Instance
                     end
 
                     warning.Visible = drop < voidSettings.margin * 2
@@ -796,9 +802,8 @@ function Module.init(runtime: any): any
                     end
 
                     resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-                    if runtimeState.lastSafe then
-                        resolvedRoot.CFrame =
-                            CFrame.new(runtimeState.lastSafe + Vector3.new(0, 4, 0))
+                    if lastSafe and lastGround and lastGround:IsDescendantOf(workspace) then
+                        resolvedRoot.CFrame = CFrame.new(lastSafe + Vector3.new(0, 4, 0))
                     end
                 end)
         end,
@@ -886,7 +891,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 40, function(value: number): ()
         auraSettings.range = value
@@ -905,11 +910,8 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         ServerAuraFeature,
-        "Safe band: 20-28 studs of range and single-digit hits per second. "
-            .. "Past 28 studs no legitimate swing could have reached, and that "
-            .. "is what gets accounts collected in a ban wave. Leave the weapon "
-            .. "empty and it reads whichever view model you hold; the Friend "
-            .. "List is respected."
+        "Servers may enforce their own reach and rate rules. Leave the weapon "
+            .. "empty to read the held view model; the Friend List is respected."
     )
 
     local function equippedBlockName(): string
@@ -946,6 +948,10 @@ function Module.init(runtime: any): any
                 return
             end
             local nextAt: number = 0
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
             host.featureConnections.BedFightServerScaffold =
                 TaskManager:Connect(function(): ()
                     local character: Model? = LocalPlayer.Character
@@ -964,10 +970,10 @@ function Module.init(runtime: any): any
                         return
                     end
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {character :: any}
+                    if character ~= lastCharacter then
+                        lastCharacter = character
+                        parameters.FilterDescendantsInstances = {character :: any}
+                    end
                     local drop: number = resolvedHumanoid.HipHeight + placeSettings.grid + 1
                     local below: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
@@ -1127,7 +1133,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addTextOption(MinerFeature, "Pickaxe", minerSettings.tool, function(value: string): ()
         minerSettings.tool = value
@@ -1298,20 +1304,16 @@ function Module.destroy(): ()
             pcall(host.disconnectFeatureConnection, name)
         end
     end
-    clearMarks(runtimeState.bedMarks)
+    clearBeds()
     clearMarks(runtimeState.generatorMarks)
-    if runtimeState.infoPanel then
-        pcall(function(): ()
-            runtimeState.infoPanel.root:Destroy()
-        end)
-        runtimeState.infoPanel = nil
-    end
     if runtimeState.voidPanel then
-        pcall(function(): ()
-            runtimeState.voidPanel:Destroy()
-        end)
+        runtimeState.voidPanel:Destroy()
         runtimeState.voidPanel = nil
     end
+    table.clear(mapCache.beds)
+    table.clear(mapCache.generators)
+    mapCache.at = -math.huge
+    table.clear(remoteCache)
     Module.Initialized = false
 end
 

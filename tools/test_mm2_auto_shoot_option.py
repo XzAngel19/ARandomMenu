@@ -11,7 +11,7 @@ assert 'addToggleOption(ShootFeature, "Auto Shoot"' not in S, 'Auto Shoot must b
 auto_shoot = (ROOT / 'src/games/MM2/Combat/AutoShoot.lua').read_text()
 assert 'createUniversalFeature' in auto_shoot
 assert '"Auto Shoot"' in auto_shoot
-assert 'categoryName = "Combat"' in auto_shoot
+assert 'categoryName = "Utilities"' in auto_shoot
 
 # Check Auto Shoot has the required options
 assert '"Mode"' in auto_shoot
@@ -32,13 +32,14 @@ assert '"Fling Sheriff and Get Gun"' in auto_win
 knife_throw = (ROOT / 'src/games/MM2/Combat/KnifeThrow.lua').read_text()
 assert 'createUniversalFeature' in knife_throw
 assert '"Knife Throw"' in knife_throw
-assert 'categoryName = "Combat"' in knife_throw
+assert 'categoryName = "Exploits"' in knife_throw
 assert '"WallCheck"' in knife_throw
 assert '"Delay"' in knife_throw
 
 # Gun Aimbot (formerly SilentAIM) should have Bullet/CFrame modes and WallCheck as the single gate
 assert '"Gun Aimbot"' in S
-assert '"Bullet"' in S and '"CFrame"' in S and '"Experimental"' in S
+assert '"Normal(Bullet)"' in S and '"Silent(Cframe)"' in S and '"Experimental"' in S
+assert 'Avoid innocents' not in S and 'avoidInnocents' not in S
 for retained in ('Aim method', 'Target', 'WallCheck', 'Macro'):
     assert f'"{retained}"' in S, f'{retained} must still be in Gun Aimbot'
 
@@ -54,4 +55,4 @@ assert 'configData.states["Universal.WalkFling"] = false' in walkfling, \
     'Walk Fling must never be restored from the saved config'
 assert 'MAP_FLING_WARMUP_SECONDS' in auto_win, 'Auto Win must wait for map load before Fling Sheriff'
 
-print('PASS Auto Shoot and Knife Throw are now independent Combat modules with required options')
+print('PASS Auto Shoot and Knife Throw are independent Utilities/Exploits modules with required options')

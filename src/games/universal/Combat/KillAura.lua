@@ -115,9 +115,7 @@ function Module.init(context: Runtime): any
     local function clearHighlights(keep: {[any]: boolean}?): ()
         for key: any, highlight: Highlight in pairs(highlights) do
             if not keep or not keep[key] then
-                pcall(function(): ()
-                    highlight:Destroy()
-                end)
+                highlight:Destroy()
                 highlights[key] = nil
             end
         end
@@ -169,13 +167,15 @@ function Module.init(context: Runtime): any
         )
     end
 
-    local function watchAllTools(): ()
+    local function clearToolWatches(): ()
         for _, connection: RBXScriptConnection in ipairs(learnConnections) do
-            pcall(function(): ()
-                connection:Disconnect()
-            end)
+            connection:Disconnect()
         end
-        learnConnections = {}
+        table.clear(learnConnections)
+    end
+
+    local function watchAllTools(): ()
+        clearToolWatches()
         for _, tool: Tool in ipairs(collectTools(localPlayer)) do
             watchTool(tool)
         end
@@ -261,9 +261,10 @@ function Module.init(context: Runtime): any
         end
     end
 
-    aura = framework.Categories.Combat:CreateModule({
-        Name = "KillAura",
-        Category = "Combat",
+    aura = framework.Categories.Exploits:CreateModule({
+        Name = "KillAura", -- stable framework identity for game adapters
+        DisplayName = host.GAME_CHECK and host.GAME_CHECK.MM2Active and "Knife Stab" or "KillAura",
+        Category = "Exploits",
         ConfigKey = "Universal.KillAura",
         Order = 1,
         Tooltip = "Swings your weapon at everyone in reach, with its own "
@@ -289,7 +290,9 @@ function Module.init(context: Runtime): any
 
             watchAllTools()
             aura:Event(localPlayer.CharacterAdded, function(): ()
-                task.defer(watchAllTools)
+                task.defer(function()
+                    if aura.Enabled then watchAllTools() end
+                end)
             end)
             local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
             if backpack then
@@ -299,14 +302,7 @@ function Module.init(context: Runtime): any
                     end
                 end)
             end
-            aura:Clean(function(): ()
-                for _, connection: RBXScriptConnection in ipairs(learnConnections) do
-                    pcall(function(): ()
-                        connection:Disconnect()
-                    end)
-                end
-                learnConnections = {}
-            end)
+            aura:Clean(clearToolWatches)
 
             aura:Loop(function(): ()
                 local options: any = aura.Options
@@ -637,27 +633,22 @@ function Module.init(context: Runtime): any
     })
 
     aura:CreateNote(
-        "Safe band: 8-12 swings a second and a reach close to the weapon's "
-            .. "own. Reach is the only distance this card reads; there is no "
+        "Servers may enforce their own rate and reach rules. Reach is the "
+            .. "only distance this card reads; there is no "
             .. "second, longer one. Friend List protects players from this "
             .. "module in every game."
     )
 
     activeCleanup = function(): ()
-        clearHighlights()
+        if aura.Enabled then aura:Toggle(false) else clearHighlights() end
     end
     Module.Initialized = true
     return aura
 end
 
 function Module.destroy(): ()
-    if aura and aura.Enabled then
-        pcall(function(): ()
-            aura:Toggle(false)
-        end)
-    end
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

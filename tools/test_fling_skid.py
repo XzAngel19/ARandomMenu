@@ -347,8 +347,12 @@ assert(options["Touch Fling"] == nil, "Touch Fling moved to its own card")
 assert(options["Select Target"] == nil, "the Select Target dropdown must be gone")
 assert(options["Target player"] ~= nil, "Target player is the only target input")
 assert(options["Fling"] ~= nil and options["Fling Murderer"] ~= nil, "actions stay")
+for _, name in ipairs({"Power", "Duration", "Prediction"}) do
+    assert(options[name] == nil, name .. " slider must not be created")
+end
+assert(options.Retries, "the unrelated retry option must remain available")
 assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive for Auto Win")
-pass("Fling card exposes the typed target and the actions only")
+pass("Fling retains target, actions and Retries without the three removed controls")
 
 -- Empty target ------------------------------------------------------------
 notifications = {}
@@ -462,8 +466,6 @@ pass("MM2 role actions degrade cleanly outside MM2")
 -- A failed YARHM pose still restores the local body, pin and void setting.
 notifications = {}
 victimSpeed = 0
-options["Retries"](0)
-options["Duration"](1)
 failNextPose = true
 options["Target player"]("Victim")
 options["Fling"]()
@@ -487,13 +489,9 @@ victimSpeed = 100
 networkPing = 0.3
 notifications = {}
 resetWrites()
-options["Power"](3)
-options["Prediction"](0.15)
-options["Duration"](1)
-options["Retries"](0)
 options["Target player"]("Victim")
 options["Fling"]()
-pump(120)
+pump(650)
 assert(#notifications == 1, "the fling must finish, got " .. tostring(notifications[1]))
 local furthest = 0
 for _, position in ipairs(writes.positions) do
@@ -502,58 +500,50 @@ end
 assert(furthest > 22,
     "the pose must lead the victim by ~30 studs at 300 ms ping, got " .. tostring(furthest))
 networkPing = 0
--- Prediction 0 still leads by half the (now zero) ping: essentially no lead.
 victimSpeed = 0
 pass("the pose leads the victim by half the ping plus Prediction")
 
--- Power scales both the pose velocity and the EpixVel pin ------------------
+-- Fixed power retains the former default 4 and scales both pose and pin.
 networkPing = 0
 victimSpeed = 0
 notifications = {}
 resetWrites()
-options["Power"](6)
-options["Duration"](1)
-options["Retries"](0)
-local baseMax = writes.maxVelocity
 options["Target player"]("Victim")
 options["Fling"]()
-pump(120)
-assert(writes.maxVelocity >= 1.7e9,
-    "Power 6 must double the 9e8 pose velocity, got " .. tostring(writes.maxVelocity))
-local pinAfter = nil
-for _, object in ipairs(created) do
-    if object.ClassName == "BodyVelocity" and object.Name == "EpixVel"
-        and object.destroyed == false then pinAfter = object end
-end
--- The pin is destroyed when the fling ends; assert the scaled value was set.
+pump(650)
+assert(writes.maxVelocity >= 1.2e9,
+    "fixed Power 4 must retain the former default strength, got " .. tostring(writes.maxVelocity))
 local sawScaledPin = false
 for _, object in ipairs(created) do
     if object.ClassName == "BodyVelocity" and object.Name == "EpixVel"
-        and object.Velocity and object.Velocity.Magnitude >= 1.7e9 then
+        and object.Velocity and object.Velocity.Magnitude >= 2e9 then
         sawScaledPin = true
     end
 end
-assert(sawScaledPin, "the EpixVel pin must be scaled by Power too")
-options["Power"](3)
-pass("Power scales the pose velocity and the pin together")
+assert(sawScaledPin, "the EpixVel pin must keep the former default scale")
+pass("fixed default Power 4 retains pose and pin strength")
 
 -- Retries: a victim that never moves gets a second pass ---------------------
 victimSpeed = 0
 notifications = {}
 resetWrites()
-options["Power"](3)
-options["Duration"](0.5)
-options["Retries"](1)
-options["Prediction"](0)
 options["Target player"]("Victim")
 options["Fling"]()
-pump(400)
+pump(650)
 assert(#notifications == 1, "one notification, got " .. tostring(#notifications))
 assert(state.mm2LastFling and (state.mm2LastFling.retries or 0) >= 1,
     "a victim that did not move must trigger the second pass")
 assert(writes.poses >= 24, "the second pass writes more poses, got " .. writes.poses)
-options["Retries"](1)
 pass("a motionless victim gets a second pass on its other part")
+
+options.Retries(0)
+notifications = {}
+options["Fling"]()
+pump(500)
+assert(#notifications == 1 and state.mm2LastFling and (state.mm2LastFling.retries or 0) == 0,
+    "Retries 0 must keep the original one-pass behavior")
+options.Retries(1)
+pass("the unrelated Retries control still changes the number of passes")
 
 print("PASS " .. passed .. " SkidFling suites")
 '''

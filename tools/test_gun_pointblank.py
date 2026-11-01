@@ -136,7 +136,7 @@ local ShootFeature = {SetStatus = function(_, m) statusMessage = m end}
 SHOOT_MOCKS = r'''
 local muzzlePosition = Vector3.new(0.5, 0, 0)
 local mm2Settings = {silentAim = false, shootWallCheck = true,
-    silentSpawn = 'Through', silentSweep = 0, avoidInnocents = true,
+    silentSpawn = 'Through', silentSweep = 0,
     shootRaw = false}
 local remote = {IsA = function() return true end, sends = 0,
     FireServer = function(self) self.sends += 1 end}
@@ -258,19 +258,15 @@ for _, silent in ipairs({false, true}) do
     INNOCENT.Character = character(Vector3.new(4000, 0, 0), 'Innocent')
 end
 
--- 5. An innocent right behind with nothing between: still refused, and the
--- refusal is recorded with its own reason so a session can count the cost.
+-- An innocent behind no longer changes or rejects the authored shot. The
+-- user's removed Avoid Innocents option is not silently retained in either mode.
 INNOCENT.Character = character(Vector3.new(25, 0, 0), 'Innocent')
 for _, silent in ipairs({false, true}) do
     local mode = silent and 'silent' or 'normal'
     local fired, status = trial(12, {silent = silent,
         extra = {INNOCENT.Character.root}})
-    expect(mode .. ' innocent 13 behind is refused', fired, status, false,
-        'An innocent is right behind the murderer.')
-    assert(#blockedNotes == 1, 'the refusal must be recorded once')
-    assert(blockedNotes[1].reason == 'corridor',
-        'the refusal must carry reason=corridor, got '
-            .. tostring(blockedNotes[1].reason))
+    expect(mode .. ' innocent behind does not gate the shot', fired, status, true)
+    assert(#blockedNotes == 0, 'no removed behind-target refusal is recorded')
 end
 INNOCENT.Character = character(Vector3.new(4000, 0, 0), 'Innocent')
 
@@ -313,15 +309,13 @@ end
 # the dispatch. Two overlapping ranges would declare `ShootFeature` twice and
 # the module's own nil declaration would shadow the harness one.
 shoot_section = section(
-    SHOOT, "    local function bystanderOnSegment(", "    local shootFeatureActive:"
+    SHOOT, "    local SILENT_ORIGIN_STUDS:", "    local shootFeatureActive:"
 )
 shoot_section = shoot_section.replace("local ShootFeature: any = nil", "-- injected")
 
 code = (
     PRELUDE
     + MOCKS
-    + section(BASE, "local function describeRayHit(", "local function describeRayBeyond(")
-    + section(BASE, "local function describeRayBeyond(", "local function getWeaponFromContainer(")
     + section(BASE, "local function isWeaponPathClear(", "local function getWeaponFromContainer(")
     + section(BASE, "local function validateGunShot(", "local function disconnectGunFiredObserver")
     + SHOOT_MOCKS

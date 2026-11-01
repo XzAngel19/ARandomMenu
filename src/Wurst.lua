@@ -9,7 +9,6 @@ local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 -- Manifest.lua ("categories" and "cards") right after the catalog is fetched.
 -- These are only the loader's last-resort defaults, not a second catalog.
 local OFFICIAL_CATEGORIES: {string} = {
-    "Combat",
     "Exploits",
     "Utilities",
     "World",
@@ -115,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v166-20261031-shaders-black-module-cleanup"
+local SOURCE_STAMP: string = "v167-20261031-menu-mm2-module-audit"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -6031,6 +6030,9 @@ local moduleServices: ModuleServices = {
                     table.find(state.itemEspProviders, provider)
                 if index then
                     table.remove(state.itemEspProviders, index :: number)
+                    for _, listener: () -> () in ipairs(state.itemEspListeners) do
+                        pcall(listener)
+                    end
                 end
             end
         end,

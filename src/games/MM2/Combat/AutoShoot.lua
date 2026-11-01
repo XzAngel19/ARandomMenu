@@ -474,7 +474,9 @@ function Module.init(runtime: any): any
     end
 
     local function updateStatus(): ()
-        if not AutoShootFeature or not AutoShootFeature.enabled then
+        -- The feature's UI flag is flipped after its callback returns, so use
+        -- our controller state during the initial enable as well.
+        if not AutoShootFeature or not autoShootActive then
             return
         end
         if settings.proximity then
@@ -519,7 +521,7 @@ function Module.init(runtime: any): any
         4,
         toggleAutoShoot,
         {
-            categoryName = "Combat",
+            categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -549,7 +551,9 @@ function Module.init(runtime: any): any
     local optionsReady: boolean = false
     local function refreshProximityOption(): ()
         if auraSlider and type(setOptionVisible) == "function" then
-            setOptionVisible(AutoShootFeature, auraSlider.Parent :: GuiObject, settings.proximity == true)
+            -- addNumberOption returns the option row itself, not its slider.
+            -- Hiding its parent hides every option in the settings window.
+            setOptionVisible(AutoShootFeature, auraSlider :: GuiObject, settings.proximity == true)
         end
         updateStatus()
     end
@@ -594,7 +598,7 @@ function Module.init(runtime: any): any
             modeConfigs[settings.mode].aura = value
             values["MM2.AutoShoot." .. settings.mode .. ".Aura"] = value
         end
-        if AutoShootFeature.enabled then AutoShootFeature:SetStatus(tostring(value) .. " studs") end
+        updateStatus()
     end, "Maximum distance with Proximity enabled, saved per mode.", 1)
     optionsReady = true
     syncMode()

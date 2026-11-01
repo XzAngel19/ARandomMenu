@@ -164,11 +164,6 @@ function Module.init(context: Runtime): any
         -- Hold the selected emote while walking with a track Animate does
         -- not own. Keep it through jumps; release on death, replacement,
         -- mode change or disable.
-        local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-        if okState and state == Enum.HumanoidStateType.Dead then
-            clearStickyEmoteTracks()
-            return
-        end
         local animator: any = getAnimator(humanoid)
         if not animator then
             if watchedAnimator then clearStickyEmoteTracks() end
@@ -448,8 +443,8 @@ function Module.init(context: Runtime): any
     end
 
     local function restoreFreezeMovements(): ()
-        for root: any, original: any in pairs(originalFreezeState) do
-            pcall(function(): () root.Anchored = original.anchored end)
+        for root: BasePart, original: any in pairs(originalFreezeState) do
+            root.Anchored = original.anchored
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
@@ -497,8 +492,7 @@ function Module.init(context: Runtime): any
                 clearStickyEmoteTracks()
                 return
             end
-            local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-            if ok and state == Enum.HumanoidStateType.Dead then
+            if humanoid:GetState() == Enum.HumanoidStateType.Dead then
                 restoreFreezeMovements()
                 clearMotionTrack()
                 clearStickyEmoteTracks()
@@ -558,7 +552,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

@@ -33,11 +33,11 @@ local TITLE_HEIGHT: number = 26
 -- with a different alias set than the loader's. The table below is only the
 -- last-resort default for a hand-made state that has no catalog.
 local DEFAULT_CATEGORY_ORDER: {string} = {
-    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
+    "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
 local categories: any = {
     order = DEFAULT_CATEGORY_ORDER,
-    aliases = {},
+    aliases = {Combat = "Exploits"},
     default = "Utilities",
 }
 
@@ -249,6 +249,15 @@ function Module.init(context: any): any
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
+        end
+    end
+
+    -- An adapter may change a card's display name after delayed game detection.
+    -- Reorder without placing/counting the same row a second time.
+    function ClickGui.Resort(feature: any): ()
+        local record: CategoryWindow? = feature and ClickGui.categories[feature.categoryName]
+        if record then
+            sortCategoryRows(record :: CategoryWindow)
         end
     end
 

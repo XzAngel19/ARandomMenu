@@ -69,7 +69,7 @@ function Module.init(context: Runtime): any
 
             infiniteJump:SetStatus("Active")
 
-            local function executeAirJump(fromTouchButton: boolean?): ()
+            local function executeAirJump(): ()
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or root.Anchored or not canBoostJump(humanoid) then
                     return
@@ -77,10 +77,9 @@ function Module.init(context: Runtime): any
                 local power: number = infiniteJump.Options["Jump Power"]
                     and infiniteJump.Options["Jump Power"].Value
                     or 50
-                -- Leave ordinary positive ground takeoff to Roblox unless
-                -- triggered from the mobile JumpButton while airborne or using
-                -- negative inverted jump physics.
-                if humanoid.FloorMaterial ~= Enum.Material.Air and power >= 0 and not fromTouchButton then
+                -- Leave the first positive ground jump to Roblox on both PC
+                -- and mobile. Negative power deliberately inverts takeoff.
+                if humanoid.FloorMaterial ~= Enum.Material.Air and power >= 0 then
                     return
                 end
                 local now: number = os.clock()
@@ -131,7 +130,7 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
-                executeAirJump(false)
+                executeAirJump()
             end
 
             if movementInput and type(movementInput.onJumpRequest) == "function" then
@@ -161,7 +160,7 @@ function Module.init(context: Runtime): any
                                 and p.Y <= at.Y + size.Y then
                                 jumpTouch = input
                                 pressHeld = true
-                                executeAirJump(true)
+                                executeAirJump()
                             end
                         end
                     end

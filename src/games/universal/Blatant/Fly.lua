@@ -64,6 +64,20 @@ function Module.init(context: Runtime): any
     local flyObjects: {[Instance]: boolean} =
         setmetatable({}, {__mode = "k"}) :: any
     local flyTouchVertical: number = 0
+    local flyRaycastParams: RaycastParams? = nil
+    local flyRaycastCharacter: Instance? = nil
+
+    local function raycastParamsFor(root: BasePart): RaycastParams
+        if not flyRaycastParams then
+            flyRaycastParams = RaycastParams.new()
+            flyRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        end
+        if root.Parent ~= flyRaycastCharacter then
+            flyRaycastCharacter = root.Parent
+            flyRaycastParams.FilterDescendantsInstances = root.Parent and {root.Parent} or {}
+        end
+        return flyRaycastParams :: RaycastParams
+    end
 
     local function removeFlyObjects(): ()
         for object: Instance in pairs(flyObjects) do
@@ -194,7 +208,7 @@ function Module.init(context: Runtime): any
                 flyRuntime.walkSpeed = humanoid.WalkSpeed
                 flyRuntime.walkHumanoid = humanoid
             end
-            humanoid.WalkSpeed = flySettings.speed
+            if humanoid.WalkSpeed ~= flySettings.speed then humanoid.WalkSpeed = flySettings.speed end
             if flySettings.speed < 0 then
                 root.AssemblyLinearVelocity = Vector3.new(
                     target.X,
@@ -224,13 +238,10 @@ function Module.init(context: Runtime): any
                 end
             end
             if step.Magnitude > 0.001 and flySettings.wallCheck then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                 local wallHit: RaycastResult? = currentWorkspace:Raycast(
                     root.Position,
                     step + step.Unit * 2,
-                    raycastParams
+                    raycastParamsFor(root)
                 )
                 if wallHit then
                     step = Vector3.zero
@@ -333,13 +344,10 @@ function Module.init(context: Runtime): any
             if flySettings.wallCheck then
                 local offset: number = level - root.Position.Y
                 if math.abs(offset) > 0.001 then
-                    local raycastParams: RaycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                     local ceilingHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         Vector3.new(0, offset, 0),
-                        raycastParams
+                        raycastParamsFor(root)
                     )
                     if ceilingHit then
                         level = ceilingHit.Position.Y
@@ -407,6 +415,8 @@ function Module.init(context: Runtime): any
             flyRuntime.floatMethod = nil
 
             if not enabled then
+                flyRaycastCharacter = nil
+                if flyRaycastParams then flyRaycastParams.FilterDescendantsInstances = {} end
                 fly:SetStatus(nil)
                 local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                 if root then
@@ -446,13 +456,10 @@ function Module.init(context: Runtime): any
 
                 local moveDirection, vertical, cameraForward = getFlyDirection(camera)
                 if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
-                    local raycastParams: RaycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                     local wallHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         moveDirection.Unit * 2.75,
-                        raycastParams
+                        raycastParamsFor(root)
                     )
                     if wallHit then
                         moveDirection = Vector3.zero
@@ -640,7 +647,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

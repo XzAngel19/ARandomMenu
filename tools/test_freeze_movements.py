@@ -43,6 +43,7 @@ local animate={Name='Animate',GetDescendants=function() return {danceAnimation} 
 danceFolder.Parent=animate
 local character={FindFirstChild=function(_,name) if name=='Animate' then return animate end end,FindFirstChildWhichIsA=function() return nil end}
 local humanoid={EmoteTriggered=signal(),Parent=character,WalkSpeed=16,JumpPower=50,JumpHeight=7.2,AutoRotate=true,
+    GetState=function() return 'Running' end,
     FindFirstChildOfClass=function() return animator end,
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
 local tick,mode,toggle,feature

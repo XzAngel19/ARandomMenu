@@ -1,5 +1,5 @@
 return {
-    stamp = "v166-20261031-shaders-black-module-cleanup",
+    stamp = "v167-20261031-menu-mm2-module-audit",
     files = {
         ["src/Profile/135856908115931.lua"] = [[
 --!strict
@@ -156,18 +156,23 @@ local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = 
 function Module.init(runtime: any): any
     if Module.Initialized then return Module end
     local env: any = getfenv()
-    local enabled: boolean = false
     local rate: number = 9
     local nextAt: number = 0
     local function update(): ()
-        if not enabled or os.clock() < nextAt then return end
-        nextAt = os.clock() + 1 / math.max(rate, 0.5)
+        local now: number = os.clock()
+        if now < nextAt then return end
+        nextAt = now + 1 / math.max(rate, 0.5)
         local weapons: any = env.state.weaponLibrary
         if weapons then weapons:Swing() end
     end
-    local feature: any = env.createUniversalFeature("Auto Swing", "Presses the game's own sword button on a timer", 4, function(value: boolean): () enabled = value end, {parent = env.state.bedFightScroll, registry = env.state.bedFightFeatures, categoryName = "Combat"})
+    local feature: any = env.createUniversalFeature("Auto Swing", "Presses the game's own sword button on a timer", 4, function(enabled: boolean): ()
+        if Module.Connection then Module.Connection:Disconnect(); Module.Connection = nil end
+        if enabled then
+            nextAt = 0
+            Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
+        end
+    end, {parent = env.state.bedFightScroll, registry = env.state.bedFightFeatures, categoryName = "Exploits"})
     env.addNumberOption(feature, "Swings per second", rate, 1, 20, function(value: number): () rate = value end)
-    Module.Connection = game:GetService("RunService").Heartbeat:Connect(update)
     Module.Initialized = true
     return Module
 end
@@ -183,27 +188,34 @@ return Module
         ["src/games/BedFight/Render/RoundInfo.lua"] = [[
 local Module = {Name = "BedFight Round Info", Initialized = false, Connection = nil, Panel = nil}
 
-local function value(name: string): any
-    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local info: Instance? = replicated:FindFirstChild("GameInfo")
-    local item: Instance? = info and info:FindFirstChild(name)
-    if item and item:IsA("ValueBase") then return item.Value end
-    return item and item:GetAttribute("Value") or nil
-end
-
 function Module.init(runtime: any): any
     if Module.Initialized then return Module end
     local env: any = getfenv()
-    local enabled: boolean = false
+    local replicated: ReplicatedStorage = game:GetService("ReplicatedStorage")
     local status: TextLabel? = nil
     local mode: TextLabel? = nil
     local beds: TextLabel? = nil
+
+    local function value(name: string): any
+        local info: Instance? = replicated:FindFirstChild("GameInfo")
+        local item: Instance? = info and info:FindFirstChild(name)
+        if item and item:IsA("ValueBase") then return item.Value end
+        return item and item:GetAttribute("Value") or nil
+    end
     local function clear(): ()
-        if Module.Panel then Module.Panel:Destroy() Module.Panel = nil end
-        status = nil mode = nil beds = nil
+        if Module.Connection then Module.Connection:Disconnect(); Module.Connection = nil end
+        if Module.Panel then Module.Panel:Destroy(); Module.Panel = nil end
+        status, mode, beds = nil, nil, nil
+    end
+    local function refresh(): ()
+        local statusText: string = tostring(value("Status") or "—")
+        local modeText: string = "Mode: " .. tostring(value("GameMode") or "—")
+        local bedsText: string = "Beds: " .. (value("AllBedsBroken") == true and "all broken" or "standing")
+        if status.Text ~= statusText then status.Text = statusText end
+        if mode.Text ~= modeText then mode.Text = modeText end
+        if beds.Text ~= bedsText then beds.Text = bedsText end
     end
     local function toggle(active: boolean): ()
-        enabled = active
         clear()
         if not active then return end
         local root: Frame = env.create("Frame", {Parent = env.ScreenGui, Name = "BedFightInfo", AnchorPoint = Vector2.new(1, 0), BackgroundColor3 = Color3.fromRGB(14, 14, 16), BackgroundTransparency = 0.15, BorderSizePixel = 0, Position = UDim2.new(1, -18, 0, 90), Size = UDim2.fromOffset(196, 64), ZIndex = 60})
@@ -215,21 +227,23 @@ function Module.init(runtime: any): any
         mode.Position = UDim2.fromOffset(10, 25) mode.Size = UDim2.new(1, -20, 0, 18)
         beds.Position = UDim2.fromOffset(10, 42) beds.Size = UDim2.new(1, -20, 0, 18)
         Module.Panel = root
+        refresh()
+        local elapsed: number = 0
+        Module.Connection = game:GetService("RunService").Heartbeat:Connect(function(deltaTime: number): ()
+            elapsed += deltaTime
+            if elapsed < 0.2 then return end
+            elapsed %= 0.2
+            refresh()
+        end)
     end
     env.createUniversalFeature("Round Info", "Status, mode and bed state", 3, toggle, {parent = env.state.bedFightScroll, registry = env.state.bedFightFeatures, categoryName = "Render"})
-    Module.Connection = game:GetService("RunService").Heartbeat:Connect(function(): ()
-        if not enabled or not status or not mode or not beds then return end
-        status.Text = tostring(value("Status") or "—")
-        mode.Text = "Mode: " .. tostring(value("GameMode") or "—")
-        beds.Text = "Beds: " .. (value("AllBedsBroken") == true and "all broken" or "standing")
-    end)
     Module.Initialized = true
     return Module
 end
 
 function Module.destroy(): ()
-    if Module.Connection then Module.Connection:Disconnect() Module.Connection = nil end
-    if Module.Panel then Module.Panel:Destroy() Module.Panel = nil end
+    if Module.Connection then Module.Connection:Disconnect(); Module.Connection = nil end
+    if Module.Panel then Module.Panel:Destroy(); Module.Panel = nil end
     Module.Initialized = false
 end
 
@@ -245,23 +259,34 @@ local Module = {
 }
 
 local runtimeState: any = {
-    connections = {} :: {[string]: any},
-    bedMarks = {} :: {[Instance]: any},
+    bedMarks = {} :: {[Instance]: boolean},
+    bedLayer = nil :: Frame?,
+    bedRender = nil :: any,
     generatorMarks = {} :: {[Instance]: any},
-    infoPanel = nil :: any,
-    voidPanel = nil :: any,
-    lastSafe = nil :: Vector3?,
+    voidPanel = nil :: Frame?,
 }
 
-local mapCache: any = {beds = {}, generators = {}, at = -1}
+local mapCache: any = {beds = {}, generators = {}, at = -math.huge}
 
 local function clearMarks(store: {[Instance]: any}): ()
     for instance: Instance, mark: any in pairs(store) do
-        pcall(function(): ()
-            mark:Destroy()
-        end)
+        mark:Destroy()
         store[instance] = nil
     end
+end
+
+local function clearBeds(): ()
+    local layer: Frame? = runtimeState.bedLayer
+    local library: any = runtimeState.bedRender
+    if library and layer then
+        for bed: Instance in pairs(runtimeState.bedMarks) do
+            library:Release(layer, bed)
+        end
+        layer.Visible = false
+    end
+    table.clear(runtimeState.bedMarks)
+    runtimeState.bedLayer = nil
+    runtimeState.bedRender = nil
 end
 
 local remoteCache: any = {}
@@ -444,10 +469,6 @@ function Module.init(runtime: any): any
         maxDistance = 2000,
     }
 
-    local function clearBeds(): ()
-        clearMarks(runtimeState.bedMarks)
-    end
-
     local function renderLibrary(): any
         return state.renderLibrary
     end
@@ -468,6 +489,8 @@ function Module.init(runtime: any): any
             return
         end
         local resolvedLayer: Frame = layer :: Frame
+        runtimeState.bedLayer = resolvedLayer
+        runtimeState.bedRender = library
         resolvedLayer.Visible = true
         local root: BasePart? = LocalPlayer.Character
             and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -516,12 +539,6 @@ function Module.init(runtime: any): any
     local function setBedEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightBeds")
         clearBeds()
-        local library: any = renderLibrary()
-        local layer: Frame? = worldLayer("BedFightEspLayer")
-        if library and layer and not enabled then
-            library:ReleaseAll(layer)
-            layer.Visible = false
-        end
         if not enabled then
             return
         end
@@ -564,13 +581,6 @@ function Module.init(runtime: any): any
 
     local function setGeneratorEsp(enabled: boolean): ()
         host.disconnectFeatureConnection("BedFightGenerators")
-        local library: any = renderLibrary()
-        local layer: Frame? = worldLayer("BedFightEspLayer")
-        if library and layer then
-            for generator: Instance in pairs(runtimeState.generatorMarks) do
-                library:Release(layer, generator)
-            end
-        end
         clearMarks(runtimeState.generatorMarks)
         if not enabled then
             return
@@ -632,9 +642,7 @@ function Module.init(runtime: any): any
 
                 for generator: Instance, mark: any in pairs(runtimeState.generatorMarks) do
                     if not seen[generator] or not generator.Parent then
-                        pcall(function(): ()
-                            mark:Destroy()
-                        end)
+                        mark:Destroy()
                         runtimeState.generatorMarks[generator] = nil
                     end
                 end
@@ -768,7 +776,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addNumberOption(
         NukerFeature,
@@ -866,6 +874,10 @@ function Module.init(runtime: any): any
                 return
             end
             local nextAt: number = 0
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
             host.featureConnections.BedFightScaffold =
                 TaskManager:Connect(function(): ()
                     local character: Model? = LocalPlayer.Character
@@ -879,10 +891,10 @@ function Module.init(runtime: any): any
                     local resolvedRoot: BasePart = root :: BasePart
                     local resolvedHumanoid: Humanoid = humanoid :: Humanoid
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {character :: any}
+                    if character ~= lastCharacter then
+                        lastCharacter = character
+                        parameters.FilterDescendantsInstances = {character :: any}
+                    end
                     local below: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
                         Vector3.new(0, -(resolvedHumanoid.HipHeight + scaffoldSettings.reach), 0),
@@ -967,14 +979,19 @@ function Module.init(runtime: any): any
         function(enabled: boolean): ()
             host.disconnectFeatureConnection("BedFightVoid")
             if runtimeState.voidPanel then
-                pcall(function(): ()
-                    runtimeState.voidPanel:Destroy()
-                end)
+                runtimeState.voidPanel:Destroy()
                 runtimeState.voidPanel = nil
             end
             if not enabled then
                 return
             end
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
+            local lastRoot: BasePart? = nil
+            local lastSafe: Vector3? = nil
+            local lastGround: Instance? = nil
             local warning: Frame = create("Frame", {
                 Parent = host.ScreenGui,
                 Name = "BedFightVoidWarning",
@@ -1002,9 +1019,16 @@ function Module.init(runtime: any): any
                         and info:FindFirstChild("DeathBarrierInfo")
                     local heightValue: Instance? = barrier
                         and barrier:FindFirstChild("MaxHeight")
-                    local root: BasePart? = LocalPlayer.Character
-                        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local character: Model? = LocalPlayer.Character
+                    local root: BasePart? = character
+                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if character ~= lastCharacter or root ~= lastRoot then
+                        lastCharacter, lastRoot = character, root
+                        lastSafe, lastGround = nil, nil
+                        parameters.FilterDescendantsInstances = character and {character} or {}
+                    end
                     if not root or not heightValue or not heightValue:IsA("NumberValue") then
+                        lastSafe, lastGround = nil, nil
                         warning.Visible = false
                         return
                     end
@@ -1012,17 +1036,13 @@ function Module.init(runtime: any): any
                     local floor: number = (heightValue :: NumberValue).Value
                     local drop: number = resolvedRoot.Position.Y - floor
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {LocalPlayer.Character :: any}
                     local ground: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
                         Vector3.new(0, -12, 0),
                         parameters
                     )
                     if ground then
-                        runtimeState.lastSafe = resolvedRoot.Position
+                        lastSafe, lastGround = resolvedRoot.Position, ground.Instance
                     end
 
                     warning.Visible = drop < voidSettings.margin * 2
@@ -1035,9 +1055,8 @@ function Module.init(runtime: any): any
                     end
 
                     resolvedRoot.AssemblyLinearVelocity = Vector3.zero
-                    if runtimeState.lastSafe then
-                        resolvedRoot.CFrame =
-                            CFrame.new(runtimeState.lastSafe + Vector3.new(0, 4, 0))
+                    if lastSafe and lastGround and lastGround:IsDescendantOf(workspace) then
+                        resolvedRoot.CFrame = CFrame.new(lastSafe + Vector3.new(0, 4, 0))
                     end
                 end)
         end,
@@ -1125,7 +1144,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addNumberOption(ServerAuraFeature, "Range", auraSettings.range, 5, 40, function(value: number): ()
         auraSettings.range = value
@@ -1144,11 +1163,8 @@ function Module.init(runtime: any): any
     end)
     addInformationOption(
         ServerAuraFeature,
-        "Safe band: 20-28 studs of range and single-digit hits per second. "
-            .. "Past 28 studs no legitimate swing could have reached, and that "
-            .. "is what gets accounts collected in a ban wave. Leave the weapon "
-            .. "empty and it reads whichever view model you hold; the Friend "
-            .. "List is respected."
+        "Servers may enforce their own reach and rate rules. Leave the weapon "
+            .. "empty to read the held view model; the Friend List is respected."
     )
 
     local function equippedBlockName(): string
@@ -1185,6 +1201,10 @@ function Module.init(runtime: any): any
                 return
             end
             local nextAt: number = 0
+            local parameters: RaycastParams = RaycastParams.new()
+            parameters.FilterType = Enum.RaycastFilterType.Exclude
+            parameters.IgnoreWater = true
+            local lastCharacter: Model? = nil
             host.featureConnections.BedFightServerScaffold =
                 TaskManager:Connect(function(): ()
                     local character: Model? = LocalPlayer.Character
@@ -1203,10 +1223,10 @@ function Module.init(runtime: any): any
                         return
                     end
 
-                    local parameters: RaycastParams = RaycastParams.new()
-                    parameters.FilterType = Enum.RaycastFilterType.Exclude
-                    parameters.IgnoreWater = true
-                    parameters.FilterDescendantsInstances = {character :: any}
+                    if character ~= lastCharacter then
+                        lastCharacter = character
+                        parameters.FilterDescendantsInstances = {character :: any}
+                    end
                     local drop: number = resolvedHumanoid.HipHeight + placeSettings.grid + 1
                     local below: RaycastResult? = workspace:Raycast(
                         resolvedRoot.Position,
@@ -1366,7 +1386,7 @@ function Module.init(runtime: any): any
                     end
                 end)
         end,
-        {parent = scroll, registry = registry, categoryName = "Combat"}
+        {parent = scroll, registry = registry, categoryName = "Exploits"}
     )
     addTextOption(MinerFeature, "Pickaxe", minerSettings.tool, function(value: string): ()
         minerSettings.tool = value
@@ -1537,20 +1557,16 @@ function Module.destroy(): ()
             pcall(host.disconnectFeatureConnection, name)
         end
     end
-    clearMarks(runtimeState.bedMarks)
+    clearBeds()
     clearMarks(runtimeState.generatorMarks)
-    if runtimeState.infoPanel then
-        pcall(function(): ()
-            runtimeState.infoPanel.root:Destroy()
-        end)
-        runtimeState.infoPanel = nil
-    end
     if runtimeState.voidPanel then
-        pcall(function(): ()
-            runtimeState.voidPanel:Destroy()
-        end)
+        runtimeState.voidPanel:Destroy()
         runtimeState.voidPanel = nil
     end
+    table.clear(mapCache.beds)
+    table.clear(mapCache.generators)
+    mapCache.at = -math.huge
+    table.clear(remoteCache)
     Module.Initialized = false
 end
 
@@ -1915,6 +1931,7 @@ function Module.init(runtime: any): any
     local aura: any = state.framework and state.framework:GetModule("KillAura")
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
+    local migratedShortcut: any = nil
     if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
         for _, label: string in ipairs({"KnifeAura"}) do
             local old: any = configData.states["MM2.Knife." .. label]
@@ -1925,19 +1942,39 @@ function Module.init(runtime: any): any
             {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
             {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
         }) do
-            if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
+            if configData.values[pair[2]] == nil then
+                configData.values[pair[2]] = configData.values[pair[1]]
+                if pair[2] == "Shortcut.UniversalKillAura" then
+                    migratedShortcut = configData.values[pair[2]]
+                end
+            end
         end
-        wasEnabled = wasEnabled or configData.states["MM2.Knife"] == true
+        if configData.states["Universal.KillAura"] == nil then
+            local previous = configData.states["MM2.Knife"]
+            configData.states["Universal.KillAura"] = previous
+            wasEnabled = wasEnabled or previous == true
+        end
         configData.values["MM2.Knife.MigratedToKillAura"] = true
         if type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+    -- The universal card and its shortcut already exist by the time MM2 is
+    -- identified. Apply a migrated key now, rather than on the next boot.
+    local shortcut: any = state.shortcutBindings and state.shortcutBindings["Universal.KillAura"]
+    if shortcut and type(migratedShortcut) == "string" then
+        local ok: boolean, key: any = pcall(function(): any return (Enum.KeyCode :: any)[migratedShortcut] end)
+        if ok and key then
+            shortcut.key = key
+            if type(shortcut.refresh) == "function" then shortcut.refresh() end
+        end
     end
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
-    local originalSearch: string = KnifeFeature.searchText
     KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
+    if type(KnifeFeature.SetName) == "function" then
+        KnifeFeature:SetName("Knife Stab")
+    end
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -1955,7 +1992,7 @@ function Module.init(runtime: any): any
     state.mm2KnifeFeature = KnifeFeature
 
     aura:CreateToggle({Name = "Knife Aura", Default = true, Function = toggleKnifeAura,
-        Tooltip = "MM2 stabs with your equipped knife while KillAura is ON."})
+        Tooltip = "MM2 stabs with your equipped knife while Knife Stab is ON."})
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
@@ -2012,10 +2049,20 @@ function Module.init(runtime: any): any
         suppressKillPlayerCallback = false
     end
     killPlayerReady = true
-    if wasEnabled then aura:Toggle(true) end
+    if wasEnabled then
+        if not KnifeFeature.enabled and type(KnifeFeature.activate) == "function" then
+            KnifeFeature.activate()
+        else
+            aura:Toggle(true)
+        end
+    end
 
     activeCleanup = function(): ()
         if aura.Enabled then aura:Toggle(false) end
+        if KnifeFeature.enabled then
+            KnifeFeature.enabled = false
+            refreshFeatureToggle(KnifeFeature)
+        end
         toggleKnifeAura(false)
         table.clear(killedCharacterByPlayer)
         state.mm2KnifeRuntime.masterEnabled = false
@@ -2024,7 +2071,9 @@ function Module.init(runtime: any): any
         aura.CombatAdapter = nil
         KnifeFeature.description = originalDescription
         KnifeFeature.tooltipText = originalDescription
-        KnifeFeature.searchText = originalSearch
+        if type(KnifeFeature.SetName) == "function" then
+            KnifeFeature:SetName("KillAura")
+        end
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean
@@ -2084,7 +2133,6 @@ function Module.init(runtime: any): any
     local isPlayerAlive: any = core.isPlayerAlive
     local isProtectedTarget: any = core.isProtectedTarget
     local isWeaponPathClear: any = core.isWeaponPathClear
-    local describeRayBeyond: any = core.describeRayBeyond
     local describeRayHit: any = core.describeRayHit
     local mm2Settings: any = core.mm2Settings
     local validateGunShot: any = core.validateGunShot
@@ -2128,56 +2176,14 @@ function Module.init(runtime: any): any
         return target
     end
 
-    local function bystanderOnSegment(
-        target: Player,
-        startPoint: Vector3,
-        endPoint: Vector3
-    ): boolean
-        local parameters: RaycastParams = RaycastParams.new()
-        parameters.FilterType = Enum.RaycastFilterType.Include
-        parameters.IgnoreWater = true
-        local bodies: {Instance} = {}
-        for _, player: Player in ipairs(Players:GetPlayers()) do
-            if player ~= target
-                and player ~= LocalPlayer
-                and player.Character
-                and isPlayerAlive(player) then
-                table.insert(bodies, player.Character)
-            end
-        end
-        if #bodies == 0 then
-            return false
-        end
-        parameters.FilterDescendantsInstances = bodies
-        return workspace:Raycast(startPoint, endPoint - startPoint, parameters) ~= nil
-    end
-
     local SILENT_ORIGIN_STUDS: number = 2.5
     local SILENT_PIERCE_STUDS: number = 1.0
     local SILENT_LIFT_STUDS: number = 1.6
     local MAX_SILENT_SWEEP: number = 1.5
-    -- v139.3: two different questions, two different reaches. They shared one
-    -- constant in v139.2, and raising it to 200 studs for the corridor also
-    -- widened the silent construction's bystander probe -- which asks a
-    -- PLAYER-ONLY raycast that ignores walls. The v139.2 session then refused
-    -- shots ("Another player blocks the silent shot") with an innocent 100+
-    -- studs behind the murderer and a wall in between.
-    --
-    --  * how far behind the authored segment a body still takes the ray:
-    --    the v139.1 value the silent construction was validated with.
-    local BODY_OVERSHOOT_STUDS: number = 12
-    --  * how far behind the AIM the corridor looks for a body (see
-    --    corridorSafePoint): a long reach, because this probe stops at the
-    --    first thing it meets, so a wall ends the question.
-    local CORRIDOR_PROBE_STUDS: number = 200
-    -- A body this close behind the aim is a point-blank innocent hit waiting
-    -- to happen: even a 1-stud prediction error walks into it.
-    local INNOCENT_DANGER_STUDS: number = 35
     -- Inside this distance the murderer's body covers the whole line of sight,
     -- so the lead stops helping and can even invert the shot: 17 studs/s of
     -- charge times a 0.1 s lead is 1.7 studs, more than the gap itself.
     local POINT_BLANK_STUDS: number = 6
-    local MAX_AUTO_LEAD_SAFE: number = 0.6
 
     -- The Top/fallback origin lift belongs to the target's rig, not to a
     -- universal constant: R6 and R15 put the head at different heights
@@ -2193,52 +2199,6 @@ function Module.init(runtime: any): any
             end
         end
         return SILENT_LIFT_STUDS
-    end
-
-    -- The server ray is not clipped at our authored endpoint, so the
-    -- bystander check covers the segment plus a short overshoot probe: a body
-    -- just behind the target would take the continuing ray.
-    --
-    -- v139.3: the overshoot probe now stops at the FIRST thing it meets and a
-    -- wall ends it. The old version asked bystanderOnSegment, whose raycast is
-    -- filtered to player characters only, so walls were transparent to it: an
-    -- innocent in the next room sat on the ray and every silent shot was
-    -- refused. "What is behind the aim" is corridorSafePoint's job; this check
-    -- only needs to know whether the continuing ray immediately finds a body.
-    local function bystanderBlocks(
-        target: Player,
-        startPoint: Vector3,
-        endPoint: Vector3
-    ): boolean
-        if bystanderOnSegment(target, startPoint, endPoint) then
-            return true
-        end
-        local segment: Vector3 = endPoint - startPoint
-        if segment.Magnitude <= 0.05 then
-            return false
-        end
-        if type(describeRayBeyond) == "function" then
-            local exclude: {Instance} = {target}
-            local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
-            if ownCharacter then
-                table.insert(exclude, ownCharacter)
-            end
-            local ok: boolean, hit: any = pcall(
-                describeRayBeyond,
-                startPoint,
-                endPoint,
-                BODY_OVERSHOOT_STUDS,
-                exclude
-            )
-            if ok then
-                return type(hit) == "table"
-                    and hit.isBody == true
-                    and hit.player ~= target
-            end
-        end
-        local beyond: Vector3 = endPoint
-            + segment.Unit * BODY_OVERSHOOT_STUDS
-        return bystanderOnSegment(target, endPoint, beyond)
     end
 
     -- The bypass segment runs along the target's own motion. A fixed extra
@@ -2271,7 +2231,7 @@ function Module.init(runtime: any): any
     end
 
     local function buildSilentShot(
-        target: Player,
+        _target: Player,
         info: any,
         muzzleOrigin: CFrame?,
         variant: string
@@ -2345,25 +2305,6 @@ function Module.init(runtime: any): any
             resolvedVariant = "Top"
             sweep = 0
         end
-        -- Through has length even when the configurable extra sweep is zero.
-        -- Record the geometry actually authored, not just the requested
-        -- variant: a bystander fallback removes the sweep and can change a
-        -- Through/Behind request into the Front or lifted construction.
-        if bystanderBlocks(target, startPoint, endPoint) then
-            sweep = 0
-            if variant ~= "Top" and approach then
-                startPoint = predicted - approach * approachOffset
-                resolvedVariant = "Front"
-            else
-                startPoint = predicted + Vector3.new(0, liftStuds, 0)
-                resolvedVariant = "Top"
-            end
-            endPoint = predicted
-            if bystanderBlocks(target, startPoint, endPoint) then
-                return nil, nil, 0, 0, resolvedVariant
-            end
-        end
-
         return CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint),
             approachOffset, sweep, resolvedVariant
     end
@@ -2401,8 +2342,7 @@ function Module.init(runtime: any): any
     local ShootFeature: any = nil
     local lastRejectReason: string = ""
 
-    -- The parts an aim may land on, best first. Shared by the corridor check
-    -- and the ghost check so both move the aim the same way.
+    -- The parts an aim may land on, best first, for the ghost preference.
     local AIM_BODY_PARTS: {string} = {
         "UpperTorso", "Torso", "HumanoidRootPart", "Head",
         "RightUpperArm", "LeftUpperArm", "RightUpperLeg", "LeftUpperLeg",
@@ -2510,81 +2450,6 @@ function Module.init(runtime: any): any
         return (part :: BasePart).Position + lead, partName
     end
 
-    -- v139.2: pick the aim point whose line is safest BEYOND the target.
-    -- A shot that misses by a stud continues into whoever is standing behind;
-    -- the aim is therefore chosen by what is behind it, not only by what is in
-    -- front. Candidates stay inside the body (torso, root, head, outer limbs),
-    -- so the target itself remains just as hittable.
-    local function corridorSafePoint(
-        target: Player,
-        info: any,
-        origin: Vector3,
-        preferred: Vector3
-    ): (Vector3, boolean, string)
-        local character: Model? = target.Character
-        if not character or not describeRayBeyond then
-            return preferred, true, "none"
-        end
-        local exclude: {Instance} = {}
-        local ownCharacter: Model? = LocalPlayer and LocalPlayer.Character
-        if ownCharacter then
-            table.insert(exclude, ownCharacter)
-        end
-        table.insert(exclude, character)
-        local function blocker(point: Vector3): any
-            local hit: any = describeRayBeyond(
-                origin,
-                point,
-                CORRIDOR_PROBE_STUDS,
-                exclude
-            )
-            if not hit or not hit.isBody then
-                return nil
-            end
-            if hit.player == target then
-                return nil
-            end
-            -- A rig with no player behind it is only a danger while alive: a
-            -- corpse is not an innocent, and refusing on one costs the shot.
-            if hit.player == nil and (tonumber(hit.health) or 0) <= 0 then
-                return nil
-            end
-            return hit
-        end
-        -- The preferred point is the predictor's own aim; it is only touched
-        -- when something alive is close behind it.
-        local near: any = blocker(preferred)
-        if not near or near.gap >= INNOCENT_DANGER_STUDS then
-            return preferred, true, "torso"
-        end
-        -- Same lead the preferred point got, applied to each body part, so the
-        -- candidates differ in where the ray goes, not in how far ahead it is.
-        local lead: Vector3 = info.endpoint - (info.capturedPosition or info.endpoint)
-        local bestPoint: Vector3 = preferred
-        local bestGap: number = near.gap
-        local bestName: string = "torso"
-        for _, partName: string in ipairs(AIM_BODY_PARTS) do
-            local part: Instance? = character:FindFirstChild(partName)
-            if part and part:IsA("BasePart") then
-                local candidate: Vector3 = (part :: BasePart).Position + lead
-                local hit: any = blocker(candidate)
-                if not hit or hit.gap >= INNOCENT_DANGER_STUDS then
-                    -- This line is safe enough: aim there instead.
-                    return candidate, true, partName
-                end
-                if hit.gap > bestGap then
-                    bestGap = hit.gap
-                    bestPoint = candidate
-                    bestName = partName
-                end
-            end
-        end
-        -- Every line has a body within the danger radius: the safest one is
-        -- still a coin flip, so the shot is skipped (MM2 takes the gun away
-        -- from a sheriff who shoots an innocent).
-        return bestPoint, false, bestName
-    end
-
     local function fireGunAtTarget(
         target: Player?,
         options: FireOptions?
@@ -2635,7 +2500,7 @@ function Module.init(runtime: any): any
 
         -- v160: the two cheap gates move ABOVE the aim solve. Auto Shoot runs
         -- this function every frame; during the 1.5 s confirmation window it
-        -- used to pay for the predictor plus the corridor/wall rays and then
+        -- used to pay for the predictor plus wall rays and then
         -- reject at the very end. Refusing before the work leaves the firing
         -- instant unchanged (the gate is time based) and makes an Auto Shoot
         -- that is holding fire cost almost nothing per frame.
@@ -2741,41 +2606,6 @@ function Module.init(runtime: any): any
             end
         end
 
-        -- v139.2: choose the aim point by what is BEHIND it. The server ray
-        -- does not stop at our endpoint, so a stud of prediction error turns
-        -- into a body behind the murderer. Measured in the v139.1 session:
-        -- 2 of 10 confirmed shots hit another player's root, 3 stopped on
-        -- map geometry beyond the aim.
-        if mm2Settings.avoidInnocents ~= false and origin and info then
-            local chosen: Vector3, safe: boolean, picked: string =
-                corridorSafePoint(target, info, origin.Position, info.endpoint)
-            if not safe then
-                -- Recorded like any other refusal, with its own reason, so a
-                -- session can answer "how many shots did this cost me?".
-                if trajectoryCalibration
-                    and type(trajectoryCalibration.noteBlockedShot) == "function" then
-                    pcall(trajectoryCalibration.noteBlockedShot,
-                        trajectoryCalibration, {
-                            reason = "corridor",
-                            name = "body behind aim",
-                            distance = 0,
-                            skipped = false,
-                            canCollide = false,
-                        })
-                end
-                return reject("An innocent is right behind the murderer.")
-            end
-            if chosen ~= info.endpoint then
-                local shift: Vector3 = chosen - info.endpoint
-                info.capturedPosition = (info.capturedPosition or info.endpoint)
-                    + shift
-                info.endpoint = chosen
-                info.aimPartChosen = picked
-            else
-                info.aimPartChosen = picked
-            end
-        end
-
         local rejectMessages: {[string]: string} = {
             ["no body"] = "The murderer has no usable body to aim at.",
             ["no samples"] = "The murderer has no fresh motion samples yet.",
@@ -2813,8 +2643,8 @@ function Module.init(runtime: any): any
             -- used to return true here, so Auto Shoot and Auto Win (which call
             -- this path with continuous=true) fired with no wall check at all:
             -- the only geometry they ever saw was the near-target pass, never
-            -- the gun's own line. A wall between the gun and the murderer is a
-            -- wall in every mode, so the muzzle line is always checked.
+            -- the gun's own line. When WallCheck is enabled, check the muzzle
+            -- line too; Auto Farm explicitly opts out of that filter.
             if useRaw then
                 if not useWallCheck or not isWeaponPathClear then
                     return true
@@ -2910,7 +2740,7 @@ function Module.init(runtime: any): any
                     end
                 end
                 if not shotOrigin or not shotEnd then
-                    return reject("Another player blocks the silent shot.")
+                    return reject("Could not construct the silent shot.")
                 end
             end
             variant = resolvedVariant
@@ -3155,11 +2985,11 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "Gun Aimbot",
-        "Gun aimbot with Bullet and CFrame modes. The main assigned key fires/equips Gun. Every shot uses the kinematic predictor with the game-filter WallCheck.",
+        "Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned key fires/equips Gun; WallCheck is configurable per mode.",
         4,
         toggleShootMurderer,
         {
-            categoryName = "Combat",
+            categoryName = "Exploits",
             configKey = "MM2.Shoot", -- preserve existing Gun settings and activation key
             parent = MM2Scroll,
             registry = mm2Features,
@@ -3196,25 +3026,35 @@ function Module.init(runtime: any): any
     if addSectionOption then addSectionOption(ShootFeature, "Gun") end
     local states: any = type(configData) == "table" and configData.states or {}
     local values: any = type(configData) == "table" and configData.values or {}
-    local initialMode: string = values["MM2.Shoot.Aimmethod"] or (mm2Settings.silentAim and "CFrame" or "Bullet")
-    if initialMode ~= "CFrame" and initialMode ~= "Experimental" then initialMode = "Bullet" end
+    -- Display names changed, but the old Bullet/CFrame keys keep their
+    -- per-mode settings and remain valid when loading existing profiles.
+    local function modeKey(value: any): string
+        if value == "Experimental" then return "Experimental" end
+        if value == "CFrame" or value == "Silent(Cframe)" then return "CFrame" end
+        return "Bullet"
+    end
+    local savedMode: any = values["MM2.Shoot.Aimmethod"]
+    local initialMode: string = modeKey(savedMode
+        or (mm2Settings.experimentalAim and "Experimental" or (mm2Settings.silentAim and "CFrame" or "Bullet")))
+    if savedMode == "Bullet" or savedMode == "CFrame" then
+        values["MM2.Shoot.Aimmethod"] = savedMode == "CFrame" and "Silent(Cframe)" or "Normal(Bullet)"
+        if type(queueConfigSave) == "function" then queueConfigSave() end
+    end
     local function modeConfig(mode: string): any
         local prefix: string = "MM2.Shoot." .. mode .. "."
         local legacy: boolean = mode == initialMode
         local wall: any = states[prefix .. "WallCheck"]
         local macro: any = states[prefix .. "Macro"]
-        local avoid: any = states[prefix .. "AvoidInnocents"]
         local targetMode: any = values[prefix .. "Target"]
         local targetName: any = values[prefix .. "TargetPlayer"]
         if legacy then
             if wall == nil then wall = states["MM2.Shoot.WallCheck"] end
             if macro == nil then macro = states["MM2.Shoot.Macro"] end
-            if avoid == nil then avoid = states["MM2.Shoot.Avoidinnocents"] end
             if targetMode == nil then targetMode = values["MM2.Shoot.Target"] end
             if targetName == nil then targetName = values["MM2.Shoot.Targetplayer"] end
         end
         return {wallCheck = wall == nil or wall == true, macro = macro == true,
-            avoid = avoid == nil or avoid == true, targetMode = targetMode == "Custom" and "Custom" or "Murder",
+            targetMode = targetMode == "Custom" and "Custom" or "Murder",
             targetName = type(targetName) == "string" and targetName or ""}
     end
     local modeConfigs: any = {Bullet = modeConfig("Bullet"), CFrame = modeConfig("CFrame"),
@@ -3231,10 +3071,10 @@ function Module.init(runtime: any): any
     local function syncMode(): ()
         local cfg: any = modeConfigs[activeModeKey] or modeConfigs.Bullet
         switching = true
-        mm2Settings.shootWallCheck, mm2Settings.avoidInnocents = cfg.wallCheck, cfg.avoid
+        mm2Settings.shootWallCheck = cfg.wallCheck
         shootMacro, mm2Settings.shootMode, mm2Settings.shootTarget = cfg.macro, cfg.targetMode, cfg.targetName
         if state and type(state.toggleControls) == "table" then
-            for _, item: any in ipairs({{"WallCheck", cfg.wallCheck}, {"Avoidinnocents", cfg.avoid}, {"Macro", cfg.macro}}) do
+            for _, item: any in ipairs({{"WallCheck", cfg.wallCheck}, {"Macro", cfg.macro}}) do
                 local control: any = state.toggleControls["MM2.Shoot." .. item[1]]
                 if control and control.setChecked then pcall(control.setChecked, item[2]) end
             end
@@ -3248,10 +3088,10 @@ function Module.init(runtime: any): any
         switching = false
         refreshShootOptions()
     end
-    addCycleOption(ShootFeature, "Aim method", {"Bullet", "CFrame", "Experimental"},
-        mm2Settings.experimentalAim and 3 or (mm2Settings.silentAim and 2 or 1),
+    addCycleOption(ShootFeature, "Aim method", {"Normal(Bullet)", "Silent(Cframe)", "Experimental"},
+        initialMode == "Experimental" and 3 or (initialMode == "CFrame" and 2 or 1),
         function(value: string): ()
-            activeModeKey = value == "Experimental" and "Experimental" or (value == "CFrame" and "CFrame" or "Bullet")
+            activeModeKey = modeKey(value)
             mm2Settings.experimentalAim = activeModeKey == "Experimental"
             mm2Settings.silentAim = activeModeKey == "CFrame"
             syncMode()
@@ -3275,13 +3115,6 @@ function Module.init(runtime: any): any
             states["MM2.Shoot." .. activeModeKey .. ".WallCheck"] = value == true
         end
     end, "Check for walls; saved independently per mode.")
-    addToggleOption(ShootFeature, "Avoid innocents", true, function(value: boolean): ()
-        mm2Settings.avoidInnocents = value == true
-        if optionsReady and not switching then
-            modeConfigs[activeModeKey].avoid = value == true
-            states["MM2.Shoot." .. activeModeKey .. ".AvoidInnocents"] = value == true
-        end
-    end, "Avoid firing toward innocents behind the target; saved per mode.")
     addToggleOption(ShootFeature, "Macro", false, function(value: boolean): ()
         shootMacro = value == true
         if optionsReady and not switching then
@@ -3810,7 +3643,9 @@ function Module.init(runtime: any): any
     end
 
     local function updateStatus(): ()
-        if not AutoShootFeature or not AutoShootFeature.enabled then
+        -- The feature's UI flag is flipped after its callback returns, so use
+        -- our controller state during the initial enable as well.
+        if not AutoShootFeature or not autoShootActive then
             return
         end
         if settings.proximity then
@@ -3855,7 +3690,7 @@ function Module.init(runtime: any): any
         4,
         toggleAutoShoot,
         {
-            categoryName = "Combat",
+            categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -3885,7 +3720,9 @@ function Module.init(runtime: any): any
     local optionsReady: boolean = false
     local function refreshProximityOption(): ()
         if auraSlider and type(setOptionVisible) == "function" then
-            setOptionVisible(AutoShootFeature, auraSlider.Parent :: GuiObject, settings.proximity == true)
+            -- addNumberOption returns the option row itself, not its slider.
+            -- Hiding its parent hides every option in the settings window.
+            setOptionVisible(AutoShootFeature, auraSlider :: GuiObject, settings.proximity == true)
         end
         updateStatus()
     end
@@ -3930,7 +3767,7 @@ function Module.init(runtime: any): any
             modeConfigs[settings.mode].aura = value
             values["MM2.AutoShoot." .. settings.mode .. ".Aura"] = value
         end
-        if AutoShootFeature.enabled then AutoShootFeature:SetStatus(tostring(value) .. " studs") end
+        updateStatus()
     end, "Maximum distance with Proximity enabled, saved per mode.", 1)
     optionsReady = true
     syncMode()
@@ -4963,7 +4800,7 @@ function Module.init(runtime: any): any
         15,
         toggleKnifeThrow,
         {
-            categoryName = "Combat",
+            categoryName = "Exploits",
             parent = MM2Scroll,
             registry = mm2Features,
         }
@@ -5068,7 +4905,13 @@ function Module.init(runtime: any): any
     local blurtEnabled: boolean = false
     local blurtSignature: string = ""
     local blurtPending: boolean = false
+    local blurtGeneration: number = 0
     local lastBlurtAt: number = -math.huge
+
+    local function cancelPendingBlurt(): ()
+        blurtGeneration += 1
+        blurtPending = false
+    end
 
     local function sendPublicChat(message: string): boolean
         local sent: boolean = false
@@ -5178,11 +5021,11 @@ function Module.init(runtime: any): any
             return
         end
         blurtPending = true
+        local generation: number = blurtGeneration
         task.delay(math.max(mm2Settings.blurtDelay, 0), function(): ()
+            if generation ~= blurtGeneration then return end
             blurtPending = false
-            if blurtEnabled then
-                blurtRoles(false)
-            end
+            if blurtEnabled then blurtRoles(false) end
         end)
     end
 
@@ -5198,6 +5041,7 @@ function Module.init(runtime: any): any
 
     local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
         if not active then
+            cancelPendingBlurt()
             blurtSignature = ""
             instantSent = false
             return
@@ -5208,6 +5052,7 @@ function Module.init(runtime: any): any
 
     local function toggleBlurtRoles(enabled: boolean): ()
         blurtEnabled = enabled
+        cancelPendingBlurt()
         disconnectFeatureConnection("MM2BlurtRoles")
         if not enabled then
             return
@@ -5298,7 +5143,7 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
+    activeCleanup()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
@@ -5414,7 +5259,7 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
+    activeCleanup()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
@@ -5765,7 +5610,6 @@ function Module.init(_runtime: any): any
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
     local findMM2Map: any = core.findMM2Map
     local getEstimatedLatency: any = core.getEstimatedLatency
-    local getGunOriginCFrame: any = core.getGunOriginCFrame
 
     -- v138.7 renamed the two full-bag fling toggles ("after reset" ->
     -- "after full bag"). Option keys are derived from the label, so carry a saved
@@ -6096,96 +5940,25 @@ function Module.init(_runtime: any): any
         end)
     end
 
-    -- Auto grab gun + auto shoot: equip the dropped sheriff gun and
-    -- fire predicted shots at the murderer (same gun remote and
-    -- prediction the Shoot module authors).
-    local lastShotAt: number = 0
+    -- Use the shared Silent/CFrame constructor only. Auto Farm explicitly
+    -- opts out of WallCheck; Gun Aimbot's per-mode setting is independent.
+    local lastShotAt: number = -math.huge
     local function shootMurderer(murderer: Player): boolean
-        if os.clock() - lastShotAt < 0.22 then
+        if type(state.mm2FireSilentShot) ~= "function" then
+            setStatus("Silent shot unavailable")
             return false
         end
-        local character: Model?, humanoid: Humanoid? = characterParts()
-        if not character or not humanoid then
-            return false
-        end
-        local gun: Tool? = nil
-        if type(getPlayerWeapon) == "function" then
-            gun = getPlayerWeapon(LocalPlayer, "Gun")
-        end
-        if not gun then
-            return false
-        end
-        if gun.Parent ~= character then
-            pcall(function(): ()
-                humanoid:EquipTool(gun :: Tool)
-            end)
-            local equipDeadline: number = os.clock() + 0.2
-            while gun.Parent ~= character
-                and os.clock() < equipDeadline do
-                task.wait()
-            end
-        end
-        if gun.Parent ~= character
-            or gun:GetAttribute("Reloading") == true
-            or gun:GetAttribute("IsReloading") == true then
-            return false
-        end
-        local remote: Instance? = gun:FindFirstChild("Shoot")
-        if not remote or not remote:IsA("RemoteEvent") then
-            return false
-        end
-        local origin: CFrame? = nil
-        if type(getGunOriginCFrame) == "function" then
-            local ok: boolean, value: any =
-                pcall(getGunOriginCFrame, character, gun)
-            if ok then
-                origin = value
-            end
-        end
-        if not origin then
-            return false
-        end
-        local endpoint: Vector3? = nil
-        local prediction: any = state.mm2Prediction
-        if prediction and type(prediction.gunAim) == "function" then
-            local ok: boolean, predicted: any = pcall(
-                prediction.gunAim, murderer, (origin :: CFrame).Position,
-                "Bullet")
-            if ok and predicted then
-                endpoint = predicted
-            end
-        end
-        if not endpoint then
-            local targetRoot: BasePart? = rootOf(murderer)
-            if not targetRoot then
-                return false
-            end
-            endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
-        end
-        -- v139.4: the farm's own shot must respect the same geometry rule the
-        -- Gun Aimbot uses; firing through a wall here is how a farm gets a
-        -- sheriff killed by an invisible barrier.
-        if type(isWeaponPathClear) == "function" then
-            local okClear: boolean, allowed: any = pcall(
-                isWeaponPathClear,
-                (origin :: CFrame).Position,
-                endpoint,
-                murderer.Character,
-                nil,
-                {ignoreTarget = true}
-            )
-            if not okClear or allowed ~= true then
-                return false
-            end
-        end
-        lastShotAt = os.clock()
-        pcall(function(): ()
-            (remote :: RemoteEvent):FireServer(
-                CFrame.lookAt((origin :: CFrame).Position, endpoint :: Vector3),
-                CFrame.new(endpoint :: Vector3)
-            )
-        end)
-        return true
+        local now: number = os.clock()
+        if now - lastShotAt < 0.22 then return false end
+        -- A thrown error can happen after a send; pace it and never fall back
+        -- to a second transport or to a normal Bullet shot.
+        lastShotAt = now
+        local ok: boolean, sent: any = pcall(state.mm2FireSilentShot, murderer, {
+            continuous = true,
+            quiet = true,
+            wallCheck = false,
+        })
+        return ok and sent == true
     end
 
     local function toggleAutoFarm(enabled: boolean): ()
@@ -7108,15 +6881,7 @@ function Module.init(_runtime: any): any
                 end
             end
             if gun.Parent == character and canGrabGun() then
-                local firedSilent: boolean = false
-                if type(state.mm2FireSilentShot) == "function" then
-                    local okShot: boolean, shotRes: any =
-                        pcall(state.mm2FireSilentShot, murderer)
-                    firedSilent = okShot and shotRes == true
-                end
-                if not firedSilent then
-                    shootMurderer(murderer)
-                end
+                shootMurderer(murderer)
             end
             task.wait(0.12)
         end
@@ -7561,7 +7326,7 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
-        end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
+        end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire Silent shots at the Murderer without WallCheck. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value
@@ -10433,12 +10198,12 @@ function Module.init(runtime: any): any
 
     local function clearTrails(): ()
         if trailFolder then
-            pcall(function(): () trailFolder:Destroy() end)
+            trailFolder:Destroy()
             trailFolder = nil
         end
     end
 
-    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
+    local function drawShotTrail(origin: Vector3, hit: Vector3): ()
         local folder: Folder = ensureTrailFolder()
         local segment: Vector3 = hit - origin
         local length: number = segment.Magnitude
@@ -10456,17 +10221,13 @@ function Module.init(runtime: any): any
             beam.Size = Vector3.new(0.07, 0.07, length)
             beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
             beam.Parent = folder
-            pcall(function(): ()
-                TweenService:Create(
-                    beam,
-                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                    { Transparency = 1 }
-                ):Play()
-            end)
+            TweenService:Create(
+                beam,
+                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                { Transparency = 1 }
+            ):Play()
             task.delay(1.55, function(): ()
-                if beam.Parent then
-                    pcall(function(): () beam:Destroy() end)
-                end
+                if beam.Parent then beam:Destroy() end
             end)
         end
         -- Pixel-sized ring at the reported endpoint; never highlight the
@@ -10512,7 +10273,7 @@ function Module.init(runtime: any): any
         local ok, service = pcall(core.getWeaponServiceModule)
         if not ok or type(service) ~= "table" or not service.GunFired then return end
         local connected, result = pcall(function()
-            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit, hitPart)
+            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit)
                 if not options.trailEsp then return end
                 local function position(value)
                     local v = typeof(value) == "Vector3" and value
@@ -10521,7 +10282,7 @@ function Module.init(runtime: any): any
                     return nil
                 end
                 local a, b = position(origin), position(hit)
-                if a and b then drawShotTrail(a, b, hitPart) end
+                if a and b then drawShotTrail(a, b) end
             end)
         end)
         if connected then connection = result end
@@ -10862,24 +10623,25 @@ function Module.init(runtime: any): any
         name: string,
         command: string,
         animationId: string,
+        looped: boolean?,
     }
 
-    -- Complete MM2 Sync.Emotes catalog from place, source.rbxlx (TestingStuff)
+    -- Fallback catalog from the TestingStuff client snapshot; live Sync wins.
     local BUILTIN_EMOTES: {EmoteDef} = {
-        { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://204292303" },
-        { id = "sit", name = "Sit", command = "sit2", animationId = "rbxassetid://204292303" },
-        { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://204295235" },
-        { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://248263260" },
-        { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://5917459365" },
-        { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://616158929" },
-        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://35154961" },
+        { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
+        { id = "sit", name = "Sit", command = "sit2", animationId = "rbxassetid://2431845940", looped = true },
+        { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
+        { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
+        { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
+        { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
+        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
         { id = "wave", name = "Wave", command = "wave", animationId = "http://www.roblox.com/asset/?id=128777973" },
         { id = "cheer", name = "Cheer", command = "cheer", animationId = "http://www.roblox.com/asset/?id=129423030" },
         { id = "laugh", name = "Laugh", command = "laugh", animationId = "http://www.roblox.com/asset/?id=129423131" },
         { id = "point", name = "Point", command = "point", animationId = "http://www.roblox.com/asset/?id=128853357" },
-        { id = "dance1", name = "Dance 1", command = "dance1", animationId = "http://www.roblox.com/asset/?id=182435998" },
-        { id = "dance2", name = "Dance 2", command = "dance2", animationId = "http://www.roblox.com/asset/?id=182436842" },
-        { id = "dance3", name = "Dance 3", command = "dance3", animationId = "http://www.roblox.com/asset/?id=182436935" },
+        { id = "dance1", name = "Dance 1", command = "dance1", animationId = "http://www.roblox.com/asset/?id=182435998", looped = true },
+        { id = "dance2", name = "Dance 2", command = "dance2", animationId = "http://www.roblox.com/asset/?id=182436842", looped = true },
+        { id = "dance3", name = "Dance 3", command = "dance3", animationId = "http://www.roblox.com/asset/?id=182436935", looped = true },
     }
 
     local SPECIAL_EMOTE_LABELS: {string} = {
@@ -10904,15 +10666,34 @@ function Module.init(runtime: any): any
 
     local selectedEmoteLabel: string = "Floss"
     local activeTrack: any = nil
+    local generation: number = 0
     local GetAllEmotesFeature: any = nil
+
+    local function stopActiveTrack(): ()
+        if activeTrack then
+            pcall(function(): () activeTrack:Stop(0.1) end)
+            activeTrack = nil
+        end
+    end
+
+    local function animationUri(value: any): string?
+        if type(value) == "number" and value > 0 and value < math.huge then
+            return "rbxassetid://" .. string.format("%.0f", value)
+        end
+        if type(value) == "string" and value ~= "" then
+            return string.match(value, "^%d+$") and ("rbxassetid://" .. value) or value
+        end
+        return nil
+    end
 
     local function collectAllEmotes(): ({EmoteDef}, {[string]: EmoteDef})
         local list: {EmoteDef} = {}
         local byId: {[string]: EmoteDef} = {}
 
         for _, def: EmoteDef in ipairs(BUILTIN_EMOTES) do
-            byId[def.id] = def
-            table.insert(list, def)
+            local copy: EmoteDef = table.clone(def)
+            byId[copy.id] = copy
+            table.insert(list, copy)
         end
 
         pcall(function(): ()
@@ -10924,19 +10705,25 @@ function Module.init(runtime: any): any
                 local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
                 if okReq and type(syncEmotes) == "table" then
                     for emoteId: any, info: any in pairs(syncEmotes) do
-                        if type(emoteId) == "string"
-                            and emoteId ~= "Back"
-                            and type(info) == "table"
-                            and (type(info.Command) == "string" or type(info.AnimationID) == "string") then
-                            if not byId[emoteId] then
-                                local entry: EmoteDef = {
-                                    id = emoteId,
-                                    name = tostring(info.Name or emoteId),
-                                    command = tostring(info.Command or emoteId),
-                                    animationId = tostring(info.AnimationID or ""),
-                                }
-                                byId[emoteId] = entry
-                                table.insert(list, entry)
+                        if type(emoteId) == "string" and emoteId ~= "Back" and type(info) == "table" then
+                            local asset = animationUri(info.AnimationID)
+                            if type(info.Command) == "string" or asset then
+                                local entry = byId[emoteId]
+                                if not entry then
+                                    entry = { id = emoteId, name = emoteId, command = emoteId, animationId = "" }
+                                    byId[emoteId] = entry
+                                    table.insert(list, entry)
+                                end
+                                if type(info.Name) == "string" and info.Name ~= "" then
+                                    entry.name = info.Name
+                                end
+                                if type(info.Command) == "string" and info.Command ~= "" then
+                                    entry.command = info.Command
+                                end
+                                if asset then
+                                    entry.animationId = asset
+                                end
+                                entry.looped = info.Loop == true
                             end
                         end
                     end
@@ -10947,13 +10734,11 @@ function Module.init(runtime: any): any
         return list, byId
     end
 
-    -- Grant all emotes in ProfileData.Emotes.Owned and fire InventoryDataChanged
-    -- so MM2's EmoteWindow and Inventory UI populate every emote button and wire
-    -- ReplicatedStorage.Remotes.Misc.PlayEmote (which Character.Animate plays on
-    -- Humanoid/Animator and replicates to the server and all other players).
+    -- Update the client's ProfileData and inventory event when available.
+    -- Neither a local table nor a BindableEvent proves server-side ownership.
     local function unlockAllEmotes(showNotification: boolean?): number
         local allEmotes: {EmoteDef}, _byId: {[string]: EmoteDef} = collectAllEmotes()
-        local unlockedCount: number = 0
+        local localCount: number = 0
 
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
@@ -10992,16 +10777,17 @@ function Module.init(runtime: any): any
             local invChanged: Instance? = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
 
             for _, def: EmoteDef in ipairs(allEmotes) do
-                if type(ownedTable) == "table" and not ownedSet[def.id] then
+                local updated: boolean = type(ownedTable) == "table"
+                if updated and not ownedSet[def.id] then
                     ownedSet[def.id] = true
-                    table.insert(ownedTable, def.id)
+                    table.insert(ownedTable :: {string}, def.id)
                 end
                 if invChanged and type((invChanged :: any).Fire) == "function" then
                     pcall(function(): ()
                         (invChanged :: any):Fire("Emotes", def.id, 1)
                     end)
                 end
-                unlockedCount += 1
+                if updated then localCount += 1 end
             end
 
             -- 3. Also support EmoteModule.GenerateEmotes if used by the current UI layout
@@ -11020,21 +10806,18 @@ function Module.init(runtime: any): any
         end)
 
         if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
-            GetAllEmotesFeature:SetStatus(string.format("%d Emotes", unlockedCount))
+            GetAllEmotesFeature:SetStatus(string.format("%d local emotes", localCount))
         end
         if showNotification and type(notify) == "function" then
-            pcall(notify, string.format("Get All Emotes: unlocked %d MM2 emotes", unlockedCount))
+            pcall(notify, string.format("Get All Emotes: %d local emote entries; server ownership is not verified.", localCount))
         end
-        return unlockedCount
+        return localCount
     end
 
-    -- Play an emote so it replicates to the server and is visible to all players:
-    -- 1. Fires ReplicatedStorage.Remotes.Misc.PlayEmote:Fire(emoteId), which
-    --    StarterCharacterScripts.Animate handles by playing the pre-registered
-    --    emote command on LocalPlayer.Character.Humanoid.
-    -- 2. Fallback: if PlayEmote is unavailable, loads the Animation onto the
-    --    character's Humanoid/Animator (which Roblox replicates to the server).
-    local function playServerReplicatedEmote(emoteId: string): boolean
+    -- Request the game's native emote, or use the character Animator as a
+    -- fallback. The game's permissions determine playback and replication.
+    local function requestEmotePlayback(emoteId: string): boolean
+        stopActiveTrack()
         local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectAllEmotes()
         local def: EmoteDef? = byId[emoteId]
         local firedBindable: boolean = false
@@ -11054,7 +10837,7 @@ function Module.init(runtime: any): any
             return true
         end
 
-        -- Direct Humanoid/Animator fallback (replicates to server via network ownership)
+        -- Direct Humanoid/Animator fallback; replication is game-dependent.
         if not def or def.animationId == "" then
             return false
         end
@@ -11065,45 +10848,47 @@ function Module.init(runtime: any): any
             if not humanoid or humanoid.Health <= 0 then
                 return
             end
-            if activeTrack then
-                pcall(function(): ()
-                    activeTrack:Stop(0.1)
-                end)
-                activeTrack = nil
-            end
             local anim: Animation = Instance.new("Animation")
             anim.Name = def.command
             anim.AnimationId = def.animationId
             local animator: Animator? = humanoid:FindFirstChildOfClass("Animator")
-            local track: any = if animator
-                then animator:LoadAnimation(anim)
-                else (humanoid :: any):LoadAnimation(anim)
-            if track then
+            local loaded: boolean, track: any = pcall(function(): any
+                return if animator then animator:LoadAnimation(anim)
+                    else (humanoid :: any):LoadAnimation(anim)
+            end)
+            if loaded and track then
                 activeTrack = track
-                track:Play(0.1)
-                playedFallback = true
+                playedFallback = pcall(function(): ()
+                    track.Looped = def.looped == true
+                    track:Play(0.1)
+                end)
             end
+            anim:Destroy()
         end)
 
         return playedFallback
     end
 
     local function toggleGetAllEmotes(enabled: boolean): ()
+        generation += 1
+        local currentGeneration: number = generation
         disconnectFeatureConnection("MM2GetAllEmotesRespawn")
 
         if not enabled then
+            stopActiveTrack()
             if GetAllEmotesFeature then
                 GetAllEmotesFeature:SetStatus(nil)
             end
             return
         end
 
-        unlockAllEmotes(true)
+        local count: number = unlockAllEmotes(true)
+        GetAllEmotesFeature:SetStatus(string.format("%d local emotes", count))
 
         if LocalPlayer and LocalPlayer.CharacterAdded then
             featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
                 task.delay(0.5, function(): ()
-                    if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
+                    if currentGeneration == generation and GetAllEmotesFeature and GetAllEmotesFeature.enabled then
                         unlockAllEmotes(false)
                     end
                 end)
@@ -11113,7 +10898,7 @@ function Module.init(runtime: any): any
 
     GetAllEmotesFeature = createUniversalFeature(
         "Get All Emotes",
-        "Unlocks all MM2 emotes (Ninja Rest, Sit, Zen, Dab, Floss, Zombie, Headless, etc.) in the Emote wheel and inventory with full server replication.",
+        "Attempts to populate the local MM2 emote list and play selected animations. Server ownership and replication depend on the game.",
         11,
         toggleGetAllEmotes,
         {
@@ -11130,7 +10915,7 @@ function Module.init(runtime: any): any
         function(): ()
             unlockAllEmotes(true)
         end,
-        "Immediately grants all MM2 emotes in your Emote wheel and inventory without buying them."
+        "Update the local emote list; this does not prove server-side ownership."
     )
 
     addCycleOption(
@@ -11141,7 +10926,7 @@ function Module.init(runtime: any): any
         function(value: string): ()
             selectedEmoteLabel = value
         end,
-        "Select an MM2 emote to play directly with server replication."
+        "Select an MM2 emote to request through the game or the character Animator."
     )
 
     addActionOption(
@@ -11150,13 +10935,14 @@ function Module.init(runtime: any): any
         function(): ()
             local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
             unlockAllEmotes(false)
-            playServerReplicatedEmote(emoteId)
+            requestEmotePlayback(emoteId)
         end,
-        "Plays the selected emote on your character so all players in the server see it."
+        "Request the selected emote. Playback and visibility to others are not guaranteed."
     )
 
     activeCleanup = function(): ()
         toggleGetAllEmotes(false)
+        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then state.mm2GetAllEmotesFeature = nil end
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -11659,8 +11445,6 @@ local Module = {
     Runtime = nil :: any,
 }
 
-local activeCleanup: () -> () = function(): () end
-
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -11714,9 +11498,6 @@ function Module.init(runtime: any): any
         "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
     )
 
-    activeCleanup = function(): ()
-
-    end
     Module.Events = featureConnections
     Module.Initialized = true
     return Module
@@ -11727,8 +11508,6 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
 end
@@ -14723,7 +14502,6 @@ local mm2Settings = {
     -- another player's HumanoidRootPart because the server ray kept going past
     -- the murderer. Shooting an innocent costs the sheriff the gun, so the
     -- shot is moved to a body part whose line is clear -- or skipped.
-    avoidInnocents = true,
     silentAim = false,
     shootKey = Enum.KeyCode.Unknown,
     shootTarget = "",
@@ -14877,96 +14655,6 @@ local function describeRayHit(origin: Vector3, endpoint: Vector3, target: Model?
             info.distance = (position - origin).Magnitude
         end
     end)
-    if part:IsA("BasePart") then
-        info.transparency = part.Transparency
-        info.canCollide = part.CanCollide
-    end
-    return info
-end
-
--- v139.2: the server does NOT stop its ray at the endpoint we author. MM2's
--- gun fires a long raycast in the aim direction and the thrown knife is a
--- physical projectile, so both keep going past the target. The saved v139.1
--- session shows what that costs: of 10 confirmed shots, 4 hit the murderer,
--- 2 stopped on map geometry and 2 landed on ANOTHER player's HumanoidRootPart
--- (the shot was 1-4 studs behind/ahead and the ray carried on). This probe
--- answers "what is behind the target on this exact line", which the 12-stud
--- overshoot check could not: a lobby is not 12 studs deep.
---
--- Only bodies are interesting here (a wall behind the target is a good thing:
--- it stops a miss). `exclude` must contain the local character and the target.
-local function describeRayBeyond(
-    origin: Vector3,
-    endpoint: Vector3,
-    beyondStuds: number,
-    exclude: {Instance}?
-): any
-    local segment: Vector3 = endpoint - origin
-    local length: number = segment.Magnitude
-    if length < 0.05 then
-        return nil
-    end
-    local reach: number = math.max(1, math.min(beyondStuds or 200, 500))
-    local direction: Vector3 = segment.Unit * reach
-    local params: RaycastParams = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.IgnoreWater = true
-    params.RespectCanCollide = false
-    local excluded: {Instance} = {}
-    for _, object: Instance in ipairs(exclude or {}) do
-        table.insert(excluded, object)
-    end
-    for _, object: Instance in ipairs(CollectionService:GetTagged("WeaponPassthrough")) do
-        table.insert(excluded, object)
-    end
-    params.FilterDescendantsInstances = excluded
-    local hit: RaycastResult? = workspace:Raycast(endpoint, direction, params)
-    if not hit then
-        return nil
-    end
-    local part: Instance = hit.Instance
-    local info: any = {
-        name = string.sub(part:GetFullName(), 1, 160),
-        className = part.ClassName,
-        isBody = false,
-        player = nil :: Player?,
-        gap = math.huge,
-    }
-    pcall(function(): ()
-        info.gap = (hit.Position - endpoint).Magnitude
-    end)
-    -- Walk up to the model: every character hangs from a Model whose parent is
-    -- the Workspace, and Players:GetPlayerFromCharacter is the only identity
-    -- that is safe to compare (no cloneref equality games).
-    local current: Instance? = part
-    for _ = 1, 8 do
-        if not current then
-            break
-        end
-        local ok: boolean, owner: any = pcall(Players.GetPlayerFromCharacter, Players, current)
-        if ok and owner then
-            info.isBody = true
-            info.player = owner
-            break
-        end
-        if current:IsA("Model") then
-            local humanoid: Humanoid? = current:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                info.isBody = true
-                -- v139.3: a body without an owner is only dangerous while it is
-                -- ALIVE. A corpse lying behind the murderer used to count as
-                -- "an innocent behind" and refused the shot.
-                pcall(function(): ()
-                    info.health = humanoid.Health
-                end)
-                break
-            end
-        end
-        if current == workspace then
-            break
-        end
-        current = current.Parent
-    end
     if part:IsA("BasePart") then
         info.transparency = part.Transparency
         info.canCollide = part.CanCollide
@@ -15936,8 +15624,16 @@ local function getPlayerPerk(player: Player): string?
     return nil
 end
 
+local mm2BridgeProvider: any = nil
+local function unregisterMM2Roles(): ()
+    if mm2BridgeProvider and type(state.unregisterRoleProvider) == "function" then
+        state.unregisterRoleProvider(mm2BridgeProvider)
+    end
+    mm2BridgeProvider = nil
+end
+
 local function registerMM2Roles(): ()
-    registerRoleProvider({
+    mm2BridgeProvider = {
         Name = "MM2",
         ReplacesTeams = true,
         DeadRoles = {"Dead"},
@@ -15976,7 +15672,8 @@ local function registerMM2Roles(): ()
                 mm2Settings.deadColor = colour
             end
         end,
-    })
+    }
+    registerRoleProvider(mm2BridgeProvider)
 end
 
 local primeRoundState: () -> ()
@@ -18858,7 +18555,7 @@ local function createTrajectoryCalibration(): any
             phase = "blocked",
             serverTime = workspace:GetServerTimeNow(),
             pingMs = getPingMilliseconds(),
-            -- v139.3: the refusal carries its own reason ("wall", "corridor"),
+            -- v139.3: the refusal carries its own reason (such as "wall"),
             -- so a calibration session can tell a real barrier apart from a
             -- policy decision that cost a shot.
             reason = type(blocker.reason) == "string" and blocker.reason or "wall",
@@ -19500,6 +19197,7 @@ end
 state.gameRoleProvider = mm2RoleProvider
 state.gameTargetProvider = mm2TargetProvider
 moduleCleanup = function(): ()
+    unregisterMM2Roles()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end
@@ -19633,7 +19331,6 @@ state.mm2Core = {
     findDroppedGun = findDroppedGun,
 
     isWeaponPathClear = isWeaponPathClear,
-    describeRayBeyond = describeRayBeyond,
     -- v161: the untouched first hit of the muzzle line, so the aim can notice
     -- a ghost (transparent, non-colliding) body part on its own line.
     describeRayHit = describeRayHit,
@@ -19650,7 +19347,7 @@ state.mm2Core = {
 }
 
 cleanupMM2Runtime = function()
-
+    unregisterMM2Roles()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
     end
@@ -19797,8 +19494,8 @@ local function buildTRSFeatures()
     local landingMarker = nil
     local lastGoalkeeperAction = 0
     local lastHeaderAction = 0
-    local autoTackleEnabled = false
-    local autoPickupEnabled = false
+    local tackleGeneration = 0
+    local pickupGeneration = 0
     local goalVisualObjects = {}
 
     local function getWorldBools()
@@ -20183,7 +19880,8 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoTackle(enabled)
-        autoTackleEnabled = enabled
+        tackleGeneration += 1
+        local generation = tackleGeneration
         disconnectFeatureConnection("TRSAutoTackle")
         clearTackleBox()
         if not enabled then
@@ -20249,7 +19947,7 @@ local function buildTRSFeatures()
             if disarm and disarm:IsA("RemoteEvent") then
                 for _, delayTime in ipairs({0.06, 0.16}) do
                     task.delay(delayTime, function()
-                        if not autoTackleEnabled then
+                        if generation ~= tackleGeneration then
                             return
                         end
                         local currentOwner, currentBall = getBallOwner()
@@ -20315,6 +20013,7 @@ local function buildTRSFeatures()
     end
 
     local uninstallShotHook: () -> () = function(): () end
+    local releaseShotHookIfIdle: () -> () = function(): () end
 
     local function installShotHook()
         if shotHookInstalled then
@@ -20363,6 +20062,7 @@ local function buildTRSFeatures()
                     else
                         nativeHeaderContext = nil
                     end
+                    task.defer(releaseShotHookIfIdle)
                 elseif settings.power and getBallOwner() == LocalPlayer then
                     arguments[3] = settings.powerValue
                 end
@@ -20403,7 +20103,7 @@ local function buildTRSFeatures()
         end
     end
 
-    local function releaseShotHookIfIdle(): ()
+    releaseShotHookIfIdle = function(): ()
         if not settings.power
             and nativeShotContext == nil
             and nativeHeaderContext == nil then
@@ -20532,6 +20232,7 @@ local function buildTRSFeatures()
             and getMobileButton("JumpButton")
             or getMobileButton("PowerShoot")
         if not button then
+            releaseShotHookIfIdle()
             if showFailure then
                 notify("TRS MobileCTRL shot button was not found.")
             end
@@ -20561,6 +20262,7 @@ local function buildTRSFeatures()
         end
         if not fired then
             nativeShotContext = nil
+            releaseShotHookIfIdle()
             if showFailure then
                 notify("The executor cannot fire native GUI signals.")
             end
@@ -20571,6 +20273,7 @@ local function buildTRSFeatures()
             if nativeShotContext == context then
                 nativeShotContext = nil
             end
+            releaseShotHookIfIdle()
         end)
         return true
     end
@@ -20951,8 +20654,9 @@ local function buildTRSFeatures()
         )
 
         if settings.pickupDeke then
+            local generation = pickupGeneration
             task.delay(0.06, function()
-                if not autoPickupEnabled then
+                if generation ~= pickupGeneration then
                     return
                 end
                 local owner = getBallOwner()
@@ -20974,7 +20678,7 @@ local function buildTRSFeatures()
     end
 
     local function toggleAutoPickup(enabled)
-        autoPickupEnabled = enabled
+        pickupGeneration += 1
         disconnectFeatureConnection("TRSPickupKey")
         disconnectFeatureConnection("TRSPickupLoop")
         if not enabled then
@@ -21281,6 +20985,7 @@ local function buildTRSFeatures()
             local button = getMobileButton("Header")
             if not button or not fireNativeSignal(button.MouseButton1Click) then
                 nativeHeaderContext = nil
+                releaseShotHookIfIdle()
                 return
             end
             lastHeaderAction = os.clock()
@@ -21289,6 +20994,7 @@ local function buildTRSFeatures()
                 if nativeHeaderContext == context then
                     nativeHeaderContext = nil
                 end
+                releaseShotHookIfIdle()
             end)
         end)
     end
@@ -21583,8 +21289,8 @@ local function buildTRSFeatures()
 
     state.cleanupTRSRuntime = function()
         settings.power = false
-        autoTackleEnabled = false
-        autoPickupEnabled = false
+        tackleGeneration += 1
+        pickupGeneration += 1
         nativeShotContext = nil
         nativeHeaderContext = nil
         uninstallShotHook()
@@ -21715,13 +21421,16 @@ local function buildVDFeatures(): ()
         lastHit = 0,
         lastVaultInput = 0,
         lastVaultPoint = nil :: BasePart?,
-        killerBaseWalkSpeed = nil :: number?,
-        walkSpeedBase = nil :: number?,
+        killerSpeedRecord = nil :: any,
+        walkSpeedRecord = nil :: any,
         damageBoostToken = 0,
         damageBoostUntil = 0,
         damageOriginalSpeed = nil :: number?,
+        damageAppliedSpeed = nil :: number?,
+        damageSpeedHumanoid = nil :: Humanoid?,
         trackedHumanoid = nil :: Humanoid?,
         actionAnimator = nil :: Animator?,
+        actionTracks = {} :: {[AnimationTrack]: any},
         selectiveCollisions = {} :: {[BasePart]: CollisionState},
         effectStates = {} :: {[Instance]: any},
         soundStates = {} :: {[Sound]: SoundState},
@@ -22476,19 +22185,19 @@ local function buildVDFeatures(): ()
         return best
     end
 
+    local function restoreKillerSpeed(): ()
+        local record: any = runtime.killerSpeedRecord
+        if record and record.applied ~= nil and record.humanoid.Parent
+            and not runtime.walkSpeedEnabled and record.humanoid.WalkSpeed == record.applied then
+            record.humanoid.WalkSpeed = record.restore
+        end
+        runtime.killerSpeedRecord = nil
+    end
+
     local function toggleKillerHitAura(enabled: boolean): ()
         disconnectFeatureConnection("VDKillerHitAura")
-        if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            if humanoid and runtime.killerBaseWalkSpeed and not runtime.walkSpeedEnabled then
-                humanoid.WalkSpeed = runtime.killerBaseWalkSpeed
-            end
-            runtime.killerBaseWalkSpeed = nil
-            return
-        end
+        restoreKillerSpeed()
+        if not enabled then return end
         local attackRemote: RemoteEvent? = findRemoteEvent("Attacks", "BasicAttack")
         assert(attackRemote, "VD Remotes.Attacks.BasicAttack is unavailable")
         featureConnections.VDKillerHitAura = TaskManager:Connect(function(): ()
@@ -22503,18 +22212,28 @@ local function buildVDFeatures(): ()
                 or lower(team.Name) ~= "killer"
                 or not localRoot
                 or not humanoid then
+                restoreKillerSpeed()
                 return
             end
-            if runtime.killerBaseWalkSpeed == nil then
-                runtime.killerBaseWalkSpeed = humanoid.WalkSpeed
+            local preventSlowdown: boolean = not runtime.walkSpeedEnabled
+                and (settings.hitAuraMode == "Blatant" or settings.hitAuraRun == true)
+            local record: any = runtime.killerSpeedRecord
+            if not preventSlowdown or (record and record.humanoid ~= humanoid) then
+                restoreKillerSpeed()
+                record = nil
             end
-            local preventSlowdown: boolean = settings.hitAuraMode == "Blatant"
-                or settings.hitAuraRun == true
             if preventSlowdown then
-                humanoid.WalkSpeed = math.max(
-                    humanoid.WalkSpeed,
-                    runtime.killerBaseWalkSpeed :: number
-                )
+                if not record then
+                    local floor: number = if runtime.damageSpeedHumanoid == humanoid
+                        then runtime.damageOriginalSpeed else humanoid.WalkSpeed
+                    record = {humanoid = humanoid, floor = floor}
+                    runtime.killerSpeedRecord = record
+                end
+                if humanoid.WalkSpeed < record.floor then
+                    record.restore = humanoid.WalkSpeed
+                    record.applied = record.floor
+                    humanoid.WalkSpeed = record.floor
+                end
             end
             local attackRange: number = if settings.hitAuraMode == "Blatant"
                 then settings.hitAuraBlatantReach
@@ -22837,11 +22556,35 @@ local function buildVDFeatures(): ()
             or track.Priority == Enum.AnimationPriority.Action4
     end
 
+    local function restoreActionTracks(): ()
+        for track: AnimationTrack, record: any in pairs(runtime.actionTracks) do
+            -- A track can already have been destroyed during respawn.
+            pcall(function(): ()
+                if track.Speed == record.applied then track:AdjustSpeed(record.base) end
+            end)
+            runtime.actionTracks[track] = nil
+        end
+    end
+
+    local function accelerateAction(track: AnimationTrack): ()
+        if not isAcceleratedAction(track) then return end
+        local record: any = runtime.actionTracks[track]
+        if not record then
+            record = {base = track.Speed}
+            runtime.actionTracks[track] = record
+        elseif track.Speed ~= record.applied then
+            record.base = track.Speed
+        end
+        if track.Speed ~= settings.actionSpeed then track:AdjustSpeed(settings.actionSpeed) end
+        record.applied = settings.actionSpeed
+    end
+
     local function bindActionAnimator(animator: Animator?): ()
         if runtime.actionAnimator == animator then
             return
         end
         disconnectFeatureConnection("VDCooldownAnimation")
+        restoreActionTracks()
         runtime.actionAnimator = animator
         if not animator then
             return
@@ -22849,14 +22592,10 @@ local function buildVDFeatures(): ()
         featureConnections.VDCooldownAnimation = animator.AnimationPlayed:Connect(function(
             track: AnimationTrack
         ): ()
-            if runtime.cooldownModifierEnabled and isAcceleratedAction(track) then
-                track:AdjustSpeed(settings.actionSpeed)
-            end
+            if runtime.cooldownModifierEnabled then accelerateAction(track) end
         end)
         for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-            if isAcceleratedAction(track) then
-                track:AdjustSpeed(settings.actionSpeed)
-            end
+            accelerateAction(track)
         end
     end
 
@@ -22865,23 +22604,8 @@ local function buildVDFeatures(): ()
         disconnectFeatureConnection("VDCooldownAnimation")
         runtime.cooldownModifierEnabled = enabled
         runtime.actionAnimator = nil
-        if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            local animator: Animator? = if humanoid
-                then humanoid:FindFirstChildOfClass("Animator")
-                else nil
-            if animator then
-                for _, track: AnimationTrack in ipairs(animator:GetPlayingAnimationTracks()) do
-                    if isAcceleratedAction(track) then
-                        track:AdjustSpeed(1)
-                    end
-                end
-            end
-            return
-        end
+        restoreActionTracks()
+        if not enabled then return end
         featureConnections.VDCooldownModifier = TaskManager:Connect(function(): ()
             local character: Model? = LocalPlayer.Character
             local humanoid: Humanoid? = if character
@@ -22894,11 +22618,31 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    local function restoreDamageSpeed(): ()
+        local humanoid: Humanoid? = runtime.damageSpeedHumanoid
+        if humanoid and humanoid.Parent and humanoid.WalkSpeed == runtime.damageAppliedSpeed then
+            local walk: any = runtime.walkSpeedRecord
+            if runtime.walkSpeedEnabled then
+                if walk and walk.humanoid == humanoid and walk.applied ~= nil then
+                    humanoid.WalkSpeed = walk.applied
+                end
+            else
+                humanoid.WalkSpeed = runtime.damageOriginalSpeed
+            end
+        end
+        runtime.damageSpeedHumanoid = nil
+        runtime.damageOriginalSpeed = nil
+        runtime.damageAppliedSpeed = nil
+    end
+
     local function bindDamageHumanoid(humanoid: Humanoid?): ()
         if runtime.trackedHumanoid == humanoid then
             return
         end
         disconnectFeatureConnection("VDDamageHealth")
+        runtime.damageBoostToken += 1
+        runtime.damageBoostUntil = 0
+        restoreDamageSpeed()
         runtime.trackedHumanoid = humanoid
         if not humanoid then
             return
@@ -22910,20 +22654,22 @@ local function buildVDFeatures(): ()
             if runtime.damageBoostEnabled and health < previousHealth and health > 0 then
                 runtime.damageBoostToken += 1
                 local boostToken: number = runtime.damageBoostToken
-                local originalSpeed: number = humanoid.WalkSpeed
-                runtime.damageOriginalSpeed = originalSpeed
+                if runtime.damageSpeedHumanoid ~= humanoid then
+                    runtime.damageSpeedHumanoid = humanoid
+                    runtime.damageOriginalSpeed = humanoid.WalkSpeed
+                elseif not runtime.walkSpeedEnabled and humanoid.WalkSpeed ~= runtime.damageAppliedSpeed then
+                    runtime.damageOriginalSpeed = humanoid.WalkSpeed
+                end
                 runtime.damageBoostUntil = os.clock() + settings.damageBoostDuration
-                humanoid.WalkSpeed = math.max(
-                    humanoid.WalkSpeed,
-                    originalSpeed + settings.damageBoost
-                )
+                local base: number = if runtime.walkSpeedEnabled
+                    then settings.walkSpeed else runtime.damageOriginalSpeed
+                local boosted: number = math.max(humanoid.WalkSpeed, base + settings.damageBoost)
+                if humanoid.WalkSpeed ~= boosted then humanoid.WalkSpeed = boosted end
+                runtime.damageAppliedSpeed = boosted
                 task.delay(settings.damageBoostDuration, function(): ()
-                    if runtime.damageBoostEnabled
-                        and runtime.damageBoostToken == boostToken
-                        and humanoid.Parent
-                        and not runtime.walkSpeedEnabled then
-                        humanoid.WalkSpeed = originalSpeed
-                        runtime.damageOriginalSpeed = nil
+                    if runtime.damageBoostEnabled and runtime.damageBoostToken == boostToken then
+                        runtime.damageBoostUntil = 0
+                        restoreDamageSpeed()
                     end
                 end)
             end
@@ -22939,14 +22685,7 @@ local function buildVDFeatures(): ()
         runtime.damageBoostToken += 1
         runtime.damageBoostUntil = 0
         if not enabled then
-            local character: Model? = LocalPlayer.Character
-            local humanoid: Humanoid? = if character
-                then character:FindFirstChildOfClass("Humanoid")
-                else nil
-            if humanoid and runtime.damageOriginalSpeed and not runtime.walkSpeedEnabled then
-                humanoid.WalkSpeed = runtime.damageOriginalSpeed
-            end
-            runtime.damageOriginalSpeed = nil
+            restoreDamageSpeed()
             return
         end
         featureConnections.VDDamageBoost = TaskManager:Connect(function(): ()
@@ -23031,31 +22770,63 @@ local function buildVDFeatures(): ()
         end)
     end
 
+    local function restoreWalkSpeed(keepDamage: boolean): ()
+        local record: any = runtime.walkSpeedRecord
+        if not record then return end
+        local humanoid: Humanoid = record.humanoid
+        local ownsDamage: boolean = runtime.damageSpeedHumanoid == humanoid
+            and humanoid.WalkSpeed == runtime.damageAppliedSpeed
+        if humanoid.Parent and (humanoid.WalkSpeed == record.applied or ownsDamage) then
+            local restored: number = record.base
+            if keepDamage and ownsDamage and os.clock() < runtime.damageBoostUntil then
+                runtime.damageOriginalSpeed = restored
+                restored += settings.damageBoost
+                runtime.damageAppliedSpeed = restored
+            end
+            if humanoid.WalkSpeed ~= restored then humanoid.WalkSpeed = restored end
+        end
+        runtime.walkSpeedRecord = nil
+    end
+
     local function toggleWalkSpeed(enabled: boolean): ()
         disconnectFeatureConnection("VDWalkSpeed")
         runtime.walkSpeedEnabled = enabled
-        local character: Model? = LocalPlayer.Character
-        local humanoid: Humanoid? = if character
-            then character:FindFirstChildOfClass("Humanoid")
-            else nil
         if not enabled then
-            if humanoid and runtime.walkSpeedBase then
-                humanoid.WalkSpeed = runtime.walkSpeedBase
-            end
-            runtime.walkSpeedBase = nil
+            restoreWalkSpeed(true)
             return
         end
-        runtime.walkSpeedBase = if humanoid then humanoid.WalkSpeed else settings.walkSpeed
         featureConnections.VDWalkSpeed = TaskManager:Connect(function(): ()
             local currentCharacter: Model? = LocalPlayer.Character
             local currentHumanoid: Humanoid? = if currentCharacter
                 then currentCharacter:FindFirstChildOfClass("Humanoid")
                 else nil
-            if currentHumanoid and isRoundActive() then
-                local activeBoost: number = if os.clock() < runtime.damageBoostUntil
-                    then settings.damageBoost
-                    else 0
-                currentHumanoid.WalkSpeed = settings.walkSpeed + activeBoost
+            local record: any = runtime.walkSpeedRecord
+            if not currentHumanoid or not isRoundActive() then
+                restoreWalkSpeed(false)
+                return
+            end
+            if record and record.humanoid ~= currentHumanoid then
+                restoreWalkSpeed(false)
+                record = nil
+            end
+            if not record then
+                local base: number = if runtime.damageSpeedHumanoid == currentHumanoid
+                    then runtime.damageOriginalSpeed else currentHumanoid.WalkSpeed
+                record = {humanoid = currentHumanoid, base = base}
+                runtime.walkSpeedRecord = record
+            elseif currentHumanoid.WalkSpeed ~= record.applied
+                and not (runtime.damageSpeedHumanoid == currentHumanoid
+                    and currentHumanoid.WalkSpeed == runtime.damageAppliedSpeed) then
+                record.base = currentHumanoid.WalkSpeed
+            end
+            local activeBoost: number = if runtime.damageSpeedHumanoid == currentHumanoid
+                    and os.clock() < runtime.damageBoostUntil
+                then settings.damageBoost else 0
+            local target: number = settings.walkSpeed + activeBoost
+            if currentHumanoid.WalkSpeed ~= target then currentHumanoid.WalkSpeed = target end
+            record.applied = target
+            if runtime.damageSpeedHumanoid == currentHumanoid and activeBoost > 0 then
+                runtime.damageAppliedSpeed = target
             end
         end)
     end
@@ -23201,7 +22972,7 @@ local function buildVDFeatures(): ()
         end)
     end
 
-    registerRoleProvider({
+    local roleProvider: any = {
         Name = "VD",
         Roles = {"Killer", "Survivor"},
         Colors = {
@@ -23215,7 +22986,8 @@ local function buildVDFeatures(): ()
             end
             return isKillerCharacter(character) and "Killer" or "Survivor"
         end,
-    })
+    }
+    registerRoleProvider(roleProvider)
 
     registerEspExtra({
         Name = "Generators",
@@ -23473,6 +23245,7 @@ local function buildVDFeatures(): ()
     )
 
     state.cleanupVDRuntime = function(): ()
+        if type(state.unregisterRoleProvider) == "function" then state.unregisterRoleProvider(roleProvider) end
         disconnectFeatureConnection("VDProximityVisibility")
         toggleGeneratorESP(false)
         toggleAutoGeneratorAura(false)
@@ -26027,7 +25800,7 @@ local function buildX2Duels(runtime: any): ()
             end
             refreshAutoShootMode()
         end,
-        "Combat"
+        "Exploits"
     )
     local autoShootOptionLabel: TextLabel? = nil
     refreshAutoShootMode = function(): ()
@@ -26157,7 +25930,7 @@ local function buildX2Duels(runtime: any): ()
             runtimeState.nextAuraAt = 0
             if not enabled then restoreCamera() end
         end,
-        "Combat"
+        "Exploits"
     )
     host.addNumberOption(auraCard, "Reach", 12, 3, 25, function(value: number): ()
         settings.killAuraRange = value
@@ -26340,19 +26113,16 @@ function Module.init(context: Runtime): any
     local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
 
-    local flingPower: number = 4
-    local flingDuration: number = 3
-    local flingPrediction: number = 0.15
+    -- Preserve the previous defaults for the three removed controls.
+    local FLING_POWER: number = 4
+    local FLING_DURATION: number = 3
+    local FLING_PREDICTION: number = 0.15
     local flingRetries: number = 1
     -- Temporary boost used by the second pass only (never persisted).
     local flingBoost: number = 1
 
     local function powerScale(): number
-        local power: number = tonumber(flingPower) or 4
-        if power ~= power then
-            power = 4
-        end
-        return (math.clamp(power, 1, 10) / 3) * flingBoost
+        return (FLING_POWER / 3) * flingBoost
     end
 
     local function scaledVelocity(base: Vector3): Vector3
@@ -26444,7 +26214,7 @@ function Module.init(context: Runtime): any
             return nil
         end
         local seconds: number = math.clamp(
-            transportSeconds() + (tonumber(flingPrediction) or 0.15),
+            transportSeconds() + FLING_PREDICTION,
             0,
             0.6
         )
@@ -26684,7 +26454,7 @@ function Module.init(context: Runtime): any
         end
         local silent: boolean = type(options) == "table" and options.silent == true
         local maxDuration: number = (type(options) == "table" and tonumber(options.duration))
-            or flingDuration
+            or FLING_DURATION
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -26779,8 +26549,7 @@ function Module.init(context: Runtime): any
                     basePart = targetHead
                 end
 
-                -- The poses follow YARHM; the menu's optional retries can
-                -- switch to another part and temporarily boost the force.
+                -- Retries can switch parts and temporarily boost force.
                 local maxPasses: number = math.clamp(
                     math.floor(tonumber(flingRetries) or 0),
                     0,
@@ -27212,46 +26981,6 @@ function Module.init(context: Runtime): any
     end)
     addNumberOption(
         FlingFeature,
-        "Power",
-        4,
-        1,
-        10,
-        function(value: number): ()
-            flingPower = tonumber(value) or 4
-        end,
-        "Strength of the catapult. 3 is YARHM's exact numbers (9e7 pose, 9e8 pin); "
-            .. "higher throws harder and is the fix when the victim barely moves. "
-            .. "Very high values can get you kicked for Invalid position.",
-        0.5
-    )
-    addNumberOption(
-        FlingFeature,
-        "Duration",
-        3,
-        1,
-        6,
-        function(value: number): ()
-            flingDuration = tonumber(value) or 3
-        end,
-        "Seconds the poses keep being written. Longer survives a laggy server that "
-            .. "applies the contact late.",
-        0.5
-    )
-    addNumberOption(
-        FlingFeature,
-        "Prediction",
-        0.15,
-        0,
-        0.5,
-        function(value: number): ()
-            flingPrediction = tonumber(value) or 0.15
-        end,
-        "Extra lead (seconds) on top of half your ping. Every pose is written where "
-            .. "the victim will be, so fast targets and 300 ms connections still get hit.",
-        0.05
-    )
-    addNumberOption(
-        FlingFeature,
         "Retries",
         1,
         0,
@@ -27356,6 +27085,20 @@ function Module.init(context: Runtime): any
     local flyObjects: {[Instance]: boolean} =
         setmetatable({}, {__mode = "k"}) :: any
     local flyTouchVertical: number = 0
+    local flyRaycastParams: RaycastParams? = nil
+    local flyRaycastCharacter: Instance? = nil
+
+    local function raycastParamsFor(root: BasePart): RaycastParams
+        if not flyRaycastParams then
+            flyRaycastParams = RaycastParams.new()
+            flyRaycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        end
+        if root.Parent ~= flyRaycastCharacter then
+            flyRaycastCharacter = root.Parent
+            flyRaycastParams.FilterDescendantsInstances = root.Parent and {root.Parent} or {}
+        end
+        return flyRaycastParams :: RaycastParams
+    end
 
     local function removeFlyObjects(): ()
         for object: Instance in pairs(flyObjects) do
@@ -27486,7 +27229,7 @@ function Module.init(context: Runtime): any
                 flyRuntime.walkSpeed = humanoid.WalkSpeed
                 flyRuntime.walkHumanoid = humanoid
             end
-            humanoid.WalkSpeed = flySettings.speed
+            if humanoid.WalkSpeed ~= flySettings.speed then humanoid.WalkSpeed = flySettings.speed end
             if flySettings.speed < 0 then
                 root.AssemblyLinearVelocity = Vector3.new(
                     target.X,
@@ -27516,13 +27259,10 @@ function Module.init(context: Runtime): any
                 end
             end
             if step.Magnitude > 0.001 and flySettings.wallCheck then
-                local raycastParams: RaycastParams = RaycastParams.new()
-                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                 local wallHit: RaycastResult? = currentWorkspace:Raycast(
                     root.Position,
                     step + step.Unit * 2,
-                    raycastParams
+                    raycastParamsFor(root)
                 )
                 if wallHit then
                     step = Vector3.zero
@@ -27625,13 +27365,10 @@ function Module.init(context: Runtime): any
             if flySettings.wallCheck then
                 local offset: number = level - root.Position.Y
                 if math.abs(offset) > 0.001 then
-                    local raycastParams: RaycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                     local ceilingHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         Vector3.new(0, offset, 0),
-                        raycastParams
+                        raycastParamsFor(root)
                     )
                     if ceilingHit then
                         level = ceilingHit.Position.Y
@@ -27699,6 +27436,8 @@ function Module.init(context: Runtime): any
             flyRuntime.floatMethod = nil
 
             if not enabled then
+                flyRaycastCharacter = nil
+                if flyRaycastParams then flyRaycastParams.FilterDescendantsInstances = {} end
                 fly:SetStatus(nil)
                 local _, humanoid: Humanoid?, root: BasePart? = getCharacterParts()
                 if root then
@@ -27738,13 +27477,10 @@ function Module.init(context: Runtime): any
 
                 local moveDirection, vertical, cameraForward = getFlyDirection(camera)
                 if flySettings.wallCheck and moveDirection.Magnitude > 0.001 then
-                    local raycastParams: RaycastParams = RaycastParams.new()
-                    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-                    raycastParams.FilterDescendantsInstances = {root.Parent :: Instance}
                     local wallHit: RaycastResult? = currentWorkspace:Raycast(
                         root.Position,
                         moveDirection.Unit * 2.75,
-                        raycastParams
+                        raycastParamsFor(root)
                     )
                     if wallHit then
                         moveDirection = Vector3.zero
@@ -27932,7 +27668,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -27986,6 +27722,16 @@ function Module.init(context)
             end
         end
         clearGhost();state.character=nil;activity(false)
+    end
+    local function turnOff()
+        local feature=card and card.Feature
+        if feature and feature.enabled and type(feature.activate)=="function" then
+            feature.activate()
+        elseif card and card.Enabled then
+            card:Toggle(false)
+        else
+            stop()
+        end
     end
     local function spawnGhost(character,root)
         clearGhost()
@@ -28064,9 +27810,13 @@ function Module.init(context)
         local humanoid, root=parts(character)
         if not humanoid or not root or humanoid.Health<=0 then return end
         if state.character~=character then
-            if not spawnGhost(character,root) then return end
+            if not spawnGhost(character,root) then
+                turnOff()
+                card:Notify("Could not create a live character.")
+                return
+            end
         end
-        if not state.model.Parent or not state.root.Parent or state.humanoid.Health<=0 then card:Toggle(false);return end
+        if not state.model.Parent or not state.root.Parent or state.humanoid.Health<=0 then turnOff();return end
         local ghostRoot, ghostHumanoid=state.root,state.humanoid
         if state.flyMode~=settings.fly then
             state.flyMode=settings.fly
@@ -28115,7 +27865,9 @@ function Module.init(context)
             local character=player.Character
             local humanoid,root=parts(character)
             if not humanoid or not root or humanoid.Health<=0 or not spawnGhost(character,root) then
-                card:Notify("Ghost could not create a live character.");return
+                -- Let the card activation/restore path record OFF as well.
+                card:Toggle(false)
+                error("Ghost could not create a live character.",0)
             end
             activity(true)
             table.insert(state.connections,run.PreSimulation:Connect(step))
@@ -28135,7 +27887,8 @@ function Module.init(context)
             if part:IsA("BasePart") then part.Transparency=settings.transparency end
         end end
     end})
-    cleanup=stop;Module.Initialized=true;return card
+    cleanup=turnOff
+    Module.Initialized=true;return card
 end
 function Module.destroy()
     if cleanup then cleanup() end
@@ -28477,25 +28230,19 @@ function Module.init(context: Runtime): any
         raycastParams.FilterType = Enum.RaycastFilterType.Exclude
         raycastParams.RespectCanCollide = true
         local ignoreRefreshAt: number = -math.huge
+        local ignoredCharacter: Model? = nil
         local ignoreList: {Instance} = {}
-        local ignoreSignature: string = ""
         local function refreshIgnore(character: Model): ()
             local now: number = os.clock()
-            if now - ignoreRefreshAt < 0.5 then
-                return
-            end
-            ignoreRefreshAt = now
-            local names: {string} = {}
+            if character == ignoredCharacter and now - ignoreRefreshAt < 0.5 then return end
+            ignoredCharacter, ignoreRefreshAt = character, now
             table.clear(ignoreList)
             table.insert(ignoreList, character)
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character then
                     table.insert(ignoreList, player.Character)
-                    table.insert(names, player.Name)
                 end
             end
-            table.sort(names)
-            ignoreSignature = table.concat(names, ",")
             raycastParams.FilterDescendantsInstances = ignoreList
         end
 
@@ -28631,7 +28378,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -29040,9 +28787,9 @@ function Module.init(context: Runtime): any
         return runtime.lockedTarget
     end
 
-    card = framework.Categories.Combat:CreateModule({
-        Name = "Aim Assist",
-        Category = "Combat",
+    card = framework.Categories.Exploits:CreateModule({
+        Name = "Aimbot",
+        Category = "Exploits",
         ConfigKey = "Universal.AimAssist",
         Order = 4,
         Tooltip = "Eases the local camera toward a valid target; no raycast or "
@@ -29314,9 +29061,7 @@ function Module.init(context: Runtime): any
     local function clearHighlights(keep: {[any]: boolean}?): ()
         for key: any, highlight: Highlight in pairs(highlights) do
             if not keep or not keep[key] then
-                pcall(function(): ()
-                    highlight:Destroy()
-                end)
+                highlight:Destroy()
                 highlights[key] = nil
             end
         end
@@ -29368,13 +29113,15 @@ function Module.init(context: Runtime): any
         )
     end
 
-    local function watchAllTools(): ()
+    local function clearToolWatches(): ()
         for _, connection: RBXScriptConnection in ipairs(learnConnections) do
-            pcall(function(): ()
-                connection:Disconnect()
-            end)
+            connection:Disconnect()
         end
-        learnConnections = {}
+        table.clear(learnConnections)
+    end
+
+    local function watchAllTools(): ()
+        clearToolWatches()
         for _, tool: Tool in ipairs(collectTools(localPlayer)) do
             watchTool(tool)
         end
@@ -29460,9 +29207,10 @@ function Module.init(context: Runtime): any
         end
     end
 
-    aura = framework.Categories.Combat:CreateModule({
-        Name = "KillAura",
-        Category = "Combat",
+    aura = framework.Categories.Exploits:CreateModule({
+        Name = "KillAura", -- stable framework identity for game adapters
+        DisplayName = host.GAME_CHECK and host.GAME_CHECK.MM2Active and "Knife Stab" or "KillAura",
+        Category = "Exploits",
         ConfigKey = "Universal.KillAura",
         Order = 1,
         Tooltip = "Swings your weapon at everyone in reach, with its own "
@@ -29488,7 +29236,9 @@ function Module.init(context: Runtime): any
 
             watchAllTools()
             aura:Event(localPlayer.CharacterAdded, function(): ()
-                task.defer(watchAllTools)
+                task.defer(function()
+                    if aura.Enabled then watchAllTools() end
+                end)
             end)
             local backpack: Instance? = localPlayer:FindFirstChild("Backpack")
             if backpack then
@@ -29498,14 +29248,7 @@ function Module.init(context: Runtime): any
                     end
                 end)
             end
-            aura:Clean(function(): ()
-                for _, connection: RBXScriptConnection in ipairs(learnConnections) do
-                    pcall(function(): ()
-                        connection:Disconnect()
-                    end)
-                end
-                learnConnections = {}
-            end)
+            aura:Clean(clearToolWatches)
 
             aura:Loop(function(): ()
                 local options: any = aura.Options
@@ -29836,27 +29579,22 @@ function Module.init(context: Runtime): any
     })
 
     aura:CreateNote(
-        "Safe band: 8-12 swings a second and a reach close to the weapon's "
-            .. "own. Reach is the only distance this card reads; there is no "
+        "Servers may enforce their own rate and reach rules. Reach is the "
+            .. "only distance this card reads; there is no "
             .. "second, longer one. Friend List protects players from this "
             .. "module in every game."
     )
 
     activeCleanup = function(): ()
-        clearHighlights()
+        if aura.Enabled then aura:Toggle(false) else clearHighlights() end
     end
     Module.Initialized = true
     return aura
 end
 
 function Module.destroy(): ()
-    if aura and aura.Enabled then
-        pcall(function(): ()
-            aura:Toggle(false)
-        end)
-    end
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -31141,11 +30879,6 @@ function Module.init(context: Runtime): any
         -- Hold the selected emote while walking with a track Animate does
         -- not own. Keep it through jumps; release on death, replacement,
         -- mode change or disable.
-        local okState: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-        if okState and state == Enum.HumanoidStateType.Dead then
-            clearStickyEmoteTracks()
-            return
-        end
         local animator: any = getAnimator(humanoid)
         if not animator then
             if watchedAnimator then clearStickyEmoteTracks() end
@@ -31425,8 +31158,8 @@ function Module.init(context: Runtime): any
     end
 
     local function restoreFreezeMovements(): ()
-        for root: any, original: any in pairs(originalFreezeState) do
-            pcall(function(): () root.Anchored = original.anchored end)
+        for root: BasePart, original: any in pairs(originalFreezeState) do
+            root.Anchored = original.anchored
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
@@ -31474,8 +31207,7 @@ function Module.init(context: Runtime): any
                 clearStickyEmoteTracks()
                 return
             end
-            local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
-            if ok and state == Enum.HumanoidStateType.Dead then
+            if humanoid:GetState() == Enum.HumanoidStateType.Dead then
                 restoreFreezeMovements()
                 clearMotionTrack()
                 clearStickyEmoteTracks()
@@ -31535,7 +31267,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -31701,7 +31433,7 @@ function Module.init(context: Runtime): any
 
             infiniteJump:SetStatus("Active")
 
-            local function executeAirJump(fromTouchButton: boolean?): ()
+            local function executeAirJump(): ()
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or root.Anchored or not canBoostJump(humanoid) then
                     return
@@ -31709,10 +31441,9 @@ function Module.init(context: Runtime): any
                 local power: number = infiniteJump.Options["Jump Power"]
                     and infiniteJump.Options["Jump Power"].Value
                     or 50
-                -- Leave ordinary positive ground takeoff to Roblox unless
-                -- triggered from the mobile JumpButton while airborne or using
-                -- negative inverted jump physics.
-                if humanoid.FloorMaterial ~= Enum.Material.Air and power >= 0 and not fromTouchButton then
+                -- Leave the first positive ground jump to Roblox on both PC
+                -- and mobile. Negative power deliberately inverts takeoff.
+                if humanoid.FloorMaterial ~= Enum.Material.Air and power >= 0 then
                     return
                 end
                 local now: number = os.clock()
@@ -31763,7 +31494,7 @@ function Module.init(context: Runtime): any
                         end
                     end
                 end
-                executeAirJump(false)
+                executeAirJump()
             end
 
             if movementInput and type(movementInput.onJumpRequest) == "function" then
@@ -31793,7 +31524,7 @@ function Module.init(context: Runtime): any
                                 and p.Y <= at.Y + size.Y then
                                 jumpTouch = input
                                 pressHeld = true
-                                executeAirJump(true)
+                                executeAirJump()
                             end
                         end
                     end
@@ -32317,6 +32048,12 @@ function Module.init(context: Runtime): any
     local player, world = host.LocalPlayer, host.workspace or workspace
     local walk, vehicle, speed
     local teleportElapsed, lastMode = 0, nil
+    local wallParams, wallCharacter, wallGroup
+
+    local function clearWallFilter()
+        if wallParams then wallParams.FilterDescendantsInstances = {} end
+        wallCharacter = nil
+    end
 
     local function parts()
         local character = player.Character
@@ -32332,9 +32069,10 @@ function Module.init(context: Runtime): any
     local function applyWalk(humanoid, value)
         if walk and walk.humanoid ~= humanoid then restoreWalk() end
         if not walk then walk = {humanoid=humanoid,base=humanoid.WalkSpeed} end
-        if walk.applied and humanoid.WalkSpeed ~= walk.applied then walk.base = humanoid.WalkSpeed end
+        local current = humanoid.WalkSpeed
+        if walk.applied ~= nil and current ~= walk.applied then walk.base = current end
         -- Negative WalkSpeed inverts controls (Roblox legacy behavior)
-        humanoid.WalkSpeed = value
+        if current ~= value then humanoid.WalkSpeed = value end
         walk.applied = value
         -- When WalkSpeed is negative, invert the move direction by setting
         -- the Humanoid's MoveDirection opposite to input
@@ -32346,10 +32084,12 @@ function Module.init(context: Runtime): any
         end
     end
     local function write(record, object, property, value)
+        local current = object[property]
         local field = record[property]
-        if not field then field = {base=object[property]}; record[property] = field end
-        if field.applied ~= nil and object[property] ~= field.applied then field.base = object[property] end
-        object[property], field.applied = value, value
+        if not field then field = {base=current}; record[property] = field end
+        if field.applied ~= nil and current ~= field.applied then field.base = current end
+        if current ~= value then object[property] = value end
+        field.applied = value
     end
     local function restoreRecord(object, record)
         if not object.Parent then return end
@@ -32449,16 +32189,24 @@ function Module.init(context: Runtime): any
     end
     local function blocked(root, step)
         if step.Magnitude < 0.001 then return step end
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {player.Character}
-        params.RespectCanCollide, params.IgnoreWater = true, true
-        params.CollisionGroup = root.CollisionGroup
+        if not wallParams then
+            wallParams = RaycastParams.new()
+            wallParams.FilterType = Enum.RaycastFilterType.Exclude
+            wallParams.RespectCanCollide, wallParams.IgnoreWater = true, true
+        end
+        if wallCharacter ~= player.Character then
+            wallCharacter = player.Character
+            wallParams.FilterDescendantsInstances = player.Character and {player.Character} or {}
+        end
+        if wallGroup ~= root.CollisionGroup then
+            wallGroup = root.CollisionGroup
+            wallParams.CollisionGroup = wallGroup
+        end
         if world.Blockcast then
-            local hit = world:Blockcast(root.CFrame,root.Size*0.9,step,params)
+            local hit = world:Blockcast(root.CFrame,root.Size*0.9,step,wallParams)
             return hit and step.Unit*math.max(0,hit.Distance-0.1) or step
         end
-        local hit = world:Raycast(root.Position,step,params)
+        local hit = world:Raycast(root.Position,step,wallParams)
         return hit and step.Unit*math.max(0,(hit.Position-root.Position).Magnitude-root.Size.Magnitude*0.5-0.1) or step
     end
     local function stepSpeed(dt)
@@ -32520,6 +32268,7 @@ function Module.init(context: Runtime): any
         Function=function(enabled)
             restoreWalk(); restoreVehicle(); teleportElapsed, lastMode = 0, nil
             if not enabled then
+                clearWallFilter()
                 if speed.ClearSprint then speed.ClearSprint() end
                 speed:SetStatus(nil)
                 if speed.SprintHeld then stepSpeed(0) end
@@ -32562,7 +32311,7 @@ function Module.init(context: Runtime): any
     activeCleanup = function()
         speed.SprintHeld = false
         if speed.Enabled then speed:Toggle(false) end
-        restoreWalk(); restoreVehicle()
+        restoreWalk(); restoreVehicle(); clearWallFilter()
         if speed.ClearSprint then speed.ClearSprint() end
     end
     Module.Initialized = true
@@ -33822,24 +33571,6 @@ function Module.init(context: Runtime): any
             end
         end
         return false
-    end
-
-    -- Clears the tracks, restarts the script and proves the body moves again.
-    -- Returns false only when nothing plays, which is the signal to fall back
-    -- to the rig's own clips instead of leaving a frozen character.
-    local function activateAnimationOverride(
-        character: Model,
-        humanoid: Humanoid,
-        animate: Instance
-    ): boolean
-        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
-            pcall(function(): ()
-                track:Stop()
-            end)
-        end
-        restartAnimateScript(animate)
-        task.wait(0.1)
-        return #playingAnimationTracks(humanoid) > 0
     end
 
     -- Session cache of clip verdicts, and its one-time notice.
@@ -36514,9 +36245,9 @@ function Module.init(context: Runtime): any
     card:CreateToggle({Name = "Through walls", Default = true})
     card:CreateToggle({Name = "Teammates", Default = false})
     card:CreateToggle({Name = "Team colours", Default = false})
-    if host.state and host.state.activeGameName == "MM2" then
-        card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
-    end
+    -- The role provider can arrive after the universal cards are built.
+    -- Keep this row hidden in other games via OptionFilter below.
+    card:CreateToggle({Name = "Show Perk", Default = true, Tooltip = "Perk icon above the murderer."})
     roles = context.services.gameRoles:Bind(card, {filters = true})
     card.OptionFilter = function(name)
         if roles.provider and roles.provider.ReplacesTeams and (name == "Teammates" or name == "Team colours") then return false end
@@ -36614,7 +36345,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false
@@ -36880,9 +36611,11 @@ function Module.init(context)
     local original, applied = {}, {}
     local originalTime, appliedTime, elapsed
     local function write(key, value)
-        if applied[key] ~= nil and lighting[key] ~= applied[key] then original[key] = lighting[key] end
-        if original[key] == nil then original[key] = lighting[key] end
-        lighting[key], applied[key] = value, value
+        local current = lighting[key]
+        if applied[key] ~= nil and current ~= applied[key] then original[key] = current end
+        if original[key] == nil then original[key] = current end
+        if current ~= value then lighting[key] = value end
+        applied[key] = value
     end
     local function restoreTime()
         if appliedTime ~= nil and lighting.ClockTime == appliedTime then lighting.ClockTime = originalTime end
@@ -36909,7 +36642,7 @@ function Module.init(context)
             if originalTime == nil then originalTime = lighting.ClockTime end
             elapsed = (elapsed + math.max(0,dt or 0)) % 4
             appliedTime = (card.Options["Fast time"].Value and elapsed * 6 or card.Options.Time.Value) % 24
-            lighting.ClockTime = appliedTime
+            if lighting.ClockTime ~= appliedTime then lighting.ClockTime = appliedTime end
         else restoreTime() end
     end
     card = context.framework.Categories.Render:CreateModule({Name="Fullbright",Category="Render",ConfigKey="Universal.Fullbright",
@@ -36936,6 +36669,9 @@ return Module
         ["src/games/universal/Render/HP.lua"] = [[
 local Module = {Name = "HP", Initialized = false}
 local activeCard, cleanup, hud, roleBinding
+local LOW_HEALTH = Color3.fromRGB(255,70,70)
+local MID_HEALTH = Color3.fromRGB(255,220,60)
+local HIGH_HEALTH = Color3.fromRGB(85,255,85)
 
 -- Shared by world bars and Self HP; finite/max-health guards avoid NaN UI sizes.
 local function healthValues(health, maximum)
@@ -36945,8 +36681,8 @@ local function healthValues(health, maximum)
     return health, maximum, math.clamp(health / maximum, 0, 1)
 end
 local function healthColour(fraction)
-    local low, mid, high = Color3.fromRGB(255,70,70), Color3.fromRGB(255,220,60), Color3.fromRGB(85,255,85)
-    return fraction < 0.5 and low:Lerp(mid, fraction * 2) or mid:Lerp(high, (fraction - 0.5) * 2)
+    return fraction < 0.5 and LOW_HEALTH:Lerp(MID_HEALTH, fraction * 2)
+        or MID_HEALTH:Lerp(HIGH_HEALTH, (fraction - 0.5) * 2)
 end
 
 function Module.init(context: any): any
@@ -36964,6 +36700,7 @@ function Module.init(context: any): any
         BackgroundTransparency=1,BorderSizePixel=0,Visible=false,ZIndex=20,
         Text="",Font=Enum.Font.Arial,TextSize=18,TextStrokeTransparency=1,TextColor3=healthColour(1)})
     local scale = create("UIScale", {Parent=hud,Scale=1})
+    local centerPosition, bottomPosition = UDim2.new(0.5,6,0.5,30), UDim2.new(0.5,0,1,-110)
     local card
     local function clear()
         render:ReleaseAll(layer); table.clear(tracked); layer.Visible = false
@@ -36995,18 +36732,21 @@ function Module.init(context: any): any
                     end
                 end
                 for player in pairs(tracked) do if not seen[player] then render:Release(layer,player); tracked[player] = nil end end
-                hud.Visible = options["Self HP"].Value
-                if hud.Visible then
+                local showSelf = options["Self HP"].Value
+                if hud.Visible ~= showSelf then hud.Visible = showSelf end
+                if showSelf then
                     local character = host.LocalPlayer.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     local health, maximum, fraction = healthValues(humanoid and humanoid.Health, humanoid and humanoid.MaxHealth)
                     local wanted = humanoid and humanoid.Health > 0 and tostring(math.ceil(health)) .. " ❤️" or ""
                     if hud.Text ~= wanted then hud.Text = wanted end
-                    hud.TextColor3 = healthColour(fraction)
-                    hud.Position = options["Self HP position"].Value == "Bottom" and UDim2.new(0.5,0,1,-110) or UDim2.new(0.5,6,0.5,30)
+                    local colour = healthColour(fraction)
+                    if hud.TextColor3 ~= colour then hud.TextColor3 = colour end
+                    local position = options["Self HP position"].Value == "Bottom" and bottomPosition or centerPosition
+                    if hud.Position ~= position then hud.Position = position end
                     local wantedScale = options["Self HP scale"].Value
                     if camera then wantedScale = math.min(wantedScale, math.max(0.5, (camera.ViewportSize.X - 24) / 140)) end
-                    scale.Scale = wantedScale
+                    if scale.Scale ~= wantedScale then scale.Scale = wantedScale end
                 end
                 card:SetStatus(options["Self HP"].Value and tostring(count) .. " + self" or tostring(count))
             end)
@@ -37564,27 +37304,47 @@ function Module.init(context: Runtime): any
     -- Game-provided item highlights (for example MM2's Gun ESP and Trap ESP)
     -- appear here as their own toggles. The card itself stays game-agnostic:
     -- games register providers, this module only renders them.
-    local providerOptionNames: {[string]: boolean} = {}
-    local function attachProvider(provider: any): ()
-        if providerOptionNames[provider.name] then
-            return
+    local providerOptions: {[string]: any} = {}
+    local activeProviders: {[string]: any} = {}
+    local function refreshProviders(): ()
+        local previous: {[string]: any} = activeProviders
+        local current: {[string]: any} = {}
+        forEachProvider(function(provider: any): ()
+            current[provider.name] = provider
+        end)
+        activeProviders = current
+
+        for name: string, provider: any in pairs(previous) do
+            if current[name] ~= provider and providerStates[name] then
+                pcall(provider.setEnabled, false)
+            end
         end
-        providerOptionNames[provider.name] = true
-        render:CreateToggle({
-            Name = provider.name,
-            Default = false,
-            Tooltip = provider.tooltip,
-            Function = function(value: boolean): ()
-                setProviderEnabled(render, providerStates, provider, value)
-            end,
-        })
+        for name: string, provider: any in pairs(current) do
+            if not providerOptions[name] then
+                providerOptions[name] = render:CreateToggle({
+                    Name = name,
+                    Default = false,
+                    Tooltip = provider.tooltip,
+                    Function = function(value: boolean): ()
+                        providerStates[name] = value
+                        local selected: any = activeProviders[name]
+                        if selected then
+                            setProviderEnabled(render, providerStates, selected, value)
+                        end
+                    end,
+                })
+            elseif previous[name] ~= provider and render.Enabled and providerStates[name] then
+                pcall(provider.setEnabled, true)
+            end
+        end
+        for name: string, option: any in pairs(providerOptions) do
+            option:SetVisible(current[name] ~= nil)
+        end
     end
-    forEachProvider(attachProvider)
+    refreshProviders()
     local providerWatch: (() -> ())? = nil
     if itemEsp and type(itemEsp.onChanged) == "function" then
-        providerWatch = itemEsp.onChanged(function(): ()
-            forEachProvider(attachProvider)
-        end)
+        providerWatch = itemEsp.onChanged(refreshProviders)
     end
 
     activeCleanup = function(): ()
@@ -37921,6 +37681,7 @@ local Module = {
 }
 
 local activeCard: any = nil
+local activeInputConnection: RBXScriptConnection? = nil
 
 local STANDARD_PART_NAMES: {[string]: boolean} = {
     head = true,
@@ -38140,6 +37901,9 @@ function Module.init(context: Runtime): any
     end
 
     local function scan(): ()
+        -- A rescan can remove formerly forced matches; discard their drawings
+        -- before replacing the tracked set.
+        render:ReleaseAll(layer)
         table.clear(bots)
         for _, object: Instance in ipairs(currentWorkspace:GetDescendants()) do
             if object:IsA("Model") then
@@ -38319,29 +38083,40 @@ function Module.init(context: Runtime): any
     card:CreateColor({Name = "Colour", Default = Color3.fromRGB(85, 255, 85)})
     card:CreateSlider({Name = "Max distance", Min = 25, Max = 2000, Step = 25, Default = 500})
 
+    local pendingName: string = ""
     local addBox: any
+    local function addForcedName(): ()
+        local trimmed: string = string.match(pendingName, "^%s*(.-)%s*$") or pendingName
+        if trimmed == "" then return end
+        local needle: string = string.lower(trimmed)
+        if not table.find(forcedNames, needle) then
+            table.insert(forcedNames, needle)
+        end
+        table.clear(verdicts)
+        table.clear(rigInfo)
+        if card.Enabled then scan() end
+        addBox:Set("")
+    end
     addBox = card:CreateTextBox({
         Name = "Force by name",
         Default = "",
-        Tooltip = "Type a model name and it is always treated as an NPC rig, "
-            .. "whatever it is built from. Partial names match, so statue "
-            .. "catches CreatorStatue.",
+        Tooltip = "Type a model name and press Enter or Add forced name. Partial names match, so statue catches CreatorStatue.",
         Function = function(value: string): ()
-            local trimmed: string = string.match(value, "^%s*(.-)%s*$") or value
-            if trimmed == "" then
-                return
-            end
-            local needle: string = string.lower(trimmed)
-            if not table.find(forcedNames, needle) then
-                table.insert(forcedNames, needle)
-            end
-            table.clear(verdicts)
-            table.clear(rigInfo)
-            if card.Enabled then
-                scan()
-            end
-            addBox:Set("")
+            pendingName = value
         end,
+    })
+    -- Widgets call the text callback before CreateTextBox returns. Apply a
+    -- previously saved value only after the option itself exists.
+    if pendingName ~= "" then addForcedName() end
+    if addBox.Object and typeof(addBox.Object) == "Instance" and addBox.Object:IsA("TextBox") then
+        activeInputConnection = addBox.Object.FocusLost:Connect(function(enterPressed: boolean): ()
+            if enterPressed then addForcedName() end
+        end)
+    end
+    card:CreateButton({
+        Name = "Add forced name",
+        Tooltip = "Add the name typed above, including on touch devices.",
+        Function = addForcedName,
     })
 
     card:CreateButton({
@@ -38364,6 +38139,10 @@ end
 function Module.destroy(): ()
     if activeCard and activeCard.Enabled then
         activeCard:Toggle(false)
+    end
+    if activeInputConnection then
+        activeInputConnection:Disconnect()
+        activeInputConnection = nil
     end
     activeCard = nil
     Module.Initialized = false
@@ -39290,7 +39069,7 @@ function Module.init(context)
                     if not record then record={base=current};records[part]=record
                     elseif current~=record.applied then record.base=current end
                     record.applied=math.max(record.base,card.Options.Transparency.Value)
-                    part.LocalTransparencyModifier=record.applied
+                    if current~=record.applied then part.LocalTransparencyModifier=record.applied end
                 else restore(part) end
                 cursor+=1
             end
@@ -39338,12 +39117,13 @@ function Module.init(context)
     local original, feature
     local function bounds(minimum,maximum)
         if player.CameraMinZoomDistance > maximum then player.CameraMinZoomDistance = minimum end
-        player.CameraMaxZoomDistance = maximum
-        player.CameraMinZoomDistance = minimum
+        if player.CameraMaxZoomDistance ~= maximum then player.CameraMaxZoomDistance = maximum end
+        if player.CameraMinZoomDistance ~= minimum then player.CameraMinZoomDistance = minimum end
     end
     local function apply()
         bounds(math.min(settings.minimum,settings.maximum),math.max(settings.minimum,settings.maximum))
-        player.CameraMode = settings.firstPerson and Enum.CameraMode.Classic or original.mode
+        local mode = settings.firstPerson and Enum.CameraMode.Classic or original.mode
+        if player.CameraMode ~= mode then player.CameraMode = mode end
         local walls = access:ThroughWalls(settings.walls)
         feature:SetStatus(settings.walls and (walls and tostring(math.round(settings.maximum)) .. " / walls" or "walls unavailable")
             or tostring(math.round(settings.maximum)) .. " studs")
@@ -39376,7 +39156,7 @@ function Module.init(context)
     return feature
 end
 function Module.destroy()
-    if cleanup then pcall(cleanup); cleanup = nil end
+    if cleanup then cleanup(); cleanup = nil end
     Module.Initialized = false
 end
 return Module
@@ -41038,7 +40818,7 @@ function Module.init(context: any): any
                 end
                 bitmapText.draw(row, {
                     {
-                        text = name,
+                        text = feature.name,
                         color = feature.titleColor or Theme.text,
                     },
                 }, {
@@ -41750,6 +41530,34 @@ function Module.init(context: any): any
             feature.status = status
         end
 
+        -- Used when a game is identified after the universal card was made.
+        -- configKey and framework identity deliberately stay unchanged.
+        function feature:SetName(nextName: string): ()
+            if type(nextName) ~= "string" or nextName == "" then return end
+            local previous: string = feature.name
+            if previous ~= nextName and registry[previous] == feature then
+                registry[previous] = nil
+                registry[nextName] = feature
+            end
+            feature.name = nextName
+            feature.searchText = string.lower(nextName .. " " .. (feature.description or "")
+                .. " " .. sectionName .. " " .. categoryName)
+            row:SetAttribute("FeatureSortName", string.lower(nextName))
+            if feature.title then feature.title.Text = nextName end
+            if feature.drawTitle then feature.drawTitle() end
+            local search: any = state.moduleSearch
+            if search and type(search.Unregister) == "function" and type(search.Register) == "function" then
+                search.Unregister(feature)
+                search.Register(feature)
+            end
+            if state.clickGui and type(state.clickGui.Resort) == "function" then
+                state.clickGui.Resort(feature)
+            end
+            if state.floatingUi and type(state.floatingUi.registerFeature) == "function" then
+                state.floatingUi.registerFeature(feature)
+            end
+        end
+
         registry[name] = feature
         table.insert(allFeatures, feature)
 
@@ -41868,11 +41676,11 @@ local TITLE_HEIGHT: number = 26
 -- with a different alias set than the loader's. The table below is only the
 -- last-resort default for a hand-made state that has no catalog.
 local DEFAULT_CATEGORY_ORDER: {string} = {
-    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
+    "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
 local categories: any = {
     order = DEFAULT_CATEGORY_ORDER,
-    aliases = {},
+    aliases = {Combat = "Exploits"},
     default = "Utilities",
 }
 
@@ -42084,6 +41892,15 @@ function Module.init(context: any): any
         end)
         for index: number, row: GuiObject in ipairs(rows) do
             row.LayoutOrder = index
+        end
+    end
+
+    -- An adapter may change a card's display name after delayed game detection.
+    -- Reorder without placing/counting the same row a second time.
+    function ClickGui.Resort(feature: any): ()
+        local record: CategoryWindow? = feature and ClickGui.categories[feature.categoryName]
+        if record then
+            sortCategoryRows(record :: CategoryWindow)
         end
     end
 
@@ -53779,14 +53596,14 @@ local Module = {
 }
 
 local KNOWN_CATEGORIES: {string} = {
-    "Combat", "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
+    "Exploits", "Utilities", "World", "Render", "Blocks", "Items",
 }
 local activeFramework: Framework? = nil
 local function isKnownCategory(name: string): boolean
     return table.find(KNOWN_CATEGORIES, name) ~= nil
 end
 local CATEGORY_ALIASES: {[string]: string} = {
-    Blatant = "Exploits", Movement = "World", Other = "Utilities",
+    Combat = "Exploits", Blatant = "Exploits", Movement = "World", Other = "Utilities",
     Fun = "Utilities", Visuals = "Render", Protection = "Utilities",
     Utility = "Utilities", Spoof = "Utilities", General = "Utilities", Player = "World",
 }
@@ -53855,6 +53672,7 @@ function Module.init(context: any): Framework
             playeresp = "playeresp",
             itemesp = "itemesp",
             autoclicker = "autoclicker",
+            aimassist = "aimbot",
             killaura = "killaura",
             fly = "flight",
             speed = "speedhack",
@@ -54034,6 +53852,9 @@ function Module.init(context: any): Framework
 
     local function createModule(category: any, definition: any): Module
         local moduleName: string = definition.Name
+        -- Keep a stable internal module/config identity when a game adapts the
+        -- visible card. This also names its mobile shortcut correctly at boot.
+        local displayName: string = definition.DisplayName or moduleName
         local categoryName: string = definition.Category or category.Name
         local created: any = {
             Name = moduleName,
@@ -54064,7 +53885,7 @@ function Module.init(context: any): Framework
             or (definition.Action == true and "action")
             or "toggle"
         local feature: any = host.createUniversalFeature(
-            moduleName,
+            displayName,
             definition.Tooltip or definition.Description or "",
             definition.Order or (#category.Modules + 1),
             kind == "action" and function(): ()
@@ -54685,7 +54506,6 @@ local Manifest: Manifest = {
     -- ended up in one window in the menu and another one in the code.
     categories = {
         order = {
-            "Combat",
             "Exploits",
             "Utilities",
             "World",
@@ -54694,6 +54514,7 @@ local Manifest: Manifest = {
             "Items",
         },
         aliases = {
+            ["Combat"] = "Exploits",
             ["Blatant"] = "Exploits",
             ["Movement"] = "World",
             ["Other"] = "Utilities",
@@ -54712,7 +54533,7 @@ local Manifest: Manifest = {
     -- pass categoryName itself.
     cards = {
         -- <arandommenu:cards> managed by tools/card.py
-        ["Aim Assist"] = "Combat",
+        ["Aimbot"] = "Exploits",
         ["Anti AFK"] = "World",
         ["Anti Fling"] = "Utilities",
         ["Anti Void"] = "Utilities",
@@ -54721,15 +54542,16 @@ local Manifest: Manifest = {
         ["Anti-Void"] = "Movement",
         ["AntiAFK"] = "Other",
         ["Auto Buy"] = "Other",
-        ["Auto Dribble"] = "Combat",
+        ["Auto Dribble"] = "Exploits",
         ["Auto Generator"] = "Other",
-        ["Auto Header"] = "Combat",
+        ["Auto Header"] = "Exploits",
         ["Auto Parry / Auto Block"] = "Movement",
         ["Auto Pickup"] = "Other",
-        ["Auto Swing"] = "Combat",
-        ["Auto Tackle"] = "Combat",
+        ["Auto Shoot"] = "Utilities",
+        ["Auto Swing"] = "Exploits",
+        ["Auto Tackle"] = "Exploits",
         ["Ball Trajectory"] = "Render",
-        ["Bed Nuker"] = "Combat",
+        ["Bed Nuker"] = "Exploits",
         ["Best Goal Visual"] = "Render",
         ["Blurt Roles"] = "World",
         ["Cooldown Modifier"] = "Exploits",
@@ -54742,40 +54564,42 @@ local Manifest: Manifest = {
         ["Freeze Movements"] = "Utilities",
         ["Fullbright"] = "Render",
         ["Ghost"] = "Utilities",
-        ["Goalkeeper Assist"] = "Combat",
+        ["Goalkeeper Assist"] = "Exploits",
         ["Gravity"] = "World",
-        ["Gun Aimbot"] = "Combat",
+        ["Gun Aimbot"] = "Exploits",
         ["Improve FPS"] = "World",
         ["Interact Extender"] = "Exploits",
         ["Invisible"] = "Exploits",
         ["Jump"] = "Exploits",
-        ["KillAura"] = "Combat",
-        ["Killer Hit Aura"] = "Combat",
+        ["KillAura"] = "Exploits",
+        ["Killer Hit Aura"] = "Exploits",
         ["Killer Power Cooldowns"] = "Render",
         ["Killer Proximity Visualizer"] = "Render",
+        ["Knife Stab"] = "Exploits",
+        ["Knife Throw"] = "Exploits",
         ["Lag Switch"] = "Exploits",
-        ["Large Shoot"] = "Combat",
+        ["Large Shoot"] = "Exploits",
         ["Line of Sight ESP"] = "Render",
         ["Locker & Hideout Detector"] = "Render",
         ["Noclip"] = "Exploits",
         ["Noclip (Vaults & Pallets)"] = "Exploits",
         ["Optimize Blind / Flash Protection"] = "Movement",
-        ["Pass Assist"] = "Combat",
+        ["Pass Assist"] = "Exploits",
         ["Player ESP"] = "Render",
-        ["Power Shot"] = "Combat",
+        ["Power Shot"] = "Exploits",
         ["Quick Actions"] = "Other",
         ["Rejoin Server"] = "Other",
         ["Remote Logger"] = "Other",
         ["Round Info"] = "Render",
         ["Scaffold"] = "Movement",
-        ["Server Aura"] = "Combat",
+        ["Server Aura"] = "Exploits",
         ["Server Miner"] = "Other",
         ["Server Scaffold"] = "Movement",
         ["Shaders"] = "Render",
-        ["Shoot Assist"] = "Combat",
-        ["Silent Aim"] = "Combat",
+        ["Shoot Assist"] = "Exploits",
+        ["Silent Aim"] = "Exploits",
         ["Silent Steps / Anti-Sound"] = "Movement",
-        ["SilentAIM"] = "Combat",
+        ["SilentAIM"] = "Exploits",
         ["Speed"] = "Exploits",
         ["Spider"] = "Exploits",
         ["Teleport"] = "Utilities",
@@ -54818,7 +54642,7 @@ local Manifest: Manifest = {
     },
     modules = {
         -- <arandommenu:modules> managed by tools/card.py
-        {path = "src/games/universal/Combat/AimAssist.lua", name = "Aim Assist", category = "Combat"},
+        {path = "src/games/universal/Combat/AimAssist.lua", name = "Aimbot", category = "Exploits"},
         {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
@@ -54841,7 +54665,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
         {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
         {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
-        {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Combat"},
+        {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Exploits"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
         {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},

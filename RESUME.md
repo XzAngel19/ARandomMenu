@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v166-20261031-shaders-black-module-cleanup`**, con árbol base de
+> **`v167-20261031-menu-mm2-module-audit`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,45 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v166: 91 fuentes,
-     91 suites, auditoría de rendimiento, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v167: 91 fuentes,
+     107 suites, auditoría estática, boot `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v167 — Menú, MM2 y continuación de la auditoría (2026-10-31)
+
+Detalle, pruebas y límites: `docs/FIXES-v167.md`.
+
+- Sin ventana Combat. Universal: KillAura y Aimbot en Exploits; solo MM2
+  muestra Knife Stab en vez de KillAura, sin cambiar `Universal.KillAura`.
+  Knife Throw y Gun Aimbot también están en Exploits; Auto Shoot en Utilities.
+  La detección tardía actualiza nombre, orden, búsqueda, opciones y shortcut.
+- Gun Aimbot muestra `Normal(Bullet)`, `Silent(Cframe)` y `Experimental`;
+  migración de modos/buckets antiguos preservada. Avoid innocents y su código
+  se retiraron. Auto Shoot solo muestra Aura con Proximity, sin ocultar el
+  resto del panel. Auto Farm dispara por Silent con WallCheck OFF, sin fallback
+  Bullet. Mocks no prueban daño ni disparos reales a través de paredes.
+- Fling oculta Power, Duration y Prediction con defaults internos anteriores;
+  conserva objetivo, acciones y Retries. No es copia literal de YARHM.
+- Roles e ItemESP: proveedores MM2/VD con ownership; Show Perk, Gun ESP y
+  Trap ESP se ocultan al retirarlos. Un proveedor nuevo del mismo nombre usa la
+  fila y selección anteriores. Infinite Jump deja el primer salto positivo de
+  suelo al motor; Ghost sincroniza OFF ante clonación fallida, pérdida o unload.
+- NPCESP ahora permite escribir el nombre completo y enviarlo con Enter o
+  `Add forced name`; los valores guardados no interrumpen su carga y al borrar
+  la lista se eliminan dibujos anteriores. Otros ajustes abarcan Universal,
+  BedFight, VD, TRS y MM2; ver el informe para alcance concreto.
+- Get All Emotes actualiza tabla **local** y solicita playback, no acredita
+  concesión de servidor. Se corrigieron IDs/Loop del snapshot TestingStuff y
+  el catálogo vivo tiene prioridad. Documentación de Roblox describe cuándo
+  puede replicarse una animación con Animator de servidor, pero no se ha
+  verificado que MM2 permita esos assets ni que otros usuarios los vean.
+- Bundle 89 archivos; 91 fuentes, 107 suites, boot `failures=0`, 90 llamadas
+  API y menú 50/49: PASS en mocks. Se continúa la revisión, pero **no se ha
+  completado una auditoría manual exhaustiva de todos los módulos**. No se
+  probó Roblox/Delta, FPS, servidor, física, anticheat ni imagen de Shaders.
 
 ## v166 — Shaders negros y más módulos simplificados (2026-10-31)
 

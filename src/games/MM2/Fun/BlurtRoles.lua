@@ -22,7 +22,13 @@ function Module.init(runtime: any): any
     local blurtEnabled: boolean = false
     local blurtSignature: string = ""
     local blurtPending: boolean = false
+    local blurtGeneration: number = 0
     local lastBlurtAt: number = -math.huge
+
+    local function cancelPendingBlurt(): ()
+        blurtGeneration += 1
+        blurtPending = false
+    end
 
     local function sendPublicChat(message: string): boolean
         local sent: boolean = false
@@ -132,11 +138,11 @@ function Module.init(runtime: any): any
             return
         end
         blurtPending = true
+        local generation: number = blurtGeneration
         task.delay(math.max(mm2Settings.blurtDelay, 0), function(): ()
+            if generation ~= blurtGeneration then return end
             blurtPending = false
-            if blurtEnabled then
-                blurtRoles(false)
-            end
+            if blurtEnabled then blurtRoles(false) end
         end)
     end
 
@@ -152,6 +158,7 @@ function Module.init(runtime: any): any
 
     local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
         if not active then
+            cancelPendingBlurt()
             blurtSignature = ""
             instantSent = false
             return
@@ -162,6 +169,7 @@ function Module.init(runtime: any): any
 
     local function toggleBlurtRoles(enabled: boolean): ()
         blurtEnabled = enabled
+        cancelPendingBlurt()
         disconnectFeatureConnection("MM2BlurtRoles")
         if not enabled then
             return
@@ -252,7 +260,7 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
-    pcall(activeCleanup)
+    activeCleanup()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil

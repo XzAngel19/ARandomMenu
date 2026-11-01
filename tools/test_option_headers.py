@@ -90,7 +90,7 @@ assert 'Throw with button' not in KNIFE, 'the button trigger option was removed'
 assert 'Lanzar con el boton' not in KNIFE, 'the menu is English'
 assert 'table.insert(feature.optionRows, 2, row)' not in KNIFE, \
     'headers replace the old row-reordering hack'
-print("PASS headers: Auto Shoot and Knife Throw are independent Combat modules")
+print("PASS headers: Auto Shoot and Knife Throw are independent Utilities/Exploits modules")
 
 # The header widget renders its own caption, so cards must not draw another.
 assert 'makeTextLabel(heading' not in FREEZE

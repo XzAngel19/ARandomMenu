@@ -19,7 +19,6 @@ function Module.init(_runtime: any): any
     local isRoundLifecycleActive: any = core.isRoundLifecycleActive
     local findMM2Map: any = core.findMM2Map
     local getEstimatedLatency: any = core.getEstimatedLatency
-    local getGunOriginCFrame: any = core.getGunOriginCFrame
 
     -- v138.7 renamed the two full-bag fling toggles ("after reset" ->
     -- "after full bag"). Option keys are derived from the label, so carry a saved
@@ -350,96 +349,25 @@ function Module.init(_runtime: any): any
         end)
     end
 
-    -- Auto grab gun + auto shoot: equip the dropped sheriff gun and
-    -- fire predicted shots at the murderer (same gun remote and
-    -- prediction the Shoot module authors).
-    local lastShotAt: number = 0
+    -- Use the shared Silent/CFrame constructor only. Auto Farm explicitly
+    -- opts out of WallCheck; Gun Aimbot's per-mode setting is independent.
+    local lastShotAt: number = -math.huge
     local function shootMurderer(murderer: Player): boolean
-        if os.clock() - lastShotAt < 0.22 then
+        if type(state.mm2FireSilentShot) ~= "function" then
+            setStatus("Silent shot unavailable")
             return false
         end
-        local character: Model?, humanoid: Humanoid? = characterParts()
-        if not character or not humanoid then
-            return false
-        end
-        local gun: Tool? = nil
-        if type(getPlayerWeapon) == "function" then
-            gun = getPlayerWeapon(LocalPlayer, "Gun")
-        end
-        if not gun then
-            return false
-        end
-        if gun.Parent ~= character then
-            pcall(function(): ()
-                humanoid:EquipTool(gun :: Tool)
-            end)
-            local equipDeadline: number = os.clock() + 0.2
-            while gun.Parent ~= character
-                and os.clock() < equipDeadline do
-                task.wait()
-            end
-        end
-        if gun.Parent ~= character
-            or gun:GetAttribute("Reloading") == true
-            or gun:GetAttribute("IsReloading") == true then
-            return false
-        end
-        local remote: Instance? = gun:FindFirstChild("Shoot")
-        if not remote or not remote:IsA("RemoteEvent") then
-            return false
-        end
-        local origin: CFrame? = nil
-        if type(getGunOriginCFrame) == "function" then
-            local ok: boolean, value: any =
-                pcall(getGunOriginCFrame, character, gun)
-            if ok then
-                origin = value
-            end
-        end
-        if not origin then
-            return false
-        end
-        local endpoint: Vector3? = nil
-        local prediction: any = state.mm2Prediction
-        if prediction and type(prediction.gunAim) == "function" then
-            local ok: boolean, predicted: any = pcall(
-                prediction.gunAim, murderer, (origin :: CFrame).Position,
-                "Bullet")
-            if ok and predicted then
-                endpoint = predicted
-            end
-        end
-        if not endpoint then
-            local targetRoot: BasePart? = rootOf(murderer)
-            if not targetRoot then
-                return false
-            end
-            endpoint = targetRoot.Position + Vector3.new(0, 0.6, 0)
-        end
-        -- v139.4: the farm's own shot must respect the same geometry rule the
-        -- Gun Aimbot uses; firing through a wall here is how a farm gets a
-        -- sheriff killed by an invisible barrier.
-        if type(isWeaponPathClear) == "function" then
-            local okClear: boolean, allowed: any = pcall(
-                isWeaponPathClear,
-                (origin :: CFrame).Position,
-                endpoint,
-                murderer.Character,
-                nil,
-                {ignoreTarget = true}
-            )
-            if not okClear or allowed ~= true then
-                return false
-            end
-        end
-        lastShotAt = os.clock()
-        pcall(function(): ()
-            (remote :: RemoteEvent):FireServer(
-                CFrame.lookAt((origin :: CFrame).Position, endpoint :: Vector3),
-                CFrame.new(endpoint :: Vector3)
-            )
-        end)
-        return true
+        local now: number = os.clock()
+        if now - lastShotAt < 0.22 then return false end
+        -- A thrown error can happen after a send; pace it and never fall back
+        -- to a second transport or to a normal Bullet shot.
+        lastShotAt = now
+        local ok: boolean, sent: any = pcall(state.mm2FireSilentShot, murderer, {
+            continuous = true,
+            quiet = true,
+            wallCheck = false,
+        })
+        return ok and sent == true
     end
 
     local function toggleAutoFarm(enabled: boolean): ()
@@ -1362,15 +1290,7 @@ function Module.init(_runtime: any): any
                 end
             end
             if gun.Parent == character and canGrabGun() then
-                local firedSilent: boolean = false
-                if type(state.mm2FireSilentShot) == "function" then
-                    local okShot: boolean, shotRes: any =
-                        pcall(state.mm2FireSilentShot, murderer)
-                    firedSilent = okShot and shotRes == true
-                end
-                if not firedSilent then
-                    shootMurderer(murderer)
-                end
+                shootMurderer(murderer)
             end
             task.wait(0.12)
         end
@@ -1815,7 +1735,7 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Auto Grab gun and Shoot", false,
         function(value: boolean): ()
             settings.grabGunShoot = value
-        end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire one SilentAim shot at the Murderer. Never during ordinary farming.")
+        end, "Only when the coin bag fills (50), only as Innocent and only during an active round (never as Murderer, never in the lobby): try an instant touch for the dropped sheriff gun, otherwise walk/fly to it, equip it, and fire Silent shots at the Murderer without WallCheck. Never during ordinary farming.")
     addToggleOption(AutoFarmFeature, "Auto Kill All When full coin bag", false,
         function(value: boolean): ()
             settings.killAllOnFull = value

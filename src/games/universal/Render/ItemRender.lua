@@ -522,27 +522,47 @@ function Module.init(context: Runtime): any
     -- Game-provided item highlights (for example MM2's Gun ESP and Trap ESP)
     -- appear here as their own toggles. The card itself stays game-agnostic:
     -- games register providers, this module only renders them.
-    local providerOptionNames: {[string]: boolean} = {}
-    local function attachProvider(provider: any): ()
-        if providerOptionNames[provider.name] then
-            return
+    local providerOptions: {[string]: any} = {}
+    local activeProviders: {[string]: any} = {}
+    local function refreshProviders(): ()
+        local previous: {[string]: any} = activeProviders
+        local current: {[string]: any} = {}
+        forEachProvider(function(provider: any): ()
+            current[provider.name] = provider
+        end)
+        activeProviders = current
+
+        for name: string, provider: any in pairs(previous) do
+            if current[name] ~= provider and providerStates[name] then
+                pcall(provider.setEnabled, false)
+            end
         end
-        providerOptionNames[provider.name] = true
-        render:CreateToggle({
-            Name = provider.name,
-            Default = false,
-            Tooltip = provider.tooltip,
-            Function = function(value: boolean): ()
-                setProviderEnabled(render, providerStates, provider, value)
-            end,
-        })
+        for name: string, provider: any in pairs(current) do
+            if not providerOptions[name] then
+                providerOptions[name] = render:CreateToggle({
+                    Name = name,
+                    Default = false,
+                    Tooltip = provider.tooltip,
+                    Function = function(value: boolean): ()
+                        providerStates[name] = value
+                        local selected: any = activeProviders[name]
+                        if selected then
+                            setProviderEnabled(render, providerStates, selected, value)
+                        end
+                    end,
+                })
+            elseif previous[name] ~= provider and render.Enabled and providerStates[name] then
+                pcall(provider.setEnabled, true)
+            end
+        end
+        for name: string, option: any in pairs(providerOptions) do
+            option:SetVisible(current[name] ~= nil)
+        end
     end
-    forEachProvider(attachProvider)
+    refreshProviders()
     local providerWatch: (() -> ())? = nil
     if itemEsp and type(itemEsp.onChanged) == "function" then
-        providerWatch = itemEsp.onChanged(function(): ()
-            forEachProvider(attachProvider)
-        end)
+        providerWatch = itemEsp.onChanged(refreshProviders)
     end
 
     activeCleanup = function(): ()

@@ -106,19 +106,16 @@ function Module.init(context: Runtime): any
     local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
 
-    local flingPower: number = 4
-    local flingDuration: number = 3
-    local flingPrediction: number = 0.15
+    -- Preserve the previous defaults for the three removed controls.
+    local FLING_POWER: number = 4
+    local FLING_DURATION: number = 3
+    local FLING_PREDICTION: number = 0.15
     local flingRetries: number = 1
     -- Temporary boost used by the second pass only (never persisted).
     local flingBoost: number = 1
 
     local function powerScale(): number
-        local power: number = tonumber(flingPower) or 4
-        if power ~= power then
-            power = 4
-        end
-        return (math.clamp(power, 1, 10) / 3) * flingBoost
+        return (FLING_POWER / 3) * flingBoost
     end
 
     local function scaledVelocity(base: Vector3): Vector3
@@ -210,7 +207,7 @@ function Module.init(context: Runtime): any
             return nil
         end
         local seconds: number = math.clamp(
-            transportSeconds() + (tonumber(flingPrediction) or 0.15),
+            transportSeconds() + FLING_PREDICTION,
             0,
             0.6
         )
@@ -450,7 +447,7 @@ function Module.init(context: Runtime): any
         end
         local silent: boolean = type(options) == "table" and options.silent == true
         local maxDuration: number = (type(options) == "table" and tonumber(options.duration))
-            or flingDuration
+            or FLING_DURATION
         local shouldStop: (() -> boolean)? = type(options) == "table"
             and type(options.shouldStop) == "function"
             and options.shouldStop
@@ -545,8 +542,7 @@ function Module.init(context: Runtime): any
                     basePart = targetHead
                 end
 
-                -- The poses follow YARHM; the menu's optional retries can
-                -- switch to another part and temporarily boost the force.
+                -- Retries can switch parts and temporarily boost force.
                 local maxPasses: number = math.clamp(
                     math.floor(tonumber(flingRetries) or 0),
                     0,
@@ -976,46 +972,6 @@ function Module.init(context: Runtime): any
             end
         end)
     end)
-    addNumberOption(
-        FlingFeature,
-        "Power",
-        4,
-        1,
-        10,
-        function(value: number): ()
-            flingPower = tonumber(value) or 4
-        end,
-        "Strength of the catapult. 3 is YARHM's exact numbers (9e7 pose, 9e8 pin); "
-            .. "higher throws harder and is the fix when the victim barely moves. "
-            .. "Very high values can get you kicked for Invalid position.",
-        0.5
-    )
-    addNumberOption(
-        FlingFeature,
-        "Duration",
-        3,
-        1,
-        6,
-        function(value: number): ()
-            flingDuration = tonumber(value) or 3
-        end,
-        "Seconds the poses keep being written. Longer survives a laggy server that "
-            .. "applies the contact late.",
-        0.5
-    )
-    addNumberOption(
-        FlingFeature,
-        "Prediction",
-        0.15,
-        0,
-        0.5,
-        function(value: number): ()
-            flingPrediction = tonumber(value) or 0.15
-        end,
-        "Extra lead (seconds) on top of half your ping. Every pose is written where "
-            .. "the victim will be, so fast targets and 300 ms connections still get hit.",
-        0.05
-    )
     addNumberOption(
         FlingFeature,
         "Retries",

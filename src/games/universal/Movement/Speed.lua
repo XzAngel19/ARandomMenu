@@ -8,6 +8,12 @@ function Module.init(context: Runtime): any
     local player, world = host.LocalPlayer, host.workspace or workspace
     local walk, vehicle, speed
     local teleportElapsed, lastMode = 0, nil
+    local wallParams, wallCharacter, wallGroup
+
+    local function clearWallFilter()
+        if wallParams then wallParams.FilterDescendantsInstances = {} end
+        wallCharacter = nil
+    end
 
     local function parts()
         local character = player.Character
@@ -23,9 +29,10 @@ function Module.init(context: Runtime): any
     local function applyWalk(humanoid, value)
         if walk and walk.humanoid ~= humanoid then restoreWalk() end
         if not walk then walk = {humanoid=humanoid,base=humanoid.WalkSpeed} end
-        if walk.applied and humanoid.WalkSpeed ~= walk.applied then walk.base = humanoid.WalkSpeed end
+        local current = humanoid.WalkSpeed
+        if walk.applied ~= nil and current ~= walk.applied then walk.base = current end
         -- Negative WalkSpeed inverts controls (Roblox legacy behavior)
-        humanoid.WalkSpeed = value
+        if current ~= value then humanoid.WalkSpeed = value end
         walk.applied = value
         -- When WalkSpeed is negative, invert the move direction by setting
         -- the Humanoid's MoveDirection opposite to input
@@ -37,10 +44,12 @@ function Module.init(context: Runtime): any
         end
     end
     local function write(record, object, property, value)
+        local current = object[property]
         local field = record[property]
-        if not field then field = {base=object[property]}; record[property] = field end
-        if field.applied ~= nil and object[property] ~= field.applied then field.base = object[property] end
-        object[property], field.applied = value, value
+        if not field then field = {base=current}; record[property] = field end
+        if field.applied ~= nil and current ~= field.applied then field.base = current end
+        if current ~= value then object[property] = value end
+        field.applied = value
     end
     local function restoreRecord(object, record)
         if not object.Parent then return end
@@ -140,16 +149,24 @@ function Module.init(context: Runtime): any
     end
     local function blocked(root, step)
         if step.Magnitude < 0.001 then return step end
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = {player.Character}
-        params.RespectCanCollide, params.IgnoreWater = true, true
-        params.CollisionGroup = root.CollisionGroup
+        if not wallParams then
+            wallParams = RaycastParams.new()
+            wallParams.FilterType = Enum.RaycastFilterType.Exclude
+            wallParams.RespectCanCollide, wallParams.IgnoreWater = true, true
+        end
+        if wallCharacter ~= player.Character then
+            wallCharacter = player.Character
+            wallParams.FilterDescendantsInstances = player.Character and {player.Character} or {}
+        end
+        if wallGroup ~= root.CollisionGroup then
+            wallGroup = root.CollisionGroup
+            wallParams.CollisionGroup = wallGroup
+        end
         if world.Blockcast then
-            local hit = world:Blockcast(root.CFrame,root.Size*0.9,step,params)
+            local hit = world:Blockcast(root.CFrame,root.Size*0.9,step,wallParams)
             return hit and step.Unit*math.max(0,hit.Distance-0.1) or step
         end
-        local hit = world:Raycast(root.Position,step,params)
+        local hit = world:Raycast(root.Position,step,wallParams)
         return hit and step.Unit*math.max(0,(hit.Position-root.Position).Magnitude-root.Size.Magnitude*0.5-0.1) or step
     end
     local function stepSpeed(dt)
@@ -211,6 +228,7 @@ function Module.init(context: Runtime): any
         Function=function(enabled)
             restoreWalk(); restoreVehicle(); teleportElapsed, lastMode = 0, nil
             if not enabled then
+                clearWallFilter()
                 if speed.ClearSprint then speed.ClearSprint() end
                 speed:SetStatus(nil)
                 if speed.SprintHeld then stepSpeed(0) end
@@ -253,7 +271,7 @@ function Module.init(context: Runtime): any
     activeCleanup = function()
         speed.SprintHeld = false
         if speed.Enabled then speed:Toggle(false) end
-        restoreWalk(); restoreVehicle()
+        restoreWalk(); restoreVehicle(); clearWallFilter()
         if speed.ClearSprint then speed.ClearSprint() end
     end
     Module.Initialized = true

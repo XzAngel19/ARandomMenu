@@ -25,6 +25,7 @@ local function signal()
 end
 local makeCharacter
 local loads=0
+local cloneFails=false
 local function object(class,values)
  local props=values or {};props.Name=props.Name or class
  local children={};local methods={}
@@ -40,7 +41,7 @@ local function object(class,values)
  function methods:Move(v) props.MoveDirection=v end
  function methods:GetState() return props.state or 'Running' end
  function methods:PivotTo(frame) self:FindFirstChild('HumanoidRootPart').CFrame=frame end
- function methods:Clone() return makeCharacter(self:FindFirstChild('HumanoidRootPart').CFrame.Position) end
+ function methods:Clone() if cloneFails then error('clone failed') end;return makeCharacter(self:FindFirstChild('HumanoidRootPart').CFrame.Position) end
  function methods:LoadAnimation()
   loads+=1;return {Play=function(self) self.playing=true end,Stop=function(self) self.playing=false end}
  end
@@ -80,8 +81,16 @@ local framework={Categories={Utilities={CreateModule=function(_,d)
   self.Options[o.Name]=field;if o.Function then o.Function(o.Default) end;return field
  end
  card.CreateToggle=option;card.CreateSlider=option
- function card:Toggle(v) self.Enabled=v;d.Function(v) end
- function card:Notify(s) error(s) end
+ function card:Toggle(v) if self.Enabled~=v then self.Enabled=v;d.Function(v) end end
+ card.Feature={enabled=false}
+ function card.Feature.activate()
+  local wanted=not card.Feature.enabled
+  local ok,err=pcall(function() card:Toggle(wanted) end)
+  card.Feature.enabled=ok and wanted or false
+  if not ok then card:Toggle(false) end
+  return ok,err
+ end
+ function card:Notify(s) self.lastNotice=s end
  return card
 end}}}
 '''+ '\nlocal Ghost=(function()\n'+(ROOT/'src/games/universal/Blatant/Invisible.lua').read_text()+'\nend)()\n'+r'''
@@ -117,8 +126,23 @@ clone=world:FindFirstChild('Wurst_Ghost');gr=clone:FindFirstChild('HumanoidRootP
 gr.CFrame=CFrame.new(110,35,0);card:Toggle(false)
 near(newRoot.Position.X,110);near(newRoot.Position.Y,35)
 assert(clone.destroyed and not flags.ghost and world.CurrentCamera.CameraSubject==newH and pre:Count()==0 and input.JumpRequest:Count()==0)
+assert(card.Feature.activate());assert(card.Enabled and card.Feature.enabled and flags.ghost and pre:Count()==1)
 Ghost.destroy()
-pass('actual Ghost: unanchored colliding Walk, no CFrame height lock, gravity left intact, Shift 32/release, jump/air guard, animation cache, Fly transitions, camera ownership, respawn and cleanup')
+assert(not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0 and input.JumpRequest:Count()==0,
+ 'direct unload must also turn the feature/card OFF and detach its listeners')
+-- A failed clone must not leave the card visually ON or persist its ON state.
+Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
+cloneFails=true
+local ok=card.Feature.activate()
+assert(not ok and not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0,
+ 'failed spawn must report failure and leave both feature and card OFF')
+cloneFails=false
+assert(card.Feature.activate() and card.Enabled and card.Feature.enabled and flags.ghost)
+clone=world:FindFirstChild('Wurst_Ghost');clone:Destroy();pre:Fire(.02)
+assert(not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0,
+ 'losing the active ghost must also switch the visible feature OFF')
+Ghost.destroy()
+pass('actual Ghost: native Walk, sprint/jump, Fly, camera and respawn; failed spawn, lost ghost and unload keep feature/card/listeners OFF')
 '''
 with tempfile.TemporaryDirectory() as tmp:
  p=Path(tmp)/'ghost.luau';p.write_text(script);subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)

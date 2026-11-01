@@ -892,7 +892,7 @@ do
     end
     assert(autoFarm.options:FindFirstChild("Option_SafeZone"), "Auto Farm must expose Safe Zone option")
     local knifeThrow = findFeature("Knife Throw")
-    assert(knifeThrow and knifeThrow.categoryName == "Combat", "Knife Throw module must exist in Combat")
+    assert(knifeThrow and knifeThrow.categoryName == "Exploits", "Knife Throw module must exist in Exploits")
     assert(knifeThrow.options:FindFirstChild("Option_AutoKnifeThrow"), "Knife Throw must expose Auto Knife Throw option")
     assert(knifeThrow.options:FindFirstChild("Option_Delay"), "Knife Throw must expose Delay option")
     assert(knifeThrow.options:FindFirstChild("Option_KnifeTracer"), "Knife Throw must expose Knife Tracer option")
@@ -912,33 +912,32 @@ do
     do
       local values, toggles, cfg = ex.state.valueControls, ex.state.toggleControls, ex.configData
       local aim = values["MM2.Shoot.Aimmethod"]
-      local gunWall, gunMacro, gunAvoid = toggles["MM2.Shoot.WallCheck"], toggles["MM2.Shoot.Macro"], toggles["MM2.Shoot.Avoidinnocents"]
+      local gunWall, gunMacro = toggles["MM2.Shoot.WallCheck"], toggles["MM2.Shoot.Macro"]
       local target, targetName = values["MM2.Shoot.Target"], values["MM2.Shoot.Targetplayer"]
-      assert(aim and gunWall and gunMacro and gunAvoid and target and targetName, "Gun Aimbot controls missing")
-      aim.apply("Bullet")
-      gunWall.setChecked(false); gunMacro.setChecked(true); gunAvoid.setChecked(false)
+      assert(aim and gunWall and gunMacro and target and targetName, "Gun Aimbot controls missing")
+      assert(not toggles["MM2.Shoot.Avoidinnocents"] and not findFeature("Gun Aimbot").options:FindFirstChild("Option_Avoidinnocents"), "Avoid Innocents must be removed")
+      aim.apply("Normal(Bullet)")
+      gunWall.setChecked(false); gunMacro.setChecked(true)
       target.apply("Custom"); targetName.apply("TestPlayer")
       local nameBox = findFeature("Gun Aimbot").options:FindFirstChild("Option_Targetplayer"):FindFirstChildOfClass("TextBox")
       nameBox:GetPropertyChangedSignal("Text"):Fire() -- the mock does not auto-fire property signals
-      aim.apply("CFrame")
-      assert(ex.state.mm2Core.mm2Settings.shootWallCheck == true and ex.state.mm2Core.mm2Settings.avoidInnocents == true
-        and ex.state.mm2Core.mm2Settings.shootMode == "Murder", "CFrame inherited Bullet settings")
+      aim.apply("Silent(Cframe)")
+      assert(ex.state.mm2Core.mm2Settings.silentAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true
+        and ex.state.mm2Core.mm2Settings.shootMode == "Murder", "Silent inherited Bullet settings")
       gunMacro.setChecked(true); gunWall.setChecked(false)
       aim.apply("Experimental")
-      assert(ex.state.mm2Core.mm2Settings.experimentalAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true
-        and ex.state.mm2Core.mm2Settings.avoidInnocents == true, "Experimental inherited Gun settings")
-      gunAvoid.setChecked(false)
-      aim.apply("Bullet")
-      assert(ex.state.mm2Core.mm2Settings.shootWallCheck == false and ex.state.mm2Core.mm2Settings.avoidInnocents == false
+      assert(ex.state.mm2Core.mm2Settings.experimentalAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true,
+        "Experimental inherited Gun settings")
+      aim.apply("Normal(Bullet)")
+      assert(ex.state.mm2Core.mm2Settings.shootWallCheck == false
         and ex.state.mm2Core.mm2Settings.shootMode == "Custom" and ex.state.mm2Core.mm2Settings.shootTarget == "TestPlayer"
         and cfg.states["MM2.Shoot.Bullet.Macro"] == true, "Bullet Gun settings were not restored")
-      aim.apply("Experimental")
-      assert(ex.state.mm2Core.mm2Settings.avoidInnocents == false and cfg.states["MM2.Shoot.Experimental.AvoidInnocents"] == false,
-        "Experimental Gun options were not retained")
+      aim.apply("Experimental"); gunWall.setChecked(false)
+      assert(cfg.states["MM2.Shoot.Experimental.WallCheck"] == false, "Experimental Gun options were not retained")
       -- Reset test changes to avoid contaminating later boot assertions.
-      gunAvoid.setChecked(true); aim.apply("Bullet"); gunWall.setChecked(true); gunMacro.setChecked(false)
-      gunAvoid.setChecked(true); target.apply("Murder"); targetName.apply("")
-      aim.apply("CFrame"); gunWall.setChecked(true); gunMacro.setChecked(false); aim.apply("Bullet")
+      gunWall.setChecked(true); aim.apply("Normal(Bullet)"); gunWall.setChecked(true); gunMacro.setChecked(false)
+      target.apply("Murder"); targetName.apply("")
+      aim.apply("Silent(Cframe)"); gunWall.setChecked(true); gunMacro.setChecked(false); aim.apply("Normal(Bullet)")
 
       local mode = values["MM2.AutoShoot.Mode"]
       local wall, prox, aura = toggles["MM2.AutoShoot.WallCheck"], toggles["MM2.AutoShoot.Proximity"], values["MM2.AutoShoot.Aura"]
@@ -963,12 +962,15 @@ do
     end
     local killAuraModule = ex.state.framework:GetModule("KillAura")
     assert(killAuraModule and killAuraModule.Options["Kill All"] and killAuraModule.Options["Kill Player"],
-      "KillAura must expose Kill All button and Kill Player living-Innocent selector")
+      "Knife Stab must expose Kill All and Kill Player")
+    assert(not findFeature("KillAura"), "MM2 must show Knife Stab instead of a second KillAura")
+    assert(not (ex.state.clickGui.categories or {}).Combat, "Combat window must not exist")
+    assert(ex.state.moduleSearch.Resolve("Knife Stab").status == "success", "Knife Stab must be searchable")
+    assert(ex.state.moduleSearch.Resolve("Aim Assist").entry.displayName == "Aimbot", "old Aimbot search alias must work")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Combat = {"Aim Assist", "KillAura", "Gun Aimbot"},
-      Exploits = {"Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling", "Walk Fling"},
-      Utilities = {"Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
+      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling", "Walk Fling"},
+      Utilities = {"Auto Shoot", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -1088,10 +1090,10 @@ do
     for _, name in ipairs({"Metrics", "Learning", "Game Learning", "HookPart", "Flight", "Invisible", "SpinBot", "Sprint", "Instant Role Notify", "Knife", "Shoot"}) do
       assert(not findFeature(name), "Removed module still present: " .. name)
     end
-    -- Auto Shoot is now an independent Combat module, not in Blatant/SilentAIM
+    -- Auto Shoot is an independent Utilities module
     local autoShoot = findFeature("Auto Shoot")
     if autoShoot then
-      assert(autoShoot.categoryName == "Combat", "Auto Shoot must be in Combat category, not Blatant")
+      assert(autoShoot.categoryName == "Utilities", "Auto Shoot must be in Utilities")
     end
     assert(not findFeature("Time Changer"))
     -- v138.2: Anti Fling is its own card and Anti Void is the invisible platform,
@@ -1102,6 +1104,13 @@ do
     assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
     assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
     assert(fling.options:FindFirstChild("Option_Fling"))
+    for _, label in ipairs({"Power", "Duration", "Prediction"}) do
+      assert(not fling.options:FindFirstChild("Option_" .. label), "Fling slider must be removed: " .. label)
+    end
+    assert(fling.options:FindFirstChild("Option_Retries"), "unrelated retry option must remain")
+    for _, label in ipairs({"FlingMurderer", "FlingSheriff", "FlingAllInnocents"}) do
+      assert(fling.options:FindFirstChild("Option_" .. label), "Fling action must remain: " .. label)
+    end
     assert(not fling.options:FindFirstChild("Option_SelectTarget"), "the Select Target dropdown is gone")
     -- Auto Win and Auto Farm still drive flings through these exports; the card
     -- moved to Universal, so they must be published from there.
@@ -1175,7 +1184,7 @@ do
     PlayersService.GetPlayers=originalPlayers
     ex.state.framework:GetModule("FreeCam").Options.Spectate.Metadata.callback(false)
     assert(type(ex.state.dock.BeginMove)=="function")
-    local aim=ex.state.framework:GetModule("Aim Assist")
+    local aim=ex.state.framework:GetModule("Aimbot")
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
     local ghost=ex.state.framework:GetModule("Ghost")
     assert(ghost.Options["Ghost Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
@@ -1212,49 +1221,52 @@ do
     assert(ex.state.mm2Prediction and type(ex.state.mm2Prediction.gunAim) == "function", "MM2 Prediction must own aiming")
     assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isWeaponPathClear) == "function")
     
-    -- GUI visibility and section tests wrapped in pcall due to mock limitations
-    pcall(function()
-    local shoot = findFeature("Gun Aimbot") or findFeature("SilentAIM")
+    -- Gun Aimbot, Knife Stab and Auto Shoot are independent real cards.
+    local shoot = findFeature("Gun Aimbot")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
-    assert(aimMethod, "Gun method must be configurable")
-    aimMethod.apply("CFrame")
+    assert(shoot and aimMethod and shoot.options:FindFirstChild("Section_Gun"))
+    aimMethod.apply("Silent(Cframe)")
     assert(shoot.options:FindFirstChild("Option_WallCheck").Visible, "WallCheck applies to Silent too")
-    aimMethod.apply("Bullet")
+    aimMethod.apply("Normal(Bullet)")
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
-    assert(not shoot.options:FindFirstChild("Option_Shootnow"), "Shoot now duplicates its main keybind")
-    assert(not ex.state.shortcutBindings["MM2.ShootShoot now"], "duplicate Shoot now shortcut must not register")
-    local knife = findFeature("KillAura")
-    for _, name in ipairs({"Mode", "ThrowRange", "Firedelay", "Spawnoffset", "WallCheck", "Throwanimation", "ThrowHz", "Thrownow"}) do
-      assert(not knife.options:FindFirstChild("Option_" .. name), "redundant Knife setting: " .. name)
-    end
-    assert(shootAuto and shoot.options:FindFirstChild("Option_AutoShoot").Visible, "Auto Shoot must be a visible top-level Gun option")
+    assert(not shoot.options:FindFirstChild("Option_AutoShoot") and not shoot.options:FindFirstChild("Option_KnifeThrow"),
+      "independent cards must not be duplicated in Gun Aimbot")
+    local knife = findFeature("Knife Stab")
+    assert(knife and knife.configKey == "Universal.KillAura", "Knife Stab keeps existing key bindings and config")
     local auraModule = ex.state.framework:GetModule("KillAura")
     assert(auraModule.CombatAdapter and not auraModule.Options.Reach.Visible, "MM2 must not run/display duplicate generic melee controls")
     auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled)
-    assert(#auraModule.Cleanup == 0, "generic attack loop/watchers must not start alongside MM2 adapter")
+    assert(#auraModule.Cleanup == 0, "generic attack watchers must not start alongside MM2 adapter")
     auraModule:Toggle(false);assert(not ex.state.mm2KnifeRuntime.masterEnabled)
     assert(ex.state.mm2KnifeRuntime.auraWanted, "master OFF retains the selected attack")
-    ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(true)
-    assert(not ex.state.mm2KnifeRuntime.masterEnabled, "child does not bypass master")
-    local gunHeader = shoot.options:FindFirstChild("Section_Gun")
-    local knifeHeader = shoot.options:FindFirstChild("Section_Knife")
-    local knifeThrowOption = shoot.options:FindFirstChild("Option_KnifeThrow")
-    local autoShootOption = shoot.options:FindFirstChild("Option_AutoShoot")
-    assert(gunHeader and gunHeader.Visible, "the Gun section header must be visible")
-    assert(knifeHeader and knifeHeader.Visible, "the Knife section header must be visible")
-    assert(autoShootOption and gunHeader.LayoutOrder < autoShootOption.LayoutOrder,
-        "the Gun header opens the gun rows")
-    assert(knifeThrowOption and knifeThrowOption.LayoutOrder > knifeHeader.LayoutOrder,
-        "Knife Throw belongs under the Knife header, not buried below Gun tuning")
-    assert(not shoot.options:FindFirstChild("Option_Throwwithbutton"), "the button trigger option was removed")
-    assert(not knife.options:FindFirstChild("Option_KnifeThrow"), "Knife Throw must not be in KillAura")
-    shoot.activationTarget.MouseButton1Click:Fire();assert(ex.state.mm2SilentAimEnabled)
-    auraModule:Toggle(true);assert(ex.state.mm2KnifeRuntime.masterEnabled and ex.state.mm2KnifeRuntime.throwWanted)
-    shoot.activationTarget.MouseButton1Click:Fire();assert(not ex.state.mm2SilentAimEnabled and ex.state.mm2KnifeRuntime.throwWanted)
-    auraModule:Toggle(false);assert(ex.state.mm2KnifeRuntime.throwWanted, "stop does not erase Throw preference")
-    ex.state.toggleControls["MM2.Shoot.KnifeThrow"].setChecked(false)
-    end)
-    
+    local auraRange = knife.options:FindFirstChild("Option_AuraRange")
+    assert(auraRange and auraRange.Visible, "Knife Aura is the default Knife Stab attack")
+    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(false)
+    assert(not auraRange.Visible)
+    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(true)
+    assert(auraRange.Visible)
+    local autoShootSettings = ex.state.windows.OpenFeatureSettings(autoShoot)
+    local autoAura = autoShoot.options:FindFirstChild("Option_Aura")
+    local autoMode = autoShoot.options:FindFirstChild("Option_Mode")
+    local autoWall = autoShoot.options:FindFirstChild("Option_WallCheck")
+    local autoProximity = autoShoot.options:FindFirstChild("Option_Proximity")
+    local proximityControl = ex.state.toggleControls["MM2.AutoShoot.Proximity"]
+    assert(autoShootSettings and autoShoot.options.Visible and autoAura and autoMode and autoWall and autoProximity)
+    autoShoot.activate()
+    assert(autoShoot.enabled and autoShoot.status=='Bullet', 'enable should show the mode without implying an Aura radius')
+    proximityControl.setChecked(false)
+    assert(autoShoot.options.Visible and not autoAura.Visible and autoMode.Visible and autoWall.Visible and autoProximity.Visible
+      and autoShoot.status=='Bullet', "Proximity OFF must hide only Aura and show no radius")
+    proximityControl.setChecked(true)
+    assert(autoShoot.options.Visible and autoAura.Visible and autoMode.Visible and autoWall.Visible and autoProximity.Visible
+      and autoShoot.status=='Bullet · 25 studs', "Proximity ON must show only the enabled radius")
+    proximityControl.setChecked(false)
+    assert(autoShoot.options.Visible and not autoAura.Visible and autoShoot.status=='Bullet', "Aura visibility/status must survive repeated toggles")
+    autoShoot.activate()
+    assert(not autoShoot.enabled and autoShoot.status==nil, 'OFF clears status and disconnects Auto Shoot')
+    autoShoot.toggleExpansion() -- close the settings window
+    print("[HARNESS] MM2 RENAMED CARDS + REAL PROXIMITY SETTINGS VISIBILITY CLEAN")
+
     -- Chams and ESP role tests wrapped in pcall
     pcall(function()
     local chams = ex.state.framework:GetModule("Chams")
@@ -1297,12 +1309,6 @@ do
     tp.Options.Destination.Metadata.callback("MM2")
     assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
 
-    local auraRange = knife.options:FindFirstChild("Option_AuraRange")
-    assert(auraRange and auraRange.Visible, "Knife Aura is the default MM2 KillAura attack")
-    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(false)
-    assert(not auraRange.Visible)
-    ex.state.toggleControls["Universal.KillAura.KnifeAura"].setChecked(true)
-    assert(auraRange.Visible)
     local spider = findFeature("Spider")
     assert(not spider.options:FindFirstChild("Option_CeilingWalk"))
     assert(spider.options:FindFirstChild("Option_Climbstate").Visible)

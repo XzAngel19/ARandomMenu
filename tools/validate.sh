@@ -2,6 +2,7 @@
 # Reproducible local/CI checks for the modular Wurst runtime.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+mkdir -p build
 
 # The toolchain is vendored in this branch: tools/luau/vendor holds the pinned
 # wasm package and tools/luau/setup.sh unpacks it into tools/luau/node_modules.

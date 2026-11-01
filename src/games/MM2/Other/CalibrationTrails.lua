@@ -30,12 +30,12 @@ function Module.init(runtime: any): any
 
     local function clearTrails(): ()
         if trailFolder then
-            pcall(function(): () trailFolder:Destroy() end)
+            trailFolder:Destroy()
             trailFolder = nil
         end
     end
 
-    local function drawShotTrail(origin: Vector3, hit: Vector3, hitPart: any): ()
+    local function drawShotTrail(origin: Vector3, hit: Vector3): ()
         local folder: Folder = ensureTrailFolder()
         local segment: Vector3 = hit - origin
         local length: number = segment.Magnitude
@@ -53,17 +53,13 @@ function Module.init(runtime: any): any
             beam.Size = Vector3.new(0.07, 0.07, length)
             beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
             beam.Parent = folder
-            pcall(function(): ()
-                TweenService:Create(
-                    beam,
-                    TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                    { Transparency = 1 }
-                ):Play()
-            end)
+            TweenService:Create(
+                beam,
+                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
+                { Transparency = 1 }
+            ):Play()
             task.delay(1.55, function(): ()
-                if beam.Parent then
-                    pcall(function(): () beam:Destroy() end)
-                end
+                if beam.Parent then beam:Destroy() end
             end)
         end
         -- Pixel-sized ring at the reported endpoint; never highlight the
@@ -109,7 +105,7 @@ function Module.init(runtime: any): any
         local ok, service = pcall(core.getWeaponServiceModule)
         if not ok or type(service) ~= "table" or not service.GunFired then return end
         local connected, result = pcall(function()
-            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit, hitPart)
+            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit)
                 if not options.trailEsp then return end
                 local function position(value)
                     local v = typeof(value) == "Vector3" and value
@@ -118,7 +114,7 @@ function Module.init(runtime: any): any
                     return nil
                 end
                 local a, b = position(origin), position(hit)
-                if a and b then drawShotTrail(a, b, hitPart) end
+                if a and b then drawShotTrail(a, b) end
             end)
         end)
         if connected then connection = result end

@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""v139.2: the shot is chosen by what is BEHIND the murderer.
+"""Removed behind-target checking: the authored Gun aim is left untouched.
 
-MM2's gun is a long hitscan ray, so the endpoint we author is not where the
-ray stops. The saved v139.1 session proves it: of 10 confirmed shots 4 hit the
-murderer, 3 stopped on map geometry past the aim and 2 landed on another
-player's HumanoidRootPart. This suite drives the real `fireGunAtTarget` plus the
-real `describeRayBeyond` against an axis-aligned ray mock and checks that
-
-  * a clear line behind the target is left alone,
-  * a body behind the torso moves the aim to a part whose line is clear,
-  * a body close enough that every line crosses it refuses the shot,
-  * a body far down the ray is not a reason to move,
-  * turning the option off restores the old "always shoot" behaviour.
-
-LUAU=/path/to/luau python3 tools/test_gun_corridor.py
+Runs the real dispatch with mocked geometry. This is not a server hit test.
 """
 from __future__ import annotations
 
@@ -27,6 +15,8 @@ from test_mm2_precision import PRELUDE, section
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (ROOT / "src/games/MM2/base.lua").read_text()
 SHOOT = (ROOT / "src/games/MM2/Blatant/Shoot.lua").read_text()
+for token in ("avoidInnocents", "bystanderBlocks", "corridorSafePoint", "describeRayBeyond"):
+    assert token not in SHOOT and token not in BASE, token
 
 code = PRELUDE + r'''
 local SELECT_TARGET = {Name = 'Murderer', role = 'Murderer'}
@@ -113,12 +103,9 @@ function workspace:Raycast(origin, delta, params)
 end
 function workspace:GetServerTimeNow() return 0 end
 function workspace:GetChildren() return {} end
-''' + section(
-    BASE, "local function describeRayBeyond(", "local function getWeaponFromContainer("
-) + r'''
--- Shoot.lua's dispatch path, with the real corridor helper handed to it.
+-- Shoot.lua's real dispatch path.
 local mm2Settings = {silentAim = false, shootWallCheck = true,
-    silentSpawn = 'Through', silentSweep = 0, avoidInnocents = true}
+    silentSpawn = 'Through', silentSweep = 0}
 local remote = {IsA = function() return true end, FireServer = function() end}
 local character = {FindFirstChildOfClass = function() return {} end}
 local gun = {Parent = character, Enabled = true, Name = 'Gun',
@@ -132,7 +119,6 @@ local function isPlayerAlive() return true end
 local function isProtectedTarget() return false end
 local function isWeaponPathClear() return true end
 local function validateGunShot() return true end
-local function bystanderOnSegment() return false end
 local function buildSilentShot()
     return CFrame.new(Vector3.zero), CFrame.new(Vector3.zero), 2.5, 0.5, 'Front'
 end
@@ -181,42 +167,17 @@ assert(sent, 'a clear line behind the murderer must shoot')
 assert(point and (point - aim.endpoint).Magnitude < 1e-6,
     'with nobody behind, the aim must not be nudged')
 
--- 2. An innocent 20 studs behind the torso line: the torso line crosses it,
---    the head line passes above. The aim moves instead of refusing.
-withScene({part(Vector3.new(40, 0, 0), Vector3.new(2, 6, 6),
-    SELECT_INNOCENT.Character)})
-sent, point = shoot()
-assert(sent, 'a body 20 studs behind must move the aim, not refuse the shot')
-assert(point and (point - aim.endpoint).Magnitude > 0.01,
-    'the aim must leave the torso line when a body sits behind it')
-assert(point and math.abs(point.X - 20) < 2.5 and math.abs(point.Z) < 2.5,
-    'the new aim must still be on the murderer')
+-- Behind-target players no longer modify the aim or block requests.
+for _, x in ipairs({22, 40, 170}) do
+    withScene({part(Vector3.new(x, 0, 0), Vector3.new(2, 10, 10),
+        SELECT_INNOCENT.Character)})
+    sent, point = shoot()
+    assert(sent, 'a body behind must not refuse the shot')
+    assert(point and (point - aim.endpoint).Magnitude < 1e-6,
+        'a body behind must not move the preferred aim')
+end
 
--- 3. A body so close and tall that every candidate line crosses it: refuse.
---    Point blank behind means a 1-stud miss kills an innocent.
-withScene({part(Vector3.new(22, 0, 0), Vector3.new(2, 10, 10),
-    SELECT_INNOCENT.Character)})
-sent = shoot()
-assert(not sent, 'an innocent right behind the murderer must skip the shot')
-
--- 4. The option off: shoot anyway, exactly where the predictor asked.
-mm2Settings.avoidInnocents = false
-sent, point = shoot()
-assert(sent, 'with Avoid innocents off the shot must still fire')
-assert(point and (point - aim.endpoint).Magnitude < 1e-6,
-    'with the option off the aim must not move')
-mm2Settings.avoidInnocents = true
-
--- 5. A body far down the ray is not a reason to change the aim: the murderer's
---    own body stops the ray long before it gets there.
-withScene({part(Vector3.new(170, 8.5, 0), Vector3.new(2, 2, 2),
-    SELECT_INNOCENT.Character)})
-sent, point = shoot()
-assert(sent, 'a far body must not skip the shot')
-assert(point and (point - aim.endpoint).Magnitude < 1e-6,
-    'a body far down the ray must not disturb the aim')
-
-print('PASS gun corridor: clear line, moved aim, point-blank refusal, far body, option off')
+print('PASS Gun aim: bodies behind do not alter or refuse the requested shot')
 '''
 
 

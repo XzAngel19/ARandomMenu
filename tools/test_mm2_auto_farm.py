@@ -122,8 +122,8 @@ assert "settings.grabGunShoot then" in SOURCE
 assert "during ordinary farming" in SOURCE
 assert "findDroppedGun" in SOURCE
 assert "humanoid:EquipTool(gun :: Tool)" in SOURCE
-assert 'gun:FindFirstChild("Shoot")' in SOURCE  # direct fallback shot
-assert "prediction.gunAim" in SOURCE
+assert "wallCheck = false" in SOURCE
+assert 'gun:FindFirstChild("Shoot")' not in SOURCE, "farm must not fall back to Bullet"
 assert "or settings.flingMurder or settings.flingSheriff" in SOURCE
 assert "going for the dropped gun" not in SOURCE, \
     "no gun grab in the ordinary farming tick"

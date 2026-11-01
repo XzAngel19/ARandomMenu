@@ -21,7 +21,10 @@ local char=model('Model',world,true)
 local characterRoot={Position=Vector3.new(0,2,0)}
 char.FindFirstChild=function() return characterRoot end
 local function part(name,size,position,parent,modifier)
- local p={Name=name,Size=size,Position=position,Parent=parent or world,Anchored=true,CanCollide=true,Transparency=0,LocalTransparencyModifier=modifier or 0}
+ local props={Name=name,Size=size,Position=position,Parent=parent or world,Anchored=true,CanCollide=true,Transparency=0,LocalTransparencyModifier=modifier or 0}
+ local writes=0
+ local p=setmetatable({}, {__index=function(_,key) return key=='writeCount' and writes or props[key] end,
+  __newindex=function(_,key,value) if key=='LocalTransparencyModifier' then writes+=1 end;props[key]=value end})
  function p:IsA(c) return c=='BasePart' end
  function p:IsDescendantOf(a) local node=self.Parent;while node do if node==a then return true end;node=node.Parent end;return false end
  table.insert(world.parts,p);return p
@@ -59,6 +62,9 @@ end}}}
 Module.init({host={LocalPlayer={Character=char},workspace=world,isMenuOwned=function(p) return p.menu end},framework=framework})
 near(wall.LocalTransparencyModifier,.2)
 module:Toggle(true);near(wall.LocalTransparencyModifier,.5);near(crate.LocalTransparencyModifier,.5)
+local writes=wall.writeCount
+module.step(.3);module.step(.3)
+assert(wall.writeCount==writes,'unchanged parts should not have transparency rewritten on every scan')
 for _,p in ipairs({floor,far,decor,dynamic,head,grip,rescue,own}) do near(p.LocalTransparencyModifier,0) end
 module.Options.Scope:Set('Walls');module.step(.3);near(crate.LocalTransparencyModifier,0);near(wall.LocalTransparencyModifier,.5)
 module.Options['Keep visible']:Set(' wall , Crate ');module.step(.3);near(wall.LocalTransparencyModifier,.2)
@@ -70,6 +76,8 @@ near(head.LocalTransparencyModifier,0);near(grip.LocalTransparencyModifier,0)
 local added=part('New wall',Vector3.new(1,12,20),Vector3.zero);world.DescendantAdded:Fire(added);module.step(.3);near(added.LocalTransparencyModifier,.5)
 wall.LocalTransparencyModifier=.8;module.step(.3);module:Toggle(false);near(wall.LocalTransparencyModifier,.8);near(added.LocalTransparencyModifier,0)
 module:Toggle(true);crate.LocalTransparencyModifier=.9;module:Toggle(false);near(crate.LocalTransparencyModifier,.9)
+module:Toggle(true);wall.LocalTransparencyModifier=.1;module.step(.3);near(wall.LocalTransparencyModifier,.5)
+module:Toggle(false);near(wall.LocalTransparencyModifier,.1)
 module:Toggle(true);added.Parent=nil;module.step(.3);near(added.LocalTransparencyModifier,0)
 Module.destroy();assert(next(world.DescendantAdded.listeners)==nil)
 pass('Xray: all scopes, kept names, floors, collision/dynamic/range filters, nested characters/tools, streamed/unparented parts, external writes and cleanup')

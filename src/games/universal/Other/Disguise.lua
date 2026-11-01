@@ -1113,24 +1113,6 @@ function Module.init(context: Runtime): any
         return false
     end
 
-    -- Clears the tracks, restarts the script and proves the body moves again.
-    -- Returns false only when nothing plays, which is the signal to fall back
-    -- to the rig's own clips instead of leaving a frozen character.
-    local function activateAnimationOverride(
-        character: Model,
-        humanoid: Humanoid,
-        animate: Instance
-    ): boolean
-        for _, track: AnimationTrack in ipairs(playingAnimationTracks(humanoid)) do
-            pcall(function(): ()
-                track:Stop()
-            end)
-        end
-        restartAnimateScript(animate)
-        task.wait(0.1)
-        return #playingAnimationTracks(humanoid) > 0
-    end
-
     -- Session cache of clip verdicts, and its one-time notice.
     -- A verdict is computed ONCE per id and never inside the Animate
     -- script's retry loop.

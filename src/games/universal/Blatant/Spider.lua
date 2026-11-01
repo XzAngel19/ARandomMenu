@@ -77,25 +77,19 @@ function Module.init(context: Runtime): any
         raycastParams.FilterType = Enum.RaycastFilterType.Exclude
         raycastParams.RespectCanCollide = true
         local ignoreRefreshAt: number = -math.huge
+        local ignoredCharacter: Model? = nil
         local ignoreList: {Instance} = {}
-        local ignoreSignature: string = ""
         local function refreshIgnore(character: Model): ()
             local now: number = os.clock()
-            if now - ignoreRefreshAt < 0.5 then
-                return
-            end
-            ignoreRefreshAt = now
-            local names: {string} = {}
+            if character == ignoredCharacter and now - ignoreRefreshAt < 0.5 then return end
+            ignoredCharacter, ignoreRefreshAt = character, now
             table.clear(ignoreList)
             table.insert(ignoreList, character)
             for _, player: Player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character then
                     table.insert(ignoreList, player.Character)
-                    table.insert(names, player.Name)
                 end
             end
-            table.sort(names)
-            ignoreSignature = table.concat(names, ",")
             raycastParams.FilterDescendantsInstances = ignoreList
         end
 
@@ -231,7 +225,7 @@ end
 
 function Module.destroy(): ()
     if activeCleanup then
-        pcall(activeCleanup)
+        activeCleanup()
     end
     activeCleanup = nil
     Module.Initialized = false

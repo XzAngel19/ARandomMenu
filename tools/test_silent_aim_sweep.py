@@ -21,7 +21,6 @@ geometry = section(
 script = PRELUDE + r'''
 local mm2Settings = {silentSweep = 0.5}
 local prediction = {}
-local function bystanderOnSegment() return false end
 ''' + geometry + r'''
 -- The predicted point is 20 studs in front of the muzzle, and the target runs
 -- along +X at 16 studs/s, so the extra segment is a straight extension of X.
@@ -73,28 +72,16 @@ prediction = {getLeadUncertainty = function() error("boom") end}
 near(getSilentSweepDistance(16), 0.5)
 pass("silent sweep: a missing or failing measurement falls back cleanly")
 
--- 6) If a bystander intersects the requested Through construction, the code
--- falls back to Front without sweep. Telemetry must describe that actual
--- packet, not the originally requested variant and length.
+-- Geometry remains the requested construction; no behind-target filter
+-- can rewrite it now that Avoid Innocents was removed.
 prediction = {}
-local bystanderCalls = 0
-bystanderOnSegment = function()
-    bystanderCalls += 1
-    return bystanderCalls == 1
-end
-local fallbackStart, fallbackEnd, _, fallbackSweep, fallbackVariant =
-    buildSilentShot({}, info, muzzle, "Through")
-assert(fallbackStart and fallbackEnd)
-near(fallbackStart.Position.X, 7.5)
-near(fallbackEnd.Position.X, 10)
-near(fallbackSweep, 0)
-assert(fallbackVariant == "Front",
-    "the calibration must record the actual fallback geometry")
-pass("silent geometry: bystander fallback reports actual variant and zero sweep")
+local start, finish, _, amount, actual = buildSilentShot({}, info, muzzle, "Through")
+assert(start and finish and actual == "Through")
+near(start.Position.X, -1.5); near(finish.Position.X, 11.5); near(amount, 0.5)
+pass("silent geometry: requested Through construction is retained")
 
 -- A vertical muzzle-to-target approach has no Front/Through direction. The
 -- motion-aligned construction must not be mislabeled as the requested Front.
-bystanderOnSegment = function() return false end
 local verticalMuzzle = CFrame.new(Vector3.new(10, 5, 0))
 local _, _, _, motionSweep, motionVariant =
     buildSilentShot({}, info, verticalMuzzle, "Front")

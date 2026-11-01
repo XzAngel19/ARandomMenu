@@ -355,6 +355,7 @@ function Module.init(runtime: any): any
     local aura: any = state.framework and state.framework:GetModule("KillAura")
     assert(aura, "MM2 Knife requires the existing KillAura module")
     local wasEnabled: boolean = aura.Enabled
+    local migratedShortcut: any = nil
     if type(configData) == "table" and not configData.values["MM2.Knife.MigratedToKillAura"] then
         for _, label: string in ipairs({"KnifeAura"}) do
             local old: any = configData.states["MM2.Knife." .. label]
@@ -365,19 +366,39 @@ function Module.init(runtime: any): any
             {"MM2.Knife.AuraRange", "Universal.KillAura.AuraRange"},
             {"Shortcut.MM2Knife", "Shortcut.UniversalKillAura"},
         }) do
-            if configData.values[pair[2]] == nil then configData.values[pair[2]] = configData.values[pair[1]] end
+            if configData.values[pair[2]] == nil then
+                configData.values[pair[2]] = configData.values[pair[1]]
+                if pair[2] == "Shortcut.UniversalKillAura" then
+                    migratedShortcut = configData.values[pair[2]]
+                end
+            end
         end
-        wasEnabled = wasEnabled or configData.states["MM2.Knife"] == true
+        if configData.states["Universal.KillAura"] == nil then
+            local previous = configData.states["MM2.Knife"]
+            configData.states["Universal.KillAura"] = previous
+            wasEnabled = wasEnabled or previous == true
+        end
         configData.values["MM2.Knife.MigratedToKillAura"] = true
         if type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+    -- The universal card and its shortcut already exist by the time MM2 is
+    -- identified. Apply a migrated key now, rather than on the next boot.
+    local shortcut: any = state.shortcutBindings and state.shortcutBindings["Universal.KillAura"]
+    if shortcut and type(migratedShortcut) == "string" then
+        local ok: boolean, key: any = pcall(function(): any return (Enum.KeyCode :: any)[migratedShortcut] end)
+        if ok and key then
+            shortcut.key = key
+            if type(shortcut.refresh) == "function" then shortcut.refresh() end
+        end
     end
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
-    local originalSearch: string = KnifeFeature.searchText
     KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
-    KnifeFeature.searchText = "killaura combat mm2 knife aura range kill all kill player"
+    if type(KnifeFeature.SetName) == "function" then
+        KnifeFeature:SetName("Knife Stab")
+    end
     aura.CombatAdapter = function(enabled: boolean): ()
         state.mm2KnifeRuntime.masterEnabled = enabled
         refreshKnifeController()
@@ -395,7 +416,7 @@ function Module.init(runtime: any): any
     state.mm2KnifeFeature = KnifeFeature
 
     aura:CreateToggle({Name = "Knife Aura", Default = true, Function = toggleKnifeAura,
-        Tooltip = "MM2 stabs with your equipped knife while KillAura is ON."})
+        Tooltip = "MM2 stabs with your equipped knife while Knife Stab is ON."})
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
@@ -452,10 +473,20 @@ function Module.init(runtime: any): any
         suppressKillPlayerCallback = false
     end
     killPlayerReady = true
-    if wasEnabled then aura:Toggle(true) end
+    if wasEnabled then
+        if not KnifeFeature.enabled and type(KnifeFeature.activate) == "function" then
+            KnifeFeature.activate()
+        else
+            aura:Toggle(true)
+        end
+    end
 
     activeCleanup = function(): ()
         if aura.Enabled then aura:Toggle(false) end
+        if KnifeFeature.enabled then
+            KnifeFeature.enabled = false
+            refreshFeatureToggle(KnifeFeature)
+        end
         toggleKnifeAura(false)
         table.clear(killedCharacterByPlayer)
         state.mm2KnifeRuntime.masterEnabled = false
@@ -464,7 +495,9 @@ function Module.init(runtime: any): any
         aura.CombatAdapter = nil
         KnifeFeature.description = originalDescription
         KnifeFeature.tooltipText = originalDescription
-        KnifeFeature.searchText = originalSearch
+        if type(KnifeFeature.SetName) == "function" then
+            KnifeFeature:SetName("KillAura")
+        end
         -- If the adapter is detached before the whole UI is destroyed, do
         -- not expose stale MM2 actions beside the generic controls.
         aura.OptionFilter = function(name: string): boolean

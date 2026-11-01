@@ -353,8 +353,8 @@ assert(featuresByName["Auto Win"].categoryName == "Utilities",
     "Auto Win is not in Utilities")
 assert(featuresByName["Auto Farm"].categoryName == "Utilities",
     "Auto Farm is not in Utilities")
-assert(featuresByName["Silent AIM"].categoryName == "Combat",
-    "Silent AIM left Combat")
+assert(featuresByName["Silent AIM"].categoryName == "Exploits",
+    "Silent AIM must remain visible in Exploits")
 assert(ex.state.x2duelsCore and ex.state.x2duelsRules,
     "X2 shared core/rules were not published")
 assert(ex.state.gameBridge.teamProvider

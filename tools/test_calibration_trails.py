@@ -33,6 +33,13 @@ local function typeof(value)
 end
 local Color3={fromRGB=function(...) return {...} end}
 Enum.Material.Neon='Neon'
+Enum.EasingStyle={Linear='Linear'}
+local TweenInfo={new=function(duration,style) return {duration=duration,style=style} end}
+local tweenCalls=0
+local TweenService={Create=function(_,part,info,properties)
+ assert(part.Name=='TrailSegment' and info.duration==1.4 and properties.Transparency==1)
+ return {Play=function() tweenCalls+=1 end}
+end}
 local UDim2={fromOffset=function(...) return {...} end,fromScale=function(...) return {...} end}
 local UDim={new=function(...) return {...} end}
 local timers={}
@@ -49,7 +56,8 @@ local function addColorOption(_,name,_,fn) controls[name]=fn end
 '''+ '\nlocal Module=(function()\n'+SOURCE+'\nend)()\n'+r'''
 Module.init({});assert(configData.states['MM2.Calibration.TrailESP'])
 gun:Fire(nil,Vector3.zero,Vector3.new(100,0,0),nil)
-assert(#workspace.children==1 and #workspace.children[1].children==2)
+assert(#workspace.children==1 and #workspace.children[1].children==2 and tweenCalls==1,
+ 'valid shots must start the native fade tween')
 local folder=workspace.children[1]
 gun:Fire(nil,Vector3.new(0/0,0,0),Vector3.new(100,0,0),nil)
 assert(#folder.children==2,'reject malformed positions')

@@ -165,7 +165,7 @@ function Module.init(context: any): any
                 end
                 bitmapText.draw(row, {
                     {
-                        text = name,
+                        text = feature.name,
                         color = feature.titleColor or Theme.text,
                     },
                 }, {
@@ -875,6 +875,34 @@ function Module.init(context: any): any
 
         function feature:SetStatus(status: string?): ()
             feature.status = status
+        end
+
+        -- Used when a game is identified after the universal card was made.
+        -- configKey and framework identity deliberately stay unchanged.
+        function feature:SetName(nextName: string): ()
+            if type(nextName) ~= "string" or nextName == "" then return end
+            local previous: string = feature.name
+            if previous ~= nextName and registry[previous] == feature then
+                registry[previous] = nil
+                registry[nextName] = feature
+            end
+            feature.name = nextName
+            feature.searchText = string.lower(nextName .. " " .. (feature.description or "")
+                .. " " .. sectionName .. " " .. categoryName)
+            row:SetAttribute("FeatureSortName", string.lower(nextName))
+            if feature.title then feature.title.Text = nextName end
+            if feature.drawTitle then feature.drawTitle() end
+            local search: any = state.moduleSearch
+            if search and type(search.Unregister) == "function" and type(search.Register) == "function" then
+                search.Unregister(feature)
+                search.Register(feature)
+            end
+            if state.clickGui and type(state.clickGui.Resort) == "function" then
+                state.clickGui.Resort(feature)
+            end
+            if state.floatingUi and type(state.floatingUi.registerFeature) == "function" then
+                state.floatingUi.registerFeature(feature)
+            end
         end
 
         registry[name] = feature

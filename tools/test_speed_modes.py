@@ -10,7 +10,8 @@ SOURCE = (ROOT/'src/games/universal/Movement/Speed.lua').read_text()
 script = PRELUDE + r'''
 Enum.ActuatorType={Motor='Motor',Servo='Servo'}
 Enum.HumanoidStateType={Running='Running',Jumping='Jumping',Climbing='Climbing',Swimming='Swimming',Physics='Physics',PlatformStanding='PlatformStanding'}
-local RaycastParams={new=function() return {} end}
+local paramCount=0
+local RaycastParams={new=function() paramCount+=1;return {} end}
 local cfMt={__add=function(a,v) return CFrame.new(a.Position+v) end}
 CFrame.new=function(p) return setmetatable({Position=p or Vector3.zero,LookVector=Vector3.new(0,0,-1)},cfMt) end
 local function signal()
@@ -24,7 +25,9 @@ local function signal()
  return s
 end
 local function newHumanoid()
- local h={Parent=true,Health=100,WalkSpeed=16,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Air',state='Running',Sit=false,changes=0}
+ local h=setmetatable({Parent=true,Health=100,_walk=16,writes=0,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Air',state='Running',Sit=false,changes=0},{
+  __index=function(self,key) if key=='WalkSpeed' then return self._walk end end,
+  __newindex=function(self,key,value) if key=='WalkSpeed' then self._walk=value;self.writes+=1 else rawset(self,key,value) end end})
  function h:GetState() return self.state end
  function h:ChangeState(s) self.state=s;self.changes+=1 end
  return h
@@ -33,10 +36,11 @@ local h=newHumanoid()
 local root={Parent=true,Anchored=false,CollisionGroup='Default',Size=Vector3.new(2,2,1),Position=Vector3.zero,CFrame=CFrame.new(),AssemblyMass=2,AssemblyLinearVelocity=Vector3.new(2,5,3)}
 function root:ApplyImpulse(v) self.AssemblyLinearVelocity+=v/self.AssemblyMass end
 local character={FindFirstChildOfClass=function() return h end,FindFirstChild=function() return root end}
+local player={Character=character}
 local fly={Enabled=false}
-local blockDistance,casts=nil,0
+local blockDistance,casts,lastParams=nil,0,nil
 local world={Blockcast=function(_,cf,size,delta,params)
- casts+=1;assert(params.RespectCanCollide and params.CollisionGroup=='Default' and params.FilterDescendantsInstances[1]==character)
+ lastParams=params;casts+=1;assert(params.RespectCanCollide and params.CollisionGroup==root.CollisionGroup and params.FilterDescendantsInstances[1]==character)
  return blockDistance and {Distance=blockDistance} or nil
 end}
 local run={PreSimulation=signal()}
@@ -62,11 +66,14 @@ end}},GetModule=function(_,name) return name=='Fly' and fly or nil end}
 local function tick(dt) run.PreSimulation:Fire(dt or 1/60) end
 local function set(name,value) module.Options[name]:Set(value) end
 ''' + '\nlocal Module=(function()\n' + SOURCE + '\nend)()\n' + r'''
-Module.init({host={LocalPlayer={Character=character},workspace=world,RunService=run},framework=framework})
+Module.init({host={LocalPlayer=player,workspace=world,RunService=run},framework=framework})
 module:Toggle(true);tick();near(h.WalkSpeed,32);assert(run.PreSimulation:Count()==1)
 for _,value in ipairs({1000,5000,1e12}) do set('Speed',value);tick();near(h.WalkSpeed,value) end
 set('Speed',32);tick();near(h.WalkSpeed,32)
-for _=1,120 do tick() end;module:Toggle(false);near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0)
+local walkWrites=h.writes
+for _=1,120 do tick() end
+assert(h.writes==walkWrites,'unchanged WalkSpeed should not be written every physics frame')
+module:Toggle(false);near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0)
 module:Toggle(true);tick();h.WalkSpeed=24;tick();near(h.WalkSpeed,32);module:Toggle(false);near(h.WalkSpeed,24)
 h.WalkSpeed=16;module:Toggle(true);tick();h.WalkSpeed=70;module:Toggle(false);near(h.WalkSpeed,70)
 h.WalkSpeed=16;module:Toggle(true);tick();local old=h;h=newHumanoid();h.WalkSpeed=22;tick();near(old.WalkSpeed,16)
@@ -78,6 +85,12 @@ h.MoveDirection=Vector3.zero;tick();near(root.AssemblyLinearVelocity.X,0)
 set('Mode','CFrame');h.MoveDirection=Vector3.new(1,0,0);root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Position.X,1.6)
 root.CFrame=CFrame.new();tick(50);near(root.CFrame.Position.X,1.6)
 blockDistance=.3;root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Position.X,.2);blockDistance=nil
+for _=1,120 do tick(1/60) end
+assert(paramCount==1, 'wall checks reuse one RaycastParams')
+character={FindFirstChildOfClass=function() return h end,FindFirstChild=function() return root end}
+player.Character=character;root.CollisionGroup='NewGroup';tick()
+assert(paramCount==1 and lastParams.FilterDescendantsInstances[1]==character and lastParams.CollisionGroup=='NewGroup',
+    'respawn and collision-group changes refresh the existing parameters')
 set('Mode','Teleport');root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Position.X,0);tick(.1);near(root.CFrame.Position.X,3.2)
 h.MoveDirection=Vector3.zero;tick(.1);h.MoveDirection=Vector3.new(1,0,0);tick(.1);near(root.CFrame.Position.X,3.2)
 tick(.1);near(root.CFrame.Position.X,6.4)
@@ -87,17 +100,24 @@ set('Mode','CFrame');root.CFrame=CFrame.new();tick(.1);near(root.CFrame.Position
 set('Mode','WalkSpeed');set('Speed',32);tick();near(h.WalkSpeed,32)
 for _,state in ipairs({'Climbing','Swimming','Physics','PlatformStanding'}) do h.state=state;tick();near(h.WalkSpeed,16) end
 h.state='Running';root.Anchored=true;tick();near(h.WalkSpeed,16);root.Anchored=false;fly.Enabled=true;tick();near(h.WalkSpeed,16);fly.Enabled=false
-module:Toggle(false);set('Auto jump',true);h.FloorMaterial='Ground';local changes=h.changes
+module:Toggle(false);assert(#lastParams.FilterDescendantsInstances==0, 'OFF releases the cached character filter')
+set('Auto jump',true);h.FloorMaterial='Ground';local changes=h.changes
 module.SetSprintHeld(true);near(h.WalkSpeed,30);assert(h.changes==changes,'Sprint OFF must not activate Auto jump')
 module.SetSprintHeld(false);near(h.WalkSpeed,16);set('Auto jump',false)
 pass('foot: all five modes, analog input, zero-input braking, Y preserved, wall volume, hitch/burst timing, external WalkSpeed, respawn, Fly/state skips and Sprint OFF')
 local model={Parent=true,motors={},DescendantAdded=signal(),FindFirstAncestorOfClass=function() return nil end}
 function model:GetDescendants() return self.motors end
 local chassis={Parent=model,Anchored=false,AssemblyLinearVelocity=Vector3.new(4,7,8),IsDescendantOf=function(_,obj) return obj==model end}
-local seat={Parent=model,AssemblyRootPart=chassis,Occupant=h,MaxSpeed=40,Torque=10,ThrottleFloat=1,CFrame=CFrame.new(),
- IsA=function(_,class) return class=='VehicleSeat' end,FindFirstAncestorOfClass=function() return model end}
+local seat=setmetatable({Parent=model,AssemblyRootPart=chassis,Occupant=h,_max=40,_torque=10,writes=0,ThrottleFloat=1,CFrame=CFrame.new(),
+ IsA=function(_,class) return class=='VehicleSeat' end,FindFirstAncestorOfClass=function() return model end},{
+ __index=function(self,key) if key=='MaxSpeed' then return self._max elseif key=='Torque' then return self._torque end end,
+ __newindex=function(self,key,value)
+  if key=='MaxSpeed' then self._max=value;self.writes+=1 elseif key=='Torque' then self._torque=value;self.writes+=1 else rawset(self,key,value) end
+ end})
 h.Sit=true;h.SeatPart=seat;set('Vehicle speed',true);module:Toggle(true);tick();near(seat.MaxSpeed,80);near(seat.Torque,20);near(h.WalkSpeed,16)
+local seatWrites=seat.writes
 for _=1,120 do tick() end;near(seat.MaxSpeed,80);near(seat.Torque,20)
+assert(seat.writes==seatWrites,'unchanged vehicle engine values should not be rewritten')
 seat.MaxSpeed=30;seat.Torque=15;tick();near(seat.MaxSpeed,60);near(seat.Torque,30)
 set('Vehicle mode','Seat');near(seat.MaxSpeed,30);near(seat.Torque,15);tick();near(seat.MaxSpeed,80)
 seat.Occupant={};tick();near(seat.MaxSpeed,30);seat.Occupant=h
