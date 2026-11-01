@@ -168,6 +168,40 @@ fire('Started');assert(#QUEUED==4 and listeners()==0)
 print('PASS teleport authorization, Keep UI, cancellation, failure, teardown and manual reload')
 '''
 
+ROUND_TRIP = r'''
+-- Execute the actual queued loader and boot the actual Wurst source, twice,
+-- with a fresh getgenv each hop and shared executor files.
+local current=boot()
+local oldHttp=game.HttpGet
+local bootFetches=0
+game.HttpGet=function(self,url,...)
+    if tostring(url):find('src/Wurst.lua',1,true) then
+        bootFetches+=1
+        return WURST_SOURCE
+    end
+    return oldHttp(self,url,...)
+end
+for hop=1,2 do
+    fire('Started')
+    assert(#QUEUED==hop, 'one source should be queued per hop')
+    local queued=QUEUED[hop]
+    local gui=CoreGui:FindFirstChild('Wurst');assert(gui)
+    gui.AncestryChanged:Fire(gui,nil) -- expected old-place UI teardown
+    assert(listeners()==0)
+    GENV={}
+    local load,err=loadstring(queued);assert(load,err);load()
+    assert(bootFetches==hop and GENV.__expose and GENV.__expose.state.destruct,
+        'queued source did not boot Wurst at the destination')
+    current=GENV.__expose
+    assert(current.state.teleportPersist.enabled and listeners()==1)
+    load() -- a consumed token must not boot a second copy after the new claim
+    assert(bootFetches==hop, 'the old queue reloaded a second time')
+end
+current.state.destruct()
+game.HttpGet=oldHttp
+print('PASS real queued loader boots Wurst across two fresh-environment hops')
+'''
+
 PERSIST_OFF = r'''
 local a=boot()
 a.state.toggleControls['ClickGUI.Keepafterteleport'].setChecked(false)
@@ -393,6 +427,7 @@ def run_case(name: str, case: str, real_source: bool = False) -> None:
 
 for name, script, real in [
     ('teleport', TELEPORT, False),
+    ('round-trip', ROUND_TRIP, False),
     ('persist-off', PERSIST_OFF, False),
     ('races', RACES, False),
     ('handoff', HANDOFF, False),

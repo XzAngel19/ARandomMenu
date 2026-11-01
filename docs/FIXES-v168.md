@@ -77,7 +77,8 @@ la cola una versión concreta de Delta.
 menú 50 tarjetas con debug y 49 en release.
 
 `tools/test_teleport_persistence.py` ejecuta el boot y el texto realmente
-encolado con archivos compartidos y entornos simulados distintos. Cubre Keep
+encolado con archivos compartidos y entornos simulados distintos, incluidos
+dos saltos consecutivos que arrancan de nuevo el Wurst real. Cubre Keep
 ON/OFF y su guardado, mismo universo/PlaceId diferente, otro universo,
 GameId disponible tras `Loaded`, estados repetidos/fallo, Destruct antes y
 después del envío, durante la espera y descarga, retiro normal de interfaz,
