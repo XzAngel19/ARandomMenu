@@ -1,5 +1,5 @@
 return {
-    stamp = "v169-20261102-repo-runtime-cleanup",
+    stamp = "v170-20261102-shaders-weather-farm",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -5670,7 +5670,8 @@ function Module.init(_runtime: any): any
     -- of us (anchored), then slash. The slash uses the repo's own
     -- knife path (Events.HandleTouched per victim, as KnifeAura
     -- does) and falls back to the game's Stab remote like YARHM.
-    local function killAll(): ()
+    local function killAll(isCurrent: () -> boolean): ()
+        if not isCurrent() then return end
         if type(getPlayerRole) ~= "function"
             or getPlayerRole(LocalPlayer) ~= "Murderer" then
             notify("Auto Farm: Kill All only works as the Murderer.")
@@ -5697,11 +5698,11 @@ function Module.init(_runtime: any): any
             -- never a fixed sleep: 0.3 s is the ceiling, not the cost.
             local equipDeadline: number = os.clock() + 0.3
             while knife.Parent ~= character
-                and os.clock() < equipDeadline do
+                and os.clock() < equipDeadline and isCurrent() do
                 task.wait()
             end
         end
-        if knife.Parent ~= character then
+        if not isCurrent() or knife.Parent ~= character then
             return
         end
         local victims: {BasePart} = {}
@@ -5722,7 +5723,18 @@ function Module.init(_runtime: any): any
         if #victims == 0 then
             return
         end
+        local function releaseVictims(): ()
+            for _, victimRoot: BasePart in ipairs(victims) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end
         task.wait(0.15)
+        if not isCurrent() then
+            releaseVictims()
+            return
+        end
         local stab: Instance? = knife:FindFirstChild("Stab")
         if stab and stab:IsA("RemoteEvent") then
             pcall(function(): ()
@@ -5736,6 +5748,7 @@ function Module.init(_runtime: any): any
             (knife :: Tool):Activate()
         end)
         for _, victimRoot: BasePart in ipairs(victims) do
+            if not isCurrent() then break end
             if handleTouched and handleTouched:IsA("RemoteEvent") then
                 pcall(function(): ()
                     (handleTouched :: RemoteEvent):FireServer(victimRoot)
@@ -5743,20 +5756,18 @@ function Module.init(_runtime: any): any
             end
             task.wait(0.05)
         end
-        task.delay(0.5, function(): ()
-            for _, victimRoot: BasePart in ipairs(victims) do
-                pcall(function(): ()
-                    victimRoot.Anchored = false
-                end)
-            end
-        end)
-        notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
+        if isCurrent() then
+            task.delay(0.5, releaseVictims)
+            notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
+        else
+            releaseVictims()
+        end
     end
 
     -- Compact spin fling: park on the target spinning hard for a
     -- couple of seconds; contact physics does the rest.
-    local function flingPlayer(target: Player?): ()
-        if not target then
+    local function flingPlayer(target: Player?, isCurrent: () -> boolean): ()
+        if not target or not isCurrent() then
             return
         end
         if type(state.mm2PerformFling) == "function" then
@@ -5764,6 +5775,8 @@ function Module.init(_runtime: any): any
                 silent = true,
                 duration = 3.5,
                 blocking = true,
+                shouldStop = function(): boolean return not isCurrent() end,
+                skipReturnOnStop = true,
             })
             return
         end
@@ -5773,7 +5786,7 @@ function Module.init(_runtime: any): any
         end
         local saved: CFrame = myRoot.CFrame
         local startedAt: number = os.clock()
-        while os.clock() - startedAt < 2.2 do
+        while os.clock() - startedAt < 2.2 and isCurrent() do
             local targetRoot: BasePart? = rootOf(target)
             if not targetRoot then
                 break
@@ -5787,7 +5800,9 @@ function Module.init(_runtime: any): any
         end
         pcall(function(): ()
             myRoot.AssemblyAngularVelocity = Vector3.zero
-            myRoot.CFrame = saved
+            if isCurrent() then
+                myRoot.CFrame = saved
+            end
         end)
     end
 
@@ -5812,10 +5827,16 @@ function Module.init(_runtime: any): any
         return ok and sent == true
     end
 
+    local farmGeneration: number = 0
+
     local function toggleAutoFarm(enabled: boolean): ()
+        farmGeneration += 1
+        local enableGeneration: number = farmGeneration
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
+        disconnectFeatureConnection("MM2AutoFarmRoundEnd")
+        disconnectFeatureConnection("MM2AutoFarmRoundStart")
         -- Invokes the restore closure the previous enable registered:
         -- collisions, PlatformStand, AutoRotate and the root all go
         -- back, and the character returns to where the farm grabbed
@@ -5834,6 +5855,12 @@ function Module.init(_runtime: any): any
         local roundFullReached: boolean = false
         local teleportedHomeThisRound: boolean = false
         local wasInActiveRound: boolean = false
+        local currentRoundMap: Instance? = nil
+        local busyLobbyPart: BasePart? = nil
+        local busyLobbyScanAt: number = 0
+        local endedMap: Instance? = nil
+        local waitingForNextRound: boolean = false
+        local roundGeneration: number = 0
         local scanCache: {Instance} = {}
         local scanAt: number = 0
         -- A coin that does not pay on the first touch is retried on a later pass
@@ -5870,6 +5897,7 @@ function Module.init(_runtime: any): any
         -- physics step). The task tick only chooses the destination.
         local hoverTarget: Vector3? = nil
         local hoverActive: boolean = false
+        local lastSteppedPosition: Vector3? = nil
 
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
@@ -5911,6 +5939,14 @@ function Module.init(_runtime: any): any
                 end
             end
             return nil
+        end
+
+        local function isNearLobby(root: BasePart?, lobby: BasePart?): boolean
+            if not root or not lobby then return false end
+            local ok: boolean, near: any = pcall(function(): boolean
+                return (root.Position - lobby.Position).Magnitude <= 350
+            end)
+            return ok and near == true
         end
 
         -- Resolves a safe indoor floor position without ever raycasting from
@@ -6190,11 +6226,11 @@ function Module.init(_runtime: any): any
         -- Detects when the player's character is inside the loaded MM2 map,
         -- including the pre-round countdown seconds right after teleporting
         -- from the lobby before roles or coins have spawned.
-        local function isCharacterInActiveRound(root: BasePart): boolean
+        local function isCharacterInActiveRound(root: BasePart, knownMap: Instance?): boolean
             if type(findMM2Map) ~= "function" then
                 return false
             end
-            local map: Instance? = findMM2Map()
+            local map: Instance? = knownMap or findMM2Map()
             if not map then
                 return false
             end
@@ -6266,10 +6302,18 @@ function Module.init(_runtime: any): any
             return true
         end
 
-        local function restoreCharacter(returnHome: boolean): ()
+        local function restoreCharacter(returnHome: boolean, noReposition: boolean?): ()
             local wasMovedByFarm: boolean = engaged or hiddenUnderMap
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
+            -- The old body can disappear before the next round's body exists.
+            -- Restore the body we actually modified, not a newly spawned one.
+            local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+            if wasMovedByFarm and movedCharacter and movedCharacter ~= character then
+                character = movedCharacter
+                humanoid = movedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                root = movedCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+            end
             for part: Instance, was: boolean in pairs(savedCollide) do
                 pcall(function(): ()
                     (part :: BasePart).CanCollide = was
@@ -6298,6 +6342,9 @@ function Module.init(_runtime: any): any
                     end
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
+                    if noReposition then
+                        return
+                    end
                     -- Return the character to the exact last position
                     -- it had right before Auto Farm started (homeCFrame),
                     -- never to a random spawn point, and during active
@@ -6355,9 +6402,64 @@ function Module.init(_runtime: any): any
             engagedCharacter = nil
             hoverActive = false
             hoverTarget = nil
+            lastSteppedPosition = nil
             walkCarryDirection = nil
             walkCarryUntil = 0
             walkBodyReady = false
+        end
+
+        -- A round may end while the character is absent, so the ordinary
+        -- lobby tick is not guaranteed to run. Invalidate full-bag and pickup
+        -- state independently of that tick; never teleport to an old map here.
+        local function clearRound(): ()
+            roundGeneration += 1
+            busy = false
+            if engaged or hiddenUnderMap then
+                -- Lift a held/underground body back to the map only while it
+                -- is still demonstrably on the SAME round map. Never move a
+                -- body already teleported to a lobby or a replacement map.
+                local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+                local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+                local sameMap: boolean = currentRoundMap ~= nil
+                    and type(findMM2Map) == "function" and findMM2Map() == currentRoundMap
+                local mayReposition: boolean = sameMap and character ~= nil
+                    and character == movedCharacter and humanoid ~= nil and humanoid.Health > 0
+                    and root ~= nil and isCharacterInActiveRound(root :: BasePart, currentRoundMap)
+                restoreCharacter(false, not mayReposition)
+            end
+            wasInActiveRound = false
+            currentRoundMap = nil
+            busyLobbyPart = nil
+            busyLobbyScanAt = 0
+            bagAmount = 0
+            bagLimit = 50
+            fullHandled = false
+            roundFullReached = false
+            teleportedHomeThisRound = false
+            homeCFrame = nil
+            homeCharacter = nil
+            -- scanCache can be Coin ESP's shared list: do not mutate it.
+            scanCache = {}
+            scanAt = 0
+            table.clear(retryAt)
+            table.clear(attempts)
+            table.clear(blacklist)
+            stuckPart = nil
+            stuckSince = 0
+            lastTouchPulse = 0
+            destroySafeZonePlatform()
+        end
+
+        local function enterRound(character: Model, root: BasePart, map: Instance): ()
+            if wasInActiveRound and currentRoundMap == map then
+                return
+            end
+            clearRound()
+            wasInActiveRound = true
+            currentRoundMap = map
+            homeCFrame = CFrame.new(root.Position)
+                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            homeCharacter = character
         end
 
         local function engage(
@@ -6624,12 +6726,12 @@ function Module.init(_runtime: any): any
     -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
     -- if we do not already carry it, equip it, and continuously shoot
     -- the murderer until the murderer is eliminated or the round ends.
-    local function grabGunAndShoot(): ()
-        if not canGrabGun() then
+    local function grabGunAndShoot(isCurrent: () -> boolean): ()
+        if not isCurrent() or not canGrabGun() then
             return
         end
         local shootLoopDeadline: number = os.clock() + 30
-        while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do
+        while os.clock() < shootLoopDeadline and isCurrent() and settings.grabGunShoot do
             if not canGrabGun() then
                 return
             end
@@ -6660,7 +6762,7 @@ function Module.init(_runtime: any): any
                 end
                 local pickupDeadline: number = os.clock() + 5
                 while os.clock() < pickupDeadline and not gun do
-                    if not canGrabGun() or not enabled or not settings.grabGunShoot then
+                    if not isCurrent() or not canGrabGun() or not settings.grabGunShoot then
                         return
                     end
                     local curChar: Model?, curHum: Humanoid?,
@@ -6727,11 +6829,11 @@ function Module.init(_runtime: any): any
                     humanoid:EquipTool(gun :: Tool)
                 end)
                 local equipWait: number = os.clock() + 0.15
-                while gun.Parent ~= character and os.clock() < equipWait do
+                while gun.Parent ~= character and os.clock() < equipWait and isCurrent() do
                     task.wait()
                 end
             end
-            if gun.Parent == character and canGrabGun() then
+            if isCurrent() and gun.Parent == character and canGrabGun() then
                 shootMurderer(murderer)
             end
             task.wait(0.12)
@@ -6742,23 +6844,25 @@ function Module.init(_runtime: any): any
         -- return to exact pre-farm position, Auto Grab gun and Shoot,
         -- reset, then the full-bag flings (which never depend on the reset).
         -- Runs once per 50-coin fill.
-        local function runFullSequence(): ()
-            busy = true
+        local function runFullSequence(isCurrent: () -> boolean): ()
             local ok: boolean, err: any = pcall(function(): ()
+                if not isCurrent() then return end
                 -- Everything in this sequence happens ONLY when the
                 -- bag is full (50): Kill All, return to the character's
                 -- last position before Auto Farm started (homeCFrame),
                 -- gun grab + continuous shooting, reset, and flings.
                 -- None of it runs during ordinary farming.
                 if settings.killAllOnFull then
-                    killAll()
+                    killAll(isCurrent)
                     task.wait()
                 end
+                if not isCurrent() then return end
                 restoreCharacter(true)
                 if settings.grabGunShoot then
-                    grabGunAndShoot()
+                    grabGunAndShoot(isCurrent)
                     task.wait(0.15)
                 end
+                if not isCurrent() then return end
                 if settings.resetOnFull then
                     local oldCharacter: Model? = LocalPlayer.Character
                     local _, humanoid: Humanoid? = characterParts()
@@ -6770,7 +6874,7 @@ function Module.init(_runtime: any): any
                     -- Wait for the respawned character, checking
                     -- every frame instead of four times a second.
                     local deadline: number = os.clock() + 10
-                    while os.clock() < deadline do
+                    while os.clock() < deadline and isCurrent() do
                         local character: Model?, newHumanoid: Humanoid?,
                             newRoot: BasePart? = characterParts()
                         if character and character ~= oldCharacter
@@ -6786,28 +6890,106 @@ function Module.init(_runtime: any): any
                 -- they meet the fresh character first (above), without one they
                 -- simply happen now. The label says "after full bag" for exactly
                 -- that reason.
+                if not isCurrent() then return end
                 if settings.flingMurder
                     and type(findMurderer) == "function" then
-                    flingPlayer(findMurderer())
+                    flingPlayer(findMurderer(), isCurrent)
                 end
-                if settings.flingSheriff
+                if isCurrent() and settings.flingSheriff
                     and type(findSheriff) == "function" then
-                    flingPlayer(findSheriff())
+                    flingPlayer(findSheriff(), isCurrent)
                 end
             end)
             if not ok then
                 warn("Auto Farm full-bag sequence failed: " .. tostring(err))
             end
-            busy = false
+        end
+
+        local function startBusySequence(action: (() -> boolean) -> ()): ()
+            if busy then return end
+            busy = true
+            -- Resolve once per sequence; individual yielded actions only do a
+            -- cheap distance check, never a workspace scan for each pose.
+            busyLobbyPart = findLobbyReferencePart()
+            busyLobbyScanAt = os.clock() + 0.5
+            local sequenceRound: number = roundGeneration
+            local sequenceMap: Instance? = currentRoundMap
+            local observedCharacter: Model? = LocalPlayer and LocalPlayer.Character
+            local mapChanged: boolean = false
+            local function isCurrent(): boolean
+                if farmGeneration ~= enableGeneration or roundGeneration ~= sequenceRound then
+                    return false
+                end
+                local character: Model?, _, root: BasePart? = characterParts()
+                if sequenceMap and not sequenceMap.Parent then return false end
+                if character ~= observedCharacter then
+                    observedCharacter = character
+                    local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                    if map and map ~= sequenceMap then mapChanged = true end
+                end
+                return not mapChanged and not isNearLobby(root, busyLobbyPart)
+            end
+            task.spawn(function(): ()
+                local ok: boolean, err: any = pcall(action, isCurrent)
+                if not ok then
+                    warn("Auto Farm sequence failed: " .. tostring(err))
+                end
+                if farmGeneration == enableGeneration and roundGeneration == sequenceRound then
+                    if isCurrent() then
+                        busy = false
+                    else
+                        local _, _, root: BasePart? = characterParts()
+                        local inLobby: boolean = isNearLobby(root, busyLobbyPart)
+                        clearRound()
+                        setStatus(if inLobby then "Auto Farm: waiting in lobby" else "Auto Farm: waiting for round")
+                    end
+                end
+            end)
         end
 
         local remotes: any = core.mm2GameplayRemotes
+        local roundEnd: Instance? = remotes and remotes:FindFirstChild("RoundEndFade")
+        if roundEnd and roundEnd:IsA("RemoteEvent") then
+            featureConnections.MM2AutoFarmRoundEnd = (roundEnd :: any).OnClientEvent:Connect(
+                function(): ()
+                    endedMap = currentRoundMap or (type(findMM2Map) == "function" and findMM2Map())
+                    waitingForNextRound = true
+                    clearRound()
+                end
+            )
+        end
+        local roundStart: Instance? = remotes and remotes:FindFirstChild("RoundStart")
+        if roundStart and roundStart:IsA("RemoteEvent") then
+            featureConnections.MM2AutoFarmRoundStart = (roundStart :: any).OnClientEvent:Connect(
+                function(duration: any): ()
+                    if waitingForNextRound and tonumber(duration) and tonumber(duration) > 0 then
+                        waitingForNextRound = false
+                        endedMap = nil
+                    end
+                end
+            )
+        end
         local collected: Instance? = remotes
             and remotes:FindFirstChild("CoinCollected")
         if collected and collected:IsA("RemoteEvent") then
             featureConnections.MM2AutoFarmCoinCollected =
                 (collected :: any).OnClientEvent:Connect(
                     function(_bag: any, amount: any, limit: any): ()
+                        -- A first coin can arrive before the next heartbeat.
+                        -- Enter its map before recording the amount, otherwise
+                        -- the following tick would immediately erase it.
+                        local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+                        local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                        if not character or not humanoid or humanoid.Health <= 0 or not root
+                            or not map or not isCharacterInActiveRound(root, map)
+                            or (waitingForNextRound and map == endedMap) then
+                            return
+                        end
+                        if waitingForNextRound then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
+                        enterRound(character, root, map)
                         if type(limit) == "number" and limit >= 50 then
                             bagLimit = limit
                         end
@@ -6837,9 +7019,22 @@ function Module.init(_runtime: any): any
                         return
                     end
                     local character: Model? = LocalPlayer and LocalPlayer.Character
-                    if not character then
+                    local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+                    if not character or (movedCharacter and movedCharacter ~= character) then
                         return
                     end
+                    local root: BasePart? =
+                        character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root or not root.Parent then return end
+                    local position: Vector3 = root.Position
+                    if lastSteppedPosition and (position - lastSteppedPosition).Magnitude > 60 then
+                        -- The server can teleport the same character to the
+                        -- lobby before Heartbeat sees the phase change. Release
+                        -- flight/NoClip without moving to an old home first.
+                        restoreCharacter(false, true)
+                        return
+                    end
+                    lastSteppedPosition = position
                     if hiddenUnderMap or settings.mode ~= "Walk" then
                         forceNoClipCharacter(character)
                     end
@@ -6848,9 +7043,7 @@ function Module.init(_runtime: any): any
                     end
                     local humanoid: Humanoid? =
                         character:FindFirstChildOfClass("Humanoid")
-                    local root: BasePart? =
-                        character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                    if root and root.Parent and humanoid and humanoid.Health > 0 then
+                    if humanoid and humanoid.Health > 0 then
                         applyBelowControl(root, humanoid)
                     end
                 end
@@ -6863,46 +7056,58 @@ function Module.init(_runtime: any): any
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
                 end
-                if busy then
-                    return
-                end
                 local character: Model?, humanoid: Humanoid?,
                     root: BasePart? = characterParts()
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
                     return
                 end
+                local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                -- A same-round full-bag sequence may be waiting for respawn.
+                -- A different map or a lobby body must be allowed to cancel it,
+                -- even when an old map remains loaded and RoundEnd was missed.
+                if busy and (not map or map == currentRoundMap) then
+                    if not busyLobbyPart and os.clock() >= busyLobbyScanAt then
+                        busyLobbyPart = findLobbyReferencePart()
+                        busyLobbyScanAt = os.clock() + 0.5
+                    end
+                    if isNearLobby(root, busyLobbyPart) then
+                        clearRound()
+                        setStatus("Auto Farm: waiting in lobby")
+                    end
+                    return
+                end
 
                 -- Strict lobby & non-round guard: NEVER activate, move,
                 -- or farm in the lobby or outside an active round on a map.
-                local inActiveRound: boolean = isCharacterInActiveRound(root)
+                local inActiveRound: boolean = map ~= nil and isCharacterInActiveRound(root, map)
                 if not inActiveRound then
-                    if engaged or hiddenUnderMap then
-                        restoreCharacter(false)
+                    if wasInActiveRound or engaged or hiddenUnderMap then
+                        clearRound()
                     end
-                    if wasInActiveRound then
-                        wasInActiveRound = false
-                        bagAmount = 0
-                        fullHandled = false
-                        roundFullReached = false
-                        teleportedHomeThisRound = false
-                        homeCFrame = nil
-                        homeCharacter = nil
-                        destroySafeZonePlatform()
+                    if waitingForNextRound then
+                        local lobby: BasePart? = findLobbyReferencePart()
+                        local reachedLobby: boolean = lobby ~= nil
+                            and (root.Position - (lobby :: BasePart).Position).Magnitude <= 350
+                        if not map or map ~= endedMap or reachedLobby then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
                     end
                     setStatus("Auto Farm: waiting in lobby")
                     return
                 end
-
-                if not wasInActiveRound then
-                    wasInActiveRound = true
-                    bagAmount = 0
-                    fullHandled = false
-                    roundFullReached = false
-                    teleportedHomeThisRound = false
-                    homeCFrame = CFrame.new(root.Position)
-                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
-                    homeCharacter = character
+                if waitingForNextRound and map == endedMap then
+                    setStatus("Auto Farm: waiting for next round")
+                    return
+                end
+                if waitingForNextRound then
+                    waitingForNextRound = false
+                    endedMap = nil
+                end
+                enterRound(character, root, map :: Instance)
+                if busy then
+                    return
                 end
 
                 local targetLimit: number = math.max(50, bagLimit)
@@ -6915,18 +7120,13 @@ function Module.init(_runtime: any): any
                         if settings.killAllOnFull or settings.resetOnFull
                             or settings.flingMurder or settings.flingSheriff
                             or settings.grabGunShoot then
-                            task.spawn(runFullSequence)
+                            startBusySequence(runFullSequence)
                         else
                             restoreCharacter(true)
                         end
                     elseif settings.grabGunShoot and canGrabGun() then
-                        task.spawn(function(): ()
-                            if busy then
-                                return
-                            end
-                            busy = true
-                            pcall(grabGunAndShoot)
-                            busy = false
+                        startBusySequence(function(isCurrent: () -> boolean): ()
+                            grabGunAndShoot(isCurrent)
                         end)
                     else
                         setStatus(string.format(
@@ -26165,6 +26365,8 @@ function Module.init(context: Runtime): any
         end
 
         local function pose(offset: CFrame, angles: CFrame): boolean
+            -- Stop between individual yielded poses, not only once per group.
+            if shouldStop and shouldStop() then return false end
             local part: BasePart? = currentBasePart()
             if not part then
                 return false
@@ -26321,6 +26523,9 @@ function Module.init(context: Runtime): any
             and type(options.shouldStop) == "function"
             and options.shouldStop
             or nil
+        -- Auto Farm opts out of returning to an old round after cancellation.
+        -- Other callers (including Auto Win) retain their existing return policy.
+        local skipReturnOnStop: boolean = type(options) == "table" and options.skipReturnOnStop == true
         local returnCFrame: CFrame? = type(options) == "table"
             and typeof(options.returnCFrame) == "CFrame"
             and options.returnCFrame
@@ -26420,6 +26625,7 @@ function Module.init(context: Runtime): any
                 local used: BasePart? = nil
                 local pass: number = 0
                 while pass < maxPasses do
+                    if shouldStop and shouldStop() then break end
                     pass += 1
                     local partNow: BasePart? = nil
                     if pass == 1 then
@@ -26494,17 +26700,36 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 workspace.FallenPartsDestroyHeight = savedDestroyHeight
             end)
+            local finalCharacter: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
+                getCharacterParts()
+            local cancelled: boolean = skipReturnOnStop and shouldStop ~= nil and shouldStop()
             if camera then
                 pcall(function(): ()
-                    camera.CameraSubject = humanoid
+                    camera.CameraSubject = if cancelled then (finalHumanoid or humanoid) else humanoid
                 end)
             end
 
-            local finalCharacter: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
-                getCharacterParts()
-            if finalCharacter and finalRoot and finalRoot.Parent then
+            local function stopBodyMotion(body: Model): ()
+                for _, descendant: Instance in ipairs(body:GetChildren()) do
+                    if descendant:IsA("BasePart") then
+                        local bodyPart: BasePart = descendant :: BasePart
+                        bodyPart.Velocity = Vector3.zero
+                        bodyPart.RotVelocity = Vector3.zero
+                    end
+                end
+            end
+            if cancelled then
+                -- A server teleport/new round may already have moved the body.
+                -- Release the old fling velocity, but never move a new body or
+                -- return the lobby body to the previous map's saved CFrame.
+                pcall(stopBodyMotion, character)
+            elseif finalCharacter and finalRoot and finalRoot.Parent then
                 local attempts: number = 0
                 repeat
+                    if skipReturnOnStop and shouldStop and shouldStop() then
+                        pcall(stopBodyMotion, character)
+                        break
+                    end
                     attempts += 1
                     pcall(function(): ()
                         finalRoot.CFrame = oldPos * CFrame.new(0, 0.5, 0)
@@ -26514,13 +26739,7 @@ function Module.init(context: Runtime): any
                                 finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
                             end)
                         end
-                        for _, descendant: Instance in ipairs(finalCharacter:GetChildren()) do
-                            if descendant:IsA("BasePart") then
-                                local bodyPart: BasePart = descendant :: BasePart
-                                bodyPart.Velocity = Vector3.zero
-                                bodyPart.RotVelocity = Vector3.zero
-                            end
-                        end
+                        stopBodyMotion(finalCharacter)
                     end)
                     task.wait()
                 until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60
@@ -38550,16 +38769,30 @@ return Module
 
 ]],
         ["src/games/universal/Render/Shaders.lua"] = [[
--- Roblox's native post-processing effects run as direct children of Lighting.
--- They affect only this client; the game's own effects are left alone.
+-- Client-side Roblox post effects and lightweight weather. The Photoreal,
+-- Golden Hour, Blue Hour and Overcast grades adapt the post-processing presets
+-- from HathuwstAlkan/Roblox-Skyscraper-Lighting (MIT). Weather adapts the
+-- camera-centred, roof-aware particle idea from ShaderCloud/rbxts-weather (ISC),
+-- but uses four emitters and staggered raycasts rather than its large grids.
+-- Licences, pinned revisions and texture credits: docs/third-party/shaders/.
 local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
 local card
 
--- Presets are added to the manual sliders, so changing a look never overwrites
--- the user's saved controls.
+-- The original looks and their manual controls remain available. The imported
+-- presets keep the old slider defaults as offsets, so existing profiles work.
 local LOOKS = {
-    {name = "None", saturation = 0, contrast = 0, brightness = 0,
-        bloom = 0, rays = 0},
+    {name = "None", saturation = 0, contrast = 0, brightness = 0, bloom = 0, rays = 0},
+    {name = "Photoreal", saturation = 0.05, contrast = 0.10, brightness = 0.01,
+        bloom = -0.28, rays = -0.15, bloomSize = 22, bloomThreshold = 2.0},
+    {name = "Golden Hour", saturation = 0.10, contrast = 0.12, brightness = 0.03,
+        bloom = -0.18, rays = -0.05, bloomSize = 26, bloomThreshold = 1.6,
+        tint = Color3.fromRGB(255, 246, 236), tintWeight = 0.6},
+    {name = "Blue Hour", saturation = 0.04, contrast = 0.10, brightness = 0.01,
+        bloom = -0.38, rays = -0.12, bloomSize = 14, bloomThreshold = 2.2,
+        tint = Color3.fromRGB(255, 250, 245), tintWeight = 0.6},
+    {name = "Overcast", saturation = -0.05, contrast = 0.08, brightness = -0.01,
+        bloom = -0.35, rays = -0.18, bloomSize = 20, bloomThreshold = 1.9,
+        tint = Color3.fromRGB(235, 240, 245), tintWeight = 0.6},
     {name = "Cinematic", saturation = 0.10, contrast = 0.12, brightness = 0.01,
         bloom = 0, rays = 0, tint = Color3.fromRGB(255, 240, 226), tintWeight = 0.25},
     {name = "Vivid", saturation = 0.35, contrast = 0.1, brightness = 0.02,
@@ -38583,13 +38816,280 @@ for _, look in ipairs(LOOKS) do
     LOOK_BY_NAME[look.name] = look
 end
 
+local WEATHER = {
+    Rain = {asset = "shaderRainTexture", fallback = "rbxasset://textures/particles/SquareParticle.png",
+        rate = 15, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
+        transparency = 0.38, spread = 1},
+    Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
+        rate = 7, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
+        transparency = 0.18, spread = 12},
+    Autumn = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
+        rate = 3, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
+        transparency = 0.10, spread = 18},
+}
+
 function Module.init(context: any): any
-    local lighting: Lighting = context.host.Lighting
+    local host: any = context.host
+    local lighting: Lighting = host.Lighting
+    local world: Workspace = host.workspace
     local color: ColorCorrectionEffect? = nil
     local bloom: BloomEffect? = nil
     local rays: SunRaysEffect? = nil
+    local fogAtmosphere: Atmosphere? = nil
+    local fogOwned: boolean = false
+    local fogOriginal: {[string]: any} = {}
+    local fogApplied: {[string]: any} = {}
+    local fogConnections: {any} = {}
+    local fogMutating: boolean = false
+    local fogQueued: boolean = false
+    local weatherFolder: Folder? = nil
+    local weatherConnection: any = nil
+    local weatherCells: {any} = {}
+    local weatherGeneration: number = 0
+
+    local function updateStatus(): ()
+        if not card or not card.Enabled then return end
+        local opts: any = card.Options
+        if not opts.Look or not opts.Weather or not opts.Fog then return end
+        local parts: {string} = {}
+        if opts.Look.Value ~= "None" then table.insert(parts, opts.Look.Value) end
+        if opts.Weather.Value ~= "Clear" then table.insert(parts, opts.Weather.Value) end
+        if opts.Fog.Value then table.insert(parts, "Fog") end
+        card:SetStatus(if #parts == 0 then nil else table.concat(parts, " · "))
+    end
+
+    local function releaseFog(): ()
+        local atmosphere: Atmosphere? = fogAtmosphere
+        local owned: boolean = fogOwned
+        local original: {[string]: any} = fogOriginal
+        local applied: {[string]: any} = fogApplied
+        fogAtmosphere = nil
+        fogOwned = false
+        fogOriginal = {}
+        fogApplied = {}
+        if not atmosphere then return end
+        if owned then
+            pcall(function(): () atmosphere:Destroy() end)
+        else
+            -- Do not undo a value another game script changed after us.
+            for property: string, value: any in pairs(applied) do
+                pcall(function(): ()
+                    if (atmosphere :: any)[property] == value then
+                        (atmosphere :: any)[property] = original[property]
+                    end
+                end)
+            end
+        end
+    end
+
+    local function refreshFog(): ()
+        if fogMutating then return end
+        fogMutating = true
+        if not card or not card.Enabled or not card.Options.Fog or not card.Options.Fog.Value then
+            releaseFog()
+            fogMutating = false
+            updateStatus()
+            return
+        end
+        local external: Atmosphere? = nil
+        for _, child: Instance in ipairs(lighting:GetChildren()) do
+            if child:IsA("Atmosphere") and child ~= fogAtmosphere then
+                external = child :: Atmosphere
+                break
+            end
+        end
+        if fogAtmosphere and fogAtmosphere.Parent == lighting
+            and (not fogOwned or not external) then
+            fogMutating = false
+            updateStatus()
+            return
+        end
+        releaseFog()
+        local atmosphere: Atmosphere = external or (Instance.new("Atmosphere") :: Atmosphere)
+        fogAtmosphere = atmosphere
+        fogOwned = external == nil
+        local values: {[string]: any} = {
+            Density = 0.38, Offset = 0.25, Haze = 1.25, Glare = 0.1,
+            Color = Color3.fromRGB(220, 229, 238),
+            Decay = Color3.fromRGB(155, 170, 185),
+        }
+        for property: string, value: any in pairs(values) do
+            pcall(function(): ()
+                fogOriginal[property] = (atmosphere :: any)[property]
+                ;(atmosphere :: any)[property] = value
+                fogApplied[property] = (atmosphere :: any)[property]
+            end)
+        end
+        if fogOwned then atmosphere.Parent = lighting end
+        fogMutating = false
+        updateStatus()
+    end
+
+    local function watchAtmosphere(object: Instance): ()
+        if not object:IsA("Atmosphere") or fogMutating or fogQueued
+            or not card or not card.Enabled or not card.Options.Fog
+            or not card.Options.Fog.Value then return end
+        fogQueued = true
+        task.defer(function(): ()
+            fogQueued = false
+            if card and card.Enabled then refreshFog() end
+        end)
+    end
+
+    local function stopWeather(): ()
+        weatherGeneration += 1
+        if weatherConnection then
+            pcall(function(): () weatherConnection:Disconnect() end)
+            weatherConnection = nil
+        end
+        if weatherFolder then
+            pcall(function(): () weatherFolder:Destroy() end)
+            weatherFolder = nil
+        end
+        weatherCells = {}
+    end
+
+    local function changeWeather(): ()
+        stopWeather()
+        if not card or not card.Enabled or not card.Options.Weather then return end
+        local mode: string = card.Options.Weather.Value
+        local style: any = WEATHER[mode]
+        if not style then updateStatus(); return end
+        local generation: number = weatherGeneration
+        local ok: boolean, failure: any = pcall(function(): ()
+            local folder: Folder = Instance.new("Folder")
+            weatherFolder = folder
+            folder.Name = "ARMShaderWeather"
+            folder.Parent = world
+            -- Four non-colliding 24x24 cells, with rates capped per cell.
+            for _, offset: Vector3 in ipairs({
+                Vector3.new(-12, 0, -12), Vector3.new(-12, 0, 12),
+                Vector3.new(12, 0, -12), Vector3.new(12, 0, 12),
+            }) do
+                local part: Part = Instance.new("Part")
+                part.Name = "WeatherCell"
+                part.Anchored = true
+                part.CanCollide = false
+                part.CanQuery = false
+                part.CanTouch = false
+                part.CastShadow = false
+                part.Transparency = 1
+                part.Size = Vector3.new(24, 0.2, 24)
+                part.Parent = folder
+                local emitter: ParticleEmitter = Instance.new("ParticleEmitter")
+                emitter.Name = mode
+                emitter.Enabled = false
+                emitter.Texture = style.fallback
+                emitter.Shape = Enum.ParticleEmitterShape.Box
+                emitter.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+                emitter.EmissionDirection = Enum.NormalId.Bottom
+                emitter.Orientation = if mode == "Rain"
+                    then Enum.ParticleOrientation.VelocityParallel
+                    else Enum.ParticleOrientation.FacingCamera
+                emitter.Rate = style.rate
+                emitter.Size = NumberSequence.new(style.size)
+                emitter.Speed = NumberRange.new(style.speedMin, style.speedMax)
+                emitter.Lifetime = NumberRange.new(style.lifetime)
+                emitter.Transparency = NumberSequence.new(style.transparency)
+                emitter.SpreadAngle = Vector2.new(style.spread, style.spread)
+                emitter.LightInfluence = 0.8
+                emitter.LightEmission = if mode == "Snow" then 0.2 else 0.05
+                if mode == "Rain" then
+                    emitter.Squash = NumberSequence.new(-2.5)
+                    emitter.Color = ColorSequence.new(Color3.fromRGB(205, 219, 235))
+                else
+                    emitter.Rotation = NumberRange.new(0, 360)
+                    emitter.RotSpeed = NumberRange.new(-45, 45)
+                end
+                emitter.Parent = part
+                table.insert(weatherCells, {part = part, emitter = emitter, offset = offset})
+            end
+            local params: RaycastParams = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Exclude
+            params.IgnoreWater = true
+            local previousCharacter: Model? = nil
+            local lastFocus: Vector3? = nil
+            local lastCamera: Camera? = nil
+            local moveElapsed: number = 0
+            local roofElapsed: number = 0.15
+            local roofIndex: number = 0
+            local function updateWeather(deltaTime: number): ()
+                -- Part positions are updated at most 20 times/s, not every
+                -- rendered frame. One roof ray per 0.15 s is staggered.
+                moveElapsed += math.clamp(deltaTime, 0, 0.25)
+                if moveElapsed < 0.05 then return end
+                local elapsed: number = moveElapsed
+                moveElapsed = 0
+                local camera: Camera? = world.CurrentCamera
+                if not camera then
+                    for _, cell: any in ipairs(weatherCells) do cell.emitter.Enabled = false end
+                    lastCamera = nil
+                    lastFocus = nil
+                    return
+                end
+                local focus: Vector3 = camera.CFrame.Position
+                if camera ~= lastCamera or (lastFocus and (focus - lastFocus).Magnitude > 30) then
+                    -- Recheck each cell after a jump, without bypassing the
+                    -- global ray interval during rapid camera changes.
+                    for _, cell: any in ipairs(weatherCells) do cell.emitter.Enabled = false end
+                end
+                lastCamera = camera
+                lastFocus = focus
+                local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
+                if character ~= previousCharacter or roofIndex == 0 then
+                    previousCharacter = character
+                    local excluded: {Instance} = {folder}
+                    if character then table.insert(excluded, character) end
+                    params.FilterDescendantsInstances = excluded
+                end
+                for _, cell: any in ipairs(weatherCells) do
+                    cell.part.Position = focus + cell.offset + Vector3.new(0, 20, 0)
+                end
+                roofElapsed += elapsed
+                if roofElapsed < 0.15 then return end
+                roofElapsed = 0
+                roofIndex = roofIndex % #weatherCells + 1
+                local cell: any = weatherCells[roofIndex]
+                local castOk: boolean, hit: any = pcall(function(): any
+                    return world:Raycast(focus + cell.offset, Vector3.new(0, 150, 0), params)
+                end)
+                local covered: boolean = castOk and hit ~= nil
+                if covered and hit.Instance and hit.Instance:IsA("BasePart")
+                    and hit.Instance.Transparency >= 0.95 then
+                    covered = false
+                end
+                cell.emitter.Enabled = not covered
+            end
+            weatherConnection = host.TaskManager:Connect(updateWeather, nil, "Shaders weather")
+            -- Begin with a built-in texture. Network/file work never blocks a frame.
+            task.spawn(function(): ()
+                local state: any = host.state
+                if not state or type(state.resolveAsset) ~= "function" then return end
+                local resolved: boolean, asset: any = pcall(state.resolveAsset, style.asset)
+                if not resolved or type(asset) ~= "string" or asset == ""
+                    or generation ~= weatherGeneration or not card or not card.Enabled then return end
+                for _, cell: any in ipairs(weatherCells) do
+                    cell.emitter.Texture = asset
+                end
+            end)
+        end)
+        if not ok then
+            stopWeather()
+            warn("[Shaders] Weather unavailable: " .. tostring(failure))
+            card:Notify("Weather unavailable; the colour effects are still active")
+        end
+        updateStatus()
+    end
 
     local function cleanup(): ()
+        stopWeather()
+        for _, connection: any in ipairs(fogConnections) do
+            pcall(function(): () connection:Disconnect() end)
+        end
+        fogConnections = {}
+        fogMutating = true
+        releaseFog()
+        fogMutating = false
         if color then color:Destroy(); color = nil end
         if bloom then bloom:Destroy(); bloom = nil end
         if rays then rays:Destroy(); rays = nil end
@@ -38609,24 +39109,22 @@ function Module.init(context: any): any
         local look: any = LOOK_BY_NAME[opts.Look.Value] or LOOKS[1]
         local tint: Color3 = opts.Tint.Value
         if look.tint then tint = tint:Lerp(look.tint, look.tintWeight) end
-        -- Saved/typed values can exceed slider ranges. Brightness -1 or a
-        -- black multiplicative tint makes the entire rendered world black.
+        -- Old saved/typed values can exceed slider ranges. Never apply a
+        -- documented blackout brightness or a black multiplicative tint.
         color.Saturation = math.clamp(opts.Saturation.Value + look.saturation, -1, 1)
         color.Contrast = math.clamp(opts.Contrast.Value + look.contrast, -0.35, 0.25)
         color.Brightness = math.clamp(opts.Brightness.Value + look.brightness, -0.05, 0.3)
         color.TintColor = Color3.new(math.clamp(tint.R, 0.6, 1),
             math.clamp(tint.G, 0.6, 1), math.clamp(tint.B, 0.6, 1))
         color.Enabled = true
-
         bloom.Intensity = math.clamp(opts.Bloom.Value + look.bloom, 0, 10)
-        bloom.Size = math.clamp(opts["Bloom size"].Value, 0, 56)
-        bloom.Threshold = math.clamp(opts["Bloom threshold"].Value, 0, 5)
+        bloom.Size = math.clamp(opts["Bloom size"].Value + (look.bloomSize or 24) - 24, 0, 56)
+        bloom.Threshold = math.clamp(opts["Bloom threshold"].Value + (look.bloomThreshold or 1.1) - 1.1, 0, 5)
         bloom.Enabled = bloom.Intensity > 0.01
-
         rays.Intensity = math.clamp(opts["Sun rays"].Value + look.rays, 0, 1)
         rays.Spread = math.clamp(opts["Ray spread"].Value, 0, 1)
         rays.Enabled = rays.Intensity > 0.01
-        card:SetStatus(if look.name == "None" then nil else look.name)
+        updateStatus()
     end
 
     local function diagnose(): ()
@@ -38644,7 +39142,7 @@ function Module.init(context: any): any
         )
         print(text)
         local parents = {lighting}
-        local camera: Camera? = context.host.workspace.CurrentCamera
+        local camera: Camera? = world.CurrentCamera
         if camera then table.insert(parents, camera) end
         for _, parent in ipairs(parents) do
             for _, other in ipairs(parent:GetChildren()) do
@@ -38659,25 +39157,23 @@ function Module.init(context: any): any
     end
 
     card = context.framework.Categories.Render:CreateModule({
-        Name = "Shaders",
-        Category = "Render",
-        ConfigKey = "Universal.Shaders",
-        Tooltip = "Native Roblox colour grading, bloom and sun rays on this client.",
+        Name = "Shaders", Category = "Render", ConfigKey = "Universal.Shaders",
+        Tooltip = "Photoreal lighting presets, fog and lightweight client-side weather.",
         Function = function(enabled: boolean): ()
-            if not enabled then
-                card:SetStatus(nil)
-                return
-            end
+            if not enabled then card:SetStatus(nil); return end
             cleanup()
             card:Clean(cleanup)
             local ok, failure = pcall(function()
                 color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
                 bloom = makeEffect("BloomEffect", "ARMShaderBloom")
                 rays = makeEffect("SunRaysEffect", "ARMShaderRays")
+                if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
+                if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end
                 apply()
+                refreshFog()
+                changeWeather()
             end)
             if not ok then
-                -- Config restoration may catch the error without sending OFF.
                 card:Toggle(false)
                 error(failure, 0)
             end
@@ -38685,28 +39181,33 @@ function Module.init(context: any): any
     })
 
     card:CreateDropdown({Name = "Look", List = LOOK_NAMES, Index = 2, Function = apply,
-        Tooltip = "Preset added to the sliders below. None uses only your sliders."})
-
+        Tooltip = "Photoreal presets plus the original colour looks."})
+    card:CreateDropdown({Name = "Weather", List = {"Clear", "Rain", "Snow", "Autumn"},
+        Index = 1, Function = changeWeather, Tooltip = "Lightweight particles around the camera; roofs limit them."})
+    card:CreateToggle({Name = "Fog", Default = false, Function = refreshFog,
+        Tooltip = "Adds atmospheric fog locally without deleting the game's effects."})
+    card:CreateToggle({Name = "Advanced", Default = false,
+        Tooltip = "Show the original manual colour, bloom and sun-ray controls."})
+    local advanced = {Option = "Advanced"}
     local function slider(name: string, min: number, max: number, default: number,
         tooltip: string, fractional: boolean): ()
         card:CreateSlider({Name = name, Min = min, Max = max, Default = default,
-            Decimal = if fractional then 2 else nil,
-            Step = if fractional then 0.01 else nil,
-            Function = apply, Tooltip = tooltip})
+            Decimal = if fractional then 2 else nil, Step = if fractional then 0.01 else nil,
+            Function = apply, Tooltip = tooltip, Show = advanced})
     end
     slider("Saturation", -1, 1, 0, "Negative drains colour, positive boosts it.", true)
     slider("Contrast", -0.35, 0.25, 0, "Separates dark from light; limited to preserve detail.", true)
     slider("Brightness", -0.05, 0.3, 0, "Applied brightness is limited to avoid a black screen.", true)
     card:CreateColor({Name = "Tint", Default = Color3.fromRGB(255, 255, 255),
-        Function = apply, Tooltip = "Colour cast blended with the look; very dark colours are lightened."})
+        Function = apply, Tooltip = "Colour cast blended with the look; very dark colours are lightened.", Show = advanced})
     slider("Bloom", 0, 2, 0.6, "Glow around bright surfaces; zero disables it.", true)
     slider("Bloom threshold", 0, 3, 1.1, "Brightness needed for glow.", true)
     slider("Bloom size", 0, 56, 24, "Spread of the glow.", false)
     slider("Sun rays", 0, 1, 0.2, "Rays around the sun; zero disables them.", true)
     slider("Ray spread", 0, 1, 0.5, "Width of the sun rays.", true)
     card:CreateButton({Name = "Diagnose", Function = diagnose,
-        Tooltip = "Print the effects' actual parents and enabled states."})
-    card:CreateNote("Client-side effects depend on graphics quality. Improve FPS > Disable post effects can suppress them.")
+        Tooltip = "Print the effects' actual parents and enabled states.", Show = advanced})
+    card:CreateNote("Client-side only. Graphics quality can suppress effects; weather textures fall back if download is unavailable.")
 
     Module.Initialized = true
     return card

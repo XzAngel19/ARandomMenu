@@ -98,6 +98,11 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
                 assert error not in run.stdout, f'{name} {mode}: {error} appeared during boot'
             cards = audit_menu.parse(run.stdout)
             assert len(cards) == count, f'{name} {mode}: expected {count} cards, got {len(cards)}'
+            shader = next(card for card in cards if card['configKey'] == 'Universal.Shaders')
+            visible = [row['label'] for row in shader['rows'] if row.get('visible')]
+            assert visible == ['Look', 'Weather', 'Fog', 'Advanced'], (
+                f'{name} {mode}: Shaders default panel is not simplified: {visible}'
+            )
             if not mobile and not fallback:
                 desktop_cards = cards
             elif fallback:

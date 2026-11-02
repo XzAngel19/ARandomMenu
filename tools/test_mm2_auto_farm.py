@@ -140,12 +140,13 @@ assert "isRoundLifecycleActive() ~= true" in SOURCE
 assert "if not canGrabGun() then" in SOURCE
 assert "local function touchDroppedGun(" in SOURCE
 assert "touchDroppedGun(firstDrop, startRoot)" in SOURCE
-assert "while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do" in SOURCE
+assert "while os.clock() < shootLoopDeadline and isCurrent() and settings.grabGunShoot do" in SOURCE
+assert "farmGeneration == enableGeneration and roundGeneration == sequenceRound" in SOURCE
 
-sequence_body = SOURCE.split("local function runFullSequence()", 1)[1]
-kill_index = sequence_body.index("killAll()")
+sequence_body = SOURCE.split("local function runFullSequence(isCurrent:", 1)[1]
+kill_index = sequence_body.index("killAll(isCurrent)")
 teleport_index = sequence_body.index("restoreCharacter(true)")
-grab_index = sequence_body.index("grabGunAndShoot()")
+grab_index = sequence_body.index("grabGunAndShoot(isCurrent)")
 assert kill_index < teleport_index < grab_index, \
     "full-bag order: Kill All, return to homeCFrame, then Auto Grab + Shoot"
 

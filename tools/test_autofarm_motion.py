@@ -114,11 +114,29 @@ Color3 = {fromRGB = Color3_fromRGB}
 local now = 0
 local function currentTime() return now end
 local os = {clock = currentTime, time = currentTime}
+local asyncMode = false
+local waitingTasks = {}
 local task = {
-    wait = function() end,
-    spawn = function(fn) fn() end,
+    wait = function()
+        if asyncMode then coroutine.yield() end
+    end,
+    spawn = function(fn)
+        if not asyncMode then fn(); return end
+        local thread = coroutine.create(fn)
+        table.insert(waitingTasks, thread)
+        local ok, err = coroutine.resume(thread)
+        assert(ok, tostring(err))
+    end,
     delay = function(_seconds, fn) fn() end,
 }
+local function resumeTasks()
+    for _, thread in ipairs(waitingTasks) do
+        if coroutine.status(thread) ~= "dead" then
+            local ok, err = coroutine.resume(thread)
+            assert(ok, tostring(err))
+        end
+    end
+end
 
 -- instances ---------------------------------------------------------------
 local function signal()
@@ -204,7 +222,12 @@ end
 function character:FindFirstChildWhichIsA() return root end
 
 local LocalPlayer = {Name = "Local", Character = character}
-local Players = {GetPlayers = function() return {LocalPlayer} end}
+local otherPlayers = {}
+local Players = {GetPlayers = function()
+    local players = {LocalPlayer}
+    for _, player in ipairs(otherPlayers) do table.insert(players, player) end
+    return players
+end}
 
 -- The map, so isCharacterInActiveRound says "in round" --------------------
 local mapFloor = {Name = "Floor", ClassName = "Part", Parent = true,
@@ -242,7 +265,12 @@ local function makeCoin(position)
 end
 
 workspace = {FallenPartsDestroyHeight = -500, CurrentCamera = nil}
-function workspace:GetChildren() return {mapModel, mapFloor} end
+local simulatedLobby = nil
+function workspace:GetChildren()
+    local result = {mapModel, mapFloor}
+    if simulatedLobby then table.insert(result, simulatedLobby) end
+    return result
+end
 function workspace:GetDescendants()
     local out = {}
     for _, entry in ipairs(coins) do table.insert(out, entry.part) end
@@ -292,22 +320,43 @@ end}
 
 -- The MM2 core -----------------------------------------------------------
 state = {}
+local activeMap = mapModel
+local lifecycleActive = true
+local coinCollectedSignal, roundEndSignal, roundStartSignal = signal(), signal(), signal()
+local remotesByName = {}
+for name, eventSignal in pairs({CoinCollected = coinCollectedSignal,
+    RoundEndFade = roundEndSignal, RoundStart = roundStartSignal}) do
+    remotesByName[name] = {OnClientEvent = eventSignal,
+        IsA = function(_, class) return class == "RemoteEvent" end}
+end
+local gameplayRemotes = {FindFirstChild = function(_, name) return remotesByName[name] end}
+local murdererTarget = nil
+local localGun, localKnife = nil, nil
+local localRole = "Innocent"
 state.mm2Core = {
-    getPlayerRole = function(player) return "Innocent" end,
-    getPlayerWeapon = function() return nil end,
+    getPlayerRole = function(player) return localRole end,
+    getPlayerWeapon = function(_, weapon)
+        if weapon == "Gun" then return localGun end
+        if weapon == "Knife" then return localKnife end
+        return nil
+    end,
     isPlayerAlive = function() return true end,
-    findMurderer = function() return nil end,
+    findMurderer = function() return murdererTarget end,
     findSheriff = function() return nil end,
     findDroppedGun = function() return nil end,
-    isRoundLifecycleActive = function() return true end,
-    findMM2Map = function() return mapModel end,
+    isRoundLifecycleActive = function() return lifecycleActive end,
+    findMM2Map = function() return activeMap end,
+    mm2GameplayRemotes = gameplayRemotes,
     getEstimatedLatency = function() return 0.05 end,
     getGunOriginCFrame = function() return CFrame.new(0, 12, 0) end,
 }
 
 -- Host API ----------------------------------------------------------------
 notify = function() end
-getCharacterParts = function() return character, humanoid, root end
+getCharacterParts = function()
+    if not LocalPlayer.Character then return nil, nil, nil end
+    return LocalPlayer.Character, humanoid, root
+end
 featureConnections = {}
 disconnectFeatureConnection = function(key)
     local connection = featureConnections[key]
@@ -631,7 +680,404 @@ assert(rootProps.Position.Y > 10 - 12,
 assert(rootProps.Size.Y == 8, "Below keeps its hitbox once farming")
 pass("Stay Under also works in Below mode")
 
+-- End the round while parked UNDER the map. In the real event ordering MM2
+-- base may have already cleared roles and marked the lifecycle inactive.
 feature.onToggle(false)
+resetBody()
+table.clear(coins)
+feature.onToggle(true)
+frames(40)
+assert(rootProps.Position.Y < 7 and not rootProps.CanCollide, "fixture waits under the map")
+role, lifecycleActive = nil, false
+roundEndSignal:Fire()
+assert(rootProps.Position.Y >= 10 and rootProps.Position.Y < 30,
+    "RoundEnd lifts the same body onto the interior floor, not the roof or void")
+assert(rootProps.CanCollide and not humanoid.PlatformStand,
+    "RoundEnd restores collisions and humanoid state")
+feature.onToggle(false)
+role, lifecycleActive = "Innocent", true
+pass("RoundEnd releases a held body safely inside the same map")
+
+-- 7) Reproduce the round-transition stall without toggling Auto Farm.
+-- The old tick returned before its lobby reset if the character was missing.
+-- If a new map arrived before the next valid tick, the old 50/50 bag survived.
+resetBody()
+table.clear(coins)
+autoCollect = false
+activeMap = mapModel
+setMode("Walk")
+optionCallbacks["Stay Under When Round starts"](false)
+optionCallbacks["Reset When Full Coin Bag"](false)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(2)
+assert(feature.status and feature.status:find("full bag", 1, true),
+    "the old round is deliberately at 50/50")
+LocalPlayer.Character = nil
+frames(3)
+local nextMap = table.clone(mapModel)
+nextMap.Name = "NextMap"
+activeMap = nextMap
+rootProps.Position = Vector3.new(0, 12, 0)
+rootProps.AssemblyLinearVelocity = Vector3.zero
+LocalPlayer.Character = character
+makeCoin(Vector3.new(40, 10, 0))
+frames(180) -- fake humanoid does not walk; the 2 s velocity carry must engage
+assert(rootProps.Position.X > 5,
+    "a new map after an absent character must resume without toggling, X="
+        .. tostring(rootProps.Position.X) .. " status=" .. tostring(feature.status))
+assert(feature.status and not feature.status:find("full bag", 1, true),
+    "the previous map's full bag must not stop the new map")
+pass("new map after missing character resets stale full-bag state")
+
+-- RoundEnd can arrive while no valid character exists; a later countdown may
+-- reuse the same map instance. Do not clear a full bag just because the body
+-- respawns in the SAME round, and do not move while the old map is ending.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(2)
+LocalPlayer.Character = nil
+frames(2)
+LocalPlayer.Character = character
+frames(2)
+assert(feature.status and feature.status:find("full bag", 1, true),
+    "respawning on the same map alone must not reset the 50-coin bag")
+LocalPlayer.Character = nil
+lifecycleActive = false
+roundEndSignal:Fire()
+frames(2)
+LocalPlayer.Character = character
+rootProps.Position = Vector3.new(0, 12, 0)
+rootProps.AssemblyLinearVelocity = Vector3.zero
+local oldMapCoin = makeCoin(Vector3.new(40, 10, 0))
+frames(12)
+assert(rootProps.Position.X == 0, "old map after RoundEnd must not be farmed")
+roundStartSignal:Fire(120)
+lifecycleActive = true
+frames(180)
+assert(rootProps.Position.X > 5,
+    "RoundStart must release an ended, reused map without toggling; X="
+        .. tostring(rootProps.Position.X) .. " status=" .. tostring(feature.status))
+pass("RoundEnd/Start handles absent bodies and a reused map without clearing same-round bag")
+
+-- A coin report can precede the first heartbeat on a freshly loaded map.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+feature.onToggle(true)
+frames(2)
+activeMap = nextMap
+makeCoin(Vector3.new(40, 10, 0))
+coinCollectedSignal:Fire(nil, 7, 50)
+frames(1)
+assert(feature.status and feature.status:find("bag 7/50", 1, true),
+    "the first new-map coin report must not be erased by the heartbeat: " .. tostring(feature.status))
+pass("first coin report before the new-map heartbeat is retained")
+
+-- No known map still means lobby, regardless of available pickup-like parts.
+feature.onToggle(false)
+resetBody()
+activeMap = nil
+feature.onToggle(true)
+frames(30)
+assert(rootProps.Position.X == 0 and rootProps.CanCollide and not humanoid.PlatformStand,
+    "no map: never move, noclip or engage the body")
+assert(feature.status == "Auto Farm: waiting in lobby")
+pass("lobby remains untouched during the transition")
+
+-- The old map can still be loaded when the server teleports the SAME body
+-- to the lobby. The pre-physics flight controller must release it before it
+-- can reapply NoClip/velocity; Heartbeat must not teleport it to the old map.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+local lobbyPart = {Name="LobbySpawn", Position=Vector3.new(1000, 12, 0)}
+simulatedLobby = {Name="Lobby", FindFirstChild=function() return nil end,
+    FindFirstChildWhichIsA=function() return lobbyPart end}
+setMode("Below (Hitbox)")
+makeCoin(Vector3.new(40, 10, 0))
+feature.onToggle(true)
+frames(8)
+assert(not rootProps.CanCollide and humanoid.PlatformStand, "below farm is engaged on map")
+rootProps.Position = Vector3.new(1000, 12, 0)
+rootProps.AssemblyLinearVelocity = Vector3.zero
+frames(1)
+assert(rootProps.Position.X == 1000 and rootProps.CanCollide and not humanoid.PlatformStand,
+    "the same body is released before physics in the lobby and not moved home")
+frames(10)
+assert(rootProps.Position.X == 1000 and feature.status == "Auto Farm: waiting in lobby")
+feature.onToggle(false)
+simulatedLobby = nil
+setMode("Walk")
+pass("teleporting the same engaged body to a loaded-map lobby releases control")
+
+-- A full-bag worker may be asleep in the reset wait when the round ends.
+-- It must not fling the next round's players or keep the new farm busy.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+lifecycleActive = true
+optionCallbacks["Reset When Full Coin Bag"](true)
+optionCallbacks["Fling Murder after full bag"](true)
+local flingCalls = 0
+murdererTarget = {Name = "Murderer"}
+state.mm2PerformFling = function(_target, options)
+    assert(options.skipReturnOnStop == true and type(options.shouldStop) == "function",
+        "Auto Farm must request safe cancellation from the real Fling")
+    assert(not options.shouldStop(), "normal same-round fling remains enabled")
+    flingCalls += 1
+end
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1,
+    "full-bag sequence is paused while waiting for the respawn")
+LocalPlayer.Character = nil
+roundEndSignal:Fire()
+activeMap = nextMap
+resetBody()
+roundStartSignal:Fire(120)
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(flingCalls == 0, "a cancelled full-bag worker must not fling in the next round")
+makeCoin(Vector3.new(40, 10, 0))
+frames(180)
+assert(rootProps.Position.X > 5, "cancelled worker must not keep the new round busy")
+pass("round change cancels a sleeping full-bag sequence without carrying busy or fling")
+
+-- If the round event is missed but the old map remains loaded, a busy worker
+-- must notice that the new character has appeared in the lobby. It must not
+-- continue into the queued full-bag fling there.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+simulatedLobby = {Name="Lobby", FindFirstChild=function() return nil end,
+    FindFirstChildWhichIsA=function() return lobbyPart end}
+flingCalls = 0
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1)
+LocalPlayer.Character = table.clone(character)
+humanoid.Health = 100
+rootProps.Position = Vector3.new(1000, 12, 0)
+-- The worker wakes BEFORE the next Heartbeat; its cached lobby reference must
+-- still stop it before it can initiate a fling.
+resumeTasks()
+resumeTasks()
+resumeTasks()
+frames(20)
+asyncMode = false
+assert(flingCalls == 0 and rootProps.Position.X == 1000,
+    "a busy old-map sequence must cancel when the new body appears in lobby")
+assert(feature.status == "Auto Farm: waiting in lobby")
+feature.onToggle(false)
+
+-- Also cover the reverse ordering: Heartbeat sees lobby while the worker is
+-- still asleep, so it must clear busy without waiting for the coroutine.
+resetBody()
+table.clear(coins)
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1)
+LocalPlayer.Character = table.clone(character)
+humanoid.Health = 100
+rootProps.Position = Vector3.new(1000, 12, 0)
+frames(1)
+assert(feature.status == "Auto Farm: waiting in lobby")
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(flingCalls == 0 and rootProps.Position.X == 1000)
+feature.onToggle(false)
+simulatedLobby = nil
+pass("busy full-bag worker cancels in lobby even while the old map is loaded")
+
+-- The new map and body can also arrive without RoundEnd; the old worker may
+-- wake before Heartbeat notices the change. It must not fling into that round.
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+flingCalls = 0
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1)
+activeMap = nextMap
+LocalPlayer.Character = table.clone(character)
+humanoid.Health = 100
+resumeTasks()
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(flingCalls == 0, "waking before the new-map tick cannot start an old fling")
+makeCoin(Vector3.new(40, 10, 0))
+frames(180)
+assert(rootProps.Position.X > 5, "new map remains able to farm")
+feature.onToggle(false)
+pass("busy worker detects a new map before the next Heartbeat")
+
+-- The same cancellation applies to OFF followed by ON in the same round.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1)
+feature.onToggle(false)
+resetBody()
+feature.onToggle(true)
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(flingCalls == 0, "old enable must not resume its full-bag fling after OFF/ON")
+feature.onToggle(false)
+pass("OFF/ON invalidates sleeping full-bag workers")
+
+-- Conversely, if the reset and respawn belong to the SAME round, the user's
+-- configured full-bag fling must still run, and the 50/50 bag stays full.
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+flingCalls = 0
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(humanoid.Health == 0 and #waitingTasks == 1)
+local respawnedCharacter = table.clone(character)
+respawnedCharacter.Name = "Respawned"
+LocalPlayer.Character = respawnedCharacter
+humanoid.Health = 100
+resumeTasks() -- notices the new body and waits the short post-respawn delay
+resumeTasks() -- full-bag fling
+asyncMode = false
+assert(flingCalls == 1, "a same-round reset must still execute the configured fling")
+frames(2)
+assert(feature.status and feature.status:find("full bag", 1, true),
+    "same-round respawn must not resume farming with a full bag")
+feature.onToggle(false)
+pass("same-round full-bag reset and fling remain functional")
+
+-- The full-bag gun action still uses the shared Silent path with WallCheck
+-- off, and a sleeping shooting loop must stop when the round ends.
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+lifecycleActive = true
+optionCallbacks["Reset When Full Coin Bag"](false)
+optionCallbacks["Fling Murder after full bag"](false)
+optionCallbacks["Auto Grab gun and Shoot"](true)
+localGun = {Name = "Gun", Parent = character}
+local sent = 0
+state.mm2FireSilentShot = function(target, options)
+    assert(target == murdererTarget and options.continuous and options.quiet and options.wallCheck == false)
+    sent += 1
+    return true
+end
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(sent == 1, "a full bag starts the configured Silent gun action")
+now += 0.25
+resumeTasks()
+assert(sent == 2, "the same-round gun action continues at the existing pace")
+roundEndSignal:Fire()
+now += 0.25
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(sent == 2, "no old-round Silent shots after RoundEnd")
+feature.onToggle(false)
+pass("full-bag Silent gun path is retained and stops at round end")
+
+-- Kill All can be paused after it temporarily anchors victims. On a round
+-- change it releases those victims and does not send the old-round slash.
+resetBody()
+table.clear(coins)
+activeMap = mapModel
+localRole = "Murderer"
+optionCallbacks["Auto Grab gun and Shoot"](false)
+optionCallbacks["Auto Kill All When full coin bag"](true)
+local slashes, touched = 0, 0
+local stabRemote = {IsA=function(_, name) return name == "RemoteEvent" end,
+    FireServer=function(_, action) assert(action == "Slash"); slashes += 1 end}
+local touchRemote = {IsA=function(_, name) return name == "RemoteEvent" end,
+    FireServer=function() touched += 1 end}
+local knifeEvents = {FindFirstChild=function(_, name) return name == "HandleTouched" and touchRemote or nil end}
+localKnife = {Parent=character, FindFirstChild=function(_, name)
+    if name == "Stab" then return stabRemote end
+    if name == "Events" then return knifeEvents end
+end, Activate=function() end}
+local victimRoot = {Anchored=false, CFrame=CFrame.new(40, 12, 0)}
+local victimBody = {FindFirstChild=function(_, name) return name == "HumanoidRootPart" and victimRoot or nil end}
+table.insert(otherPlayers, {Name="Victim", Character=victimBody})
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+assert(victimRoot.Anchored and #waitingTasks == 1)
+roundEndSignal:Fire()
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(not victimRoot.Anchored and slashes == 0 and touched == 0,
+    "round-end cancellation releases victims without an old slash")
+feature.onToggle(false)
+
+-- When there is no cancellation the same action still fires at 50 coins.
+resetBody()
+activeMap = mapModel
+asyncMode = true
+table.clear(waitingTasks)
+feature.onToggle(true)
+frames(2)
+coinCollectedSignal:Fire(nil, 50, 50)
+frames(1)
+resumeTasks()
+resumeTasks()
+resumeTasks()
+asyncMode = false
+assert(slashes == 1 and touched == 1 and not victimRoot.Anchored,
+    "same-round Kill All still fires and releases its victim")
+feature.onToggle(false)
+pass("full-bag Kill All preserves normal behavior and cancels safely")
 print("PASS " .. passed .. " Auto Farm motion suites")
 '''
 

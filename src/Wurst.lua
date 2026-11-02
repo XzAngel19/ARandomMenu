@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v169-20261102-repo-runtime-cleanup"
+local SOURCE_STAMP: string = "v170-20261102-shaders-weather-farm"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1756,6 +1756,23 @@ local AssetManager: any = {
             fileName = "monocraft-32-v1.png",
             fallback = "",
             version = 1,
+            assetType = "image/png",
+        },
+
+        -- Weather textures are fetched lazily, only after choosing an effect.
+        shaderRainTexture = {
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/rain-trace.png",
+            fileName = "shader-rain-v1.png", fallback = "", version = 1,
+            assetType = "image/png",
+        },
+        shaderSnowTexture = {
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/snow-soft.png",
+            fileName = "shader-snow-v1.png", fallback = "", version = 1,
+            assetType = "image/png",
+        },
+        shaderAutumnTexture = {
+            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/autumn-maple.png",
+            fileName = "shader-autumn-v1.png", fallback = "", version = 1,
             assetType = "image/png",
         },
 
@@ -4271,6 +4288,10 @@ local function runBucket(
             if scheduled.failures >= 3 then
                 scheduled.handle.Connected = false
             end
+        else
+            -- A recovered task should not lose its failure budget forever.
+            -- Only three consecutive failing frames disable it.
+            scheduled.failures = 0
         end
         if not scheduled.warned and scheduled.costMs >= TASK_WARN_MS then
             scheduled.warned = true

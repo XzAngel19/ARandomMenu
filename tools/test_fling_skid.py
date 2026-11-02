@@ -277,6 +277,7 @@ Players.FindFirstChild = function(_, name)
 end
 
 local world = {FallenPartsDestroyHeight=-500, CurrentCamera=nil}
+local liveCharacter, liveHumanoid, liveRoot = character, humanoid, root
 
 local networkPing = 0
 local notifications = {}
@@ -286,7 +287,7 @@ local host = {
     Players=Players,
     LocalPlayer={Name="Local", Character=character,
         GetNetworkPing=function() return networkPing end},
-    getCharacterParts=function() return character, humanoid, root end,
+    getCharacterParts=function() return liveCharacter, liveHumanoid, liveRoot end,
     notify=function(message) table.insert(notifications, message) end,
     findPlayerByText=function() return nil end,
     RunService=RunService,
@@ -544,6 +545,78 @@ assert(#notifications == 1 and state.mm2LastFling and (state.mm2LastFling.retrie
     "Retries 0 must keep the original one-pass behavior")
 options.Retries(1)
 pass("the unrelated Retries control still changes the number of passes")
+
+-- Auto Farm cancels a running full-bag fling when the round ends. Roblox may
+-- teleport the very same body to lobby while the real SkidFling is suspended
+-- at a pose: neither another pose nor its old return CFrame may move that body.
+root.CFrame = CFrame.new(0, 10, 0)
+victimSpeed = 0
+resetWrites()
+local cancelled = false
+task.spawn(function()
+    state.mm2PerformFling(victimPlayer, {blocking=true, silent=true, duration=3,
+        shouldStop=function() return cancelled end, skipReturnOnStop=true})
+end)
+assert(writes.cframeWrites > 0, "a real fling pose ran before cancellation")
+rootProps.Position = Vector3.new(1000, 12, 0) -- server moves same body to lobby
+local writesAtTeleport = writes.cframeWrites
+cancelled = true
+pump(25)
+assert(rootProps.Position.X == 1000 and writes.cframeWrites == writesAtTeleport,
+    "a stopped farm fling must not pose or return the lobby body to an old map")
+assert(rootProps.Velocity.Magnitude == 0 and rootProps.RotVelocity.Magnitude == 0,
+    "cancellation must remove the fling's residual velocity")
+assert(world.FallenPartsDestroyHeight == -500 and activityService.flags["fling"] == false,
+    "cancellation restores void height and releases activity")
+for _, object in ipairs(created) do
+    if object.Name == "EpixVel" then assert(object.destroyed, "cancel cleans the fling pin") end
+end
+pass("cancelled full-bag fling leaves a same-body lobby teleport untouched")
+
+-- If a fresh body appears, cancellation must not teleport or zero that body;
+-- the camera should follow its humanoid, not the one used by the old fling.
+root.CFrame = CFrame.new(0, 10, 0)
+world.CurrentCamera = {CameraSubject=humanoid}
+cancelled = false
+resetWrites()
+task.spawn(function()
+    state.mm2PerformFling(victimPlayer, {blocking=true, silent=true, duration=3,
+        shouldStop=function() return cancelled end, skipReturnOnStop=true})
+end)
+local newRoot, newRootProps = makePart("HumanoidRootPart", Vector3.new(1000, 12, 0))
+newRootProps.Velocity = Vector3.new(5, 0, 0)
+local newHumanoid = {Health=100, RootPart=newRoot}
+local newCharacter = makeCharacter({newRoot}, newHumanoid, "Respawned")
+liveCharacter, liveHumanoid, liveRoot = newCharacter, newHumanoid, newRoot
+host.LocalPlayer.Character = newCharacter
+local writesAtRespawn, primariesAtRespawn = writes.cframeWrites, writes.primaries
+cancelled = true
+pump(25)
+assert(newRootProps.Position.X == 1000 and newRootProps.Velocity.X == 5,
+    "a cancelled old fling must not touch the new body")
+assert(writes.cframeWrites == writesAtRespawn and writes.primaries == primariesAtRespawn,
+    "no old pose or saved return may be applied after respawn")
+assert(world.CurrentCamera.CameraSubject == newHumanoid, "camera follows the respawned body")
+assert(activityService.flags["fling"] == false and world.FallenPartsDestroyHeight == -500)
+liveCharacter, liveHumanoid, liveRoot = character, humanoid, root
+host.LocalPlayer.Character = character
+world.CurrentCamera = nil
+pass("cancelled full-bag fling leaves a respawn untouched and restores the new camera subject")
+
+-- Auto Win also passes shouldStop, but did not opt into the farm-only no-return
+-- policy. Its explicit safe return CFrame must remain in effect.
+root.CFrame = CFrame.new(0, 10, 0)
+cancelled = false
+resetWrites()
+task.spawn(function()
+    state.mm2PerformFling(victimPlayer, {blocking=true, silent=true, duration=3,
+        shouldStop=function() return cancelled end, returnCFrame=CFrame.new(0, 70, 0)})
+end)
+cancelled = true
+pump(25)
+near(rootProps.Position.Y, 70.5, 0.01)
+assert(activityService.flags["fling"] == false)
+pass("Auto Win-style stopped fling keeps its explicit safe return")
 
 print("PASS " .. passed .. " SkidFling suites")
 '''

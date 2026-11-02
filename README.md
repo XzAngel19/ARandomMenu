@@ -11,6 +11,14 @@ getgenv().WURST_BRANCH = "arena/9492e6b6-arandommenu"
 loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/9492e6b6-arandommenu/src/Wurst.lua"))()
 ```
 
+## Shaders
+
+En `Render > Shaders` elige un `Look`, el clima `Clear`, `Rain`, `Snow` o
+`Autumn` y activa `Fog` si quieres niebla. `Advanced` muestra los controles
+anteriores. Las texturas del clima se descargan solo al usarlas; los fallbacks,
+fuentes y licencias están en `docs/third-party/shaders/README.md`. Los efectos
+son nativos de Roblox, no ReShade ni RTX.
+
 ## Desarrollo
 
 `src/libraries/Manifest.lua` es el catálogo de módulos; `src/Wurst.lua` carga

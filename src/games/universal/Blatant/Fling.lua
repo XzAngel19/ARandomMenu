@@ -296,6 +296,8 @@ function Module.init(context: Runtime): any
         end
 
         local function pose(offset: CFrame, angles: CFrame): boolean
+            -- Stop between individual yielded poses, not only once per group.
+            if shouldStop and shouldStop() then return false end
             local part: BasePart? = currentBasePart()
             if not part then
                 return false
@@ -452,6 +454,9 @@ function Module.init(context: Runtime): any
             and type(options.shouldStop) == "function"
             and options.shouldStop
             or nil
+        -- Auto Farm opts out of returning to an old round after cancellation.
+        -- Other callers (including Auto Win) retain their existing return policy.
+        local skipReturnOnStop: boolean = type(options) == "table" and options.skipReturnOnStop == true
         local returnCFrame: CFrame? = type(options) == "table"
             and typeof(options.returnCFrame) == "CFrame"
             and options.returnCFrame
@@ -551,6 +556,7 @@ function Module.init(context: Runtime): any
                 local used: BasePart? = nil
                 local pass: number = 0
                 while pass < maxPasses do
+                    if shouldStop and shouldStop() then break end
                     pass += 1
                     local partNow: BasePart? = nil
                     if pass == 1 then
@@ -625,17 +631,36 @@ function Module.init(context: Runtime): any
             pcall(function(): ()
                 workspace.FallenPartsDestroyHeight = savedDestroyHeight
             end)
+            local finalCharacter: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
+                getCharacterParts()
+            local cancelled: boolean = skipReturnOnStop and shouldStop ~= nil and shouldStop()
             if camera then
                 pcall(function(): ()
-                    camera.CameraSubject = humanoid
+                    camera.CameraSubject = if cancelled then (finalHumanoid or humanoid) else humanoid
                 end)
             end
 
-            local finalCharacter: Model?, finalHumanoid: Humanoid?, finalRoot: BasePart? =
-                getCharacterParts()
-            if finalCharacter and finalRoot and finalRoot.Parent then
+            local function stopBodyMotion(body: Model): ()
+                for _, descendant: Instance in ipairs(body:GetChildren()) do
+                    if descendant:IsA("BasePart") then
+                        local bodyPart: BasePart = descendant :: BasePart
+                        bodyPart.Velocity = Vector3.zero
+                        bodyPart.RotVelocity = Vector3.zero
+                    end
+                end
+            end
+            if cancelled then
+                -- A server teleport/new round may already have moved the body.
+                -- Release the old fling velocity, but never move a new body or
+                -- return the lobby body to the previous map's saved CFrame.
+                pcall(stopBodyMotion, character)
+            elseif finalCharacter and finalRoot and finalRoot.Parent then
                 local attempts: number = 0
                 repeat
+                    if skipReturnOnStop and shouldStop and shouldStop() then
+                        pcall(stopBodyMotion, character)
+                        break
+                    end
                     attempts += 1
                     pcall(function(): ()
                         finalRoot.CFrame = oldPos * CFrame.new(0, 0.5, 0)
@@ -645,13 +670,7 @@ function Module.init(context: Runtime): any
                                 finalHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
                             end)
                         end
-                        for _, descendant: Instance in ipairs(finalCharacter:GetChildren()) do
-                            if descendant:IsA("BasePart") then
-                                local bodyPart: BasePart = descendant :: BasePart
-                                bodyPart.Velocity = Vector3.zero
-                                bodyPart.RotVelocity = Vector3.zero
-                            end
-                        end
+                        stopBodyMotion(finalCharacter)
                     end)
                     task.wait()
                 until (finalRoot.Position - oldPos.Position).Magnitude < 25 or attempts >= 60

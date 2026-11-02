@@ -228,7 +228,8 @@ function Module.init(_runtime: any): any
     -- of us (anchored), then slash. The slash uses the repo's own
     -- knife path (Events.HandleTouched per victim, as KnifeAura
     -- does) and falls back to the game's Stab remote like YARHM.
-    local function killAll(): ()
+    local function killAll(isCurrent: () -> boolean): ()
+        if not isCurrent() then return end
         if type(getPlayerRole) ~= "function"
             or getPlayerRole(LocalPlayer) ~= "Murderer" then
             notify("Auto Farm: Kill All only works as the Murderer.")
@@ -255,11 +256,11 @@ function Module.init(_runtime: any): any
             -- never a fixed sleep: 0.3 s is the ceiling, not the cost.
             local equipDeadline: number = os.clock() + 0.3
             while knife.Parent ~= character
-                and os.clock() < equipDeadline do
+                and os.clock() < equipDeadline and isCurrent() do
                 task.wait()
             end
         end
-        if knife.Parent ~= character then
+        if not isCurrent() or knife.Parent ~= character then
             return
         end
         local victims: {BasePart} = {}
@@ -280,7 +281,18 @@ function Module.init(_runtime: any): any
         if #victims == 0 then
             return
         end
+        local function releaseVictims(): ()
+            for _, victimRoot: BasePart in ipairs(victims) do
+                pcall(function(): ()
+                    victimRoot.Anchored = false
+                end)
+            end
+        end
         task.wait(0.15)
+        if not isCurrent() then
+            releaseVictims()
+            return
+        end
         local stab: Instance? = knife:FindFirstChild("Stab")
         if stab and stab:IsA("RemoteEvent") then
             pcall(function(): ()
@@ -294,6 +306,7 @@ function Module.init(_runtime: any): any
             (knife :: Tool):Activate()
         end)
         for _, victimRoot: BasePart in ipairs(victims) do
+            if not isCurrent() then break end
             if handleTouched and handleTouched:IsA("RemoteEvent") then
                 pcall(function(): ()
                     (handleTouched :: RemoteEvent):FireServer(victimRoot)
@@ -301,20 +314,18 @@ function Module.init(_runtime: any): any
             end
             task.wait(0.05)
         end
-        task.delay(0.5, function(): ()
-            for _, victimRoot: BasePart in ipairs(victims) do
-                pcall(function(): ()
-                    victimRoot.Anchored = false
-                end)
-            end
-        end)
-        notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
+        if isCurrent() then
+            task.delay(0.5, releaseVictims)
+            notify("Auto Farm: Kill All fired at " .. #victims .. " players.")
+        else
+            releaseVictims()
+        end
     end
 
     -- Compact spin fling: park on the target spinning hard for a
     -- couple of seconds; contact physics does the rest.
-    local function flingPlayer(target: Player?): ()
-        if not target then
+    local function flingPlayer(target: Player?, isCurrent: () -> boolean): ()
+        if not target or not isCurrent() then
             return
         end
         if type(state.mm2PerformFling) == "function" then
@@ -322,6 +333,8 @@ function Module.init(_runtime: any): any
                 silent = true,
                 duration = 3.5,
                 blocking = true,
+                shouldStop = function(): boolean return not isCurrent() end,
+                skipReturnOnStop = true,
             })
             return
         end
@@ -331,7 +344,7 @@ function Module.init(_runtime: any): any
         end
         local saved: CFrame = myRoot.CFrame
         local startedAt: number = os.clock()
-        while os.clock() - startedAt < 2.2 do
+        while os.clock() - startedAt < 2.2 and isCurrent() do
             local targetRoot: BasePart? = rootOf(target)
             if not targetRoot then
                 break
@@ -345,7 +358,9 @@ function Module.init(_runtime: any): any
         end
         pcall(function(): ()
             myRoot.AssemblyAngularVelocity = Vector3.zero
-            myRoot.CFrame = saved
+            if isCurrent() then
+                myRoot.CFrame = saved
+            end
         end)
     end
 
@@ -370,10 +385,16 @@ function Module.init(_runtime: any): any
         return ok and sent == true
     end
 
+    local farmGeneration: number = 0
+
     local function toggleAutoFarm(enabled: boolean): ()
+        farmGeneration += 1
+        local enableGeneration: number = farmGeneration
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
+        disconnectFeatureConnection("MM2AutoFarmRoundEnd")
+        disconnectFeatureConnection("MM2AutoFarmRoundStart")
         -- Invokes the restore closure the previous enable registered:
         -- collisions, PlatformStand, AutoRotate and the root all go
         -- back, and the character returns to where the farm grabbed
@@ -392,6 +413,12 @@ function Module.init(_runtime: any): any
         local roundFullReached: boolean = false
         local teleportedHomeThisRound: boolean = false
         local wasInActiveRound: boolean = false
+        local currentRoundMap: Instance? = nil
+        local busyLobbyPart: BasePart? = nil
+        local busyLobbyScanAt: number = 0
+        local endedMap: Instance? = nil
+        local waitingForNextRound: boolean = false
+        local roundGeneration: number = 0
         local scanCache: {Instance} = {}
         local scanAt: number = 0
         -- A coin that does not pay on the first touch is retried on a later pass
@@ -428,6 +455,7 @@ function Module.init(_runtime: any): any
         -- physics step). The task tick only chooses the destination.
         local hoverTarget: Vector3? = nil
         local hoverActive: boolean = false
+        local lastSteppedPosition: Vector3? = nil
 
         local function yawOf(frame: CFrame): number
             local look: Vector3 = frame.LookVector
@@ -469,6 +497,14 @@ function Module.init(_runtime: any): any
                 end
             end
             return nil
+        end
+
+        local function isNearLobby(root: BasePart?, lobby: BasePart?): boolean
+            if not root or not lobby then return false end
+            local ok: boolean, near: any = pcall(function(): boolean
+                return (root.Position - lobby.Position).Magnitude <= 350
+            end)
+            return ok and near == true
         end
 
         -- Resolves a safe indoor floor position without ever raycasting from
@@ -748,11 +784,11 @@ function Module.init(_runtime: any): any
         -- Detects when the player's character is inside the loaded MM2 map,
         -- including the pre-round countdown seconds right after teleporting
         -- from the lobby before roles or coins have spawned.
-        local function isCharacterInActiveRound(root: BasePart): boolean
+        local function isCharacterInActiveRound(root: BasePart, knownMap: Instance?): boolean
             if type(findMM2Map) ~= "function" then
                 return false
             end
-            local map: Instance? = findMM2Map()
+            local map: Instance? = knownMap or findMM2Map()
             if not map then
                 return false
             end
@@ -824,10 +860,18 @@ function Module.init(_runtime: any): any
             return true
         end
 
-        local function restoreCharacter(returnHome: boolean): ()
+        local function restoreCharacter(returnHome: boolean, noReposition: boolean?): ()
             local wasMovedByFarm: boolean = engaged or hiddenUnderMap
             local character: Model?, humanoid: Humanoid?, root: BasePart? =
                 characterParts()
+            -- The old body can disappear before the next round's body exists.
+            -- Restore the body we actually modified, not a newly spawned one.
+            local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+            if wasMovedByFarm and movedCharacter and movedCharacter ~= character then
+                character = movedCharacter
+                humanoid = movedCharacter:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                root = movedCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+            end
             for part: Instance, was: boolean in pairs(savedCollide) do
                 pcall(function(): ()
                     (part :: BasePart).CanCollide = was
@@ -856,6 +900,9 @@ function Module.init(_runtime: any): any
                     end
                     root.AssemblyLinearVelocity = Vector3.zero
                     root.AssemblyAngularVelocity = Vector3.zero
+                    if noReposition then
+                        return
+                    end
                     -- Return the character to the exact last position
                     -- it had right before Auto Farm started (homeCFrame),
                     -- never to a random spawn point, and during active
@@ -913,9 +960,64 @@ function Module.init(_runtime: any): any
             engagedCharacter = nil
             hoverActive = false
             hoverTarget = nil
+            lastSteppedPosition = nil
             walkCarryDirection = nil
             walkCarryUntil = 0
             walkBodyReady = false
+        end
+
+        -- A round may end while the character is absent, so the ordinary
+        -- lobby tick is not guaranteed to run. Invalidate full-bag and pickup
+        -- state independently of that tick; never teleport to an old map here.
+        local function clearRound(): ()
+            roundGeneration += 1
+            busy = false
+            if engaged or hiddenUnderMap then
+                -- Lift a held/underground body back to the map only while it
+                -- is still demonstrably on the SAME round map. Never move a
+                -- body already teleported to a lobby or a replacement map.
+                local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+                local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+                local sameMap: boolean = currentRoundMap ~= nil
+                    and type(findMM2Map) == "function" and findMM2Map() == currentRoundMap
+                local mayReposition: boolean = sameMap and character ~= nil
+                    and character == movedCharacter and humanoid ~= nil and humanoid.Health > 0
+                    and root ~= nil and isCharacterInActiveRound(root :: BasePart, currentRoundMap)
+                restoreCharacter(false, not mayReposition)
+            end
+            wasInActiveRound = false
+            currentRoundMap = nil
+            busyLobbyPart = nil
+            busyLobbyScanAt = 0
+            bagAmount = 0
+            bagLimit = 50
+            fullHandled = false
+            roundFullReached = false
+            teleportedHomeThisRound = false
+            homeCFrame = nil
+            homeCharacter = nil
+            -- scanCache can be Coin ESP's shared list: do not mutate it.
+            scanCache = {}
+            scanAt = 0
+            table.clear(retryAt)
+            table.clear(attempts)
+            table.clear(blacklist)
+            stuckPart = nil
+            stuckSince = 0
+            lastTouchPulse = 0
+            destroySafeZonePlatform()
+        end
+
+        local function enterRound(character: Model, root: BasePart, map: Instance): ()
+            if wasInActiveRound and currentRoundMap == map then
+                return
+            end
+            clearRound()
+            wasInActiveRound = true
+            currentRoundMap = map
+            homeCFrame = CFrame.new(root.Position)
+                * CFrame.Angles(0, yawOf(root.CFrame), 0)
+            homeCharacter = character
         end
 
         local function engage(
@@ -1182,12 +1284,12 @@ function Module.init(_runtime: any): any
     -- Full-bag Auto Grab gun and Shoot: fetch the dropped sheriff gun
     -- if we do not already carry it, equip it, and continuously shoot
     -- the murderer until the murderer is eliminated or the round ends.
-    local function grabGunAndShoot(): ()
-        if not canGrabGun() then
+    local function grabGunAndShoot(isCurrent: () -> boolean): ()
+        if not isCurrent() or not canGrabGun() then
             return
         end
         local shootLoopDeadline: number = os.clock() + 30
-        while os.clock() < shootLoopDeadline and enabled and settings.grabGunShoot do
+        while os.clock() < shootLoopDeadline and isCurrent() and settings.grabGunShoot do
             if not canGrabGun() then
                 return
             end
@@ -1218,7 +1320,7 @@ function Module.init(_runtime: any): any
                 end
                 local pickupDeadline: number = os.clock() + 5
                 while os.clock() < pickupDeadline and not gun do
-                    if not canGrabGun() or not enabled or not settings.grabGunShoot then
+                    if not isCurrent() or not canGrabGun() or not settings.grabGunShoot then
                         return
                     end
                     local curChar: Model?, curHum: Humanoid?,
@@ -1285,11 +1387,11 @@ function Module.init(_runtime: any): any
                     humanoid:EquipTool(gun :: Tool)
                 end)
                 local equipWait: number = os.clock() + 0.15
-                while gun.Parent ~= character and os.clock() < equipWait do
+                while gun.Parent ~= character and os.clock() < equipWait and isCurrent() do
                     task.wait()
                 end
             end
-            if gun.Parent == character and canGrabGun() then
+            if isCurrent() and gun.Parent == character and canGrabGun() then
                 shootMurderer(murderer)
             end
             task.wait(0.12)
@@ -1300,23 +1402,25 @@ function Module.init(_runtime: any): any
         -- return to exact pre-farm position, Auto Grab gun and Shoot,
         -- reset, then the full-bag flings (which never depend on the reset).
         -- Runs once per 50-coin fill.
-        local function runFullSequence(): ()
-            busy = true
+        local function runFullSequence(isCurrent: () -> boolean): ()
             local ok: boolean, err: any = pcall(function(): ()
+                if not isCurrent() then return end
                 -- Everything in this sequence happens ONLY when the
                 -- bag is full (50): Kill All, return to the character's
                 -- last position before Auto Farm started (homeCFrame),
                 -- gun grab + continuous shooting, reset, and flings.
                 -- None of it runs during ordinary farming.
                 if settings.killAllOnFull then
-                    killAll()
+                    killAll(isCurrent)
                     task.wait()
                 end
+                if not isCurrent() then return end
                 restoreCharacter(true)
                 if settings.grabGunShoot then
-                    grabGunAndShoot()
+                    grabGunAndShoot(isCurrent)
                     task.wait(0.15)
                 end
+                if not isCurrent() then return end
                 if settings.resetOnFull then
                     local oldCharacter: Model? = LocalPlayer.Character
                     local _, humanoid: Humanoid? = characterParts()
@@ -1328,7 +1432,7 @@ function Module.init(_runtime: any): any
                     -- Wait for the respawned character, checking
                     -- every frame instead of four times a second.
                     local deadline: number = os.clock() + 10
-                    while os.clock() < deadline do
+                    while os.clock() < deadline and isCurrent() do
                         local character: Model?, newHumanoid: Humanoid?,
                             newRoot: BasePart? = characterParts()
                         if character and character ~= oldCharacter
@@ -1344,28 +1448,106 @@ function Module.init(_runtime: any): any
                 -- they meet the fresh character first (above), without one they
                 -- simply happen now. The label says "after full bag" for exactly
                 -- that reason.
+                if not isCurrent() then return end
                 if settings.flingMurder
                     and type(findMurderer) == "function" then
-                    flingPlayer(findMurderer())
+                    flingPlayer(findMurderer(), isCurrent)
                 end
-                if settings.flingSheriff
+                if isCurrent() and settings.flingSheriff
                     and type(findSheriff) == "function" then
-                    flingPlayer(findSheriff())
+                    flingPlayer(findSheriff(), isCurrent)
                 end
             end)
             if not ok then
                 warn("Auto Farm full-bag sequence failed: " .. tostring(err))
             end
-            busy = false
+        end
+
+        local function startBusySequence(action: (() -> boolean) -> ()): ()
+            if busy then return end
+            busy = true
+            -- Resolve once per sequence; individual yielded actions only do a
+            -- cheap distance check, never a workspace scan for each pose.
+            busyLobbyPart = findLobbyReferencePart()
+            busyLobbyScanAt = os.clock() + 0.5
+            local sequenceRound: number = roundGeneration
+            local sequenceMap: Instance? = currentRoundMap
+            local observedCharacter: Model? = LocalPlayer and LocalPlayer.Character
+            local mapChanged: boolean = false
+            local function isCurrent(): boolean
+                if farmGeneration ~= enableGeneration or roundGeneration ~= sequenceRound then
+                    return false
+                end
+                local character: Model?, _, root: BasePart? = characterParts()
+                if sequenceMap and not sequenceMap.Parent then return false end
+                if character ~= observedCharacter then
+                    observedCharacter = character
+                    local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                    if map and map ~= sequenceMap then mapChanged = true end
+                end
+                return not mapChanged and not isNearLobby(root, busyLobbyPart)
+            end
+            task.spawn(function(): ()
+                local ok: boolean, err: any = pcall(action, isCurrent)
+                if not ok then
+                    warn("Auto Farm sequence failed: " .. tostring(err))
+                end
+                if farmGeneration == enableGeneration and roundGeneration == sequenceRound then
+                    if isCurrent() then
+                        busy = false
+                    else
+                        local _, _, root: BasePart? = characterParts()
+                        local inLobby: boolean = isNearLobby(root, busyLobbyPart)
+                        clearRound()
+                        setStatus(if inLobby then "Auto Farm: waiting in lobby" else "Auto Farm: waiting for round")
+                    end
+                end
+            end)
         end
 
         local remotes: any = core.mm2GameplayRemotes
+        local roundEnd: Instance? = remotes and remotes:FindFirstChild("RoundEndFade")
+        if roundEnd and roundEnd:IsA("RemoteEvent") then
+            featureConnections.MM2AutoFarmRoundEnd = (roundEnd :: any).OnClientEvent:Connect(
+                function(): ()
+                    endedMap = currentRoundMap or (type(findMM2Map) == "function" and findMM2Map())
+                    waitingForNextRound = true
+                    clearRound()
+                end
+            )
+        end
+        local roundStart: Instance? = remotes and remotes:FindFirstChild("RoundStart")
+        if roundStart and roundStart:IsA("RemoteEvent") then
+            featureConnections.MM2AutoFarmRoundStart = (roundStart :: any).OnClientEvent:Connect(
+                function(duration: any): ()
+                    if waitingForNextRound and tonumber(duration) and tonumber(duration) > 0 then
+                        waitingForNextRound = false
+                        endedMap = nil
+                    end
+                end
+            )
+        end
         local collected: Instance? = remotes
             and remotes:FindFirstChild("CoinCollected")
         if collected and collected:IsA("RemoteEvent") then
             featureConnections.MM2AutoFarmCoinCollected =
                 (collected :: any).OnClientEvent:Connect(
                     function(_bag: any, amount: any, limit: any): ()
+                        -- A first coin can arrive before the next heartbeat.
+                        -- Enter its map before recording the amount, otherwise
+                        -- the following tick would immediately erase it.
+                        local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+                        local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                        if not character or not humanoid or humanoid.Health <= 0 or not root
+                            or not map or not isCharacterInActiveRound(root, map)
+                            or (waitingForNextRound and map == endedMap) then
+                            return
+                        end
+                        if waitingForNextRound then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
+                        enterRound(character, root, map)
                         if type(limit) == "number" and limit >= 50 then
                             bagLimit = limit
                         end
@@ -1395,9 +1577,22 @@ function Module.init(_runtime: any): any
                         return
                     end
                     local character: Model? = LocalPlayer and LocalPlayer.Character
-                    if not character then
+                    local movedCharacter: Model? = engagedCharacter or (hiddenUnderMap and homeCharacter)
+                    if not character or (movedCharacter and movedCharacter ~= character) then
                         return
                     end
+                    local root: BasePart? =
+                        character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    if not root or not root.Parent then return end
+                    local position: Vector3 = root.Position
+                    if lastSteppedPosition and (position - lastSteppedPosition).Magnitude > 60 then
+                        -- The server can teleport the same character to the
+                        -- lobby before Heartbeat sees the phase change. Release
+                        -- flight/NoClip without moving to an old home first.
+                        restoreCharacter(false, true)
+                        return
+                    end
+                    lastSteppedPosition = position
                     if hiddenUnderMap or settings.mode ~= "Walk" then
                         forceNoClipCharacter(character)
                     end
@@ -1406,9 +1601,7 @@ function Module.init(_runtime: any): any
                     end
                     local humanoid: Humanoid? =
                         character:FindFirstChildOfClass("Humanoid")
-                    local root: BasePart? =
-                        character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                    if root and root.Parent and humanoid and humanoid.Health > 0 then
+                    if humanoid and humanoid.Health > 0 then
                         applyBelowControl(root, humanoid)
                     end
                 end
@@ -1421,46 +1614,58 @@ function Module.init(_runtime: any): any
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
                 end
-                if busy then
-                    return
-                end
                 local character: Model?, humanoid: Humanoid?,
                     root: BasePart? = characterParts()
                 if not character or not humanoid or not root
                     or humanoid.Health <= 0 then
                     return
                 end
+                local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+                -- A same-round full-bag sequence may be waiting for respawn.
+                -- A different map or a lobby body must be allowed to cancel it,
+                -- even when an old map remains loaded and RoundEnd was missed.
+                if busy and (not map or map == currentRoundMap) then
+                    if not busyLobbyPart and os.clock() >= busyLobbyScanAt then
+                        busyLobbyPart = findLobbyReferencePart()
+                        busyLobbyScanAt = os.clock() + 0.5
+                    end
+                    if isNearLobby(root, busyLobbyPart) then
+                        clearRound()
+                        setStatus("Auto Farm: waiting in lobby")
+                    end
+                    return
+                end
 
                 -- Strict lobby & non-round guard: NEVER activate, move,
                 -- or farm in the lobby or outside an active round on a map.
-                local inActiveRound: boolean = isCharacterInActiveRound(root)
+                local inActiveRound: boolean = map ~= nil and isCharacterInActiveRound(root, map)
                 if not inActiveRound then
-                    if engaged or hiddenUnderMap then
-                        restoreCharacter(false)
+                    if wasInActiveRound or engaged or hiddenUnderMap then
+                        clearRound()
                     end
-                    if wasInActiveRound then
-                        wasInActiveRound = false
-                        bagAmount = 0
-                        fullHandled = false
-                        roundFullReached = false
-                        teleportedHomeThisRound = false
-                        homeCFrame = nil
-                        homeCharacter = nil
-                        destroySafeZonePlatform()
+                    if waitingForNextRound then
+                        local lobby: BasePart? = findLobbyReferencePart()
+                        local reachedLobby: boolean = lobby ~= nil
+                            and (root.Position - (lobby :: BasePart).Position).Magnitude <= 350
+                        if not map or map ~= endedMap or reachedLobby then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
                     end
                     setStatus("Auto Farm: waiting in lobby")
                     return
                 end
-
-                if not wasInActiveRound then
-                    wasInActiveRound = true
-                    bagAmount = 0
-                    fullHandled = false
-                    roundFullReached = false
-                    teleportedHomeThisRound = false
-                    homeCFrame = CFrame.new(root.Position)
-                        * CFrame.Angles(0, yawOf(root.CFrame), 0)
-                    homeCharacter = character
+                if waitingForNextRound and map == endedMap then
+                    setStatus("Auto Farm: waiting for next round")
+                    return
+                end
+                if waitingForNextRound then
+                    waitingForNextRound = false
+                    endedMap = nil
+                end
+                enterRound(character, root, map :: Instance)
+                if busy then
+                    return
                 end
 
                 local targetLimit: number = math.max(50, bagLimit)
@@ -1473,18 +1678,13 @@ function Module.init(_runtime: any): any
                         if settings.killAllOnFull or settings.resetOnFull
                             or settings.flingMurder or settings.flingSheriff
                             or settings.grabGunShoot then
-                            task.spawn(runFullSequence)
+                            startBusySequence(runFullSequence)
                         else
                             restoreCharacter(true)
                         end
                     elseif settings.grabGunShoot and canGrabGun() then
-                        task.spawn(function(): ()
-                            if busy then
-                                return
-                            end
-                            busy = true
-                            pcall(grabGunAndShoot)
-                            busy = false
+                        startBusySequence(function(isCurrent: () -> boolean): ()
+                            grabGunAndShoot(isCurrent)
                         end)
                     else
                         setStatus(string.format(

@@ -128,6 +128,19 @@ frame()
 assert(#state.taskManager.tasks == before, "the disabled task is swept out of the bucket")
 pass("an erroring task is disabled instead of breaking the frame")
 
+-- A transient loading/map error followed by successful frames must not use up
+-- the entire lifetime's failure allowance: the card stays ON across rounds.
+local ticks = 0
+local intermittent = state.taskManager:Connect(function()
+    ticks += 1
+    if ticks == 1 or ticks == 3 or ticks == 5 then error("transient") end
+end, nil, "intermittent Auto Farm")
+for _ = 1, 8 do frame() end
+assert(intermittent.Connected and ticks == 8,
+    "three isolated errors separated by successful ticks must not kill the task")
+intermittent:Disconnect()
+pass("isolated failures do not permanently disable a recovered task")
+
 -- 5) Stats() --------------------------------------------------------------
 calls = {}
 local slow = state.taskManager:Connect(makeTask("slow", 0.004), nil, "slow module")

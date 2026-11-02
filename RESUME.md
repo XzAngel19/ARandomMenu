@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v169-20261102-repo-runtime-cleanup`**, con árbol base de
+> **`v170-20261102-shaders-weather-farm`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -27,6 +27,35 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v170 — Shaders, clima y transición de Auto Farm (2026-11-02)
+
+Detalle, licencias y pruebas: `docs/FIXES-v170.md` y `docs/third-party/shaders/`.
+
+- El usuario confirmó que Shaders, Destruct, Keep After Teleport, Gun y Knife
+  funcionan en su experiencia. Auto Farm funciona pero a veces se detenía al
+  empezar una ronda y volvía al alternarlo. No se debe presentar una simulación
+  como prueba de la causa exacta en vivo.
+- Shaders ahora ofrece Look, Weather (Clear/Rain/Snow/Autumn), Fog y Advanced.
+  Los controles y looks anteriores se conservan bajo Advanced o en Look; se
+  adaptaron cuatro presets de iluminación reales con licencia MIT. Fog restaura
+  la atmósfera ajena cuando corresponde. Cuatro emisores y raycasts escalonados
+  limitan el trabajo de clima. Tres texturas con licencia abierta se descargan
+  solo al usar cada clima, con fallback; no son ReShade/RTX. Ninguna prueba
+  offline certifica cómo renderiza Delta ni mide FPS.
+- Se reprodujo en el módulo real una bolsa 50/50 obsoleta si el personaje
+  desaparece entre mapas. El cambio de mapa y RoundEnd invalidan ese estado y
+  secuencias pendientes, sin borrar una bolsa llena por respawn en la misma
+  ronda. Un reporte de moneda previo al tick se conserva. El controlador suelta
+  el personaje si este se traslada bruscamente al lobby. El Fling real detiene
+  poses entre esperas y Auto Farm evita devolver al cuerpo al mapa anterior al
+  cancelar; Fling normal y el retorno de Auto Win conservan su comportamiento
+  en pruebas. El scheduler reinicia el conteo tras un tick exitoso y aún
+  desactiva tareas con tres errores consecutivos. Las acciones de bolsa llena y
+  Silent sin WallCheck pasan mocks.
+- Validación offline: 85 fuentes, 111 suites, bundle 83 fuentes, 9 assets,
+  boots sin fallos, 90 llamadas API, menú 50/49. Siguen pendientes las pruebas
+  visuales y de rendimiento reales, servidor/Delta y auditoría exhaustiva.
 
 ## v169 — Limpieza del repositorio y arranque Universal (2026-11-02)
 
