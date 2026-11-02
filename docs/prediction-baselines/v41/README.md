@@ -3,7 +3,8 @@
 Copias completas obtenidas de Git antes de modificar los predictores:
 `Shoot.lua.txt`, `KnifeThrow.lua.txt`, `base.lua.txt`. El commit completo y los
 SHA-256 están en `metadata.json`. No se incluyen como módulos en el bundle.
-La referencia v35 anterior no fue modificada.
+La referencia v35 anterior se conserva en el historial de Git
+(`a4e9fb3:docs/prediction-baselines/v35/`), no en el árbol actual.
 
 En v42, **Calibration → Prediction model → Reference v41** restaura las
 matemáticas A de Gun y Knife conservando correcciones posteriores de menú,

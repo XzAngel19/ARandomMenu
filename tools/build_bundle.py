@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate (or verify) src/libraries/bundle.lua.
 
-The runtime ships every source file inside a single Lua table so an executor
-that cannot HttpGet still boots from memory. Whenever a module changes the
-bundle has to be rebuilt *and* the stamp bumped, otherwise
-`Wurst.fetchRepositorySource` keeps serving the previous copy and the user
-silently runs stale code.
+The runtime ships its source files inside one Lua table. Wurst fetches that
+bundle and serves its contents from memory; the initial download still needs
+network access. Whenever a module changes, rebuild the bundle *and* bump the
+stamp so Wurst does not silently serve a previous copy.
 
 Usage:
     python3 tools/build_bundle.py --stamp v3-20261011-1800

@@ -5,7 +5,7 @@ from pathlib import Path
 from test_mm2_precision import PRELUDE, section
 import replay_gun_prediction as replay
 ROOT=Path(__file__).resolve().parents[1]
-print("Historical archived prediction test; live v45 is covered by test_prediction_66d and test_gun_safety",flush=True)
+print("Historical archived prediction test; current code has separate precision and gun safety tests",flush=True)
 archive=ROOT/'docs/prediction-baselines/v43'
 for saved in (archive,ROOT/'docs/prediction-baselines/v44'):
  for name,sha in json.loads((saved/'metadata.json').read_text())['files'].items():

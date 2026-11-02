@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v168-20261031-destruct-teleport-lifecycle"
+local SOURCE_STAMP: string = "v169-20261102-repo-runtime-cleanup"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -2264,7 +2264,25 @@ function SectionManager.initializeAllAsync(): ()
     local completed: number = 0
     local failures: number = 0
 
+    local function finishLoading(): ()
+        print("[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures=" .. tostring(failures))
+        -- With no game-specific section, the universal menu is already built.
+        -- It still needs to release its launcher, especially on mobile.
+        local function finish(): ()
+            state.menuReady = true
+            if type(state.refreshLauncher) == "function" then
+                pcall(state.refreshLauncher)
+            end
+        end
+        if type(task) == "table" and type(task.defer) == "function" then
+            task.defer(finish)
+        else
+            finish()
+        end
+    end
+
     if total == 0 then
+        finishLoading()
         return
     end
 
@@ -2288,23 +2306,7 @@ function SectionManager.initializeAllAsync(): ()
             end
             completed += 1
             if completed >= total then
-                print(
-                    "[" .. PRODUCT.logPrefix .. ":Bootstrap] Load complete · failures="
-                        .. tostring(failures)
-                )
-                -- The GUI is fully built from here on: this is what releases the
-                -- launcher (it stays hidden through the whole load).
-                local finish = function(): ()
-                    state.menuReady = true
-                    if type(state.refreshLauncher) == "function" then
-                        pcall(state.refreshLauncher)
-                    end
-                end
-                if type(task) == "table" and type(task.defer) == "function" then
-                    task.defer(finish)
-                else
-                    finish()
-                end
+                finishLoading()
             end
         end)
     end

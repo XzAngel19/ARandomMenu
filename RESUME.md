@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v168-20261031-destruct-teleport-lifecycle`**, con árbol base de
+> **`v169-20261102-repo-runtime-cleanup`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,12 +21,40 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v168: 91 fuentes,
-     108 suites, auditoría estática, boot `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v169: 85 fuentes,
+     110 suites, auditoría estática, boots `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v169 — Limpieza del repositorio y arranque Universal (2026-11-02)
+
+Detalle, pruebas y límites: `docs/FIXES-v169.md`.
+
+- Se retiraron la GUI anterior `src/gui/Current`, sus assets y procesador,
+  los registries `src/library` y los perfiles viejos `src/Profile`: ninguno
+  se cargaba en el menú actual. Se conservan los seis assets que Wurst
+  descarga por URL, todos los módulos vigentes, constructor, tests y fixtures.
+- El bundle contiene **83 fuentes** (el Manifest y sus 82 rutas). El test de
+  inventario comprueba también los assets separados y detecta código huérfano;
+  la matriz de arranque prueba Universal y los seis PlaceId con mocks de PC y
+  móvil, incluido el dock y su botón de respaldo. La comparación antes/después
+  preservó tarjetas, encabezados, opciones y visibilidad inicial en esos boots.
+- Se corrigió un fallo existente: cuando Universal no registra ninguna sección
+  de juego, nunca se marcaba `menuReady`, por lo que el lanzador de respaldo
+  podía quedar oculto si el dock no estaba disponible. El dock móvil normal ya
+  existía; no se ha probado la corrección en Roblox/Delta.
+- Se retiraron informes históricos, datos que ningún test usa y un `AGENTS.md`
+  ajeno al proyecto. Se conservaron los informes recientes, contratos, esta guía
+  y las integraciones de desarrollo. El historial no se reescribió: para un
+  informe retirado, usar `git show a4e9fb3:docs/FIXES-v163.md` (sustituir el
+  nombre); los archivos todavía existen en ese commit. La limpieza vive en la
+  rama fija, no en `main`. El README ya apunta al loader de la rama fija.
+- Validación offline: 85 fuentes, 110 suites, boots `failures=0`, 90 llamadas
+  API y menú MM2 50/49. Una auditoría manual de todos los módulos, Shaders,
+  lag/Shift Lock, física, aceptación del servidor y Delta/Roblox siguen sin
+  verificación real. No declarar el menú completo solo porque compile.
 
 ## v168 — Destruct, teleport y ownership del runtime (2026-10-31)
 
@@ -169,7 +197,7 @@ Detalle, cifras y límites: `docs/FIXES-v164.md`.
 
 ## v163 — Shaders de verdad y medición de picos sin atribuciones (2026-10-29)
 
-Detalle y limitaciones: `docs/FIXES-v163.md`.
+Detalle y limitaciones: `git show a4e9fb3:docs/FIXES-v163.md`.
 
 - El usuario informa que Shaders seguía sin modificar la imagen. La causa era
   que los `PostEffect` vivían en un **Folder** bajo Lighting: Roblox exige
@@ -200,7 +228,7 @@ Detalle y limitaciones: `docs/FIXES-v163.md`.
 
 ## v162 — Shift Lock, Shaders que no hacía nada, coste de los rayos (2026-10-30)
 
-Detalle y tablas: `docs/FIXES-v162.md`.
+Detalle y tablas: `git show a4e9fb3:docs/FIXES-v162.md`.
 
 - **Shift Lock / ratón libre (causa encontrada).** El menú pedía el cursor al
   abrirse y al cerrarse **escribía siempre** un valor, pisando el `LockCenter`
@@ -225,7 +253,7 @@ Detalle y tablas: `docs/FIXES-v162.md`.
 
 ## v161 — Prediction con lazo cerrado por vía + módulo Shaders (2026-10-30)
 
-Detalle, tablas y límites: `docs/FIXES-v161.md`.
+Detalle, tablas y límites: `git show a4e9fb3:docs/FIXES-v161.md`.
 
 - **El lazo de plomo vuelve, con frenos.** Desde v120 `leadError` se medía y se
   tiraba a la basura. Ahora se aplica con 3 muestras mínimas, tope ±60 ms
@@ -252,7 +280,7 @@ Detalle, tablas y límites: `docs/FIXES-v161.md`.
 ## v160 — Auditoría de rendimiento (2026-10-29)
 
 El usuario reportó lag y pidió verificar si lo causa el executor o el menú, en
-MM2 y Universal. Detalle y tabla de hallazgos: `docs/FIXES-v160.md`.
+MM2 y Universal. Detalle y tabla de hallazgos: `git show a4e9fb3:docs/FIXES-v160.md`.
 
 - **Diagnóstico que ya existe y ahora sirve:** overlay `Session Info` muestra
   `FPS`, `Ping`, `Menu X+Y ms` y `Spikes`, y el scheduler avisa por consola si
@@ -282,7 +310,7 @@ MM2 y Universal. Detalle y tabla de hallazgos: `docs/FIXES-v160.md`.
 El usuario rechazó el invento de "aperturas" de v158 («no mejora nada, quita
 esa
 cosa», en resumen): **no quiere que el cuchillo apunte a nada que no sea un
-objetivo visible**. Detalle: `docs/FIXES-v159.md`.
+objetivo visible**. Detalle: `git show a4e9fb3:docs/FIXES-v159.md`.
 
 - **Eliminado por completo** `resolveSpeculativeAim` y sus cuatro usos. Sin
   objetivo visible no hay lanzamiento: `Auto Knife Throw` gasta cuchillo solo
@@ -325,7 +353,7 @@ objetivo visible**. Detalle: `docs/FIXES-v159.md`.
 
 El usuario reportó que el Knife especulativo apuntaba a enemigos detrás de
 paredes y a enemigos muertos en el piso, «prediciéndoles», en vez de apuntar a
-aperturas estratégicas. Detalle completo: `docs/FIXES-v158.md`.
+aperturas estratégicas. Detalle completo: `git show a4e9fb3:docs/FIXES-v158.md`.
 
 - `resolveSpeculativeAim` ya **no usa ninguna posición de jugador**. Antes
   centraba radios 4/9/16 studs en el elegible oculto más cercano; por eso con
@@ -370,7 +398,7 @@ aperturas estratégicas. Detalle completo: `docs/FIXES-v158.md`.
   distinguir ápice verdadero de estado/velocidad replicados incorrectamente.
   Giros o paradas futuros causan grandes errores de predicción como es de
   esperar. Estos valores NO son tasas de acierto del servidor. Resultados y
-  alcance: `docs/FIXES-v157.md`.
+  alcance: `git show a4e9fb3:docs/FIXES-v157.md`.
 - `tools/test_mm2_auto_shoot_dispatch.py` prueba rechazos, errores, una llamada
   que envía antes de lanzar error, WallCheck del fallback y salida correcta.
   `test_mm2_experimental.py` comprueba además el pacing y estado incierto tras
@@ -429,7 +457,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > limpia `CanCollide` y el usuario lee como noclip— pasó a ser la opción
 > **Touch Fling**: solo corre mientras esa opción está encendida, y al apagarse
 > devuelve las colisiones. La tarjeta `Fling` es un grupo y ya no lanza nada.
-> Evidencia: `docs/FIXES-v138.1.md`.
+> Evidencia: `git show a4e9fb3:docs/FIXES-v138.1.md`.
 >
 > **v138.2 (2026-10-27):** Walk Fling es su propia tarjeta universal
 > (`src/games/universal/Blatant/WalkFling.lua`, Exploits, orden 8) y el Fling de
@@ -440,7 +468,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `CanTouch=false`, `Transparency=1`, `Distance` 1–40) que no baja al caer.
 > **Anti Fling** es tarjeta propia (`src/games/universal/Movement/AntiFling.lua`,
 > Utilities, orden 5) que recorta impulso planar/subida/caída/giro cada frame y
-> respeta `fling`/`walkfling`. Evidencia: `docs/FIXES-v138.2.md`,
+> respeta `fling`/`walkfling`. Evidencia: `git show a4e9fb3:docs/FIXES-v138.2.md`,
 > `tools/test_walkfling.py`, `tools/test_fling_skid.py`, `tools/test_antivoid50.py`.
 >
 > **v138.3 (2026-10-27):** **Fling** dejó de ser tarjeta de MM2 y es un módulo
@@ -451,7 +479,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > botones de rol resuelven `state.mm2Core` en el clic y avisan fuera de MM2.
 > `state.mm2PerformFling` / `state.mm2FlingStep` los publica este módulo y el
 > harness los verifica tras el arranque. **Walk Fling** ya no tiene slider
-> (`POWER = 10000`, `noOptions = true`). Evidencia: `docs/FIXES-v138.3.md`.
+> (`POWER = 10000`, `noOptions = true`). Evidencia: `git show a4e9fb3:docs/FIXES-v138.3.md`.
 >
 > **v138.4 (2026-10-27):** la mecánica de **Fling** se reescribió copiando
 > `SkidFling` de YARHM tal cual. El bug era el pin: nuestro `BodyVelocity` iba con
@@ -462,7 +490,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `SetPrimaryPartCFrame` + `RootPart.Velocity = (9e7, 9e7*10, 9e7)` +
 > `RotVelocity = 9e8` con `task.wait()` entre pose y pose, y volver a casa con
 > `OldPos * CFrame.new(0, .5, 0)`. `state.mm2FlingStep` (Auto Win) usa el mismo
-> golpe y limpia su pin a los 0.5 s. Evidencia: `docs/FIXES-v138.4.md`,
+> golpe y limpia su pin a los 0.5 s. Evidencia: `git show a4e9fb3:docs/FIXES-v138.4.md`,
 > `tools/test_fling_skid.py` (6 suites).
 >
 > **v138.5 (2026-10-27):** el Fling "terminaba" en medio segundo porque el `until`
@@ -474,7 +502,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `os.clock()`) con tope de 600 poses, `guardedRun()` que nunca deja `flingRunning`
 > pegado, pin con reintento a `1e9` si `math.huge` falla, rescate de 2 frames si la
 > víctima no se movió, y notificación con poses/velocidad reales +
-> `state.mm2LastFling`. Evidencia: `docs/FIXES-v138.5.md`,
+> `state.mm2LastFling`. Evidencia: `git show a4e9fb3:docs/FIXES-v138.5.md`,
 > `tools/test_fling_skid.py` (7 suites).
 >
 > **v138.6 (2026-10-27):** **Auto Farm** dejó de caerse al vacío: el vuelo de
@@ -490,7 +518,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `Humanoid:Move` no mueve. **Menú**: el orden de las tarjetas dentro de cada
 > ventana es **aleatorio por sesión** (LCG + atributo `FeatureSortRank`), no
 > alfabético, con toggle *Settings → Random Card Order*. Evidencia:
-> `docs/FIXES-v138.6.md`, `tools/test_autofarm_motion.py` (4 suites, con gravedad
+> `git show a4e9fb3:docs/FIXES-v138.6.md`, `tools/test_autofarm_motion.py` (4 suites, con gravedad
 > simulada y tick congelado), `tools/test_mm2_auto_farm.py`,
 > `tools/gen_full_boot_harness.py` (prueba de orden no alfabético).
 >
@@ -503,7 +531,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `Random Card Order` y `Rainbow`. El **loader** ya no cachea fuentes en disco:
 > bundle → memoria → un GET, y purga `Wurst/src` en segundo plano. El antiguo
 > abridor circular (círculo + `≡`) se crea oculto y solo aparece cuando
-> `state.menuReady` (fin de todas las secciones). Evidencia: `docs/FIXES-v138.7.md`,
+> `state.menuReady` (fin de todas las secciones). Evidencia: `git show a4e9fb3:docs/FIXES-v138.7.md`,
 > `tools/test_autofarm_motion.py`, `tools/test_loader_launcher.py`.
 >
 > **v138.8 (2026-10-27):** se revierte el **fly-through** del Auto Farm (velocidad
@@ -516,7 +544,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > escondite el cuerpo va a la superficie en `homeCFrame` (antes raycast desde debajo
 > del suelo, que era lo que dejaba el cuerpo enterrado en Walk). **Anti Fling** queda
 > sin opciones (`noOptions = true`, umbrales 2.5× WalkSpeed). Evidencia:
-> `docs/FIXES-v138.8.md`, `tools/test_autofarm_motion.py` (7 suites).
+> `git show a4e9fb3:docs/FIXES-v138.8.md`, `tools/test_autofarm_motion.py` (7 suites).
 >
 > **v138.9 (2026-10-27):** las tarjetas vuelven al **orden alfabético** (fuera
 > `nextRandomRank`, `FeatureSortRank` y el mapa curado `ordered`); se elimina el
@@ -527,7 +555,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > en `validate.sh`. **Fling**: opciones Power (3 = YARHM exacto), Duration,
 > Prediction y Retries, adelanto por `ping/2` en cada pose, re-resolución de las
 > partes del rival, mínimo de 12 poses y segunda pasada con boost ×1.5. Evidencia:
-> `docs/FIXES-v138.9.md`, `tools/test_fling_skid.py` (10 suites).
+> `git show a4e9fb3:docs/FIXES-v138.9.md`, `tools/test_fling_skid.py` (10 suites).
 >
 > **v139.0 (2026-10-27):** pase de rendimiento ("tengo lag"). El `TaskManager` se
 > mide a sí mismo (`state.performance`, `state.taskManager:Stats()`,
@@ -541,7 +569,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > apagados; clave duplicada `MM2AutoShoot` (disparo fantasma) renombrada. El test
 > nuevo `tools/test_scheduler.py` (8 suites) destapó el bug del swap-remove al
 > autodesconectarse una tarea. Harness: 6 tareas always-on, todas con nombre, y
-> 8 toggles seguidos no dejan conexiones. Evidencia: `docs/FIXES-v139.0.md`.
+> 8 toggles seguidos no dejan conexiones. Evidencia: `git show a4e9fb3:docs/FIXES-v139.0.md`.
 >
 > **v139.1 (2026-10-27):** "tengo lag spikes" + versión. `PRODUCT.version` pasa de
 > `0.1 Beta` a **`0.823 Release`**. Se añade detector de hitches en
@@ -553,7 +581,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > `Render:Label` ya no escribe `Size`/`BackgroundTransparency` si no cambian (los
 > ESP completos se benefician); `Nametags` deja de reasignar `Font` y de re-medir
 > texto cada frame; el HUD del menú sólo redibuja la fila que cambió. Evidencia:
-> `docs/FIXES-v139.1.md`.
+> `git show a4e9fb3:docs/FIXES-v139.1.md`.
 
 > **v139.2 (2026-10-27):** "¿Shoot y Auto Throw son lo mejor?". Estudio físico del
 > personaje (17 studs/s de mediana, `moveDirection` <0,08 en el 8 % de las
@@ -570,7 +598,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > (13 resoluciones/s a 60 FPS en vez de 61). Telemetría nueva: `missReason` +
 > `gunMisses`/`gunMissReasons` en el resumen y `closestApproachStuds` /
 > `passedThroughBody` en `projectile-observed`. **El lead no se tocó.** Evidencia:
-> `docs/FIXES-v139.2.md`, `tools/test_gun_corridor.py`,
+> `git show a4e9fb3:docs/FIXES-v139.2.md`, `tools/test_gun_corridor.py`,
 > `tools/test_mm2_knife_equip.py`.
 
 > **v139.3 (2026-10-28):** "¿está bien que el wallcheck detecte el cuerpo del
@@ -589,7 +617,7 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > "cuerpo detrás" usa `describeRayBeyond`, que **se detiene en la primera
 > pared**. Un cadáver (cuerpo sin dueño, salud 0) ya no cuenta como inocente. Los
 > rechazos del corredor se registran con `reason = "corridor"`. **El lead no se
-> tocó** (error mediano 12 ms). Evidencia: `docs/FIXES-v139.3.md`,
+> tocó** (error mediano 12 ms). Evidencia: `git show a4e9fb3:docs/FIXES-v139.3.md`,
 > `tools/test_gun_pointblank.py` (25 comprobaciones).
 
 > **v139.4 (2026-10-28):** cuatro puntos de revisión, los cuatro reales.
@@ -609,19 +637,19 @@ v138.x/v139.x de abajo es histórica de la rama elegida.
 > y el tope de 36 puntos cortaba por el lado viejo, perdiendo **las muestras
 > nuevas**; ahora se decima conservando el span y la última. Ese error alimenta
 > `leadUncertainty` → barrido adaptativo de Silent. Evidencia:
-> `docs/FIXES-v139.4.md`, `tools/test_gun_silent_constructor.py`,
+> `git show a4e9fb3:docs/FIXES-v139.4.md`, `tools/test_gun_silent_constructor.py`,
 > `tools/test_mm2_knife_aim.py`, `tools/test_telemetry_aim_offset.py`.
 
 ## 1A. X2Duels (MVS): estructura MM2, evidencia y contratos
 
-- PlaceIds registrados: `92876937625630` y el MVS anterior `135856908115931`.
-  Fuentes activas: `Rules.lua`, `base.lua`, `Other/AutoFarm.lua` y sus dos
-  perfiles. La sección de menú existente se llama `MVSD`; `Render/TeamESP.lua`
-  fue eliminado y no debe volver como módulo independiente.
+- PlaceIds registrados: `92876937625630` y `135856908115931`. Fuentes activas:
+  `Rules.lua`, `base.lua` y `Other/AutoFarm.lua`, registradas en el Manifest;
+  ambos IDs usan el mismo módulo y no los perfiles viejos. La sección de menú
+  existente se llama `MVSD`; `Render/TeamESP.lua` no debe volver como módulo
+  independiente.
 - Hay exactamente cinco tarjetas X2: **Auto Farm** y **Auto Win** en
-  **Utilities**, **Silent AIM**, **Kill Aura** en Combat y **Hitbox** en
-  Exploits. El único TriggerBot es el universal, adaptado al core X2 para
-  Gun/Knife; no se debe crear otra tarjeta.
+  **Utilities**; **Silent AIM**, **Kill Aura** y **Hitbox** en **Exploits**.
+  TriggerBot se eliminó por petición del usuario, no debe volver a crearse.
 - Silent AIM contiene las secciones Gun y Knife. Auto Shoot sigue el master y
   muestra Legit/Silent. Knife Throw es una subopción de Silent AIM: intenta la
   activación nativa en cada tick, sin slider ni temporizador de intervalo;
@@ -684,7 +712,7 @@ necesita y qué puede restaurar al apagarse**.
 | --- | --- | --- | --- |
 | **Silent AIM** | Seleccionar un objetivo y dirigir/activar ataques a distancia o proyectiles. | Shoot, Gun, Knife Throw, flechas, cohetes, lanzamientos y otras variantes de proyectil. | Swings cuerpo a cuerpo, un segundo selector de equipos, una tarjeta independiente por cada skin. |
 | **Kill Aura** | Ataques melee de corto alcance contra objetivos válidos. | Knife, machete, sword, bat, axe y cualquier arma cuyo ataque sea un swing/contacto cercano. | Redirección de proyectiles, Silent Ray, predicción de una trayectoria o un ThrowEvent inventado. |
-| **TriggerBot** | Reaccionar a una condición ya visible/validada y activar la acción correspondiente. | Disparar cuando el objetivo está bajo el crosshair, usando el adaptador nativo compartido. | Otro Silent AIM, otro bucle de selección o una copia del módulo de cada juego. |
+| **TriggerBot** | Retirado por petición del usuario. | Ninguno. | No volver a añadirlo sin una nueva petición explícita. |
 | **Utilities** | Automatizaciones y datos útiles que no son el control directo de un ataque o del cuerpo. | Auto Farm, Auto Win de solo estado, Auto Get Gun, Auto Unbox y ayudas de farmeo. | Hitbox, una expansión de colisiones o un módulo puesto ahí solo porque «es fuerte». |
 | **Exploits** | Cambiar una propiedad o aprovechar directamente una mecánica explotable del juego. | Hitbox y manipulaciones equivalentes que tengan una razón técnica clara. | Auto Farm/Auto Win por costumbre, o cualquier tarjeta que no se pueda explicar técnicamente. |
 | **Render** | Mostrar información sin decidir el combate. | PlayerESP, Chams, Nametags, HP, Arrows, Coin ESP. | Un TeamESP paralelo con otra resolución de equipos. |
@@ -715,8 +743,8 @@ src/games/<Game>/
   Blatant/ o Combat/        -- ataques y módulos de combate del juego
   Other/AutoFarm.lua        -- utilidad de farmeo, si existe
   Render/                   -- presentación, nunca otra lógica de equipos
-src/Profile/<PlaceId>.lua   -- sección/perfil del PlaceId
-src/Wurst.lua               -- fingerprint, loader, registro y cleanup global
+src/libraries/Manifest.lua  -- catálogo único de fuentes, juegos y PlaceIds
+src/Wurst.lua               -- fingerprint, registro de secciones y cleanup global
 ```
 
 - `Rules.lua` no crea GUI ni conexiones. Expone funciones comprobables para
@@ -755,23 +783,21 @@ que su `init` se ejecute tampoco significa necesariamente que cree una tarjeta.
 Sprint es el ejemplo: se carga como módulo técnico de MM2, pero registra una
 opción dentro de Speed mediante la tarjeta que ya existe.
 
-- **Módulo universal nuevo:** añade su `{path, name, category}` a
-  `src/libraries/Manifest.lua` y exactamente lo mismo al `fallbackManifest` de
-  `src/Wurst.lua`. El manifest normal y el fallback no pueden describir menús
-  distintos. El módulo debe devolver `init(context)` y `destroy()`; el loader
-  universal llama después a cada `init` en el orden del manifest.
-- **Módulo de un game:** añade la ruta a la lista explícita de
-  `loadGameModule` en `src/Wurst.lua`, respetando las dependencias. MM2 exige
-  que la lista cubra exactamente sus archivos; X2 carga Rules → base/core →
-  AutoFarm. Un archivo como Sprint necesita aparecer ahí aunque no añada una
-  tarjeta propia. Si sólo es un helper sin `init`/`destroy`, debe cargarlo su
-  dueño mediante la ruta existente, no fingir que es un módulo autónomo.
-- **Juego o PlaceId nuevo:** un archivo `src/Profile/<PlaceId>.lua` sólo declara
-  metadata y secciones; **no registra gameplay por sí solo**. Hay que revisar
-  el mapa `GAME_MODULES`, la rama de `loadGameModule`, `GAME_CHECK`, la llamada
-  `registerPlaceModule`, cleanup y, cuando proceda, fingerprint. Para añadir
-  otro PlaceId de un juego ya soportado, conserva el mismo module key y comprueba
-  también su perfil; no clones el árbol completo.
+- **Módulo universal nuevo:** añade su `{path, name, category}` al único
+  catálogo `src/libraries/Manifest.lua`, preferiblemente con `tools/card.py`.
+  No existe `fallbackManifest`. El módulo devuelve `init(context)` y
+  `destroy()`; el loader universal llama a `init` en el orden del catálogo.
+- **Módulo de un game:** añade la ruta a `gameModules` en el Manifest,
+  respetando las dependencias. MM2 exige que la lista cubra sus archivos;
+  X2 carga Rules → base/core → AutoFarm. Sprint necesita aparecer ahí aunque
+  no añada tarjeta propia. Un helper sin `init`/`destroy` debe cargarlo su dueño,
+  no fingir que es un módulo autónomo.
+- **Juego o PlaceId nuevo:** registra el PlaceId en `gamePlaces` del Manifest y
+  también revisa `GAME_MODULES` en `src/Wurst.lua`: se usa antes de descargar el
+  Manifest para la detección inicial. Un juego nuevo requiere `GAME_CHECK`,
+  `registerPlaceModule`, cleanup y, cuando proceda, fingerprint. Para otro
+  PlaceId de un juego ya soportado, conserva la misma clave y prueba ambos IDs;
+  no clones el árbol completo ni restaures los `src/Profile` antiguos.
 - **Tarjeta:** dentro de un módulo ya cargado,
   `src/guis/Wurst/Code/Cards.lua:createUniversalFeature` la inserta en el
   `registry` elegido y en `allFeatures`, además de conectar búsqueda, UI y
@@ -784,16 +810,17 @@ opción dentro de Speed mediante la tarjeta que ya existe.
   hace Sprint con Speed.
 
 Al retirar una función se aplica el recorrido inverso: quitar widget/tarjeta,
-cleanup, entrada de carga y entradas del manifest/fallback que correspondan;
-después regenerar el bundle. No dejar un archivo huérfano «por si acaso».
+cleanup y las entradas de carga del Manifest; después regenerar el bundle. No
+se deja un archivo huérfano «por si acaso». Si un helper nuevo se carga de forma
+especial, debe documentarse y revisarse explícitamente en el test de inventario.
 
-Las pruebas de esta frontera ya existen: `tools/test_manifest_sync.py` detecta
-módulos universales sin registrar, paths ausentes/duplicados, divergencia del
-fallback y diferencias en la lista MM2. `tools/audit_menu.py` comprueba lo que
-realmente se registra al arrancar. Si se añade o retira una tarjeta, hay que
-revisar también el inventario 38/37 documentado y cualquier contrato de menú;
-si sólo se añade una opción, la prueba debe impedir que aparezca una tarjeta
-extra. La salida final sigue siendo `bash tools/validate.sh` con boot limpio.
+`tools/test_manifest_sync.py` comprueba entradas y categorías; el nuevo
+`tools/test_source_inventory.py` comprueba todas las fuentes y los assets del
+loader, y `tools/test_runtime_boots.py` arranca los siete PlaceIds en PC/móvil
+simulados. `tools/audit_menu.py` inspecciona el menú construido. Al añadir o
+retirar una tarjeta hay que actualizar el inventario y los contratos de menú;
+si sólo se añade una opción, la prueba debe impedir una tarjeta extra. La salida
+final sigue siendo `bash tools/validate.sh` con boot limpio.
 
 ### 4. Cómo se crea una tarjeta y sus opciones
 
@@ -1032,8 +1059,8 @@ una opción **dentro de Speed**, reutilizando ese mismo estado de locomoción;
 no una tarjeta `Auto Sprint` con otro Heartbeat y otra escritura de WalkSpeed.
 
 Esto también evita una simplificación incorrecta: no todo lo relacionado debe
-fusionarse. Aim Assist, Silent AIM y TriggerBot pueden compartir targeting sin
-ser la misma tarjeta porque su comportamiento de activación es distinto. Speed
+fusionarse. Aim Assist y Silent AIM pueden compartir targeting sin ser la misma
+tarjeta porque su comportamiento es distinto. TriggerBot está retirado. Speed
 y Noclip comparten el personaje, pero WalkSpeed/velocidad y colisión tienen
 propósitos, riesgos y restores diferentes. La regla es compartir el **estado y
 el ciclo de vida real**, no solamente el tema.
@@ -1267,10 +1294,8 @@ entornos produjo la evidencia.
   los necesita de verdad, se fija versión y configuración, se prueba el comando
   y se documenta el motivo; no se formatea todo el árbol ni se introduce otra
   cadena de build de manera incidental.
-- `tools/process_manga_assets.py` es una excepción opcional: importa **Pillow**
-  (`PIL`) y **NumPy**. Esas dependencias sólo se instalan para procesar esos
-  assets (`python3 -m pip install Pillow numpy`); no son necesarias para
-  compilar, generar el bundle ni ejecutar `validate.sh`.
+- No hacen falta Pillow ni NumPy para el runtime, el bundle o `validate.sh`.
+  El antiguo procesador de assets de una GUI que ya no se usaba fue retirado.
 - Los mocks y herramientas ya incluidos son la primera opción. Antes de añadir
   una dependencia nueva hay que explicar qué hueco cubre, cómo se instala de
   forma reproducible, qué comando la ejecuta y qué prueba impide que quede
@@ -1435,9 +1460,9 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
   - KnifeAura MM2: ciclo de swing medido 0.86 s, propio de esa mecánica melee.
   - Auto Unbox: delay entre cajas **configurable y a propósito lento** — es el
     arreglo de la pantalla gris/negra al spamear. No lo aceleres.
-  - Rates con slider del usuario (TriggerBot Delay, KillAura swings/s, etc.):
-    son suyos, no delays ocultos. Si se migra una opción a Cooldown, se conserva
-    el valor sólo cuando representa exactamente el mismo delay.
+  - Rates con slider del usuario, cuando existan, son suyos, no delays ocultos.
+    Si se migra una opción a Cooldown, se conserva el valor sólo cuando
+    representa exactamente el mismo delay. TriggerBot está retirado.
   - Refrescos de status/visuales a 0.2–5 s (ESP, Chams, Coin ESP): no retrasan
     ninguna acción ni deben usarse como reloj de combate.
 
@@ -1508,8 +1533,9 @@ que reúne la comprobación normal sigue siendo `bash tools/validate.sh`.
 
 ## 9. Pendiente de verificación EN VIVO (no lo des por hecho)
 
-Nada de esto está probado en partida real todavía; está probado en estático,
-boot y las 61 suites:
+Nada de esto está probado en partida real todavía; las pruebas estáticas,
+boots y suites son simulaciones. Las referencias de versión siguientes son
+históricas y deben contrastarse con el código actual:
 
 - Shoot v106–v112: si con el muzzle real desaparecen los impactos en geometría
   del mapa (`Smooth Block Model`), y si el gate de 1.5 s recupera los ecos.
@@ -1544,7 +1570,6 @@ boot y las 61 suites:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-10-29 · v156, base migrada completa y modos MM2
-experimentales; los resultados reales y la aceptación del servidor no verificados.
-Al publicar una versión nueva, actualiza la línea de estado de arriba y cualquier
-sección que cambie.*
+*Última actualización: 2026-11-02 · v169. Los resultados reales, el rendimiento
+visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
+nueva, actualiza la línea de estado superior y las secciones que cambien.*

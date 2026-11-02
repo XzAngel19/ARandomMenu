@@ -228,8 +228,8 @@ def run_integration_contracts() -> None:
     require(farm, 'categoryName = "Utilities"', "Auto Farm Utilities category")
 
     catalog = (ROOT / "src/libraries/Manifest.lua").read_text()
-    require(catalog, "{placeId = 92876937625630, module = \"X2Duels\"", "current PlaceId registration")
-    require(catalog, "{placeId = 135856908115931, module = \"X2Duels\"", "legacy MVS PlaceId registration")
+    require(catalog, "{placeId = 92876937625630, module = \"X2Duels\"", "legacy X2 PlaceId registration")
+    require(catalog, "{placeId = 135856908115931, module = \"X2Duels\"", "current MVS PlaceId registration")
     require(wurst, 'X2DuelsActive = ACTIVE_GAME_MODULE == "X2Duels"', "GAME_CHECK")
     require(catalog, '"src/games/X2Duels/Rules.lua"', "rules loader path")
     require(catalog, '"src/games/X2Duels/base.lua"', "base loader path")
@@ -253,11 +253,13 @@ def run_integration_contracts() -> None:
     if compiled.returncode:
         raise SystemExit(compiled.stdout + compiled.stderr)
 
+    # The legacy src/Profile files never participated in the Wurst boot. Check
+    # the actual early PlaceId map as well as gamePlaces above; the runtime boot
+    # matrix separately verifies the MVSD cards for both IDs.
     for place_id in (92876937625630, 135856908115931):
-        profile = ROOT / "src" / "Profile" / f"{place_id}.lua"
-        text = profile.read_text(encoding="utf-8")
-        require(text, 'key = "X2Duels"', f"profile {place_id}")
-        require(text, '"MVSD"', f"existing MVS section {place_id}")
+        require(wurst, f'[{place_id}] = "X2Duels"', f"initial detection for {place_id}")
+    require(wurst, 'registerPlaceModule("X2Duels", GAME_CHECK.X2Duels)',
+            "X2Duels section registration")
     print("X2Duels architecture, MM2 structure, farm and decompiler contracts: PASS")
 
 def run_bundle_boot() -> None:
