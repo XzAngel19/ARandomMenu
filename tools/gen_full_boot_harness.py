@@ -842,10 +842,10 @@ do
       "default floor reflection must start its PlayerGui viewport")
     assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
       "ColorCorrectionEffect must be enabled directly under Lighting")
-    assert(shaderColor.Contrast == 0.08 and shaderColor.Saturation == 0.05 and shaderColor.Brightness == 0,
+    assert(shaderColor.Contrast == 0.14 and shaderColor.Saturation == 0.10 and shaderColor.Brightness == 0.01,
       "the baseline is active without a look or forced brightness")
-    assert(Lighting.EnvironmentSpecularScale == 0.65 and Lighting.GlobalShadows == true
-      and Lighting.EnvironmentDiffuseScale == 0.2 and Lighting.ExposureCompensation == 0,
+    assert(Lighting.EnvironmentSpecularScale == 0.82 and Lighting.GlobalShadows == true
+      and Lighting.EnvironmentDiffuseScale == 0.55 and Lighting.ExposureCompensation == 0.10,
       "native specular and shadows are applied without washing out the existing scene")
     assert(shaderBloom and shaderBloom.Parent == Lighting and shaderRays and shaderRays.Parent == Lighting,
       "bloom and sun rays must be direct children of Lighting")

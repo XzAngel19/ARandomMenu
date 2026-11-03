@@ -282,12 +282,14 @@ queryParts={floor,wood,wall,grass,marble,glass,window,avatarFloor,npcFloor,toolF
 features.Shaders.toggle(true)
 local color,bloom,rays=byName(lighting,"ARMShaderColor"),byName(lighting,"ARMShaderBloom"),byName(lighting,"ARMShaderRays")
 assert(card.Enabled and renderable(color) and renderable(bloom) and renderable(rays))
-assert(color.Brightness==0 and color.Contrast==0.08 and color.Saturation==0.05
-    and color.TintColor==Color3.fromRGB(255,247,236))
-assert(bloom.Intensity==0.2 and bloom.Threshold==0.95 and rays.Intensity==0.1)
-assert(lighting.EnvironmentDiffuseScale==0.2 and lighting.EnvironmentSpecularScale==0.65
-    and lighting.ShadowSoftness==0.35 and lighting.GlobalShadows and lighting.ExposureCompensation==0,
-    "the baseline must not forcibly brighten the existing scene")
+assert(color.Brightness==0.01 and color.Contrast==0.14 and color.Saturation==0.10
+    and color.TintColor==Color3.fromRGB(255,244,232))
+assert(bloom.Intensity==0.36 and bloom.Size==30 and bloom.Threshold==1.05 and rays.Intensity==0.18 and rays.Spread==0.85)
+local dof=byName(lighting,"ARMShaderDOF"); local blur=byName(lighting,"ARMShaderBlur")
+assert(dof and dof.Enabled and dof.FarIntensity==0.12 and blur and blur.Enabled and blur.Size==2)
+assert(lighting.EnvironmentDiffuseScale==0.55 and lighting.EnvironmentSpecularScale==0.82
+    and lighting.ShadowSoftness==0.20 and lighting.GlobalShadows and lighting.ExposureCompensation==0.10 and lighting.Brightness==2.2,
+    "realistic baseline: stronger specular/diffuse and cinematic exposure")
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
 assert(activeHandles("Shaders surfaces")==1 and #spawned==0,"surface art is lazy, not downloaded at boot")
 assert(reflectionStarts==1 and reflectionStops==0)
@@ -306,7 +308,7 @@ pass("warm baseline, floor reflection lifecycle and independent failure isolatio
 frames(25)
 assert(reflectionObservations[floor] and reflectionObservations[wood],
     "the world traversal must feed eligible map surfaces to the mirror library")
-assert(glass.Reflectance==0.22 and window.Reflectance==0.22)
+assert(glass.Reflectance==0.38 and window.Reflectance==0.38)
 assert(#assetRequests==0 and #spawned==5,"only five detected materials request art asynchronously")
 assert(textureOf(floor).ColorMapContent.Uri=="rbxassetid://9920484153"
     and textureOf(wood).ColorMapContent.Uri=="rbxassetid://9920626778"
@@ -341,9 +343,9 @@ assert(textureOf(floor)==originalFloorTexture and not originalFloorTexture.destr
 card.Options["Glass reflections"].Metadata.callback(true)
 card.Options["Wet surfaces"].Metadata.callback(true)
 frames(80)
-assert(glass.Reflectance==0.22 and floor.Reflectance==0.16)
+assert(glass.Reflectance==0.38 and floor.Reflectance==0.30)
 card.Options["Wet surfaces"].Metadata.callback(false)
-assert(floor.Reflectance==0 and glass.Reflectance==0.22 and textureOf(floor)==originalFloorTexture)
+assert(floor.Reflectance==0 and glass.Reflectance==0.38 and textureOf(floor)==originalFloorTexture)
 glass.Reflectance=0.66 -- the game changes this while the option is active
 card.Options["Glass reflections"].Metadata.callback(false)
 assert(glass.Reflectance==0.66 and window.Reflectance==0.05,"never overwrite a newer game value")
@@ -512,7 +514,7 @@ camera.CFrame={Position=Vector3.new(5000,12,0)};frames(180,1/60)
 assert(textureOf(manyFloors[1]) and textureOf(manyFloors[140]), "moving the camera must not evict earlier floors")
 local stream=part("StreamedWindow",Enum.Material.Glass,Vector3.new(10,10,1));stream.Transparency=0.5
 world.DescendantAdded:Fire(stream);frames(1)
-assert(stream.Reflectance==0.22,"streamed-in parts enter the bounded priority queue")
+assert(stream.Reflectance==0.38,"streamed-in parts enter the bounded priority queue")
 world.DescendantRemoving:Fire(stream);stream.Parent=nil
 assert(stream.Reflectance==0,"streamed-out parts restore their own value")
 card.Options["Surface textures"].Metadata.callback(false)
@@ -540,7 +542,7 @@ for _,p in ipairs(world:GetChildren()) do
         for _,texture in ipairs(children(p,"Texture")) do
             if texture.Name=="ARMShaderTexture" then allTextures+=1 end
         end
-        if p.Reflectance==0.22 then allGlass+=1 end -- includes transparent plastic windows
+        if p.Reflectance==0.38 then allGlass+=1 end -- includes transparent plastic windows
     end
 end
 assert(allTextures==600 and allGlass==1200,"hard map budgets are enforced: "..allTextures.."/"..allGlass)

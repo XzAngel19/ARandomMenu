@@ -129,23 +129,44 @@ function Module.init(context: any): any
     local function applyLighting(): ()
         local function setMinimum(property: string, minimum: number): ()
             pcall(function(): ()
-                local old: number = (lighting :: any)[property]
-                local value: number = math.max(old, minimum)
+                local old: any = (lighting :: any)[property]
+                local value: number = if type(old) == "number" then math.max(old, minimum) else minimum
                 lightOriginal[property] = old
                 ;(lighting :: any)[property] = value
                 lightApplied[property] = (lighting :: any)[property]
             end)
         end
-        -- These engine properties affect material/sky lighting even when a
-        -- place's own post effects compete with our colour correction.
-        -- Do not raise diffuse light or exposure: both can wash out an
-        -- already-bright floor even with the reflection itself switched off.
-        setMinimum("EnvironmentSpecularScale", 0.65)
-        setMinimum("ShadowSoftness", 0.35)
+        local function setColor(property: string, value: Color3): ()
+            pcall(function(): ()
+                local old: Color3 = (lighting :: any)[property]
+                lightOriginal[property] = old
+                ;(lighting :: any)[property] = value
+                lightApplied[property] = value
+            end)
+        end
+        -- Realistic baseline: stronger specular for glass/wet, softer shadows,
+        -- subtle ambient shift for depth. All client-sided and restores on OFF.
+        setMinimum("EnvironmentSpecularScale", 0.82)
+        setMinimum("EnvironmentDiffuseScale", 0.55)
+        setMinimum("ShadowSoftness", 0.20)
+        setMinimum("Brightness", 2.2)
+        setMinimum("ExposureCompensation", 0.10)
         pcall(function(): ()
             lightOriginal.GlobalShadows = lighting.GlobalShadows
             lighting.GlobalShadows = true
             lightApplied.GlobalShadows = lighting.GlobalShadows
+        end)
+        -- Ambient tints give real-world depth without washing the floor.
+        setColor("Ambient", Color3.fromRGB(138, 138, 145))
+        setColor("OutdoorAmbient", Color3.fromRGB(124, 132, 148))
+        setColor("ColorShift_Bottom", Color3.fromRGB(255, 235, 220))
+        pcall(function(): ()
+            if (lighting :: any).Technology ~= nil then
+                lightOriginal.Technology = (lighting :: any).Technology
+                -- Future gives real shadows/reflections; some executors block the write.
+                ;(lighting :: any).Technology = Enum.Technology.Future
+                lightApplied.Technology = (lighting :: any).Technology
+            end
         end)
     end
 
@@ -222,8 +243,8 @@ function Module.init(context: any): any
         local atmosphere: Atmosphere = external or (Instance.new("Atmosphere") :: Atmosphere)
         fogAtmosphere, fogOwned = atmosphere, external == nil
         local values: {[string]: any} = {
-            Density = 0.38, Offset = 0.2, Haze = 1.65, Glare = 0.14,
-            Color = Color3.fromRGB(218, 227, 238), Decay = Color3.fromRGB(148, 164, 180),
+            Density = 0.38, Offset = 0.14, Haze = 1.85, Glare = 0.18,
+            Color = Color3.fromRGB(220, 233, 245), Decay = Color3.fromRGB(138, 155, 175),
         }
         for property: string, value: any in pairs(values) do
             pcall(function(): ()
@@ -237,9 +258,9 @@ function Module.init(context: any): any
         -- lowers FogEnd so distant objects fade, works in every game.
         -- Values are moderate to stay playable, not blinding white.
         local fogLightingValues: {[string]: any} = {
-            FogColor = Color3.fromRGB(199, 212, 225),
-            FogStart = 55,
-            FogEnd = 420,
+            FogColor = Color3.fromRGB(188, 204, 220),
+            FogStart = 38,
+            FogEnd = 315,
         }
         for property: string, value: any in pairs(fogLightingValues) do
             pcall(function(): ()
@@ -623,24 +644,21 @@ function Module.init(context: any): any
         local window: boolean = name == "pane" or string.find(name, "window", 1, true) ~= nil
             or string.find(name, "glass", 1, true) ~= nil
         if enabled("Glass reflections") then
-            if material == Enum.Material.Glass then return 0.22 end
-            if material == Enum.Material.ForceField and part.Transparency >= 0.15 and part.Transparency < 0.9 then return 0.22 end
-            if plastic and part.Transparency >= 0.15 and part.Transparency < 0.9 then
-                -- Universal: any fairly transparent plastic counts as window,
-                -- name heuristic is extra, not required.
-                if window or part.Transparency >= 0.25 then return 0.22 end
+            if material == Enum.Material.Glass then return 0.38 end
+            if material == Enum.Material.ForceField and part.Transparency >= 0.15 and part.Transparency < 0.9 then return 0.38 end
+            if plastic and part.Transparency >= 0.14 and part.Transparency < 0.9 then
+                if window or part.Transparency >= 0.22 then return 0.38 end
             end
-            -- Generic transparent parts that look like glass in many games
-            if part.Transparency >= 0.2 and part.Transparency <= 0.85 then
+            if part.Transparency >= 0.18 and part.Transparency <= 0.85 then
                 local size: Vector3 = part.Size
                 local area: number = math.max(size.X * size.Z, size.X * size.Y, size.Y * size.Z)
-                if area >= 16 and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic or material == Enum.Material.Metal) then
-                    return 0.22
+                if area >= 14 and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic or material == Enum.Material.Metal) then
+                    return 0.38
                 end
             end
         end
         if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
-            and material ~= Enum.Material.Glass then return 0.16 end
+            and material ~= Enum.Material.Glass then return 0.30 end
         return nil
     end
 
@@ -896,6 +914,8 @@ function Module.init(context: any): any
         surfaceConnection = host.TaskManager:Connect(updateSurfaces, nil, "Shaders surfaces")
         updateStatus()
     end
+    local depthField: DepthOfFieldEffect? = nil
+    local blur: BlurEffect? = nil
     local function cleanup(): ()
         stopFloorReflection()
         stopWeather()
@@ -911,6 +931,8 @@ function Module.init(context: any): any
         if color then color:Destroy(); color = nil end
         if bloom then bloom:Destroy(); bloom = nil end
         if rays then rays:Destroy(); rays = nil end
+        if depthField then depthField:Destroy(); depthField = nil end
+        if blur then blur:Destroy(); blur = nil end
     end
 
     local function makeEffect(className: string, name: string): any
@@ -921,7 +943,7 @@ function Module.init(context: any): any
 
     card = context.framework.Categories.Render:CreateModule({
         Name = "Shaders", Category = "Render", ConfigKey = "Universal.Shaders",
-        Tooltip = "Warm lighting, local floor reflections and optional atmosphere.",
+        Tooltip = "Realistic lighting: Cinematic color, bloom, sun rays, depth fog and optional atmosphere.",
         Function = function(on: boolean): ()
             if not on then card:SetStatus(nil); return end
             cleanup()
@@ -930,10 +952,25 @@ function Module.init(context: any): any
                 color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
                 bloom = makeEffect("BloomEffect", "ARMShaderBloom")
                 rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-                color.Brightness, color.Contrast, color.Saturation = 0, 0.08, 0.05
-                color.TintColor, color.Enabled = Color3.fromRGB(255, 247, 236), true
-                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.2, 24, 0.95, true
-                rays.Intensity, rays.Spread, rays.Enabled = 0.1, 0.6, true
+                -- Realistic cinematic preset: visible contrast/saturation/bloom,
+                -- inspired by devforum “Future + ColorCorrection + Bloom + SunRays + DOF” stacks.
+                color.Brightness, color.Contrast, color.Saturation = 0.01, 0.14, 0.10
+                color.TintColor, color.Enabled = Color3.fromRGB(255, 244, 232), true
+                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.36, 30, 1.05, true
+                rays.Intensity, rays.Spread, rays.Enabled = 0.18, 0.85, true
+                -- Depth-of-field gives real distance cue; tiny cost, big realism.
+                local dofOk: boolean, dof: any = pcall(makeEffect, "DepthOfFieldEffect", "ARMShaderDOF")
+                if dofOk and dof then
+                    depthField = dof
+                    depthField.FarIntensity, depthField.FocusDistance, depthField.InFocusRadius, depthField.NearIntensity = 0.12, 75, 55, 0.15
+                    depthField.Enabled = true
+                end
+                local blurOk: boolean, b: any = pcall(makeEffect, "BlurEffect", "ARMShaderBlur")
+                if blurOk and b then
+                    blur = b
+                    blur.Size = 2
+                    blur.Enabled = true
+                end
                 applyLighting()
                 if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
                 if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end

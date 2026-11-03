@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/414d25a1-arandommenu` (hereda `arena/9492e6b6-arandommenu`), build
-> **`v175-20261104-shaders-universal`**, con árbol base de
+> **`v176-20261104-shaders-realistic`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -139,6 +139,12 @@ Detalle y límites: `docs/FIXES-v171.md`, fuentes/licencias en
   simuladas cubren selección, restauración, cambios de mapa, fallos, carreras,
   cielo/techo, calidad de recursos y límites, pero no píxeles, física real,
   FPS ni dispositivos. Auto Farm, Fling y demás módulos no se tocaron.
+
+## v176 — Shaders cinematico: base realista, DOF/blur, fog volumetrico y reflejos marcados (2026-11-04)
+
+Detalle y límites: `docs/FIXES-v176.md`.
+
+- Tras v175 las capturas de `Interstellar Sky` seguían viendo `Fog` plano, `Glass/Wet/Surface` imperceptibles y solo `Snow/Leaves/Rain` notorias. Se investigaron 10 guías de shaders realistas (Future + ColorCorrection Contrast 0.1-0.3 / Bloom 0.2-0.8 / SunRays 0.18-0.4 / DepthOfField / Atmosphere Density 0.25-0.35 Haze 1-1.55 Glare) y se rehízo la base: `Color 0.01/0.14/0.10 Tint 255,244,232`, `Bloom 0.36/30/1.05`, `SunRays 0.18/0.85`, nuevo `DepthOfField 0.12/75/55/0.15` + `Blur 2`, `Specular 0.82 Diffuse 0.55 Shadow 0.20 Brightness 2.2 Exposure 0.10 Ambient/OutdoorAmbient cálidos` con restore. `Fog` pasa a `Atmosphere Haze 1.85 Glare 0.18 Color 220,233,245 Decay 138,155,175` + `FogColor 188,204,220 FogStart 38 FogEnd 315` para niebla con profundidad visible en ese mapa. `Glass 0.38 / Wet 0.30` marcan vidrio y charcos. Harness y `test_shaders` actualizados. `validate.sh` 84/116, menú 50/49.
 
 ## v175 — Shaders universal, fog realista y vidrio en cualquier juego (2026-11-04)
 
