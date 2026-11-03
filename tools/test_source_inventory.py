@@ -59,6 +59,8 @@ for asset in sorted(asset_paths):
     assert len(contents) >= 64, f'empty or truncated asset: {asset}'
     if asset.endswith('.png'):
         assert contents.startswith(b'\x89PNG\r\n\x1a\n'), f'invalid PNG: {asset}'
+    elif asset.endswith(('.jpg', '.jpeg')):
+        assert contents.startswith(b'\xff\xd8\xff'), f'invalid JPEG: {asset}'
     elif asset.endswith(('.otf', '.ttf')):
         assert contents[:4] in (b'OTTO', b'\x00\x01\x00\x00'), f'invalid font: {asset}'
     else:

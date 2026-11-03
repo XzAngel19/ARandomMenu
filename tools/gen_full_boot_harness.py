@@ -87,6 +87,8 @@ end})
 Enum.RenderPriority.Camera.Value = 200
 Enum.ContextActionPriority.High.Value = 3000
 TweenInfo = {new = function(...) return {Name = "TweenInfo"} end}
+OverlapParams = {new = function() return {} end}
+RaycastParams = {new = function() return {} end}
 ColorSequence = {new = function(...) return {Name = "ColorSequence"} end}
 ColorSequenceKeypoint = {new = function(t, c) return {Time = t, Value = c} end}
 NumberSequence = {new = function(...) return {Name = "NumberSequence"} end}
@@ -420,6 +422,11 @@ function UserInputService:GetFocusedTextBox() return nil end
 function UserInputService:GetMouseLocation() return Vector2.new(0, 0) end
 
 Lighting = newInst("Lighting")
+Lighting.props.EnvironmentDiffuseScale = 0.2
+Lighting.props.EnvironmentSpecularScale = 0.1
+Lighting.props.ShadowSoftness = 0.1
+Lighting.props.ExposureCompensation = 0
+Lighting.props.GlobalShadows = false
 Stats = newInst("Stats")
 HttpService = newInst("HttpService")
 function HttpService:JSONEncode(v) return "{}" end
@@ -484,10 +491,12 @@ TeleportService = newInst("TeleportService")
 
 camera = newInst("Camera")
 camera.props.FieldOfView = 70
+camera.props.CFrame = CFrame.new()
 workspaceService = newInst("Workspace")
 workspaceService.props.CurrentCamera = camera
 camera.Parent = workspaceService
 function workspaceService:Raycast() return nil end
+function workspaceService:GetPartBoundsInRadius() return {} end
 function workspaceService:GetDescendants() return {} end
 function camera:WorldToViewportPoint(pos)
     return Vector2.new(640, 360), true, 100
@@ -805,25 +814,28 @@ do
     -- Booted bundle + real Framework + real widgets: PostEffects have to be
     -- direct Lighting children, not descendants of an inert Folder.
     local shaders = ex.state.framework:GetModule("Shaders")
-    assert(shaders and shaders.Options.Look and shaders.Options.Saturation, "Shaders must boot")
-    assert(shaders.Options.Saturation.Object:GetAttribute("Step") == 0.01,
-      "saturation must have decimal slider steps")
-    shaders.Options.Look.Metadata.callback("Noir")
-    shaders.Options.Saturation.Metadata.callback(0)
+    assert(shaders and shaders.Options["Surface textures"] and shaders.Options["Glass reflections"]
+      and shaders.Options.Fog and not shaders.Options.Look and not shaders.Options.Weather,
+      "Shaders must boot without a look or weather mode selector")
     shaders:Toggle(true)
     local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
     local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
     local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
     assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
       "ColorCorrectionEffect must be enabled directly under Lighting")
-    assert(shaderColor.Saturation == -1, "Noir must desaturate the real color pass")
+    assert(shaderColor.Contrast == 0.12 and shaderColor.Saturation == 0.08,
+      "realistic baseline is active without choosing a look")
+    assert(Lighting.EnvironmentSpecularScale == 0.9 and Lighting.GlobalShadows == true,
+      "native environment and shadows must be applied")
     assert(shaderBloom and shaderBloom.Parent == Lighting and shaderRays and shaderRays.Parent == Lighting,
       "bloom and sun rays must be direct children of Lighting")
     shaders:Toggle(false)
     assert(not Lighting:FindFirstChild("ARMShaderColor")
       and not Lighting:FindFirstChild("ARMShaderBloom") and not Lighting:FindFirstChild("ARMShaderRays"),
       "disabling Shaders must remove its effects")
-    print("[HARNESS] SHADERS DIRECT LIGHTING PARENT + CLEANUP")
+    assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
+      "disabling Shaders must restore unchanged Lighting properties")
+    print("[HARNESS] SHADERS REALISM + LIGHTING RESTORE")
     local freeze = findFeature("Freeze Movements")
     assert(freeze, "Freeze Movements feature must exist after boot")
     for cycle = 1, 2 do

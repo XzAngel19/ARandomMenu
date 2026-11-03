@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v170-20261102-shaders-weather-farm`**, con árbol base de
+> **`v171-20261102-realistic-surfaces`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -28,7 +28,39 @@
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v170 — Shaders, clima y transición de Auto Farm (2026-11-02)
+## v171 — Shaders sin modos, superficies y efectos (2026-11-02)
+
+Detalle y límites: `docs/FIXES-v171.md`, fuentes/licencias en
+`docs/third-party/shaders/README.md`.
+
+- El usuario rechazó los looks de v170 por no producir un resultado útil y
+  pidió investigar shaders reales, incluir assets y opciones independientes.
+  Ya no existen `Look`, presets, `Weather` ni controles Advanced: Shaders activa
+  iluminación/reflectancia ambiental y tiene toggles para superficies, vidrio,
+  Fog, lluvia, nieve, hojas, polvo, superficies mojadas y reflejos del agua.
+- Cinco imágenes CC0 de ambientCG se descargan bajo demanda para texturas 2D
+  en bloques estáticos compatibles; no se cambian los materiales físicos, los
+  personajes ni los decals existentes, ni se aplican esas texturas a mallas.
+  La opción de vidrio toca únicamente reflectancia visual. Los filtros,
+  niebla, agua, partículas y superficie se
+  deshacen al apagar; escrituras posteriores del juego se respetan cuando se
+  pueden distinguir. Primero se intentan los ColorMap nativos documentados;
+  al llegar los assets CC0 se cambian gradualmente. Si estos fallan se avisa;
+  ninguna URL demuestra que el cliente dibuje la imagen.
+- Se inspeccionaron Penumbra MIT, RbxShader MIT, PBR-Surface-Applier Apache y
+  otras fuentes; el render por píxel no es un filtro gratuito de la escena y
+  los mapas PBR comunes requieren permisos o rutas de EditableImage no
+  garantizadas en juegos ajenos. No se integró código de esos proyectos ni
+  se afirma RTX, ReShade, PBR completo o compatibilidad Delta verificada.
+- Presupuestos: hasta 240 piezas cada 2 s en radio 120, un raycast de suelo
+  por consulta, cuatro candidatas por tick, 80 texturas y 100 reflectancias;
+  hasta 13 emisores, 107 partículas/s y
+  una prueba de techo por 0,15 s. Son límites, no mediciones. Pruebas Luau
+  simuladas cubren selección, restauración, cambios de mapa, fallos, carreras,
+  cielo/techo, calidad de recursos y límites, pero no píxeles, física real,
+  FPS ni dispositivos. Auto Farm, Fling y demás módulos no se tocaron.
+
+## v170 — Shaders, clima y transición de Auto Farm (2026-11-02; histórico)
 
 Detalle, licencias y pruebas: `docs/FIXES-v170.md` y `docs/third-party/shaders/`.
 

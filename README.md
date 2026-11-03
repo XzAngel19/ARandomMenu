@@ -13,11 +13,20 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu
 
 ## Shaders
 
-En `Render > Shaders` elige un `Look`, el clima `Clear`, `Rain`, `Snow` o
-`Autumn` y activa `Fog` si quieres niebla. `Advanced` muestra los controles
-anteriores. Las texturas del clima se descargan solo al usarlas; los fallbacks,
-fuentes y licencias están en `docs/third-party/shaders/README.md`. Los efectos
-son nativos de Roblox, no ReShade ni RTX.
+Al activar `Render > Shaders` se aplican iluminación y reflejos ambientales,
+con texturas de color en superficies compatibles cercanas. No hay selector de
+`Look`: `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`, `Wet surfaces` y
+`Water reflections` son opciones independientes. `Surface textures` y
+`Glass reflections` también se pueden apagar. Al desactivar Shaders se retiran
+sus efectos y se restauran los valores que aún controla.
+
+Las imágenes se descargan bajo demanda. Mientras cargan, o si el executor no
+permite assets locales, se intentan imágenes de materiales de Roblox; si fallan
+los assets propios aparece un aviso. La disponibilidad de ambos tipos depende
+del cliente. Solo se retocan ciertas piezas, no todas las mallas del mapa. La
+calidad gráfica y el juego pueden limitar los cambios visibles. Son efectos
+nativos y mapas de color, no RTX, ReShade ni PBR completo. Fuentes y licencias
+en `docs/third-party/shaders/README.md`.
 
 ## Desarrollo
 
