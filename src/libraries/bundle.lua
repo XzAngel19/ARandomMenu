@@ -1,5 +1,5 @@
 return {
-    stamp = "v173-20261102-map-shaders",
+    stamp = "v174-20261103-mm2-ui-reflections",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -40291,6 +40291,11 @@ function Module.init(context: any): any
             refreshFeatureToggle(feature)
         end
 
+        local activationGeneration: number = 0
+        local function paintToggle(): ()
+            local ok: boolean, failure: any = pcall(refreshFeatureToggle, feature)
+            if not ok then warn("[Random Testing Menu] " .. name .. " UI: " .. tostring(failure)) end
+        end
         local function activateFeature(): ()
             if feature.isHoldAction then
 
@@ -40321,28 +40326,31 @@ function Module.init(context: any): any
             end
 
             local requestedState: boolean = not feature.enabled
-            local success: boolean, errorMessage: any = pcall(
-                feature.onToggle,
-                requestedState
-            )
+            activationGeneration += 1
+            local generation: number = activationGeneration
+            feature.enabled = requestedState
+            if requestedState then feature.enabledAt = os.clock() end
+            -- Handlers and profile writes can yield in an executor. Repaint all
+            -- views immediately, and ignore an older handler that finishes
+            -- after a newer toggle or after teardown changed the feature.
+            paintToggle()
+            local success: boolean, errorMessage: any = pcall(feature.onToggle, requestedState)
+            if generation ~= activationGeneration or feature.enabled ~= requestedState then return end
             if success then
-                feature.enabled = requestedState
-                if requestedState then
-                    feature.enabledAt = os.clock()
-                end
                 configData.states[feature.configKey] = requestedState
                 flushConfigSave()
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false
+                paintToggle()
                 pcall(feature.onToggle, false)
+                if generation ~= activationGeneration then return end
                 local reason: string = tostring(errorMessage)
                 if #reason > 90 then
                     reason = string.sub(reason, 1, 90)
                 end
                 notify("Could not toggle " .. name .. ": " .. reason)
             end
-            refreshFeatureToggle(feature)
         end
         feature.activate = activateFeature
 
@@ -40554,16 +40562,15 @@ function Module.init(context: any): any
                 square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
-                -- Palette-driven: a bound key paints with the Enabled
-                -- colour, a conflicting one with the negative colour, so the
-                -- squares match whatever the user picked in UI Settings.
+                -- The letter communicates that a key is assigned. A green
+                -- square must not imply an OFF module is still enabled.
                 local conflict: any = bound and conflictWith() or nil
                 if conflict then
                     square.BackgroundColor3 = Theme.negative
                     square.BackgroundTransparency = 0.35
                     edge.Color = Theme.negative
                     edge.Transparency = 0.15
-                elseif bound then
+                elseif bound and feature.enabled == true then
                     square.BackgroundColor3 = Theme.enabled
                     square.BackgroundTransparency = 0.35
                     edge.Color = Theme.enabled
@@ -40572,7 +40579,7 @@ function Module.init(context: any): any
                     square.BackgroundColor3 = UNBOUND_BG
                     square.BackgroundTransparency = 0.55
                     edge.Color = Theme.outline
-                    edge.Transparency = 0.6
+                    edge.Transparency = if bound then 0.25 else 0.6
                 end
             end
             feature.bindSquare = square
@@ -40838,15 +40845,18 @@ function Module.init(context: any): any
             and configuration.restore ~= false
             and configData.states[feature.configKey] == true then
             task.defer(function(): ()
-                local success: boolean, errorMessage: any = pcall(
-                    feature.onToggle,
-                    true
-                )
-                if success then
-                    feature.enabled = true
-                    feature.enabledAt = os.clock()
-                    refreshFeatureToggle(feature)
-                else
+                -- Do not let an old deferred restore undo a more recent input.
+                if activationGeneration ~= 0 or configData.states[feature.configKey] ~= true then return end
+                activationGeneration += 1
+                local generation: number = activationGeneration
+                feature.enabled = true
+                feature.enabledAt = os.clock()
+                paintToggle()
+                local success: boolean, errorMessage: any = pcall(feature.onToggle, true)
+                if generation ~= activationGeneration or feature.enabled ~= true then return end
+                if not success then
+                    feature.enabled = false
+                    paintToggle()
                     configData.states[feature.configKey] = false
                     queueConfigSave()
                     warn(
@@ -40959,13 +40969,21 @@ function Module.init(context: any): any
     local allFeatures: {any} = host.allFeatures
     local normalizeFeatureCategory: any = host.normalizeFeatureCategory
 
+    local function viewportSize(): Vector2
+        -- Wurst stores the last valid viewport during camera swaps, so a
+        -- transient 0x0 camera cannot collapse the menu or its window grid.
+        local saved: any = state.layoutViewport
+        if saved and saved.X > 1 and saved.Y > 1 then return saved end
+        local camera: Camera? = workspace.CurrentCamera
+        local current: any = camera and camera.ViewportSize
+        if current and current.X > 1 and current.Y > 1 then return current end
+        return Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+    end
+
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        local camera: Camera? = workspace.CurrentCamera
-        local viewport: Vector2 = camera
-            and (camera :: Camera).ViewportSize
-            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local viewport: Vector2 = viewportSize()
         local fit: number = math.min(
             viewport.X / CALIBRATION_WIDTH,
             viewport.Y / CALIBRATION_HEIGHT
@@ -40974,10 +40992,7 @@ function Module.init(context: any): any
     end
 
     local function logicalViewport(): Vector2
-        local camera: Camera? = workspace.CurrentCamera
-        local viewport: Vector2 = camera
-            and (camera :: Camera).ViewportSize
-            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local viewport: Vector2 = viewportSize()
         local factor: number = viewportScale()
         return Vector2.new(viewport.X / factor, viewport.Y / factor)
     end
@@ -41418,8 +41433,12 @@ function Module.init(context: any): any
     radarSettings.rings = radarSettings.rings ~= false
 
     local function getFloatingViewport(): Vector2
+        local stable: any = state.layoutViewport
+        if stable and stable.X > 1 and stable.Y > 1 then return stable end
         local camera: Camera? = workspace.CurrentCamera
-        return camera and camera.ViewportSize or Vector2.new(1280, 720)
+        local current: any = camera and camera.ViewportSize
+        if current and current.X > 1 and current.Y > 1 then return current end
+        return Vector2.new(1280, 720)
     end
 
     local function clampFloatingPosition(
@@ -50632,10 +50651,11 @@ function Module.init(context: any): any
     }
 
     local function screenViewport(): Vector2
+        local stable: any = state.layoutViewport
+        if stable and stable.X > 1 and stable.Y > 1 then return stable end
         local camera: Camera? = workspace.CurrentCamera
-        if camera then
-            return (camera :: Camera).ViewportSize
-        end
+        local current: any = camera and camera.ViewportSize
+        if current and current.X > 1 and current.Y > 1 then return current end
         return Vector2.new(1280, 720)
     end
 
@@ -54592,6 +54612,7 @@ local MAX_SECONDARY_PARTS = 32
 local MAX_TRACKED_FLOORS = 600
 local MAX_FLOOR_CHECKS_PER_TICK = 32
 local MAX_FLOOR_SIZE = 256
+local MAX_DETAIL_SIZE = 64
 local SECONDARY_INTERVAL = 1
 local SECONDARY_POSE_INTERVAL = 1 / 15
 local MAX_CREATIONS_PER_TICK = 3
@@ -54870,19 +54891,31 @@ function Module.init(host: any): any
             end
             missingElapsed, missingReported = 0, false
             local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
-            -- Cover the complete rectangular floor up to a bounded 256-stud
-            -- surface instead of just a 24x20 patch under the player.
-            local width: number = math.min(floor.Size.X - 0.04, MAX_FLOOR_SIZE)
-            local depth: number = math.min(floor.Size.Z - 0.04, MAX_FLOOR_SIZE)
+            -- A 256-stud canvas makes a character only a few pixels wide.
+            -- Keep detail around the avatar and use one secondary viewport for
+            -- the wider floor when necessary, still at most three viewports.
+            -- If a secondary allocation fails and there is no wide layer for
+            -- this floor, fall back to the broad primary surface.
+            local canUseWide: boolean = not secondaryFailed or secondary[floor] ~= nil
+            local detailLimit: number = if canUseWide then MAX_DETAIL_SIZE else MAX_FLOOR_SIZE
+            local width: number = math.min(floor.Size.X - 0.04, detailLimit)
+            local depth: number = math.min(floor.Size.Z - 0.04, detailLimit)
+            local wideFloor: boolean = canUseWide and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
+                or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
             local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
             local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
             plane.Size = Vector3.new(width, 0.04, depth)
-            plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + 0.04, z)
+            -- Separate the two local surfaces to reduce depth fighting.
+            plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + (if wideFloor then 0.06 else 0.04), z)
             local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, localHit.Y, 0))
             local normal: Vector3 = floor.CFrame.UpVector
             if floor ~= currentFloor or not planePoint or not planeNormal
                 or math.abs((point - planePoint):Dot(normal)) > 0.04
                 or (normal - planeNormal).Magnitude > 0.01 then
+                if floor ~= currentFloor then
+                    selectionItems = nil
+                    secondaryElapsed = SECONDARY_INTERVAL
+                end
                 currentFloor, planePoint, planeNormal = floor, point, normal
                 planeVersion += 1
                 sceneElapsed = SCENE_INTERVAL
@@ -55188,13 +55221,32 @@ function Module.init(host: any): any
             return mirror
         end
 
+        local function needsWideFloor(floor: any): boolean
+            return floor ~= nil and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
+                or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
+        end
+
+        -- The probed floor has already passed the primary raycast rules.
+        -- Do not apply the stricter remote-floor shape filter to its wide layer.
+        local function eligibleWideFloor(floor: any): boolean
+            return floor == currentFloor and floor.Parent ~= nil and floor:IsA("BasePart")
+                and floor.Anchored and floor.Transparency < 0.95
+                and floor.CFrame.UpVector.Y >= 0.97 and floor.Size.X >= 3 and floor.Size.Z >= 3
+                and needsWideFloor(floor)
+        end
+
         local function chooseMirrors(): number
             local camera: Camera? = world.CurrentCamera
             if not camera or secondaryFailed then selectionItems = nil; return 0 end
             if not selectionItems then
                 selectionItems, selectionIndex, selectionChoices = {}, 1, {}
+                if needsWideFloor(currentFloor) then
+                    table.insert(selectionItems :: {any}, {floor = currentFloor, order = 0, wide = true})
+                end
                 for floor: any, order: number in pairs(candidates) do
-                    table.insert(selectionItems :: {any}, {floor = floor, order = order})
+                    if floor ~= currentFloor then
+                        table.insert(selectionItems :: {any}, {floor = floor, order = order})
+                    end
                 end
             end
             local items: {any} = selectionItems :: {any}
@@ -55208,10 +55260,11 @@ function Module.init(host: any): any
                 if not item then break end
                 selectionIndex += 1
                 local floor: any, order: number = item.floor, item.order
-                local ok: boolean, eligible: any = pcall(eligibleFloor, floor)
+                local wide: boolean = item.wide == true and floor == currentFloor and needsWideFloor(floor)
+                local ok: boolean, eligible: any = pcall(if wide then eligibleWideFloor else eligibleFloor, floor)
                 if not ok or not eligible then
                     if candidates[floor] then candidates[floor] = nil; candidateCount -= 1 end
-                elseif floor ~= currentFloor then
+                elseif floor ~= currentFloor or wide then
                     local localCamera: Vector3 = floor.CFrame:PointToObjectSpace(frame.Position)
                     local size: Vector3 = floor.Size
                     local dx: number = math.max(0, math.abs(localCamera.X) - size.X / 2)
@@ -55228,7 +55281,9 @@ function Module.init(host: any): any
                         and math.abs(localCamera.Z - patchZ) / depth <= 1
                     if canProject and distance <= 160 and (floor.Position - frame.Position):Dot(look) + extent > 0 then
                         table.insert(selectionChoices, {
-                            floor = floor, score = distance - (if secondary[floor] then 8 else 0), order = order,
+                            floor = floor,
+                            score = if wide then -math.huge else distance - (if secondary[floor] then 8 else 0),
+                            order = order, wide = wide,
                         })
                         table.sort(selectionChoices, function(a: any, b: any): boolean
                             return if a.score == b.score then a.order < b.order else a.score < b.score
@@ -55241,8 +55296,14 @@ function Module.init(host: any): any
             selectionItems = nil
             local choices: {any} = {}
             for _, choice: any in ipairs(selectionChoices) do
-                local ok: boolean, eligible: any = pcall(eligibleFloor, choice.floor)
-                if ok and eligible and choice.floor ~= currentFloor then table.insert(choices, choice) end
+                local ok: boolean, eligible: any = pcall(
+                    if choice.wide then eligibleWideFloor else eligibleFloor, choice.floor
+                )
+                local stillCurrentWide: boolean = choice.wide == true and choice.floor == currentFloor
+                    and needsWideFloor(choice.floor)
+                if ok and eligible and (stillCurrentWide or (not choice.wide and choice.floor ~= currentFloor)) then
+                    table.insert(choices, choice)
+                end
             end
             selectionChoices = {}
             local desired: {[Instance]: boolean} = {}

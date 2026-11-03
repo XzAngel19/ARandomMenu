@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v173-20261102-map-shaders"
+local SOURCE_STAMP: string = "v174-20261103-mm2-ui-reflections"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1472,32 +1472,41 @@ state.openMenuSurface = function(): ()
     state.setMenuVisible(not state.visible)
 end
 
-state.layout = computeLayoutMetrics(
-    (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
-        or Vector2.new(1280, 720),
-    UserInputService.TouchEnabled
-)
+-- Camera replacement can briefly expose a zero-sized viewport. Keep the last
+-- valid size so the menu is not rescaled or moved during that transition.
+local function validLayoutViewport(viewport: any): boolean
+    return viewport ~= nil and type(viewport.X) == "number" and type(viewport.Y) == "number"
+        and viewport.X > 1 and viewport.Y > 1
+        and viewport.X < math.huge and viewport.Y < math.huge
+end
+local bootViewport: any = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+state.layoutViewport = if validLayoutViewport(bootViewport) then bootViewport else Vector2.new(1280, 720)
+state.layout = computeLayoutMetrics(state.layoutViewport, UserInputService.TouchEnabled)
 state.layoutListeners = {} :: {(LayoutMetrics) -> ()}
 
 state.onLayout = function(listener: (LayoutMetrics) -> ()): ()
     table.insert(state.layoutListeners, listener)
 end
 
-state.refreshLayout = function(force: boolean?): ()
+state.refreshLayout = function(force: boolean?): boolean
     local camera: Camera? = workspace.CurrentCamera
-    local viewport: Vector2 = camera
-        and camera.ViewportSize
-        or Vector2.new(1280, 720)
-    local nextLayout: LayoutMetrics = computeLayoutMetrics(
-        viewport,
-        UserInputService.TouchEnabled
-    )
-    local previous: LayoutMetrics = state.layout
-    if not force
-        and previous.mode == nextLayout.mode
-        and previous.cardHeight == nextLayout.cardHeight then
-        return
+    local viewport: any = camera and camera.ViewportSize
+    if not validLayoutViewport(viewport) then
+        if force then state.layoutNeedsRefresh = true end
+        return false
     end
+    local nextLayout: LayoutMetrics = computeLayoutMetrics(viewport, UserInputService.TouchEnabled)
+    local previous: LayoutMetrics = state.layout
+    local previousViewport: Vector2 = state.layoutViewport
+    local forceRefresh: boolean = force == true or state.layoutNeedsRefresh == true
+    state.layoutNeedsRefresh = false
+    if not forceRefresh
+        and previous.mode == nextLayout.mode
+        and previous.cardHeight == nextLayout.cardHeight
+        and previousViewport.X == viewport.X and previousViewport.Y == viewport.Y then
+        return true
+    end
+    state.layoutViewport = viewport
     state.layout = nextLayout
     for _, listener: (LayoutMetrics) -> () in ipairs(state.layoutListeners) do
         local ok: boolean, failure: any = pcall(listener, nextLayout)
@@ -1505,6 +1514,7 @@ state.refreshLayout = function(force: boolean?): ()
             warn("[" .. PRODUCT.name .. "] layout listener: " .. tostring(failure))
         end
     end
+    return true
 end
 
 local function trackUiConnection(
@@ -4717,6 +4727,9 @@ local function refreshFeatureToggle(feature: any): ()
         feature.enabled = feature.active == true
     end
     state.applyCardSkin(feature, false)
+    if type(feature.syncBindSquare) == "function" then
+        feature.syncBindSquare()
+    end
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
     end
@@ -4863,12 +4876,20 @@ local function bindActionShortcut(
     refreshButtonText()
 
     binding.assign = function(keyCode: Enum.KeyCode): boolean
-        local cleared: boolean = keyCode == binding.key
+        local oldKey: Enum.KeyCode = binding.key
+        local cleared: boolean = keyCode == oldKey
         binding.key = cleared and Enum.KeyCode.Unknown or keyCode
         setShortcutPressed(binding, false)
         configData.values[optionKey] = binding.key.Name
         queueConfigSave()
-        refreshButtonText()
+        -- Refresh both ends of any conflict, as well as this key's square.
+        for _, other: any in pairs(state.shortcutBindings) do
+            if other == binding
+                or (oldKey ~= Enum.KeyCode.Unknown and other.key == oldKey)
+                or (binding.key ~= Enum.KeyCode.Unknown and other.key == binding.key) then
+                if type(other.refresh) == "function" then other.refresh() end
+            end
+        end
         return not cleared
     end
 
@@ -6628,7 +6649,7 @@ local function reflowForViewport(force: boolean?): ()
         if not ScreenGui.Parent then
             return
         end
-        state.refreshLayout(force)
+        if not state.refreshLayout(force) then return end
         if state.floatingUi and state.floatingUi.reclamp then
             state.floatingUi.reclamp()
         end

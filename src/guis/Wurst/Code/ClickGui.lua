@@ -73,13 +73,21 @@ function Module.init(context: any): any
     local allFeatures: {any} = host.allFeatures
     local normalizeFeatureCategory: any = host.normalizeFeatureCategory
 
+    local function viewportSize(): Vector2
+        -- Wurst stores the last valid viewport during camera swaps, so a
+        -- transient 0x0 camera cannot collapse the menu or its window grid.
+        local saved: any = state.layoutViewport
+        if saved and saved.X > 1 and saved.Y > 1 then return saved end
+        local camera: Camera? = workspace.CurrentCamera
+        local current: any = camera and camera.ViewportSize
+        if current and current.X > 1 and current.Y > 1 then return current end
+        return Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+    end
+
     local function viewportScale(): number
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
-        local camera: Camera? = workspace.CurrentCamera
-        local viewport: Vector2 = camera
-            and (camera :: Camera).ViewportSize
-            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local viewport: Vector2 = viewportSize()
         local fit: number = math.min(
             viewport.X / CALIBRATION_WIDTH,
             viewport.Y / CALIBRATION_HEIGHT
@@ -88,10 +96,7 @@ function Module.init(context: any): any
     end
 
     local function logicalViewport(): Vector2
-        local camera: Camera? = workspace.CurrentCamera
-        local viewport: Vector2 = camera
-            and (camera :: Camera).ViewportSize
-            or Vector2.new(CALIBRATION_WIDTH, CALIBRATION_HEIGHT)
+        local viewport: Vector2 = viewportSize()
         local factor: number = viewportScale()
         return Vector2.new(viewport.X / factor, viewport.Y / factor)
     end

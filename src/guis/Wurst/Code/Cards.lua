@@ -395,6 +395,11 @@ function Module.init(context: any): any
             refreshFeatureToggle(feature)
         end
 
+        local activationGeneration: number = 0
+        local function paintToggle(): ()
+            local ok: boolean, failure: any = pcall(refreshFeatureToggle, feature)
+            if not ok then warn("[Random Testing Menu] " .. name .. " UI: " .. tostring(failure)) end
+        end
         local function activateFeature(): ()
             if feature.isHoldAction then
 
@@ -425,28 +430,31 @@ function Module.init(context: any): any
             end
 
             local requestedState: boolean = not feature.enabled
-            local success: boolean, errorMessage: any = pcall(
-                feature.onToggle,
-                requestedState
-            )
+            activationGeneration += 1
+            local generation: number = activationGeneration
+            feature.enabled = requestedState
+            if requestedState then feature.enabledAt = os.clock() end
+            -- Handlers and profile writes can yield in an executor. Repaint all
+            -- views immediately, and ignore an older handler that finishes
+            -- after a newer toggle or after teardown changed the feature.
+            paintToggle()
+            local success: boolean, errorMessage: any = pcall(feature.onToggle, requestedState)
+            if generation ~= activationGeneration or feature.enabled ~= requestedState then return end
             if success then
-                feature.enabled = requestedState
-                if requestedState then
-                    feature.enabledAt = os.clock()
-                end
                 configData.states[feature.configKey] = requestedState
                 flushConfigSave()
             else
                 warn("[Random Testing Menu] " .. name .. ": " .. tostring(errorMessage))
                 feature.enabled = false
+                paintToggle()
                 pcall(feature.onToggle, false)
+                if generation ~= activationGeneration then return end
                 local reason: string = tostring(errorMessage)
                 if #reason > 90 then
                     reason = string.sub(reason, 1, 90)
                 end
                 notify("Could not toggle " .. name .. ": " .. reason)
             end
-            refreshFeatureToggle(feature)
         end
         feature.activate = activateFeature
 
@@ -658,16 +666,15 @@ function Module.init(context: any): any
                 square:SetAttribute("CaptureIdleText", caption)
                 local bound: boolean = binding.key ~= nil
                     and binding.key ~= Enum.KeyCode.Unknown
-                -- Palette-driven: a bound key paints with the Enabled
-                -- colour, a conflicting one with the negative colour, so the
-                -- squares match whatever the user picked in UI Settings.
+                -- The letter communicates that a key is assigned. A green
+                -- square must not imply an OFF module is still enabled.
                 local conflict: any = bound and conflictWith() or nil
                 if conflict then
                     square.BackgroundColor3 = Theme.negative
                     square.BackgroundTransparency = 0.35
                     edge.Color = Theme.negative
                     edge.Transparency = 0.15
-                elseif bound then
+                elseif bound and feature.enabled == true then
                     square.BackgroundColor3 = Theme.enabled
                     square.BackgroundTransparency = 0.35
                     edge.Color = Theme.enabled
@@ -676,7 +683,7 @@ function Module.init(context: any): any
                     square.BackgroundColor3 = UNBOUND_BG
                     square.BackgroundTransparency = 0.55
                     edge.Color = Theme.outline
-                    edge.Transparency = 0.6
+                    edge.Transparency = if bound then 0.25 else 0.6
                 end
             end
             feature.bindSquare = square
@@ -942,15 +949,18 @@ function Module.init(context: any): any
             and configuration.restore ~= false
             and configData.states[feature.configKey] == true then
             task.defer(function(): ()
-                local success: boolean, errorMessage: any = pcall(
-                    feature.onToggle,
-                    true
-                )
-                if success then
-                    feature.enabled = true
-                    feature.enabledAt = os.clock()
-                    refreshFeatureToggle(feature)
-                else
+                -- Do not let an old deferred restore undo a more recent input.
+                if activationGeneration ~= 0 or configData.states[feature.configKey] ~= true then return end
+                activationGeneration += 1
+                local generation: number = activationGeneration
+                feature.enabled = true
+                feature.enabledAt = os.clock()
+                paintToggle()
+                local success: boolean, errorMessage: any = pcall(feature.onToggle, true)
+                if generation ~= activationGeneration or feature.enabled ~= true then return end
+                if not success then
+                    feature.enabled = false
+                    paintToggle()
                     configData.states[feature.configKey] = false
                     queueConfigSave()
                     warn(

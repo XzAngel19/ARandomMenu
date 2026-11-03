@@ -82,10 +82,11 @@ function Module.init(context: any): any
     }
 
     local function screenViewport(): Vector2
+        local stable: any = state.layoutViewport
+        if stable and stable.X > 1 and stable.Y > 1 then return stable end
         local camera: Camera? = workspace.CurrentCamera
-        if camera then
-            return (camera :: Camera).ViewportSize
-        end
+        local current: any = camera and camera.ViewportSize
+        if current and current.X > 1 and current.Y > 1 then return current end
         return Vector2.new(1280, 720)
     end
 

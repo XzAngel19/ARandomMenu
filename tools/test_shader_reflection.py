@@ -421,6 +421,45 @@ multi:Stop()
 assert(#remotes()==0 and liveHandles()==0 and not extra[2].destroyed and not extra[3].destroyed)
 pass('map-observed floors get bounded independent mirrors and streaming cleanup')
 
+-- v173 stretched the 1024-pixel primary canvas across as much as 256 studs.
+-- Keep broad coverage, but allocate a denser local mirror for the avatar.
+nextFloor.Size=Vector3.new(256,1,256)
+local detailed=assert(again:Start(report));detailed:Observe(extra[3]);frames(120,0.1)
+local mainGui=find(playerGui,'ARMShaderFloorReflection')
+local mainPlane=mainGui.Adornee;local wideGui=nil;local neighbor=nil
+for _,g in ipairs(remotes()) do
+    if g.Adornee.Size.X>250 then wideGui=g else neighbor=g end
+end
+assert(mainPlane.Size.X<=64 and mainPlane.Size.Z<=64,'local mirror must retain avatar detail on very large floors')
+assert(mainGui.CanvasSize.X/mainPlane.Size.X>8,'local floor pixel density must not collapse')
+assert(wideGui and wideGui.Enabled and neighbor and #remotes()==2,
+    'the broader floor and one other floor remain reflected within the same three-viewport cap')
+assert(wideGui.Adornee.Position.Y < mainPlane.Position.Y, 'local detail lies above the wider surface')
+local wideScene=find(find(wideGui,'Reflection'),'ReflectedScene')
+assert(countParts(wideScene)>0 and countParts(wideScene)<=32)
+newRoot.Position=Vector3.new(80,5,0);hit.Position=Vector3.new(80,2,0)
+camera.CFrame=CFrame.new(80,10,10);frames(25,0.1)
+near(mainPlane.Position.X,80);assert(wideGui.Enabled and wideGui.Adornee.Size.X>250)
+-- On leaving the big floor its wide layer must not survive as a stale mirror.
+hit={Instance=extra[3],Position=Vector3.new(0,2,-24),Normal=Vector3.new(0,1,0)}
+newRoot.Position=Vector3.new(0,5,-24);camera.CFrame=CFrame.new(0,10,-14);frames(5,0.1)
+assert(wideGui.destroyed and #remotes()<=2)
+detailed:Stop();nextFloor.Size=Vector3.new(30,1,30)
+hit={Instance=nextFloor,Position=Vector3.new(0,2,0),Normal=Vector3.new(0,1,0)}
+newRoot.Position=Vector3.new(0,5,0);camera.CFrame=CFrame.new(0,10,10)
+assert(#remotes()==0 and liveHandles()==0)
+pass('large floor keeps a detailed local mirror plus bounded broad coverage')
+
+-- The under-player probe accepts narrow solid floors; the broad layer must
+-- not silently disappear just because the additional-floor filter is stricter.
+nextFloor.Size=Vector3.new(256,1,4);camera.CFrame=CFrame.new(0,10,2)
+local narrow=assert(again:Start(report));frames(80,0.1)
+local narrowWide=nil
+for _,g in ipairs(remotes()) do if g.Adornee.Size.X>250 then narrowWide=g end end
+assert(narrowWide and narrowWide.Enabled,'large, narrow primary floor keeps broad coverage')
+narrow:Stop();nextFloor.Size=Vector3.new(30,1,30);camera.CFrame=CFrame.new(0,10,10)
+pass('primary wide layer uses the primary floor eligibility rules')
+
 local isolated=assert(again:Start(report))
 Instance.failClass='SurfaceGui'
 isolated:Observe(extra[3]);local beforeFailure=#notices;frames(20,0.1)
@@ -429,6 +468,16 @@ assert(liveHandles()==2 and #remotes()==0 and #notices==beforeFailure+1
     'secondary allocation failure must not disable or leak the primary reflection')
 Instance.failClass=nil;isolated:Stop();Module.destroy();assert(liveHandles()==0)
 pass('secondary viewport setup failure is isolated and cleaned up')
+
+nextFloor.Size=Vector3.new(256,1,256)
+local fallback=assert(again:Start(report));Instance.failClass='SurfaceGui'
+local failureNotices=#notices;frames(20,0.1)
+local fallbackGui=find(playerGui,'ARMShaderFloorReflection')
+assert(fallbackGui.Enabled and fallbackGui.Adornee.Size.X>250 and #remotes()==0,
+    'failed wide-mirror allocation restores broad primary coverage')
+assert(#notices==failureNotices+1 and liveHandles()==2)
+Instance.failClass=nil;fallback:Stop();Module.destroy();nextFloor.Size=Vector3.new(30,1,30)
+pass('large floor falls back to a broad primary mirror if allocation fails')
 
 -- Integration: the real Shaders traversal must discover floors and feed the
 -- real reflection library even when both texture and glass options are OFF.
@@ -484,16 +533,22 @@ frames(7,0.05);assert(candidateChecks==200, 'the bounded scan eventually inspect
 bounded:Stop();Module.destroy();for _,p in ipairs(probes) do p:Destroy() end
 pass('additional-floor candidate selection is incrementally bounded')
 
-host.state={isMobile=true}
+host.state={isMobile=true};nextFloor.Size=Vector3.new(256,1,256)
 local mobileApi=Module.init(host)
 local mobile=assert(mobileApi:Start(report));mobile:Observe(extra[2]);mobile:Observe(extra[3])
 frames(100,0.1)
 local mobileGui=find(playerGui,'ARMShaderFloorReflection')
-assert(mobileGui.CanvasSize.X<=768 and mobileGui.CanvasSize.Y<=768)
-for _,g in ipairs(remotes()) do assert(g.CanvasSize.X<=384 and g.CanvasSize.Y<=384) end
-mobile:Stop();Module.destroy();host.state={}
+assert(mobileGui.CanvasSize.X<=768 and mobileGui.CanvasSize.Y<=768
+    and mobileGui.Adornee.Size.X<=64 and mobileGui.CanvasSize.X/mobileGui.Adornee.Size.X>5)
+local mobileWide=false
+for _,g in ipairs(remotes()) do
+    assert(g.CanvasSize.X<=384 and g.CanvasSize.Y<=384)
+    if g.Adornee.Size.X>250 then mobileWide=true end
+end
+assert(mobileWide and #remotes()<=2,'mobile keeps broad coverage in the same viewport budget')
+mobile:Stop();Module.destroy();host.state={};nextFloor.Size=Vector3.new(30,1,30)
 assert(liveHandles()==0 and #remotes()==0)
-pass('mobile viewport resolution is bounded separately from desktop')
+pass('mobile viewport resolution and large-floor detail are bounded separately from desktop')
 '''
 
 

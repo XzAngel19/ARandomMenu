@@ -27,9 +27,11 @@ repositorio no representan imágenes ni FPS reales.
   materiales y posprocesado. Las prendas clásicas requieren un Model/Humanoid
   como en este [ejemplo de avatares](https://devforum.roblox.com/t/how-to-render-a-character-within-a-viewportframe/524239);
   la copia limitada no garantiza fidelidad de ropa en capas o mallas asimétricas.
-  No es SSR ni render de la escena original: se dibuja el piso principal y,
-  como máximo, otros dos planos visibles descubiertos en el mapa. Las curvas,
-  mallas irregulares, Terrain y objetos omitidos pueden producir bordes o faltar.
+  No es SSR ni render de la escena original: se dibuja el piso cercano y hasta
+  dos planos adicionales. Si el piso es grande, uno de esos planos se reserva
+  para una capa amplia de ese mismo piso; solo queda uno para otro piso. Las
+  curvas, mallas irregulares, Terrain y objetos omitidos pueden producir bordes o
+  faltar. El resultado y la superposición de capas no se han comprobado en Delta.
 
 ## Superficies: cinco imágenes de color CC0
 
@@ -156,17 +158,21 @@ reflectancia y 600 pisos candidatos para espejos; se avisa si se llega a un
 límite. Los mapas más grandes pueden tener piezas sin cambios y la primera
 pasada tarda según su tamaño. No se ejecuta `GetDescendants()` del mapa por frame.
 
-Cada plano reflejado abarca su pieza hasta 256 × 256 studs; el reflejo principal
-sigue requiriendo un piso plano bajo el personaje, y se seleccionan hasta dos
-planos adicionales visibles. Se copian hasta 54 partes en el viewport principal
-y 32 en cada adicional (118 en total como máximo). La selección de los pisos
-adicionales revisa hasta 32 candidatos por tick. El escaneo cercano de escena
+El plano principal cubre hasta 64 × 64 studs bajo el personaje. Para un piso
+mayor, uno de los dos planos adicionales cubre hasta 256 × 256 studs de ese piso;
+el otro puede mostrar otro piso compatible. En un piso pequeño pueden mostrarse
+dos pisos adicionales. Si no se consigue reservar la capa amplia, el plano
+principal vuelve a cubrir hasta 256 × 256, con menos detalle. Se copian hasta
+54 partes en el viewport principal y 32 en cada adicional (118 como máximo).
+La selección revisa hasta 32 candidatos por tick. El escaneo cercano de escena
 pide hasta 100 piezas cada 2 s; el presupuesto compartido es de tres creaciones
 de partes por tick. Las poses se actualizan hasta 30/15 Hz en PC y 20/10 Hz en
 móvil (principal/adicionales), solo cuando un viewport relevante está visible.
 El lado efectivo máximo del render principal es 1.024 px en PC o 768 en móvil;
 los adicionales son 512/384. El límite tiene en cuenta el escalado fuera de eje.
-Los viewports no comparten escena ni reflejan todos los objetos del mapa.
+Los viewports no comparten escena ni reflejan todos los objetos del mapa. Un
+piso grande sin otros espejos consume ahora dos viewports, no uno: puede costar
+más GPU aunque el máximo total no aumentó.
 
 Fog, Rain, Snow, hojas y polvo suman hasta 30 emisores y 187 partículas/s
 (108 lluvia, 45 nieve, 18 hojas, 12 polvo y 4 niebla), más hasta una salpicadura

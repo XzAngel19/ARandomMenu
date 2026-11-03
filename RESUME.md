@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v173-20261102-map-shaders`**, con árbol base de
+> **`v174-20261103-mm2-ui-reflections`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,14 +21,40 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v173: 86 fuentes,
-     113 suites, auditoría estática, boots `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v174: 86 fuentes,
+     116 suites, auditoría estática, boots `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v173 — Superficies, clima y sincronización de teclado (2026-11-02)
+## v174 — Keybinds MM2, viewport y detalle cercano (2026-11-03)
+
+Detalle y límites: `docs/FIXES-v174.md`; fuentes/licencias de shaders en
+`docs/third-party/shaders/README.md`.
+
+- El usuario seguía viendo discrepancias MM2 en v173. El cuadrado de una tecla
+  asignada era verde aunque el módulo estuviera OFF; ahora sigue el estado, con
+  advertencia para conflictos. Tarjeta/favoritos/Navigator se repintan antes de
+  callbacks y guardados que puedan ceder; una generación evita que termine una
+  activación/restauración vieja y reescriba el estado posterior. Gun Aimbot
+  conserva su keybind especial de disparo/equipar y no de toggle.
+- El cambio de `ViewportSize` actualiza `UIScale` incluso si el modo de layout
+  no cambia. Se conserva el último viewport válido durante cámaras 0×0 y se
+  respeta `UI.MenuScale`. El fallo era reproducible con mocks, pero no se puede
+  atribuir con certeza el tamaño de la captura a ese único problema.
+- Para recuperar detalle del avatar en pisos grandes, Floor reflections usa un
+  plano cercano de hasta 64×64 y reserva uno de dos planos adicionales para
+  cubrir hasta 256×256 del piso actual; queda uno para otro piso. Pisos pequeños
+  conservan hasta dos adicionales. Si la reserva falla y no hay capa amplia se
+  vuelve al plano amplio de menor detalle. Hasta tres viewports, sin blanquear
+  el suelo. La segunda capa puede costar más GPU aun sin subir el límite total.
+- Mocks de Gun Aura, Shaders, Gun Aimbot, guardado/restauración suspendidos,
+  cambio de cámara y álgebra de reflejos pasan; 86 fuentes/116 suites, boot 0,
+  menú 50/49. No se probó composición de capas, visibilidad, FPS ni Delta real.
+  El menú abierto aplica `WurstBlur` 14: comparar Shaders con el menú cerrado.
+
+## v173 — Superficies, clima y sincronización de teclado (2026-11-02; histórico)
 
 Detalle, pruebas, fuentes y límites: `docs/FIXES-v173.md` y
 `docs/third-party/shaders/README.md`.

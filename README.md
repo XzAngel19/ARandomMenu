@@ -14,11 +14,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu
 ## Shaders
 
 `Render > Shaders` usa efectos **locales al cliente**. `Floor reflections`
-intenta un reflejo más intenso sobre el piso plano del personaje y hasta dos
-pisos compatibles adicionales frente a la cámara. El piso principal abarca
-hasta 256 × 256 studs; los viewports copian solo una parte de la escena. No es
-un espejo global, RTX ni SSR: Terrain, pendientes fuertes, objetos omitidos,
-ropa o mallas irregulares pueden verse distintos o no reflejarse.
+intenta un reflejo intenso sobre el piso plano del personaje y pisos compatibles
+frente a la cámara. Para conservar detalle cerca del avatar, el plano principal
+abarca hasta 64 × 64 studs; si el piso es mayor, una segunda capa cubre hasta
+256 × 256 y queda espacio para un piso adicional. En pisos pequeños pueden
+mostrarse hasta dos pisos adicionales. Los viewports copian solo parte de la
+escena: no es un espejo global, RTX ni SSR. Terrain, pendientes fuertes, objetos
+omitidos, ropa o mallas irregulares pueden verse distintos o no reflejarse.
 
 No hay selector de `Look`. `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`,
 `Wet surfaces`, `Water reflections`, `Surface textures` y `Glass reflections`
@@ -38,8 +40,10 @@ o los efectos que no uses. Fuentes, licencias y límites detallados en
 `docs/third-party/shaders/README.md`.
 
 Para comparar, prueba primero `Shaders` con `Floor reflections` encendido y
-apagado en tercera persona sobre un piso sólido. Prueba Fog y Rain por separado,
-y Rain cerca de una salida. Espera a que se recorra el mapa y revisa los avisos.
+apagado en tercera persona sobre un piso sólido. Cierra el menú para comparar:
+al abrirlo se aplica un desenfoque de la interfaz, independiente de Shaders.
+Prueba Fog y Rain por separado, y Rain cerca de una salida. Espera a que se
+recorra el mapa y revisa los avisos.
 
 ## Desarrollo
 
