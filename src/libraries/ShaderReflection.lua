@@ -15,6 +15,9 @@ local MAX_TRACKED_FLOORS = 600
 local MAX_FLOOR_CHECKS_PER_TICK = 32
 local MAX_FLOOR_SIZE = 256
 local MAX_DETAIL_SIZE = 64
+local GENERIC_FLOOR_SIZE = 32
+local GENERIC_MAX_DISTANCE = 18
+local GENERIC_MIN_NORMAL_Y = 0.85
 local SECONDARY_INTERVAL = 1
 local SECONDARY_POSE_INTERVAL = 1 / 15
 local MAX_CREATIONS_PER_TICK = 3
@@ -255,7 +258,7 @@ function Module.init(host: any): any
 
         local function loseFloor(deltaTime: number, hasRoot: boolean): ()
             if gui then gui.Enabled = false end
-            if currentFloor then
+            if currentFloor or planePoint then
                 currentFloor, planePoint, planeNormal = nil, nil, nil
                 clearCopies()
             end
@@ -285,45 +288,115 @@ function Module.init(host: any): any
                 return world:Raycast(root.Position + Vector3.new(0, 1, 0), Vector3.new(0, -15, 0), rayParams)
             end)
             local floor: any = if hitOk and hit then hit.Instance else nil
-            if not floor or not floor:IsA("BasePart") or not floor.Parent or not floor.Anchored
-                or floor.Transparency >= 0.95 or not hit.Normal or hit.Normal.Y < 0.97
-                or floor.CFrame.UpVector.Y < 0.97 or floor.Size.X < 3 or floor.Size.Z < 3 then
-                loseFloor(deltaTime, true)
+            local strictEligible: boolean = false
+            if floor and floor:IsA("BasePart") and floor.Parent and floor.Anchored
+                and floor.Transparency < 0.95 and hit.Normal and hit.Normal.Y >= 0.97
+                and floor.CFrame.UpVector.Y >= 0.97 and floor.Size.X >= 3 and floor.Size.Z >= 3 then
+                strictEligible = true
+            end
+            if strictEligible then
+                -- Strict flat solid floor path (best fidelity: clamp to real floor bounds)
+                missingElapsed, missingReported = 0, false
+                local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
+                -- A 256-stud canvas makes a character only a few pixels wide.
+                -- Keep detail around the avatar and use one secondary viewport for
+                -- the wider floor when necessary, still at most three viewports.
+                -- If a secondary allocation fails and there is no wide layer for
+                -- this floor, fall back to the broad primary surface.
+                local canUseWide: boolean = not secondaryFailed or secondary[floor] ~= nil
+                local detailLimit: number = if canUseWide then MAX_DETAIL_SIZE else MAX_FLOOR_SIZE
+                local width: number = math.min(floor.Size.X - 0.04, detailLimit)
+                local depth: number = math.min(floor.Size.Z - 0.04, detailLimit)
+                local wideFloor: boolean = canUseWide and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
+                    or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
+                local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
+                local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
+                plane.Size = Vector3.new(width, 0.04, depth)
+                -- Separate the two local surfaces to reduce depth fighting.
+                plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + (if wideFloor then 0.06 else 0.04), z)
+                local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, localHit.Y, 0))
+                local normal: Vector3 = floor.CFrame.UpVector
+                if floor ~= currentFloor or not planePoint or not planeNormal
+                    or math.abs((point - planePoint):Dot(normal)) > 0.04
+                    or (normal - planeNormal).Magnitude > 0.01 then
+                    if floor ~= currentFloor then
+                        selectionItems = nil
+                        secondaryElapsed = SECONDARY_INTERVAL
+                    end
+                    currentFloor, planePoint, planeNormal = floor, point, normal
+                    planeVersion += 1
+                    sceneElapsed = SCENE_INTERVAL
+                else
+                    planePoint, planeNormal = point, normal
+                end
                 return
             end
-            missingElapsed, missingReported = 0, false
-            local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
-            -- A 256-stud canvas makes a character only a few pixels wide.
-            -- Keep detail around the avatar and use one secondary viewport for
-            -- the wider floor when necessary, still at most three viewports.
-            -- If a secondary allocation fails and there is no wide layer for
-            -- this floor, fall back to the broad primary surface.
-            local canUseWide: boolean = not secondaryFailed or secondary[floor] ~= nil
-            local detailLimit: number = if canUseWide then MAX_DETAIL_SIZE else MAX_FLOOR_SIZE
-            local width: number = math.min(floor.Size.X - 0.04, detailLimit)
-            local depth: number = math.min(floor.Size.Z - 0.04, detailLimit)
-            local wideFloor: boolean = canUseWide and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
-                or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
-            local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
-            local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
-            plane.Size = Vector3.new(width, 0.04, depth)
-            -- Separate the two local surfaces to reduce depth fighting.
-            plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + (if wideFloor then 0.06 else 0.04), z)
-            local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, localHit.Y, 0))
-            local normal: Vector3 = floor.CFrame.UpVector
-            if floor ~= currentFloor or not planePoint or not planeNormal
-                or math.abs((point - planePoint):Dot(normal)) > 0.04
-                or (normal - planeNormal).Magnitude > 0.01 then
-                if floor ~= currentFloor then
-                    selectionItems = nil
-                    secondaryElapsed = SECONDARY_INTERVAL
+            -- Universal fallback: handle Terrain and MeshParts that fail the
+            -- strict flat-Part check but are still walkable in many games.
+            -- Keep Anchored/size/transparency gates so tiny/moving/see-through
+            -- parts stay ineligible (preserves existing tests).
+            if hitOk and hit and hit.Position and hit.Normal and hit.Normal.Y >= GENERIC_MIN_NORMAL_Y then
+                local point: Vector3 = hit.Position
+                local normal: Vector3 = hit.Normal
+                local instance: any = hit.Instance
+                local isTerrain: boolean = instance ~= nil and instance.ClassName == "Terrain"
+                local isPart: boolean = instance ~= nil and instance:IsA("BasePart")
+                local genericEligible: boolean = false
+                if isTerrain then
+                    genericEligible = true
+                elseif isPart and instance.Parent and instance.Anchored
+                    and instance.Transparency < 0.90 and instance.Size.X >= 3 and instance.Size.Z >= 3 then
+                    -- Allow mildly sloped walkable parts (UpVector relaxed).
+                    local upOk: boolean = true
+                    if instance.CFrame and instance.CFrame.UpVector then
+                        upOk = instance.CFrame.UpVector.Y >= 0.80
+                    end
+                    genericEligible = upOk
                 end
-                currentFloor, planePoint, planeNormal = floor, point, normal
-                planeVersion += 1
-                sceneElapsed = SCENE_INTERVAL
-            else
-                planePoint, planeNormal = point, normal
+                if not genericEligible then
+                    -- not eligible for generic either
+                elseif instance == folder or instance == character then
+                    -- ray filter should already exclude
+                else
+                    local distance: number = (point - root.Position).Magnitude
+                    if distance <= GENERIC_MAX_DISTANCE then
+                        missingElapsed, missingReported = 0, false
+                        local width: number = GENERIC_FLOOR_SIZE
+                        local depth: number = GENERIC_FLOOR_SIZE
+                        plane.Size = Vector3.new(width, 0.04, depth)
+                        local offset: Vector3 = normal * 0.06
+                        if normal.Y >= 0.97 then
+                            plane.CFrame = CFrame.new(point + offset)
+                        else
+                            -- Orient the generic plane to the hit normal for sloped surfaces
+                            local up: Vector3 = normal
+                            local forward: Vector3 = Vector3.new(0, 0, 1)
+                            if math.abs(up:Dot(forward)) > 0.99 then forward = Vector3.new(1, 0, 0) end
+                            local right: Vector3 = up:Cross(forward).Unit
+                            forward = (right:Cross(up)).Unit
+                            plane.CFrame = CFrame.fromMatrix(point + offset, right, up, -forward)
+                        end
+                        local isNewFloor: boolean = currentFloor ~= nil
+                        local moved: boolean = not planePoint or not planeNormal
+                            or (point - planePoint).Magnitude > 0.05
+                            or (normal - planeNormal).Magnitude > 0.01
+                        if moved then
+                            if isNewFloor then
+                                selectionItems = nil
+                                secondaryElapsed = SECONDARY_INTERVAL
+                            end
+                            currentFloor, planePoint, planeNormal = nil, point, normal
+                            planeVersion += 1
+                            sceneElapsed = SCENE_INTERVAL
+                        else
+                            planePoint, planeNormal = point, normal
+                            if isNewFloor then currentFloor = nil end
+                        end
+                        return
+                    end
+                end
             end
+            loseFloor(deltaTime, true)
         end
 
         local function isScenePart(part: any): boolean
@@ -389,7 +462,7 @@ function Module.init(host: any): any
         end
 
         local function scanScene(): ()
-            if not currentFloor or not plane or not planePoint then return end
+            if not planePoint or not plane then return end
             local desired: {[Instance]: boolean} = {}
             local desiredActors: {[Instance]: boolean} = {}
             local pending: {any} = {}
@@ -817,7 +890,7 @@ function Module.init(host: any): any
                 floorElapsed = 0
                 findFloor(elapsed)
             end
-            if not currentFloor then return end
+            if not planePoint then return end
             local budget: number = MAX_CREATIONS_PER_TICK
             if selectionItems ~= nil or secondaryElapsed >= SECONDARY_INTERVAL then
                 if selectionItems == nil then secondaryElapsed = 0 end
@@ -887,7 +960,7 @@ function Module.init(host: any): any
         end
         local function render(): ()
             local camera: Camera? = world.CurrentCamera
-            if not camera or not currentFloor or not gui or not plane or not viewport or not viewCamera then
+            if not camera or not planePoint or not gui or not plane or not viewport or not viewCamera then
                 if gui then gui.Enabled = false end
                 for _, mirror: any in pairs(secondary) do mirror.gui.Enabled = false end
                 return

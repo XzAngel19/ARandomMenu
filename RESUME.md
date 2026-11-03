@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v174-20261103-mm2-ui-reflections`**, con árbol base de
+> **Estado al escribir esto:** rama fija `arena/414d25a1-arandommenu` (hereda `arena/9492e6b6-arandommenu`), build
+> **`v175-20261104-shaders-universal`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -139,6 +139,15 @@ Detalle y límites: `docs/FIXES-v171.md`, fuentes/licencias en
   simuladas cubren selección, restauración, cambios de mapa, fallos, carreras,
   cielo/techo, calidad de recursos y límites, pero no píxeles, física real,
   FPS ni dispositivos. Auto Farm, Fling y demás módulos no se tocaron.
+
+## v175 — Shaders universal, fog realista y vidrio en cualquier juego (2026-11-04)
+
+Detalle y límites: `docs/FIXES-v175.md`; fuentes/licencias en `docs/third-party/shaders/README.md`.
+
+- El usuario mostró que `Floor reflection` seguía pidiendo un “piso plano sólido cercano” (captura Ivan's Adventure II) y que `Surface textures/Glass/Fog/Rain/Snow` no se veían como shaders client-sided universales. Pidió que funcionen en **cualquier suelo y cualquier juego**, con fog más realista, sobre la base `v174`.
+- Se mantiene el camino estricto de alta fidelidad, pero se añadió fallback genérico: si el rayo de 15 studs encuentra `Terrain`, `MeshPart`, `Union` o un `Part` walkable con `Normal.Y >=0.85`, `Size >=3` y `Anchored`, se crea un plano de **32×32 studs** a `+0.06` del hit (orientado a la normal si es inclinado). `scan/render` ya no exigen `currentFloor` sino `planePoint`, y los límites de 3 viewports/54+32 copias se conservan.
+- `Surface textures` baja `Plastic` de `>=12` a `>=8` y añade fallback `concrete` para cualquier piso plano no-vidrio (Slate/Metal/Sand/etc.), para que se note en mapas variados. `Glass reflections` ahora reconoce `ForceField`, plásticos transparentes `>=0.15` y genéricos `0.2–0.85` con área `>=16`. `Wet surfaces` y presupuestos (600 texturas/1200 reflectancias) sin cambios.
+- `Fog` conserva `Density 0.38` pero sube `Haze 1.65/Glare 0.14` y escribe `Lighting.FogColor 199,212,225 / FogStart 55 / FogEnd 420` con restauración que respeta cambios externos del juego — niebla de distancia + partículas cercanas. `validate.sh` 84 fuentes/116 suites, menú 50/49. No es RTX/SSR: Terrain y pendientes fuertes usan un plano aproximado.
 
 ## v170 — Shaders, clima y transición de Auto Farm (2026-11-02; histórico)
 

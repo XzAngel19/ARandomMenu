@@ -47,6 +47,8 @@ function Module.init(context: any): any
     local fogOwned: boolean = false
     local fogOriginal: {[string]: any} = {}
     local fogApplied: {[string]: any} = {}
+    local fogLightingOriginal: {[string]: any} = {}
+    local fogLightingApplied: {[string]: any} = {}
     local fogConnections: {any} = {}
     local fogMutating: boolean = false
     local fogQueued: boolean = false
@@ -178,11 +180,19 @@ function Module.init(context: any): any
         local applied: {[string]: any} = fogApplied
         fogAtmosphere, fogOwned = nil, false
         fogOriginal, fogApplied = {}, {}
-        if not atmosphere then return end
-        if owned then
-            pcall(function(): () atmosphere:Destroy() end)
-        else
-            restoreProperties(atmosphere, original, applied)
+        if atmosphere then
+            if owned then
+                pcall(function(): () atmosphere:Destroy() end)
+            else
+                restoreProperties(atmosphere, original, applied)
+            end
+        end
+        -- Restore realistic distance fog (Lighting FogStart/End/Color)
+        local lightingApplied: {[string]: any} = fogLightingApplied
+        local lightingOriginal: {[string]: any} = fogLightingOriginal
+        fogLightingApplied, fogLightingOriginal = {}, {}
+        if next(lightingApplied) ~= nil then
+            restoreProperties(lighting :: any, lightingOriginal, lightingApplied)
         end
     end
 
@@ -212,8 +222,8 @@ function Module.init(context: any): any
         local atmosphere: Atmosphere = external or (Instance.new("Atmosphere") :: Atmosphere)
         fogAtmosphere, fogOwned = atmosphere, external == nil
         local values: {[string]: any} = {
-            Density = 0.38, Offset = 0.25, Haze = 1.25, Glare = 0.1,
-            Color = Color3.fromRGB(220, 229, 238), Decay = Color3.fromRGB(155, 170, 185),
+            Density = 0.38, Offset = 0.2, Haze = 1.65, Glare = 0.14,
+            Color = Color3.fromRGB(218, 227, 238), Decay = Color3.fromRGB(148, 164, 180),
         }
         for property: string, value: any in pairs(values) do
             pcall(function(): ()
@@ -223,6 +233,23 @@ function Module.init(context: any): any
             end)
         end
         if fogOwned then atmosphere.Parent = lighting end
+        -- Realistic distance fog via Lighting (client-sided, universal):
+        -- lowers FogEnd so distant objects fade, works in every game.
+        -- Values are moderate to stay playable, not blinding white.
+        local fogLightingValues: {[string]: any} = {
+            FogColor = Color3.fromRGB(199, 212, 225),
+            FogStart = 55,
+            FogEnd = 420,
+        }
+        for property: string, value: any in pairs(fogLightingValues) do
+            pcall(function(): ()
+                local current: any = (lighting :: any)[property]
+                -- Only overwrite if we can read it; some executors may hide these.
+                fogLightingOriginal[property] = current
+                ;(lighting :: any)[property] = value
+                fogLightingApplied[property] = (lighting :: any)[property]
+            end)
+        end
         fogMutating = false
         updateStatus()
     end
@@ -514,6 +541,8 @@ function Module.init(context: any): any
     local function textureStyle(part: any): (string?, {any}?)
         -- Only flat, anchored block Parts. MeshParts, custom variants, decals,
         -- characters and physics are never replaced or given fake PBR maps.
+        -- Universal: support common materials and make plastic floors more
+        -- permissive so any game floor gets visible detail.
         if part.ClassName ~= "Part" or part.Shape ~= Enum.PartType.Block
             or part.Transparency > 0.05 or part.MaterialVariant ~= "" then return nil, nil end
         local material: any = part.Material
@@ -525,8 +554,13 @@ function Module.init(context: any): any
         elseif material == Enum.Material.Grass then style = "grass"
         elseif material == Enum.Material.Marble then style = "marble"
         elseif (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic)
-            and floorShape(part) and part.Size.X >= 12 and part.Size.Z >= 12 and part.Size.Y <= 3 then
-            -- Many simple maps use plain plastic for their floors.
+            and floorShape(part) and part.Size.X >= 8 and part.Size.Z >= 8 and part.Size.Y <= 4 then
+            -- Many games use plain plastic for floors, often smaller than 12.
+            style = "concrete"
+        elseif floorShape(part) and material ~= Enum.Material.Glass and material ~= Enum.Material.ForceField then
+            -- Universal fallback: any other flat floor (Slate, Sand, Metal, etc.)
+            -- gets concrete detail so the option is visible in any game.
+            -- Keep it conservative: only flat floors, not walls.
             style = "concrete"
         end
         if not style then return nil, nil end
@@ -588,8 +622,23 @@ function Module.init(context: any): any
         local name: string = string.lower(part.Name)
         local window: boolean = name == "pane" or string.find(name, "window", 1, true) ~= nil
             or string.find(name, "glass", 1, true) ~= nil
-        if enabled("Glass reflections") and (material == Enum.Material.Glass
-            or (plastic and window and part.Transparency >= 0.1)) then return 0.22 end
+        if enabled("Glass reflections") then
+            if material == Enum.Material.Glass then return 0.22 end
+            if material == Enum.Material.ForceField and part.Transparency >= 0.15 and part.Transparency < 0.9 then return 0.22 end
+            if plastic and part.Transparency >= 0.15 and part.Transparency < 0.9 then
+                -- Universal: any fairly transparent plastic counts as window,
+                -- name heuristic is extra, not required.
+                if window or part.Transparency >= 0.25 then return 0.22 end
+            end
+            -- Generic transparent parts that look like glass in many games
+            if part.Transparency >= 0.2 and part.Transparency <= 0.85 then
+                local size: Vector3 = part.Size
+                local area: number = math.max(size.X * size.Z, size.X * size.Y, size.Y * size.Z)
+                if area >= 16 and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic or material == Enum.Material.Metal) then
+                    return 0.22
+                end
+            end
+        end
         if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
             and material ~= Enum.Material.Glass then return 0.16 end
         return nil

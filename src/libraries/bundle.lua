@@ -1,5 +1,5 @@
 return {
-    stamp = "v174-20261103-mm2-ui-reflections",
+    stamp = "v175-20261104-shaders-universal",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -38702,6 +38702,8 @@ function Module.init(context: any): any
     local fogOwned: boolean = false
     local fogOriginal: {[string]: any} = {}
     local fogApplied: {[string]: any} = {}
+    local fogLightingOriginal: {[string]: any} = {}
+    local fogLightingApplied: {[string]: any} = {}
     local fogConnections: {any} = {}
     local fogMutating: boolean = false
     local fogQueued: boolean = false
@@ -38833,11 +38835,19 @@ function Module.init(context: any): any
         local applied: {[string]: any} = fogApplied
         fogAtmosphere, fogOwned = nil, false
         fogOriginal, fogApplied = {}, {}
-        if not atmosphere then return end
-        if owned then
-            pcall(function(): () atmosphere:Destroy() end)
-        else
-            restoreProperties(atmosphere, original, applied)
+        if atmosphere then
+            if owned then
+                pcall(function(): () atmosphere:Destroy() end)
+            else
+                restoreProperties(atmosphere, original, applied)
+            end
+        end
+        -- Restore realistic distance fog (Lighting FogStart/End/Color)
+        local lightingApplied: {[string]: any} = fogLightingApplied
+        local lightingOriginal: {[string]: any} = fogLightingOriginal
+        fogLightingApplied, fogLightingOriginal = {}, {}
+        if next(lightingApplied) ~= nil then
+            restoreProperties(lighting :: any, lightingOriginal, lightingApplied)
         end
     end
 
@@ -38867,8 +38877,8 @@ function Module.init(context: any): any
         local atmosphere: Atmosphere = external or (Instance.new("Atmosphere") :: Atmosphere)
         fogAtmosphere, fogOwned = atmosphere, external == nil
         local values: {[string]: any} = {
-            Density = 0.38, Offset = 0.25, Haze = 1.25, Glare = 0.1,
-            Color = Color3.fromRGB(220, 229, 238), Decay = Color3.fromRGB(155, 170, 185),
+            Density = 0.38, Offset = 0.2, Haze = 1.65, Glare = 0.14,
+            Color = Color3.fromRGB(218, 227, 238), Decay = Color3.fromRGB(148, 164, 180),
         }
         for property: string, value: any in pairs(values) do
             pcall(function(): ()
@@ -38878,6 +38888,23 @@ function Module.init(context: any): any
             end)
         end
         if fogOwned then atmosphere.Parent = lighting end
+        -- Realistic distance fog via Lighting (client-sided, universal):
+        -- lowers FogEnd so distant objects fade, works in every game.
+        -- Values are moderate to stay playable, not blinding white.
+        local fogLightingValues: {[string]: any} = {
+            FogColor = Color3.fromRGB(199, 212, 225),
+            FogStart = 55,
+            FogEnd = 420,
+        }
+        for property: string, value: any in pairs(fogLightingValues) do
+            pcall(function(): ()
+                local current: any = (lighting :: any)[property]
+                -- Only overwrite if we can read it; some executors may hide these.
+                fogLightingOriginal[property] = current
+                ;(lighting :: any)[property] = value
+                fogLightingApplied[property] = (lighting :: any)[property]
+            end)
+        end
         fogMutating = false
         updateStatus()
     end
@@ -39169,6 +39196,8 @@ function Module.init(context: any): any
     local function textureStyle(part: any): (string?, {any}?)
         -- Only flat, anchored block Parts. MeshParts, custom variants, decals,
         -- characters and physics are never replaced or given fake PBR maps.
+        -- Universal: support common materials and make plastic floors more
+        -- permissive so any game floor gets visible detail.
         if part.ClassName ~= "Part" or part.Shape ~= Enum.PartType.Block
             or part.Transparency > 0.05 or part.MaterialVariant ~= "" then return nil, nil end
         local material: any = part.Material
@@ -39180,8 +39209,13 @@ function Module.init(context: any): any
         elseif material == Enum.Material.Grass then style = "grass"
         elseif material == Enum.Material.Marble then style = "marble"
         elseif (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic)
-            and floorShape(part) and part.Size.X >= 12 and part.Size.Z >= 12 and part.Size.Y <= 3 then
-            -- Many simple maps use plain plastic for their floors.
+            and floorShape(part) and part.Size.X >= 8 and part.Size.Z >= 8 and part.Size.Y <= 4 then
+            -- Many games use plain plastic for floors, often smaller than 12.
+            style = "concrete"
+        elseif floorShape(part) and material ~= Enum.Material.Glass and material ~= Enum.Material.ForceField then
+            -- Universal fallback: any other flat floor (Slate, Sand, Metal, etc.)
+            -- gets concrete detail so the option is visible in any game.
+            -- Keep it conservative: only flat floors, not walls.
             style = "concrete"
         end
         if not style then return nil, nil end
@@ -39243,8 +39277,23 @@ function Module.init(context: any): any
         local name: string = string.lower(part.Name)
         local window: boolean = name == "pane" or string.find(name, "window", 1, true) ~= nil
             or string.find(name, "glass", 1, true) ~= nil
-        if enabled("Glass reflections") and (material == Enum.Material.Glass
-            or (plastic and window and part.Transparency >= 0.1)) then return 0.22 end
+        if enabled("Glass reflections") then
+            if material == Enum.Material.Glass then return 0.22 end
+            if material == Enum.Material.ForceField and part.Transparency >= 0.15 and part.Transparency < 0.9 then return 0.22 end
+            if plastic and part.Transparency >= 0.15 and part.Transparency < 0.9 then
+                -- Universal: any fairly transparent plastic counts as window,
+                -- name heuristic is extra, not required.
+                if window or part.Transparency >= 0.25 then return 0.22 end
+            end
+            -- Generic transparent parts that look like glass in many games
+            if part.Transparency >= 0.2 and part.Transparency <= 0.85 then
+                local size: Vector3 = part.Size
+                local area: number = math.max(size.X * size.Z, size.X * size.Y, size.Y * size.Z)
+                if area >= 16 and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic or material == Enum.Material.Metal) then
+                    return 0.22
+                end
+            end
+        end
         if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
             and material ~= Enum.Material.Glass then return 0.16 end
         return nil
@@ -54613,6 +54662,9 @@ local MAX_TRACKED_FLOORS = 600
 local MAX_FLOOR_CHECKS_PER_TICK = 32
 local MAX_FLOOR_SIZE = 256
 local MAX_DETAIL_SIZE = 64
+local GENERIC_FLOOR_SIZE = 32
+local GENERIC_MAX_DISTANCE = 18
+local GENERIC_MIN_NORMAL_Y = 0.85
 local SECONDARY_INTERVAL = 1
 local SECONDARY_POSE_INTERVAL = 1 / 15
 local MAX_CREATIONS_PER_TICK = 3
@@ -54853,7 +54905,7 @@ function Module.init(host: any): any
 
         local function loseFloor(deltaTime: number, hasRoot: boolean): ()
             if gui then gui.Enabled = false end
-            if currentFloor then
+            if currentFloor or planePoint then
                 currentFloor, planePoint, planeNormal = nil, nil, nil
                 clearCopies()
             end
@@ -54883,45 +54935,115 @@ function Module.init(host: any): any
                 return world:Raycast(root.Position + Vector3.new(0, 1, 0), Vector3.new(0, -15, 0), rayParams)
             end)
             local floor: any = if hitOk and hit then hit.Instance else nil
-            if not floor or not floor:IsA("BasePart") or not floor.Parent or not floor.Anchored
-                or floor.Transparency >= 0.95 or not hit.Normal or hit.Normal.Y < 0.97
-                or floor.CFrame.UpVector.Y < 0.97 or floor.Size.X < 3 or floor.Size.Z < 3 then
-                loseFloor(deltaTime, true)
+            local strictEligible: boolean = false
+            if floor and floor:IsA("BasePart") and floor.Parent and floor.Anchored
+                and floor.Transparency < 0.95 and hit.Normal and hit.Normal.Y >= 0.97
+                and floor.CFrame.UpVector.Y >= 0.97 and floor.Size.X >= 3 and floor.Size.Z >= 3 then
+                strictEligible = true
+            end
+            if strictEligible then
+                -- Strict flat solid floor path (best fidelity: clamp to real floor bounds)
+                missingElapsed, missingReported = 0, false
+                local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
+                -- A 256-stud canvas makes a character only a few pixels wide.
+                -- Keep detail around the avatar and use one secondary viewport for
+                -- the wider floor when necessary, still at most three viewports.
+                -- If a secondary allocation fails and there is no wide layer for
+                -- this floor, fall back to the broad primary surface.
+                local canUseWide: boolean = not secondaryFailed or secondary[floor] ~= nil
+                local detailLimit: number = if canUseWide then MAX_DETAIL_SIZE else MAX_FLOOR_SIZE
+                local width: number = math.min(floor.Size.X - 0.04, detailLimit)
+                local depth: number = math.min(floor.Size.Z - 0.04, detailLimit)
+                local wideFloor: boolean = canUseWide and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
+                    or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
+                local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
+                local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
+                plane.Size = Vector3.new(width, 0.04, depth)
+                -- Separate the two local surfaces to reduce depth fighting.
+                plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + (if wideFloor then 0.06 else 0.04), z)
+                local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, localHit.Y, 0))
+                local normal: Vector3 = floor.CFrame.UpVector
+                if floor ~= currentFloor or not planePoint or not planeNormal
+                    or math.abs((point - planePoint):Dot(normal)) > 0.04
+                    or (normal - planeNormal).Magnitude > 0.01 then
+                    if floor ~= currentFloor then
+                        selectionItems = nil
+                        secondaryElapsed = SECONDARY_INTERVAL
+                    end
+                    currentFloor, planePoint, planeNormal = floor, point, normal
+                    planeVersion += 1
+                    sceneElapsed = SCENE_INTERVAL
+                else
+                    planePoint, planeNormal = point, normal
+                end
                 return
             end
-            missingElapsed, missingReported = 0, false
-            local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
-            -- A 256-stud canvas makes a character only a few pixels wide.
-            -- Keep detail around the avatar and use one secondary viewport for
-            -- the wider floor when necessary, still at most three viewports.
-            -- If a secondary allocation fails and there is no wide layer for
-            -- this floor, fall back to the broad primary surface.
-            local canUseWide: boolean = not secondaryFailed or secondary[floor] ~= nil
-            local detailLimit: number = if canUseWide then MAX_DETAIL_SIZE else MAX_FLOOR_SIZE
-            local width: number = math.min(floor.Size.X - 0.04, detailLimit)
-            local depth: number = math.min(floor.Size.Z - 0.04, detailLimit)
-            local wideFloor: boolean = canUseWide and (floor.Size.X - 0.04 > MAX_DETAIL_SIZE
-                or floor.Size.Z - 0.04 > MAX_DETAIL_SIZE)
-            local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
-            local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
-            plane.Size = Vector3.new(width, 0.04, depth)
-            -- Separate the two local surfaces to reduce depth fighting.
-            plane.CFrame = floor.CFrame * CFrame.new(x, localHit.Y + (if wideFloor then 0.06 else 0.04), z)
-            local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, localHit.Y, 0))
-            local normal: Vector3 = floor.CFrame.UpVector
-            if floor ~= currentFloor or not planePoint or not planeNormal
-                or math.abs((point - planePoint):Dot(normal)) > 0.04
-                or (normal - planeNormal).Magnitude > 0.01 then
-                if floor ~= currentFloor then
-                    selectionItems = nil
-                    secondaryElapsed = SECONDARY_INTERVAL
+            -- Universal fallback: handle Terrain and MeshParts that fail the
+            -- strict flat-Part check but are still walkable in many games.
+            -- Keep Anchored/size/transparency gates so tiny/moving/see-through
+            -- parts stay ineligible (preserves existing tests).
+            if hitOk and hit and hit.Position and hit.Normal and hit.Normal.Y >= GENERIC_MIN_NORMAL_Y then
+                local point: Vector3 = hit.Position
+                local normal: Vector3 = hit.Normal
+                local instance: any = hit.Instance
+                local isTerrain: boolean = instance ~= nil and instance.ClassName == "Terrain"
+                local isPart: boolean = instance ~= nil and instance:IsA("BasePart")
+                local genericEligible: boolean = false
+                if isTerrain then
+                    genericEligible = true
+                elseif isPart and instance.Parent and instance.Anchored
+                    and instance.Transparency < 0.90 and instance.Size.X >= 3 and instance.Size.Z >= 3 then
+                    -- Allow mildly sloped walkable parts (UpVector relaxed).
+                    local upOk: boolean = true
+                    if instance.CFrame and instance.CFrame.UpVector then
+                        upOk = instance.CFrame.UpVector.Y >= 0.80
+                    end
+                    genericEligible = upOk
                 end
-                currentFloor, planePoint, planeNormal = floor, point, normal
-                planeVersion += 1
-                sceneElapsed = SCENE_INTERVAL
-            else
-                planePoint, planeNormal = point, normal
+                if not genericEligible then
+                    -- not eligible for generic either
+                elseif instance == folder or instance == character then
+                    -- ray filter should already exclude
+                else
+                    local distance: number = (point - root.Position).Magnitude
+                    if distance <= GENERIC_MAX_DISTANCE then
+                        missingElapsed, missingReported = 0, false
+                        local width: number = GENERIC_FLOOR_SIZE
+                        local depth: number = GENERIC_FLOOR_SIZE
+                        plane.Size = Vector3.new(width, 0.04, depth)
+                        local offset: Vector3 = normal * 0.06
+                        if normal.Y >= 0.97 then
+                            plane.CFrame = CFrame.new(point + offset)
+                        else
+                            -- Orient the generic plane to the hit normal for sloped surfaces
+                            local up: Vector3 = normal
+                            local forward: Vector3 = Vector3.new(0, 0, 1)
+                            if math.abs(up:Dot(forward)) > 0.99 then forward = Vector3.new(1, 0, 0) end
+                            local right: Vector3 = up:Cross(forward).Unit
+                            forward = (right:Cross(up)).Unit
+                            plane.CFrame = CFrame.fromMatrix(point + offset, right, up, -forward)
+                        end
+                        local isNewFloor: boolean = currentFloor ~= nil
+                        local moved: boolean = not planePoint or not planeNormal
+                            or (point - planePoint).Magnitude > 0.05
+                            or (normal - planeNormal).Magnitude > 0.01
+                        if moved then
+                            if isNewFloor then
+                                selectionItems = nil
+                                secondaryElapsed = SECONDARY_INTERVAL
+                            end
+                            currentFloor, planePoint, planeNormal = nil, point, normal
+                            planeVersion += 1
+                            sceneElapsed = SCENE_INTERVAL
+                        else
+                            planePoint, planeNormal = point, normal
+                            if isNewFloor then currentFloor = nil end
+                        end
+                        return
+                    end
+                end
             end
+            loseFloor(deltaTime, true)
         end
 
         local function isScenePart(part: any): boolean
@@ -54987,7 +55109,7 @@ function Module.init(host: any): any
         end
 
         local function scanScene(): ()
-            if not currentFloor or not plane or not planePoint then return end
+            if not planePoint or not plane then return end
             local desired: {[Instance]: boolean} = {}
             local desiredActors: {[Instance]: boolean} = {}
             local pending: {any} = {}
@@ -55415,7 +55537,7 @@ function Module.init(host: any): any
                 floorElapsed = 0
                 findFloor(elapsed)
             end
-            if not currentFloor then return end
+            if not planePoint then return end
             local budget: number = MAX_CREATIONS_PER_TICK
             if selectionItems ~= nil or secondaryElapsed >= SECONDARY_INTERVAL then
                 if selectionItems == nil then secondaryElapsed = 0 end
@@ -55485,7 +55607,7 @@ function Module.init(host: any): any
         end
         local function render(): ()
             local camera: Camera? = world.CurrentCamera
-            if not camera or not currentFloor or not gui or not plane or not viewport or not viewCamera then
+            if not camera or not planePoint or not gui or not plane or not viewport or not viewCamera then
                 if gui then gui.Enabled = false end
                 for _, mirror: any in pairs(secondary) do mirror.gui.Enabled = false end
                 return
