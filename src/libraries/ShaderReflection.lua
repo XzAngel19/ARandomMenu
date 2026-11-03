@@ -91,7 +91,7 @@ end
 function Module.init(host: any): any
     local api: any = {}
 
-    function api:Start(report: (string) -> ()): (any?, string?)
+    function api:Start(report: (string, boolean?) -> ()): (any?, string?)
         local world: Workspace = host.workspace or workspace
         local player: Player = host.LocalPlayer
         local playerGui: PlayerGui? = host.PlayerGui or (player and player:FindFirstChildOfClass("PlayerGui"))
@@ -279,18 +279,49 @@ function Module.init(host: any): any
                 sceneElapsed = SCENE_INTERVAL
             end
             local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            if not root or not root:IsA("BasePart") or not root.Parent then loseFloor(deltaTime, false); return end
-            rayParams.FilterDescendantsInstances = {character, folder}
-            local hitOk: boolean, hit: any = pcall(function(): any
-                return world:Raycast(root.Position + Vector3.new(0, 1, 0), Vector3.new(0, -15, 0), rayParams)
-            end)
-            local floor: any = if hitOk and hit then hit.Instance else nil
-            if not floor or not floor:IsA("BasePart") or not floor.Parent or not floor.Anchored
-                or floor.Transparency >= 0.95 or not hit.Normal or hit.Normal.Y < 0.97
-                or floor.CFrame.UpVector.Y < 0.97 or floor.Size.X < 3 or floor.Size.Z < 3 then
-                loseFloor(deltaTime, true)
-                return
+            local hasRoot: boolean = root ~= nil and root:IsA("BasePart") and root.Parent ~= nil
+            local focus: Vector3? = if hasRoot then (root :: BasePart).Position else nil
+            if not focus then
+                local camera: Camera? = world.CurrentCamera
+                if camera then focus = camera.CFrame.Position end
             end
+            local castDepth: number = if hasRoot then 15 else 80
+            if not focus then loseFloor(deltaTime, false); return end
+            local excluded: {Instance} = {folder}
+            if character then table.insert(excluded, character) end
+            local hit: any = nil
+            local floor: any = nil
+            -- An invisible collision plate, a tiny prop, or another character
+            -- can be above the visible floor. Skip a bounded number of such
+            -- hits instead of treating the first one as the only surface.
+            for _ = 1, 4 do
+                rayParams.FilterDescendantsInstances = excluded
+                local hitOk: boolean, result: any = pcall(function(): any
+                    return world:Raycast((focus :: Vector3) + Vector3.new(0, 1, 0), Vector3.new(0, -castDepth, 0), rayParams)
+                end)
+                if not hitOk or not result or not result.Instance then break end
+                local candidate: any = result.Instance
+                local eligible: boolean = candidate:IsA("BasePart") and candidate.Parent ~= nil
+                    and candidate.Transparency < 0.95 and result.Normal ~= nil and result.Normal.Y >= 0.97
+                    and candidate.CFrame.UpVector.Y >= 0.97 and candidate.Size.X >= 3 and candidate.Size.Z >= 3
+                if eligible then
+                    local parent: any = candidate.Parent
+                    while parent and parent ~= world do
+                        if parent == folder or parent == world.CurrentCamera or parent:IsA("Tool") or parent:IsA("Accessory")
+                            or (parent:IsA("Model") and (parent:FindFirstChildOfClass("Humanoid")
+                                or parent:FindFirstChildOfClass("AnimationController"))) then
+                            eligible = false
+                            break
+                        end
+                        parent = parent.Parent
+                    end
+                    if parent ~= world then eligible = false end
+                end
+                if eligible then floor, hit = candidate, result; break end
+                if not candidate:IsA("BasePart") then break end -- e.g. Terrain cannot be flattened reliably
+                table.insert(excluded, candidate)
+            end
+            if not floor or not hit then loseFloor(deltaTime, true); return end
             missingElapsed, missingReported = 0, false
             local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
             -- A 256-stud canvas makes a character only a few pixels wide.
@@ -632,7 +663,7 @@ function Module.init(host: any): any
         -- Do not apply the stricter remote-floor shape filter to its wide layer.
         local function eligibleWideFloor(floor: any): boolean
             return floor == currentFloor and floor.Parent ~= nil and floor:IsA("BasePart")
-                and floor.Anchored and floor.Transparency < 0.95
+                and floor.Transparency < 0.95
                 and floor.CFrame.UpVector.Y >= 0.97 and floor.Size.X >= 3 and floor.Size.Z >= 3
                 and needsWideFloor(floor)
         end
@@ -882,7 +913,7 @@ function Module.init(host: any): any
                 workWarned = true
                 warn("[Shaders:FloorReflection] " .. tostring(reason))
                 session:Stop()
-                pcall(report, "Floor reflection unavailable on this client")
+                pcall(report, "Floor reflection unavailable on this client", true)
             end
         end
         local function render(): ()
@@ -896,7 +927,7 @@ function Module.init(host: any): any
             if not projected then
                 warn("[Shaders:FloorProjection] " .. tostring(visible))
                 session:Stop()
-                pcall(report, "Floor projection unavailable on this client")
+                pcall(report, "Floor projection unavailable on this client", true)
                 return
             end
             gui.Enabled = visible == true

@@ -174,12 +174,19 @@ local players={GetPlayers=function() return {player,other} end}
 local floor=parent('Part','Floor',world);floor.Anchored=true;floor.Size=Vector3.new(60,1,60);floor.Position=Vector3.new(0,-0.5,0)
 local hit={Instance=floor,Position=Vector3.new(0,0,0),Normal=Vector3.new(0,1,0)}
 local hitEnabled=true
-local rayCount,queryCount,lastQueryPosition=0,0,nil
+local rayCount,queryCount,lastQueryPosition,lastRayDepth=0,0,nil,nil
+local rayObstacles={}
 function methods:Raycast(origin,direction,params)
-    assert(params.FilterType=='Exclude' and #params.FilterDescendantsInstances==2)
-    assert(direction.Y==-15 and params.IgnoreWater)
-    rayCount+=1
-    return if hitEnabled then hit else nil
+    assert(params.FilterType=='Exclude' and #params.FilterDescendantsInstances>=1
+        and #params.FilterDescendantsInstances<=5)
+    assert((direction.Y==-15 or direction.Y==-80) and params.IgnoreWater)
+    lastRayDepth=-direction.Y;rayCount+=1
+    for _, obstacle in ipairs(rayObstacles) do
+        if not table.find(params.FilterDescendantsInstances,obstacle) then
+            return {Instance=obstacle,Position=Vector3.new(0,1,0),Normal=Vector3.new(0,1,0)}
+        end
+    end
+    return if hitEnabled and not table.find(params.FilterDescendantsInstances,hit.Instance) then hit else nil
 end
 local nearby={}
 for i=1,130 do
@@ -218,7 +225,8 @@ local function frames(n,dt)
 end
 local host={workspace=world,LocalPlayer=player,PlayerGui=playerGui,Players=players,TaskManager=manager}
 local notices={}
-local function report(s) table.insert(notices,s) end
+local fatalNotices={}
+local function report(s,fatal) table.insert(notices,s);table.insert(fatalNotices,fatal==true) end
 local function find(parent,name) return parent:FindFirstChild(name) end
 local function findDeep(parent,name)
     for _,child in ipairs(parent:GetDescendants()) do if child.Name==name then return child end end
@@ -300,6 +308,27 @@ world.CurrentCamera=nil;frames(1,0.05);assert(not gui.Enabled)
 world.CurrentCamera=camera;camera.CFrame=CFrame.new(0,10,10);frames(1,0.05);assert(gui.Enabled)
 pass('near-plane FOV clamp, under-floor/far-camera culling and camera recovery')
 
+-- Many maps place invisible collision proxies or small props above the visible
+-- floor. The first ray hit must not permanently hide the real mirror surface.
+local proxy=parent('Part','InvisibleCollider',world);proxy.Anchored=true;proxy.Transparency=1
+proxy.Size=Vector3.new(40,1,40)
+local small=parent('Part','SmallProp',world);small.Anchored=true;small.Size=Vector3.new(1,1,1)
+rayObstacles={proxy,small};local raysBefore=rayCount
+frames(8,0.1)
+assert(gui.Enabled and countParts(scene)>0 and rayCount-raysBefore<=15,
+    'skip a few invalid blockers without unbounded raycasting')
+rayObstacles={};proxy:Destroy();small:Destroy()
+-- Custom rigs can lack HumanoidRootPart entirely. Use the camera as a safe
+-- fallback anchor rather than disabling all floor reflections.
+root.Parent=nil;frames(10,0.1)
+assert(gui.Enabled and countParts(scene)>0 and lastRayDepth==80,
+    'camera anchor searches farther without a standard humanoid root')
+root.Parent=character;frames(4,0.1)
+player.Character=nil;frames(25,0.1)
+assert(gui.Enabled and countParts(scene)>0,'spectator cameras can still reflect eligible nearby scene geometry')
+player.Character=character;frames(25,0.1)
+pass('transparent blockers and nonstandard character roots do not hide valid floors')
+
 local previousCopy=copy
 hitEnabled=false;frames(4,0.1)
 assert(not gui.Enabled and countParts(scene)==0 and #scene:GetChildren()==0 and previousCopy.destroyed)
@@ -316,10 +345,13 @@ near(plane.Position.Y,2.04)
 local newCopy=findDeep(scene,'Local1');assert(newCopy);near(newCopy.Position.Y,-2)
 assert(oldFloor.Transparency==0 and nextFloor.Transparency==0)
 hit.Normal=Vector3.new(0,0.5,0);frames(3,0.1);assert(not gui.Enabled and countParts(scene)==0)
-hit.Normal=Vector3.new(0,1,0);nextFloor.Anchored=false;frames(3,0.1);assert(not gui.Enabled)
+hit.Normal=Vector3.new(0,1,0);nextFloor.Anchored=false;frames(25,0.1);assert(gui.Enabled)
+nextFloor.Position=Vector3.new(0,2.5,0);hit.Position=Vector3.new(0,3,0);frames(4,0.1)
+near(plane.Position.Y,3.04);assert(not nextFloor.Anchored,'a moving floor is never anchored by the mirror')
+nextFloor.Position=Vector3.new(0,1.5,0);hit.Position=Vector3.new(0,2,0)
 nextFloor.Anchored=true;nextFloor.Size=Vector3.new(2,1,2);frames(3,0.1);assert(not gui.Enabled)
 nextFloor.Size=Vector3.new(30,1,30);frames(25,0.1);assert(gui.Enabled and countParts(scene)==54)
-pass('floor changes, new reflection plane and ineligible slopes, moving or tiny parts')
+pass('floor changes and moving platforms follow their plane without modifying physics')
 
 nextFloor.CFrame=CFrame.new(0,1.5,0)*CFrame.Angles(0,0.4,0.1)
 local point=nextFloor.CFrame:PointToWorldSpace(Vector3.new(0,0.5,0))
@@ -366,18 +398,21 @@ local replacementBody=parent('Part','ReplacementBody',newCharacter);replacementB
 replacementBody.Archivable=false
 local warningCount=#notices
 local noAvatar=assert(api:Start(report));frames(30,0.1)
-assert(#notices==warningCount+1 and notices[#notices]:find('Avatar parts could not be copied',1,true))
+assert(#notices==warningCount+1 and notices[#notices]:find('Avatar parts could not be copied',1,true)
+    and not fatalNotices[#fatalNotices])
 noAvatar:Stop();replacementBody.Archivable=true
 local projectionFailure=assert(api:Start(report));frames(4,0.1)
 camera.CFrame={Position=Vector3.new(0,10,10)}
 warningCount=#notices;frames(1,0.1)
 assert(liveHandles()==0 and not find(world,'ARMShaderFloorReflection')
-    and notices[#notices]:find('Floor projection unavailable',1,true) and #notices==warningCount+1)
+    and notices[#notices]:find('Floor projection unavailable',1,true) and #notices==warningCount+1
+    and fatalNotices[#fatalNotices])
 camera.CFrame=CFrame.new(0,10,10)
 local externalRemoval=assert(api:Start(report));local removed=find(world,'ARMShaderFloorReflection')
 removed:Destroy();warningCount=#notices;frames(1,0.1)
 assert(liveHandles()==0 and not find(playerGui,'ARMShaderFloorReflection')
-    and notices[#notices]:find('Floor reflection unavailable',1,true) and #notices==warningCount+1)
+    and notices[#notices]:find('Floor reflection unavailable',1,true) and #notices==warningCount+1
+    and fatalNotices[#fatalNotices])
 pass('uncloneable avatars and runtime failures are reported without leaking callbacks')
 
 local a=assert(api:Start(report));local b=assert(api:Start(report));assert(liveHandles()==4)

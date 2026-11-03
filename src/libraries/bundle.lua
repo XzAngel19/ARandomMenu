@@ -1,5 +1,5 @@
 return {
-    stamp = "v174-20261103-mm2-ui-reflections",
+    stamp = "v175-20261103-client-shader-recovery",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -38663,13 +38663,13 @@ local card
 
 local WEATHER = {
     Rain = {asset = "shaderRainTexture", fallback = "rbxasset://textures/particles/SquareParticle.png",
-        rate = 12, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
-        transparency = 0.38, spread = 1},
+        rate = 18, size = 0.6, speedMin = 45, speedMax = 50, lifetime = 0.85,
+        transparency = 0.30, spread = 1},
     Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
-        rate = 5, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
+        rate = 8, size = 0.45, speedMin = 6, speedMax = 9, lifetime = 4,
         transparency = 0.18, spread = 12},
     ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
-        rate = 2, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
+        rate = 3, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
         transparency = 0.10, spread = 18},
 }
 local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
@@ -38697,12 +38697,15 @@ function Module.init(context: any): any
     local waterApplied: any = nil
     local waterTerrain: any = nil
     local floorReflection: any = nil
+    local floorGeneration: number = 0
+    local floorRetries: number = 0
 
-    local fogAtmosphere: Atmosphere? = nil
-    local fogOwned: boolean = false
+    local fogTarget: any = nil
     local fogOriginal: {[string]: any} = {}
     local fogApplied: {[string]: any} = {}
     local fogConnections: {any} = {}
+    local fogPropertyConnections: {any} = {}
+    local fogGeneration: number = 0
     local fogMutating: boolean = false
     local fogQueued: boolean = false
 
@@ -38735,6 +38738,32 @@ function Module.init(context: any): any
             and card.Options[name].Value == true
     end
 
+    -- Executor registration can return a URI even when Roblox cannot load the
+    -- image. Keep the built-in/Roblox fallback unless the image fetch reports
+    -- success. This runs only in the existing asynchronous asset jobs; even a
+    -- successful preload does not prove that a particular device drew pixels.
+    local function imageAvailable(asset: string): boolean
+        local ok: boolean, provider: any = pcall(function(): any
+            return host.ContentProvider or game:GetService("ContentProvider")
+        end)
+        if not ok or not provider then return false end
+        local probe: any = nil
+        local seenSuccess, seenFailure = false, false
+        local loaded: boolean = pcall(function(): ()
+            probe = Instance.new("ImageLabel")
+            probe.Image = asset
+            provider:PreloadAsync({probe}, function(_id: any, status: any): ()
+                if status == Enum.AssetFetchStatus.Success then
+                    seenSuccess = true
+                else
+                    seenFailure = true
+                end
+            end)
+        end)
+        if probe then pcall(function(): () probe:Destroy() end) end
+        return loaded and seenSuccess and not seenFailure
+    end
+
     local function updateStatus(): ()
         if not card or not card.Enabled then return end
         local parts: {string} = {}
@@ -38745,10 +38774,11 @@ function Module.init(context: any): any
     end
 
     local function stopFloorReflection(): ()
-        if floorReflection then
-            pcall(function(): () floorReflection:Stop() end)
-            floorReflection = nil
-        end
+        floorGeneration += 1
+        floorRetries = 0
+        local session: any = floorReflection
+        floorReflection = nil
+        if session then pcall(function(): () session:Stop() end) end
     end
 
     local function refreshFloorReflection(): ()
@@ -38759,15 +38789,30 @@ function Module.init(context: any): any
             card:Notify("Floor reflection library unavailable")
             return
         end
-        local ok: boolean, result: any, failure: any = pcall(library.Start, library, function(message: string): ()
+        local generation: number = floorGeneration
+        local session: any = nil
+        local ok: boolean, result: any, failure: any = pcall(library.Start, library, function(message: string, fatal: boolean?): ()
             if card and card.Enabled then card:Notify(message) end
+            if fatal and generation == floorGeneration and session ~= nil and floorReflection == session then
+                -- The library stopped itself after a runtime error. A stale
+                -- non-nil handle otherwise prevents any restart forever.
+                floorReflection = nil
+                if floorRetries < 1 then
+                    floorRetries += 1
+                    task.defer(function(): ()
+                        if generation == floorGeneration and enabled("Floor reflections") and not floorReflection then
+                            refreshFloorReflection()
+                        end
+                    end)
+                end
+            end
         end)
         if not ok or not result then
             warn("[Shaders] Floor reflection unavailable: " .. tostring(if ok then failure else result))
             card:Notify("Floor reflection unavailable; other effects are still active")
             return
         end
-        floorReflection = result
+        session, floorReflection = result, result
     end
 
     local function restoreProperties(object: any, original: {[string]: any}, applied: {[string]: any}): ()
@@ -38827,18 +38872,25 @@ function Module.init(context: any): any
     end
 
     local function releaseFog(): ()
-        local atmosphere: Atmosphere? = fogAtmosphere
-        local owned: boolean = fogOwned
-        local original: {[string]: any} = fogOriginal
-        local applied: {[string]: any} = fogApplied
-        fogAtmosphere, fogOwned = nil, false
-        fogOriginal, fogApplied = {}, {}
-        if not atmosphere then return end
-        if owned then
-            pcall(function(): () atmosphere:Destroy() end)
-        else
-            restoreProperties(atmosphere, original, applied)
+        fogGeneration += 1
+        for _, connection: any in ipairs(fogPropertyConnections) do
+            pcall(function(): () connection:Disconnect() end)
         end
+        fogPropertyConnections = {}
+        local target: any = fogTarget
+        local original, applied = fogOriginal, fogApplied
+        fogTarget, fogOriginal, fogApplied = nil, {}, {}
+        if target then restoreProperties(target, original, applied) end
+    end
+
+    local function fogValue(target: any, property: string, original: any): any
+        if target == lighting then
+            if property == "FogStart" then return math.min(original, 20) end
+            if property == "FogEnd" then return math.min(original, 180) end
+            return Color3.fromRGB(181, 193, 201)
+        end
+        if property == "Density" then return math.max(original, 0.45) end
+        return math.max(original, 1.25) -- Haze
     end
 
     local function refreshFog(): ()
@@ -38850,34 +38902,62 @@ function Module.init(context: any): any
             updateStatus()
             return
         end
-        local external: Atmosphere? = nil
+        local atmosphere: Atmosphere? = nil
         for _, child: Instance in ipairs(lighting:GetChildren()) do
-            if child:IsA("Atmosphere") and child ~= fogAtmosphere then
-                external = child :: Atmosphere
-                break
-            end
+            if child:IsA("Atmosphere") then atmosphere = child :: Atmosphere; break end
         end
-        if fogAtmosphere and fogAtmosphere.Parent == lighting
-            and (not fogOwned or not external) then
+        -- Atmosphere supersedes FogEnd. Never insert a duplicate or delete a
+        -- game-owned object: switch to the actual engine path in use instead.
+        local target: any = atmosphere or lighting
+        if fogTarget == target then
             fogMutating = false
             updateStatus()
             return
         end
         releaseFog()
-        local atmosphere: Atmosphere = external or (Instance.new("Atmosphere") :: Atmosphere)
-        fogAtmosphere, fogOwned = atmosphere, external == nil
-        local values: {[string]: any} = {
-            Density = 0.38, Offset = 0.25, Haze = 1.25, Glare = 0.1,
-            Color = Color3.fromRGB(220, 229, 238), Decay = Color3.fromRGB(155, 170, 185),
-        }
-        for property: string, value: any in pairs(values) do
-            pcall(function(): ()
-                fogOriginal[property] = (atmosphere :: any)[property]
-                ;(atmosphere :: any)[property] = value
-                fogApplied[property] = (atmosphere :: any)[property]
+        fogTarget = target
+        local generation: number = fogGeneration
+        local properties: {string} = if atmosphere then {"Density", "Haze"} else {"FogStart", "FogEnd", "FogColor"}
+        for _, property: string in ipairs(properties) do
+            local applied: boolean = pcall(function(): ()
+                local old: any = target[property]
+                fogOriginal[property] = old
+                target[property] = fogValue(target, property, old)
+                fogApplied[property] = target[property]
             end)
+            if applied then
+                local pending: boolean = false
+                local observed: boolean, connection: any = pcall(function(): any
+                    return target:GetPropertyChangedSignal(property):Connect(function(): ()
+                        if fogMutating or generation ~= fogGeneration or fogTarget ~= target or not enabled("Fog") then return end
+                        local read: boolean, current: any = pcall(function(): any return target[property] end)
+                        if not read or current == fogApplied[property] then return end
+                        -- Preserve the latest game value, including changes
+                        -- made shortly before disabling or replacing the fog.
+                        fogOriginal[property] = current
+                        if pending then return end
+                        pending = true
+                        task.defer(function(): ()
+                            pending = false
+                            if generation ~= fogGeneration or fogTarget ~= target or not enabled("Fog") then return end
+                            pcall(function(): ()
+                                local value: any = target[property]
+                                if value ~= fogApplied[property] then fogOriginal[property] = value end
+                                fogMutating = true
+                                local ok: boolean = pcall(function(): ()
+                                    target[property] = fogValue(target, property, fogOriginal[property])
+                                    fogApplied[property] = target[property]
+                                end)
+                                fogMutating = false
+                                if not ok then return end
+                            end)
+                            fogMutating = false
+                        end)
+                    end)
+                end)
+                if observed and connection then table.insert(fogPropertyConnections, connection) end
+            end
         end
-        if fogOwned then atmosphere.Parent = lighting end
         fogMutating = false
         updateStatus()
     end
@@ -38921,17 +39001,47 @@ function Module.init(context: any): any
             folder.Name = "ARMShaderWeather"
             folder.Parent = world
             local textures: {[string]: {any}} = {}
+            local failedStyles: {[string]: boolean} = {}
+            local styleCounts: {[string]: number} = {}
+            local particleCount: number = 0
             local function remember(asset: string, emitter: ParticleEmitter): ()
                 if not textures[asset] then textures[asset] = {} end
                 table.insert(textures[asset], emitter)
+                particleCount += 1
+            end
+            local function particleFailure(name: string, failure: any): ()
+                if failedStyles[name] then return end
+                failedStyles[name] = true
+                warn("[Shaders:" .. name .. "] " .. tostring(failure))
+                card:Notify(name .. " particles unavailable; other effects remain active")
             end
             local function cellPart(name: string, size: Vector3): Part
                 local part: Part = Instance.new("Part")
-                part.Name, part.Anchored = name, true
-                part.CanCollide, part.CanQuery, part.CanTouch = false, false, false
-                part.CastShadow, part.Transparency, part.Size = false, 1, size
-                part.Parent = folder
+                local created: boolean, failure: any = pcall(function(): ()
+                    part.Name, part.Anchored = name, true
+                    part.CanCollide, part.CanQuery, part.CanTouch = false, false, false
+                    part.CastShadow, part.Transparency, part.Size = false, 1, size
+                    part.Parent = folder
+                end)
+                if not created then part:Destroy(); error(failure, 0) end
                 return part
+            end
+            local function extraEmitter(name: string, label: string, size: Vector3, asset: string, configure: (any) -> ()): (Part?, ParticleEmitter?)
+                local part: any, emitter: any = nil, nil
+                local created: boolean, failure: any = pcall(function(): ()
+                    part = cellPart(name, size)
+                    emitter = Instance.new("ParticleEmitter")
+                    configure(emitter)
+                    emitter.Parent = part
+                end)
+                if not created then
+                    if emitter then pcall(function(): () emitter:Destroy() end) end
+                    if part then pcall(function(): () part:Destroy() end) end
+                    particleFailure(label, failure)
+                    return nil, nil
+                end
+                remember(asset, emitter)
+                return part, emitter
             end
             if #kinds > 0 then
                 -- Each cell has its own sky test. The outer ring can remain
@@ -38946,82 +39056,104 @@ function Module.init(context: any): any
                     local emitters: {ParticleEmitter} = {}
                     for _, name: string in ipairs(kinds) do
                         local style: any = WEATHER[name]
-                        local emitter: ParticleEmitter = Instance.new("ParticleEmitter")
-                        emitter.Name, emitter.Enabled, emitter.Texture = name, false, style.fallback
-                        emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
-                        emitter.EmissionDirection = Enum.NormalId.Bottom
-                        emitter.Orientation = if name == "Rain" then Enum.ParticleOrientation.VelocityParallel
-                            else Enum.ParticleOrientation.FacingCamera
-                        emitter.Rate, emitter.Size = style.rate, NumberSequence.new(style.size)
-                        emitter.Speed, emitter.Lifetime = NumberRange.new(style.speedMin, style.speedMax), NumberRange.new(style.lifetime)
-                        emitter.Transparency, emitter.SpreadAngle = NumberSequence.new(style.transparency), Vector2.new(style.spread, style.spread)
-                        emitter.LightInfluence, emitter.LightEmission = 0.8, if name == "Snow" then 0.2 else 0.05
-                        if name == "Rain" then
-                            emitter.Squash = NumberSequence.new(-2.5)
-                            emitter.Color = ColorSequence.new(Color3.fromRGB(205, 219, 235))
+                        local emitter: any = nil
+                        local created: boolean, failure: any = pcall(function(): ()
+                            emitter = Instance.new("ParticleEmitter")
+                            emitter.Name, emitter.Enabled, emitter.Texture = name, false, style.fallback
+                            -- Newer particle properties are optional: a client
+                            -- lacking them should still draw the basic emitter.
+                            pcall(function(): ()
+                                emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
+                            end)
+                            emitter.EmissionDirection = Enum.NormalId.Bottom
+                            pcall(function(): ()
+                                emitter.Orientation = if name == "Rain" then Enum.ParticleOrientation.VelocityParallel
+                                    else Enum.ParticleOrientation.FacingCamera
+                            end)
+                            emitter.Rate, emitter.Size = style.rate, NumberSequence.new(style.size)
+                            emitter.Speed, emitter.Lifetime = NumberRange.new(style.speedMin, style.speedMax), NumberRange.new(style.lifetime)
+                            emitter.Transparency, emitter.SpreadAngle = NumberSequence.new(style.transparency), Vector2.new(style.spread, style.spread)
+                            emitter.LightInfluence, emitter.LightEmission = 0.8, if name == "Snow" then 0.2 else 0.05
+                            if name == "Rain" then
+                                pcall(function(): () emitter.Squash = NumberSequence.new(-2.5) end)
+                                emitter.Color = ColorSequence.new(Color3.fromRGB(205, 219, 235))
+                            else
+                                emitter.Rotation, emitter.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-45, 45)
+                            end
+                            emitter.Parent = part
+                        end)
+                        if created then
+                            table.insert(emitters, emitter)
+                            styleCounts[name] = (styleCounts[name] or 0) + 1
+                            remember(style.asset, emitter)
                         else
-                            emitter.Rotation, emitter.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-45, 45)
+                            if emitter then pcall(function(): () emitter:Destroy() end) end
+                            particleFailure(name, failure)
                         end
-                        emitter.Parent = part
-                        table.insert(emitters, emitter)
-                        remember(style.asset, emitter)
                     end
-                    table.insert(weatherCells, {part = part, emitters = emitters, offset = offset})
+                    if #emitters > 0 then
+                        table.insert(weatherCells, {part = part, emitters = emitters, offset = offset})
+                    else
+                        part:Destroy()
+                    end
                 end
             end
             local dustPart: Part? = nil
             local dust: ParticleEmitter? = nil
             if dustEnabled then
-                dustPart = cellPart("DustCell", Vector3.new(20, 6, 20))
-                dust = Instance.new("ParticleEmitter")
-                dust.Name, dust.Enabled = "Dust motes", false
-                dust.Texture = "rbxasset://textures/particles/smoke_main.dds"
-                dust.Shape, dust.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
-                dust.EmissionDirection, dust.Orientation = Enum.NormalId.Top, Enum.ParticleOrientation.FacingCamera
-                dust.Rate, dust.Size, dust.Speed = 12, NumberSequence.new(0.35), NumberRange.new(0.1, 0.4)
-                dust.Lifetime, dust.Transparency = NumberRange.new(5), NumberSequence.new(0.35)
-                dust.Color, dust.LightEmission, dust.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 232, 180)), 0.35, 0.5
-                dust.Parent = dustPart
-                remember("shaderSnowTexture", dust)
+                dustPart, dust = extraEmitter("DustCell", "Dust motes", Vector3.new(20, 6, 20), "shaderSnowTexture", function(emitter: any): ()
+                    emitter.Name, emitter.Enabled = "Dust motes", false
+                    emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                    pcall(function(): () emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
+                    emitter.EmissionDirection = Enum.NormalId.Top
+                    pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.FacingCamera end)
+                    emitter.Rate, emitter.Size, emitter.Speed = 12, NumberSequence.new(0.35), NumberRange.new(0.1, 0.4)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(5), NumberSequence.new(0.35)
+                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 232, 180)), 0.35, 0.5
+                end)
             end
             local mistPart: Part? = nil
             local mist: ParticleEmitter? = nil
             if mistEnabled then
-                -- Atmosphere handles distance haze; these translucent sprites
-                -- supply a small moving layer near the camera, even indoors.
-                mistPart = cellPart("FogCell", Vector3.new(60, 10, 60))
-                mist = Instance.new("ParticleEmitter")
-                mist.Name, mist.Enabled = "Fog mist", false
-                mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
-                mist.Shape, mist.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
-                mist.EmissionDirection, mist.Orientation = Enum.NormalId.Top, Enum.ParticleOrientation.FacingCamera
-                mist.Rate, mist.Size, mist.Speed = 4, NumberSequence.new(10), NumberRange.new(0.1, 0.35)
-                mist.Lifetime, mist.Transparency = NumberRange.new(7, 9), NumberSequence.new(0.86)
-                mist.Color, mist.LightEmission, mist.LightInfluence = ColorSequence.new(Color3.fromRGB(202, 213, 219)), 0.1, 0.7
-                mist.Rotation, mist.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
-                mist.Parent = mistPart
-                remember("shaderSnowTexture", mist)
+                -- Distance haze and its local mist are independent: a failed
+                -- optional particle must not cancel fog, rain or snow.
+                mistPart, mist = extraEmitter("FogCell", "Fog mist", Vector3.new(60, 10, 60), "shaderSnowTexture", function(emitter: any): ()
+                    emitter.Name, emitter.Enabled = "Fog mist", false
+                    emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                    pcall(function(): () emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
+                    emitter.EmissionDirection = Enum.NormalId.Top
+                    pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.FacingCamera end)
+                    emitter.Rate, emitter.Size, emitter.Speed = 4, NumberSequence.new(10), NumberRange.new(0.1, 0.35)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(7, 9), NumberSequence.new(0.86)
+                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(202, 213, 219)), 0.1, 0.7
+                    emitter.Rotation, emitter.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
+                end)
             end
             local splashPart: Part? = nil
             local splash: ParticleEmitter? = nil
-            if enabled("Rain") then
-                splashPart = cellPart("RainSplashCell", Vector3.new(0.2, 0.2, 0.2))
-                splash = Instance.new("ParticleEmitter")
-                splash.Name, splash.Enabled, splash.Rate = "Rain splashes", false, 0
-                splash.Texture = "rbxasset://textures/particles/smoke_main.dds"
-                splash.Orientation, splash.EmissionDirection = Enum.ParticleOrientation.VelocityPerpendicular, Enum.NormalId.Top
-                splash.Size, splash.Speed = NumberSequence.new(1.2), NumberRange.new(0.1, 0.2)
-                splash.Lifetime, splash.Transparency = NumberRange.new(0.2, 0.3), NumberSequence.new(0.55)
-                splash.Color, splash.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
-                splash.Parent = splashPart
-                remember("shaderSnowTexture", splash)
+            if (styleCounts.Rain or 0) > 0 then
+                splashPart, splash = extraEmitter("RainSplashCell", "Rain splashes", Vector3.new(0.2, 0.2, 0.2), "shaderSnowTexture", function(emitter: any): ()
+                    emitter.Name, emitter.Enabled, emitter.Rate = "Rain splashes", false, 0
+                    emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                    emitter.EmissionDirection = Enum.NormalId.Top
+                    pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.VelocityPerpendicular end)
+                    emitter.Size, emitter.Speed = NumberSequence.new(1.2), NumberRange.new(0.1, 0.2)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(0.2, 0.3), NumberSequence.new(0.55)
+                    emitter.Color, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
+                end)
             end
-            local params: RaycastParams = RaycastParams.new()
-            params.FilterType, params.IgnoreWater = Enum.RaycastFilterType.Exclude, true
+            if particleCount == 0 then stopWeather(); return end
+            local paramsOk: boolean, params: any = pcall(function(): any
+                local value: RaycastParams = RaycastParams.new()
+                value.FilterType, value.IgnoreWater = Enum.RaycastFilterType.Exclude, true
+                return value
+            end)
+            if not paramsOk then params = nil end
             local previousCharacter: Model? = nil
             local lastFocus: Vector3? = nil
             local lastCamera: Camera? = nil
             local moveElapsed, roofElapsed, roofIndex = 0, 0.15, 0
+            local shelterWarned: boolean = false
             local function updateWeather(deltaTime: number): ()
                 moveElapsed += math.clamp(deltaTime, 0, 0.25)
                 if moveElapsed < 0.05 then return end
@@ -39045,7 +39177,7 @@ function Module.init(context: any): any
                 end
                 lastCamera, lastFocus = camera, focus
                 local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
-                if character ~= previousCharacter or roofIndex == 0 then
+                if params and #weatherCells > 0 and (character ~= previousCharacter or roofIndex == 0) then
                     previousCharacter = character
                     local excluded: {Instance} = {folder}
                     if character then table.insert(excluded, character) end
@@ -39057,6 +39189,16 @@ function Module.init(context: any): any
                 if dustPart and dust then dustPart.Position, dust.Enabled = focus, true end
                 if mistPart and mist then mistPart.Position, mist.Enabled = focus + Vector3.new(0, -2, 0), true end
                 if #weatherCells == 0 then return end
+                if not params then
+                    for _, cell: any in ipairs(weatherCells) do
+                        for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = true end
+                    end
+                    if not shelterWarned then
+                        shelterWarned = true
+                        card:Notify("Weather shelter checks unavailable; particles may pass through roofs")
+                    end
+                    return
+                end
                 roofElapsed += elapsed
                 if roofElapsed < 0.15 then return end
                 roofElapsed = 0
@@ -39065,14 +39207,21 @@ function Module.init(context: any): any
                 local castOk: boolean, hit: any = pcall(function(): any
                     return world:Raycast(focus + cell.offset, Vector3.new(0, 150, 0), params)
                 end)
-                local covered: boolean = not castOk or hit ~= nil
+                -- A denied ray is unknown, not evidence of a roof. Keep the
+                -- weather visible, report the trade-off once and avoid splash
+                -- casts until shelter checks are available again.
+                local covered: boolean = castOk and hit ~= nil
+                if not castOk and not shelterWarned then
+                    shelterWarned = true
+                    card:Notify("Weather shelter checks unavailable; particles may pass through roofs")
+                end
                 if castOk and hit and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
                     covered = false
                 end
                 for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
                 -- One short ground sample per open cell produces inexpensive
                 -- local splashes; it does not run for snow or while sheltered.
-                if not covered and splashPart and splash then
+                if castOk and not covered and splashPart and splash then
                     local groundOk: boolean, ground: any = pcall(function(): any
                         return world:Raycast(focus + cell.offset + Vector3.new(0, 20, 0), Vector3.new(0, -100, 0), params)
                     end)
@@ -39082,15 +39231,33 @@ function Module.init(context: any): any
                     end
                 end
             end
-            weatherConnection = host.TaskManager:Connect(updateWeather, nil, "Shaders weather")
+            weatherConnection = host.TaskManager:Connect(function(deltaTime: number): ()
+                local updated: boolean, reason: any = pcall(updateWeather, deltaTime)
+                if not updated then
+                    warn("[Shaders:Weather] " .. tostring(reason))
+                    stopWeather()
+                    if card and card.Enabled then card:Notify("Weather stopped on this client; other effects remain active") end
+                end
+            end, nil, "Shaders weather")
+            local imageWarned: boolean = false
             for assetKey: string, emitters: {any} in pairs(textures) do
                 task.spawn(function(): ()
                     local state: any = host.state
                     if not state or type(state.resolveAsset) ~= "function" then return end
                     local resolved: boolean, asset: any = pcall(state.resolveAsset, assetKey)
-                    if not resolved or type(asset) ~= "string" or asset == ""
-                        or generation ~= weatherGeneration or not card or not card.Enabled then return end
-                    for _, emitter: ParticleEmitter in ipairs(emitters) do emitter.Texture = asset end
+                    if generation ~= weatherGeneration or not card or not card.Enabled then return end
+                    local usable: boolean = resolved and type(asset) == "string" and asset ~= "" and imageAvailable(asset)
+                    if generation ~= weatherGeneration or not card or not card.Enabled then return end
+                    if not usable then
+                        if not imageWarned then
+                            imageWarned = true
+                            card:Notify("Custom weather image unavailable; using particle fallback")
+                        end
+                        return
+                    end
+                    for _, emitter: ParticleEmitter in ipairs(emitters) do
+                        pcall(function(): () emitter.Texture = asset end)
+                    end
                 end)
             end
         end)
@@ -39147,7 +39314,7 @@ function Module.init(context: any): any
     end
 
     local function safePart(part: any): boolean
-        if not part:IsA("BasePart") or not part.Anchored or part.Transparency >= 0.95 then return false end
+        if not part:IsA("BasePart") or part.Transparency >= 0.95 then return false end
         local parent: any = part.Parent
         while parent and parent ~= world do
             if parent == world.CurrentCamera or parent == weatherFolder
@@ -39167,9 +39334,11 @@ function Module.init(context: any): any
     end
 
     local function textureStyle(part: any): (string?, {any}?)
-        -- Only flat, anchored block Parts. MeshParts, custom variants, decals,
-        -- characters and physics are never replaced or given fake PBR maps.
-        if part.ClassName ~= "Part" or part.Shape ~= Enum.PartType.Block
+        -- Roblox's face Texture supports anchored block Parts and CSG unions.
+        -- Keep meshes, variants and moving objects untouched; a colour image
+        -- is not a normal/roughness PBR map.
+        local block: boolean = part.ClassName == "Part" and part.Shape == Enum.PartType.Block
+        if (not block and part.ClassName ~= "UnionOperation") or not part.Anchored
             or part.Transparency > 0.05 or part.MaterialVariant ~= "" then return nil, nil end
         local material: any = part.Material
         local style: string? = nil
@@ -39196,7 +39365,8 @@ function Module.init(context: any): any
         return nil, nil
     end
 
-    local function externalSurface(part: any, record: any): boolean
+    local function availableFaces(part: any, record: any, requested: {any}): {any}?
+        local blocked: {[any]: boolean} = {}
         for _, child: any in ipairs(part:GetChildren()) do
             local ours: boolean = false
             if record and record.textures then
@@ -39204,11 +39374,23 @@ function Module.init(context: any): any
                     if texture == child then ours = true; break end
                 end
             end
-            if not ours and (child:IsA("Decal") or child:IsA("SurfaceAppearance") or child:IsA("SpecialMesh")) then
-                return true
+            if not ours then
+                -- Full mesh appearances cannot safely be overlaid as if they
+                -- were ordinary flat faces. Existing decals only own their
+                -- own face, not every side of the part.
+                if child:IsA("SurfaceAppearance") or child:IsA("SpecialMesh") then return nil end
+                if child:IsA("Decal") then
+                    local ok: boolean, face: any = pcall(function(): any return child.Face end)
+                    if not ok or face == nil then return nil end
+                    blocked[face] = true
+                end
             end
         end
-        return false
+        local available: {any} = {}
+        for _, face: any in ipairs(requested) do
+            if not blocked[face] then table.insert(available, face) end
+        end
+        return if #available > 0 then available else nil
     end
 
     local function textureAsset(key: string, fallback: string): string
@@ -39223,7 +39405,9 @@ function Module.init(context: any): any
                 local ok, asset = false, nil
                 if state and type(state.resolveAsset) == "function" then ok, asset = pcall(state.resolveAsset, key) end
                 if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
-                if ok and type(asset) == "string" and asset ~= "" then
+                local usable: boolean = ok and type(asset) == "string" and asset ~= "" and imageAvailable(asset)
+                if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
+                if usable then
                     surfaceAssets[key] = asset
                     -- Revisit already decorated parts after an async asset
                     -- resolves, without waiting for a complete world pass.
@@ -39241,11 +39425,15 @@ function Module.init(context: any): any
         local material: any = part.Material
         local plastic: boolean = material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic
         local name: string = string.lower(part.Name)
+        local size: Vector3 = part.Size
         local window: boolean = name == "pane" or string.find(name, "window", 1, true) ~= nil
             or string.find(name, "glass", 1, true) ~= nil
+            or (math.min(size.X, size.Y, size.Z) <= 2 and math.max(size.X, size.Y, size.Z) >= 4)
+        -- Thin transparent plastic panes frequently have only the default
+        -- name "Part". This is sky/environment reflectance, not a mirror.
         if enabled("Glass reflections") and (material == Enum.Material.Glass
-            or (plastic and window and part.Transparency >= 0.1)) then return 0.22 end
-        if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
+            or (plastic and window and part.Transparency >= 0.1)) then return 0.36 end
+        if enabled("Wet surfaces") and part.Anchored and part.Transparency <= 0.05 and floorShape(part)
             and material ~= Enum.Material.Glass then return 0.16 end
         return nil
     end
@@ -39265,6 +39453,17 @@ function Module.init(context: any): any
         if record and record.reflectionApplied ~= nil and record.reflectionTarget ~= reflection then
             removeReflection(part, record)
         end
+        if reflection and record and record.reflectionApplied ~= nil and part.Reflectance ~= record.reflectionApplied then
+            -- Some games rewrite windows after map/round changes. Preserve
+            -- that latest value for OFF, then restore the requested minimum.
+            local current: number = part.Reflectance
+            local updated: boolean = pcall(function(): ()
+                part.Reflectance = math.max(current, reflection :: number)
+            end)
+            if updated then
+                record.reflectionOriginal, record.reflectionApplied = current, part.Reflectance
+            end
+        end
         if reflection and (not record or record.reflectionApplied == nil) and reflectionCount < MAX_REFLECTIONS
             and part.Reflectance < reflection then
             record = record or {}
@@ -39279,7 +39478,10 @@ function Module.init(context: any): any
         end
         local style, faces = nil, nil
         if enabled("Surface textures") then style, faces = textureStyle(part) end
-        if style and externalSurface(part, record) then style, faces = nil, nil end
+        if style and faces then
+            faces = availableFaces(part, record, faces)
+            if not faces then style = nil end
+        end
         local faceKey: string? = if faces then tostring(faces[1]) .. ":" .. tostring(faces[2]) else nil
         local definition: any = if style then SURFACE_STYLES[style] else nil
         local asset: string? = if definition then textureAsset(definition.asset, definition.fallback) else nil
@@ -39296,12 +39498,27 @@ function Module.init(context: any): any
                 local ok: boolean = pcall(function(): ()
                     texture = Instance.new("Texture")
                     texture.Name, texture.Face = "ARMShaderTexture", face
-                    -- ColorMapContent is the current Decal/Texture API;
-                    -- older clients still expose the legacy Texture field.
-                    local assigned: boolean = pcall(function(): ()
-                        texture.ColorMapContent = Content.fromUri(asset)
-                    end)
-                    if not assigned then texture.Texture = asset end
+                    -- Local executor/built-in URIs can be silently ignored by
+                    -- the newer PBR ColorMapContent path. The legacy Texture
+                    -- setter is a reported workaround for local images;
+                    -- official rbxassetid images use the modern API first.
+                    local localImage: boolean = not string.match(asset, "^rbxassetid://")
+                        and not string.match(asset, "^https?://")
+                    local assigned: boolean
+                    if localImage then
+                        assigned = pcall(function(): () texture.Texture = asset end)
+                        if not assigned then
+                            assigned = pcall(function(): () texture.ColorMapContent = Content.fromUri(definition.fallback) end)
+                            if not assigned then texture.Texture = definition.fallback end
+                            if not textureWarning then
+                                textureWarning = true
+                                card:Notify("Local textures unsupported; trying Roblox material images")
+                            end
+                        end
+                    else
+                        assigned = pcall(function(): () texture.ColorMapContent = Content.fromUri(asset) end)
+                        if not assigned then texture.Texture = asset end
+                    end
                     texture.StudsPerTileU, texture.StudsPerTileV = definition.u, definition.v
                     -- Tint the overlay by the original colour, not a blend
                     -- towards white (the old blend washed dark floors out).
@@ -39514,15 +39731,24 @@ function Module.init(context: any): any
         fogMutating = false
         restoreProperties(lighting, lightOriginal, lightApplied)
         lightOriginal, lightApplied = {}, {}
-        if color then color:Destroy(); color = nil end
-        if bloom then bloom:Destroy(); bloom = nil end
-        if rays then rays:Destroy(); rays = nil end
+        if color then pcall(function(): () color:Destroy() end); color = nil end
+        if bloom then pcall(function(): () bloom:Destroy() end); bloom = nil end
+        if rays then pcall(function(): () rays:Destroy() end); rays = nil end
     end
 
-    local function makeEffect(className: string, name: string): any
-        local effect: any = Instance.new(className)
-        effect.Name, effect.Parent = name, lighting
-        return effect
+    local function makeEffect(className: string, name: string, configure: (any) -> ()): any
+        local effect: any = nil
+        local ok: boolean, failure: any = pcall(function(): ()
+            effect = Instance.new(className)
+            effect.Name = name
+            configure(effect)
+            effect.Parent = lighting
+        end)
+        if ok then return effect end
+        if effect then pcall(function(): () effect:Destroy() end) end
+        warn("[Shaders:" .. className .. "] " .. tostring(failure))
+        card:Notify(className .. " unavailable; other effects remain active")
+        return nil
     end
 
     card = context.framework.Categories.Render:CreateModule({
@@ -39532,24 +39758,32 @@ function Module.init(context: any): any
             if not on then card:SetStatus(nil); return end
             cleanup()
             card:Clean(cleanup)
-            local ok, failure = pcall(function(): ()
-                color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
-                bloom = makeEffect("BloomEffect", "ARMShaderBloom")
-                rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-                color.Brightness, color.Contrast, color.Saturation = 0, 0.08, 0.05
-                color.TintColor, color.Enabled = Color3.fromRGB(255, 247, 236), true
-                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.2, 24, 0.95, true
-                rays.Intensity, rays.Spread, rays.Enabled = 0.1, 0.6, true
-                applyLighting()
-                if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
-                if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end
-                refreshFog()
-                refreshWater()
-                refreshFloorReflection()
-                refreshSurfaces()
-                changeWeather()
+            color = makeEffect("ColorCorrectionEffect", "ARMShaderColor", function(effect: any): ()
+                effect.Brightness, effect.Contrast, effect.Saturation = 0, 0.08, 0.05
+                effect.TintColor, effect.Enabled = Color3.fromRGB(255, 247, 236), true
             end)
-            if not ok then card:Toggle(false); error(failure, 0) end
+            bloom = makeEffect("BloomEffect", "ARMShaderBloom", function(effect: any): ()
+                effect.Intensity, effect.Size, effect.Threshold, effect.Enabled = 0.2, 24, 0.95, true
+            end)
+            rays = makeEffect("SunRaysEffect", "ARMShaderRays", function(effect: any): ()
+                effect.Intensity, effect.Spread, effect.Enabled = 0.1, 0.6, true
+            end)
+            applyLighting()
+            if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
+            if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end
+            -- Each optional subsystem owns its failure; an unsupported engine
+            -- feature must not take down the rest of the user's effects.
+            for _, entry: {any} in ipairs({
+                {"Fog", refreshFog}, {"Water", refreshWater}, {"Floor", refreshFloorReflection},
+                {"Surfaces", refreshSurfaces}, {"Weather", changeWeather},
+            }) do
+                local name: string, start: () -> () = entry[1], entry[2]
+                local ok: boolean, reason: any = pcall(start)
+                if not ok then
+                    warn("[Shaders:" .. name .. "] " .. tostring(reason))
+                    card:Notify(name .. " unavailable; other effects remain active")
+                end
+            end
         end,
     })
 
@@ -39558,7 +39792,7 @@ function Module.init(context: any): any
     end,
         Tooltip = "Client-only mirror approximation on a few visible flat floors; not screen-space reflections."})
     card:CreateToggle({Name = "Surface textures", Default = true, Function = refreshSurfaces,
-        Tooltip = "Incremental map-wide colour detail on eligible blocks; no meshes or existing decals."})
+        Tooltip = "Colour detail on eligible static blocks and unions; existing decals keep their faces."})
     card:CreateToggle({Name = "Glass reflections", Default = true, Function = refreshSurfaces,
         Tooltip = "Adds sky reflectance to eligible glass and transparent windows across the map."})
     card:CreateToggle({Name = "Fog", Default = false, Function = function(): () refreshFog(); changeWeather() end,
@@ -54689,7 +54923,7 @@ end
 function Module.init(host: any): any
     local api: any = {}
 
-    function api:Start(report: (string) -> ()): (any?, string?)
+    function api:Start(report: (string, boolean?) -> ()): (any?, string?)
         local world: Workspace = host.workspace or workspace
         local player: Player = host.LocalPlayer
         local playerGui: PlayerGui? = host.PlayerGui or (player and player:FindFirstChildOfClass("PlayerGui"))
@@ -54877,18 +55111,49 @@ function Module.init(host: any): any
                 sceneElapsed = SCENE_INTERVAL
             end
             local root: BasePart? = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-            if not root or not root:IsA("BasePart") or not root.Parent then loseFloor(deltaTime, false); return end
-            rayParams.FilterDescendantsInstances = {character, folder}
-            local hitOk: boolean, hit: any = pcall(function(): any
-                return world:Raycast(root.Position + Vector3.new(0, 1, 0), Vector3.new(0, -15, 0), rayParams)
-            end)
-            local floor: any = if hitOk and hit then hit.Instance else nil
-            if not floor or not floor:IsA("BasePart") or not floor.Parent or not floor.Anchored
-                or floor.Transparency >= 0.95 or not hit.Normal or hit.Normal.Y < 0.97
-                or floor.CFrame.UpVector.Y < 0.97 or floor.Size.X < 3 or floor.Size.Z < 3 then
-                loseFloor(deltaTime, true)
-                return
+            local hasRoot: boolean = root ~= nil and root:IsA("BasePart") and root.Parent ~= nil
+            local focus: Vector3? = if hasRoot then (root :: BasePart).Position else nil
+            if not focus then
+                local camera: Camera? = world.CurrentCamera
+                if camera then focus = camera.CFrame.Position end
             end
+            local castDepth: number = if hasRoot then 15 else 80
+            if not focus then loseFloor(deltaTime, false); return end
+            local excluded: {Instance} = {folder}
+            if character then table.insert(excluded, character) end
+            local hit: any = nil
+            local floor: any = nil
+            -- An invisible collision plate, a tiny prop, or another character
+            -- can be above the visible floor. Skip a bounded number of such
+            -- hits instead of treating the first one as the only surface.
+            for _ = 1, 4 do
+                rayParams.FilterDescendantsInstances = excluded
+                local hitOk: boolean, result: any = pcall(function(): any
+                    return world:Raycast((focus :: Vector3) + Vector3.new(0, 1, 0), Vector3.new(0, -castDepth, 0), rayParams)
+                end)
+                if not hitOk or not result or not result.Instance then break end
+                local candidate: any = result.Instance
+                local eligible: boolean = candidate:IsA("BasePart") and candidate.Parent ~= nil
+                    and candidate.Transparency < 0.95 and result.Normal ~= nil and result.Normal.Y >= 0.97
+                    and candidate.CFrame.UpVector.Y >= 0.97 and candidate.Size.X >= 3 and candidate.Size.Z >= 3
+                if eligible then
+                    local parent: any = candidate.Parent
+                    while parent and parent ~= world do
+                        if parent == folder or parent == world.CurrentCamera or parent:IsA("Tool") or parent:IsA("Accessory")
+                            or (parent:IsA("Model") and (parent:FindFirstChildOfClass("Humanoid")
+                                or parent:FindFirstChildOfClass("AnimationController"))) then
+                            eligible = false
+                            break
+                        end
+                        parent = parent.Parent
+                    end
+                    if parent ~= world then eligible = false end
+                end
+                if eligible then floor, hit = candidate, result; break end
+                if not candidate:IsA("BasePart") then break end -- e.g. Terrain cannot be flattened reliably
+                table.insert(excluded, candidate)
+            end
+            if not floor or not hit then loseFloor(deltaTime, true); return end
             missingElapsed, missingReported = 0, false
             local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
             -- A 256-stud canvas makes a character only a few pixels wide.
@@ -55230,7 +55495,7 @@ function Module.init(host: any): any
         -- Do not apply the stricter remote-floor shape filter to its wide layer.
         local function eligibleWideFloor(floor: any): boolean
             return floor == currentFloor and floor.Parent ~= nil and floor:IsA("BasePart")
-                and floor.Anchored and floor.Transparency < 0.95
+                and floor.Transparency < 0.95
                 and floor.CFrame.UpVector.Y >= 0.97 and floor.Size.X >= 3 and floor.Size.Z >= 3
                 and needsWideFloor(floor)
         end
@@ -55480,7 +55745,7 @@ function Module.init(host: any): any
                 workWarned = true
                 warn("[Shaders:FloorReflection] " .. tostring(reason))
                 session:Stop()
-                pcall(report, "Floor reflection unavailable on this client")
+                pcall(report, "Floor reflection unavailable on this client", true)
             end
         end
         local function render(): ()
@@ -55494,7 +55759,7 @@ function Module.init(host: any): any
             if not projected then
                 warn("[Shaders:FloorProjection] " .. tostring(visible))
                 session:Stop()
-                pcall(report, "Floor projection unavailable on this client")
+                pcall(report, "Floor projection unavailable on this client", true)
                 return
             end
             gui.Enabled = visible == true

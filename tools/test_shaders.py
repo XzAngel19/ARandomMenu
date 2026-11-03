@@ -49,6 +49,7 @@ Enum = {
         Left=item("Left"),Right=item("Right")},
     ParticleOrientation={VelocityParallel=item("VelocityParallel"),VelocityPerpendicular=item("VelocityPerpendicular"),FacingCamera=item("FacingCamera")},
     RaycastFilterType={Exclude=item("Exclude")}, PartType={Block=item("Block"), Ball=item("Ball")},
+    AssetFetchStatus={Success=item("Success"),Failure=item("Failure"),TimedOut=item("TimedOut")},
     Material={},
 }
 for _, name in ipairs({"Plastic","SmoothPlastic","Concrete","Asphalt","Pavement","Wood",
@@ -95,14 +96,35 @@ local function container(name,class)
         for _, child in ipairs(self.children) do if child:IsA(wanted) and not child.destroyed then return child end end
     end
     function obj:IsA(wanted)
-        return self.ClassName==wanted or (wanted=="BasePart" and (self.ClassName=="Part" or self.ClassName=="MeshPart"))
+        return self.ClassName==wanted or (wanted=="BasePart" and
+            (self.ClassName=="Part" or self.ClassName=="MeshPart" or self.ClassName=="UnionOperation"))
             or (wanted=="Decal" and self.ClassName=="Texture")
     end
     return obj
 end
 local lighting=container("Lighting","Lighting")
+-- Lighting properties and Instance properties fire synchronous change signals;
+-- the production code must also tolerate Roblox's deferred signal behavior.
+local lightingValues,lightingSignals={},{}
+local propertyEventsDeferred=false
+local function fireProperty(signalObject)
+    if propertyEventsDeferred then task.defer(function() signalObject:Fire() end)
+    else signalObject:Fire() end
+end
+function lighting:GetPropertyChangedSignal(key)
+    if not lightingSignals[key] then lightingSignals[key]=signal() end
+    return lightingSignals[key]
+end
+setmetatable(lighting,{
+    __index=function(_,key) return lightingValues[key] end,
+    __newindex=function(_,key,value)
+        local old=lightingValues[key];lightingValues[key]=value
+        if old~=value and lightingSignals[key] then fireProperty(lightingSignals[key]) end
+    end,
+})
 lighting.EnvironmentDiffuseScale=0.2; lighting.EnvironmentSpecularScale=0.1
 lighting.ShadowSoftness=0.1; lighting.GlobalShadows=false; lighting.ExposureCompensation=0
+lighting.FogStart=5;lighting.FogEnd=1000;lighting.FogColor=Color3.fromRGB(80,90,100)
 local camera=container("Camera","Camera")
 camera.CFrame={Position=Vector3.new(0,12,0)}
 local world=container("Workspace","Workspace")
@@ -110,6 +132,7 @@ world.CurrentCamera=camera
 world.DescendantAdded,world.DescendantRemoving=signal(),signal()
 local roof={Transparency=0,IsA=function(_,name) return name=="BasePart" end}
 local rayCount,groundRayCount,isCovered,roofHeight,groundHit,groundFail=0,0,false,nil,nil,false
+local roofFail=false
 local roofRadius,splashGround=nil,nil
 function world:Raycast(origin,direction,params)
     assert(params.FilterType==Enum.RaycastFilterType.Exclude and #params.FilterDescendantsInstances>=1)
@@ -122,6 +145,7 @@ function world:Raycast(origin,direction,params)
         return if groundHit then {Instance=groundHit} else nil
     end
     rayCount+=1
+    if roofFail then error("sky ray denied") end
     local center=camera.CFrame.Position
     if isCovered or (roofRadius and math.abs(origin.X-center.X)<=roofRadius and math.abs(origin.Z-center.Z)<=roofRadius)
         or (roofHeight and origin.Y<=roofHeight and origin.Y+direction.Y>=roofHeight) then return {Instance=roof} end
@@ -142,7 +166,7 @@ local function children(parent,class)
     return found
 end
 local created={}
-Instance={fail={},failAt={}}
+Instance={fail={},failAt={},failProperty={}}
 function Instance.new(class)
     if Instance.fail[class] or Instance.failAt[class]==(created[class] or 0)+1 then
         error("creation denied for "..class)
@@ -155,6 +179,11 @@ function Instance.new(class)
         Anchored=false,CanCollide=true,CanQuery=true,CanTouch=true,Transparency=0,Reflectance=0,
         Material=Enum.Material.Plastic,MaterialVariant="",Shape=Enum.PartType.Block,
         Size=Vector3.new(4,1,4),CFrame={UpVector=Vector3.new(0,1,0)},WaterReflectance=0.12}
+    local propertySignals={}
+    function obj:GetPropertyChangedSignal(key)
+        if not propertySignals[key] then propertySignals[key]=signal() end
+        return propertySignals[key]
+    end
     function obj:Emit(n) self.Emitted=(self.Emitted or 0)+n end
     function obj:Destroy()
         self.Parent=nil; self.destroyed=true
@@ -169,7 +198,14 @@ function Instance.new(class)
                 store.Parent=value
                 if old and old.ChildRemoved then old.ChildRemoved:Fire(obj) end
                 if value then table.insert(value.children,obj); if value.ChildAdded then value.ChildAdded:Fire(obj) end end
-            else store[key]=value end
+            else
+                local fail=Instance.failProperty[class]
+                if fail and fail[key] and (not fail.name or fail.name==obj.Name) then
+                    error("property denied: "..class.."."..key)
+                end
+                local old=store[key];store[key]=value
+                if old~=value and propertySignals[key] then fireProperty(propertySignals[key]) end
+            end
         end,
     })
     return obj
@@ -178,7 +214,23 @@ local terrain=Instance.new("Terrain"); terrain.Name="Terrain"; terrain.Parent=wo
 local localCharacter=Instance.new("Model"); localCharacter.Name="LocalCharacter"; localCharacter.Parent=world
 local humanoid=Instance.new("Humanoid"); humanoid.Parent=localCharacter
 
-game={GetService=function(_,name) if name=="Lighting" then return lighting end end}
+-- A successful HTTP/download and getcustomasset can still yield an asset that
+-- ContentProvider cannot load. Success, failure, no callback and API errors
+-- are separate modeled outcomes, none of which prove actual rendered pixels.
+local preloadMode,preloaded="success",{}
+local contentProvider={}
+function contentProvider:PreloadAsync(instances,callback)
+    assert(#instances==1 and instances[1].ClassName=="ImageLabel")
+    local uri=instances[1].Image
+    table.insert(preloaded,uri)
+    if preloadMode=="throw" then error("preload denied") end
+    if preloadMode=="success" then callback(uri,Enum.AssetFetchStatus.Success)
+    elseif preloadMode=="failure" then callback(uri,Enum.AssetFetchStatus.Failure)
+    elseif preloadMode=="timeout" then callback(uri,Enum.AssetFetchStatus.TimedOut) end
+end
+game={GetService=function(_,name)
+    if name=="Lighting" then return lighting elseif name=="ContentProvider" then return contentProvider end
+end}
 local warnings={}
 warn=function(text) table.insert(warnings,tostring(text)) end
 local notifications,features,handles={},{},{}
@@ -235,14 +287,17 @@ local Framework=assert(loadstring(FRAMEWORK_SOURCE))()
 local framework=Framework.init(host)
 local Shaders=assert(loadstring(SHADERS_SOURCE))()
 local reflectionStarts,reflectionStops,reflectionObservations=0,0,{}
+local reflectionReports,reflectionSessions={},{}
 local reflectionLibrary={fail=false}
 function reflectionLibrary:Start(report)
     if self.fail then return nil,"simulated unavailable" end
     reflectionStarts+=1
     local active=true
-    return {Observe=function(_,part) reflectionObservations[part]=true end, Stop=function()
+    local session={Observe=function(_,part) reflectionObservations[part]=true end, Stop=function()
         if active then active=false;reflectionStops+=1 end
     end}
+    table.insert(reflectionReports,report);table.insert(reflectionSessions,session)
+    return session
 end
 local libraries={shaderreflection=reflectionLibrary}
 local card=Shaders.init({framework=framework,host=host,libraries=libraries})
@@ -268,11 +323,18 @@ local grass=part("Lawn",Enum.Material.Grass,Vector3.new(20,1,20))
 local marble=part("MarbleFloor",Enum.Material.Marble,Vector3.new(20,1,20))
 local glass=part("Glass",Enum.Material.Glass,Vector3.new(8,10,0.5)); glass.Transparency=0.4; glass.Reflectance=0.03
 local window=part("Window",Enum.Material.Plastic,Vector3.new(8,10,0.5)); window.Transparency=0.5; window.Reflectance=0.05
+local anonymousPane=part("Part",Enum.Material.SmoothPlastic,Vector3.new(8,10,0.4)); anonymousPane.Transparency=0.4
+local union=Instance.new("UnionOperation");union.Name="UnionFloor";union.Material=Enum.Material.Concrete
+union.Size=Vector3.new(24,1,24);union.Anchored=true;union.Parent=world
 local avatarFloor=part("Floor",Enum.Material.Plastic,Vector3.new(30,1,30),localCharacter)
 local npc=Instance.new("Model"); npc.Parent=world; local npcHum=Instance.new("Humanoid"); npcHum.Parent=npc
 local npcFloor=part("Floor",Enum.Material.Plastic,Vector3.new(30,1,30),npc)
 local tool=Instance.new("Tool"); tool.Parent=world; local toolFloor=part("Floor",Enum.Material.Plastic,Vector3.new(30,1,30),tool)
 local moving=part("Moving",Enum.Material.Plastic,Vector3.new(30,1,30)); moving.Anchored=false
+local movingWindow=part("MovingWindow",Enum.Material.Glass,Vector3.new(1,8,8));movingWindow.Anchored=false
+movingWindow.Transparency=0.4;movingWindow.Reflectance=0.04
+local avatarGlass=part("Visor",Enum.Material.Glass,Vector3.new(1,8,8),localCharacter)
+avatarGlass.Anchored=false;avatarGlass.Transparency=0.4
 local mesh=Instance.new("MeshPart"); mesh.Anchored=true; mesh.Size=Vector3.new(30,1,30); mesh.Parent=world
 local decorated=part("Decorated",Enum.Material.Concrete,Vector3.new(30,1,30))
 local existingDecal=Instance.new("Decal"); existingDecal.Parent=decorated
@@ -306,7 +368,11 @@ pass("warm baseline, floor reflection lifecycle and independent failure isolatio
 frames(25)
 assert(reflectionObservations[floor] and reflectionObservations[wood],
     "the world traversal must feed eligible map surfaces to the mirror library")
-assert(glass.Reflectance==0.22 and window.Reflectance==0.22)
+assert(glass.Reflectance==0.36 and window.Reflectance==0.36 and anonymousPane.Reflectance==0.36,
+    "transparent thin panes need not be literally named Window")
+assert(movingWindow.Reflectance==0.36 and not movingWindow.Anchored and movingWindow.CanCollide
+    and avatarGlass.Reflectance==0,"moving map glass can be enhanced without touching physics or avatar glass")
+assert(textureOf(union),"compatible CSG floors should use the same per-face texture API")
 assert(#assetRequests==0 and #spawned==5,"only five detected materials request art asynchronously")
 assert(textureOf(floor).ColorMapContent.Uri=="rbxassetid://9920484153"
     and textureOf(wood).ColorMapContent.Uri=="rbxassetid://9920626778"
@@ -317,12 +383,12 @@ assert(children(wall,"Texture")[1].ColorMapContent.Uri=="rbxassetid://9920482813
 runAllSpawned()
 frames(60)
 assert(#assetRequests==5)
-assert(textureOf(floor).ColorMapContent.Uri=="custom://shaderConcreteTexture")
-assert(textureOf(wood).ColorMapContent.Uri=="custom://shaderWoodTexture")
-assert(textureOf(grass).ColorMapContent.Uri=="custom://shaderGrassTexture")
-assert(textureOf(marble).ColorMapContent.Uri=="custom://shaderMarbleTexture")
+assert(textureOf(floor).Texture=="custom://shaderConcreteTexture")
+assert(textureOf(wood).Texture=="custom://shaderWoodTexture")
+assert(textureOf(grass).Texture=="custom://shaderGrassTexture")
+assert(textureOf(marble).Texture=="custom://shaderMarbleTexture")
 local brickTextures=children(wall,"Texture")
-assert(#brickTextures==2 and brickTextures[1].ColorMapContent.Uri=="custom://shaderBrickTexture")
+assert(#brickTextures==2 and brickTextures[1].Texture=="custom://shaderBrickTexture")
 assert(brickTextures[1].Face==Enum.NormalId.Front and brickTextures[2].Face==Enum.NormalId.Back)
 assert(textureOf(floor).Face==Enum.NormalId.Top and textureOf(floor).Transparency==0.55
     and textureOf(floor).Color3==floor.Color, "dark floors must not be tinted towards white")
@@ -333,20 +399,35 @@ assert(floor.Material==Enum.Material.Plastic and floor.CanCollide and floor.Anch
     "surface art does not modify materials, collisions or geometry")
 pass("actual colour textures and glass reflection affect eligible parts, not avatars or physics")
 
+-- Respect a game decal only on its own face; a sign on one side of a wall
+-- must not prevent material detail on the opposite side.
+local gameFront=Instance.new("Decal");gameFront.Face=Enum.NormalId.Front;gameFront.Parent=wall
+frames(80)
+local wallTextures=children(wall,"Texture")
+assert(#wallTextures==1 and wallTextures[1].Face==Enum.NormalId.Back and not gameFront.destroyed,
+    "an occupied wall face must leave its free opposite side available")
+gameFront:Destroy();frames(80)
+assert(#children(wall,"Texture")==2,"freed faces are reconsidered on later scans")
+pass("game-owned decals win per face without excluding unrelated surfaces")
+
 local originalFloorTexture=textureOf(floor)
 card.Options["Glass reflections"].Metadata.callback(false)
-assert(glass.Reflectance==0.03 and window.Reflectance==0.05)
+assert(glass.Reflectance==0.03 and window.Reflectance==0.05 and movingWindow.Reflectance==0.04)
 assert(textureOf(floor)==originalFloorTexture and not originalFloorTexture.destroyed,
     "turning glass off leaves texture option intact")
 card.Options["Glass reflections"].Metadata.callback(true)
 card.Options["Wet surfaces"].Metadata.callback(true)
 frames(80)
-assert(glass.Reflectance==0.22 and floor.Reflectance==0.16)
+assert(glass.Reflectance==0.36 and floor.Reflectance==0.16)
 card.Options["Wet surfaces"].Metadata.callback(false)
-assert(floor.Reflectance==0 and glass.Reflectance==0.22 and textureOf(floor)==originalFloorTexture)
+assert(floor.Reflectance==0 and glass.Reflectance==0.36 and textureOf(floor)==originalFloorTexture)
+window.Reflectance=0.02 -- the game writes after we enabled the glass option
+frames(80)
+assert(window.Reflectance==0.36,"glass remains enhanced after a game-side rewrite")
 glass.Reflectance=0.66 -- the game changes this while the option is active
 card.Options["Glass reflections"].Metadata.callback(false)
-assert(glass.Reflectance==0.66 and window.Reflectance==0.05,"never overwrite a newer game value")
+assert(glass.Reflectance==0.66 and window.Reflectance==0.02 and anonymousPane.Reflectance==0,
+    "restore each latest game value when disabling glass")
 pass("independent glass/wet toggles restore only values still owned by the module")
 
 local addedDecal=Instance.new("Decal"); addedDecal.Parent=floor
@@ -406,7 +487,7 @@ runSpawned();frames(60)
 assert(textureOf(delayed).ColorMapContent.Uri=="rbxassetid://9920484153",
     "an old completion cannot replace the current fallback")
 runSpawned();frames(60)
-assert(textureOf(delayed).ColorMapContent.Uri=="custom://generation2",
+assert(textureOf(delayed).Texture=="custom://generation2",
     "the current download replaces the fallback on a later scan")
 card.Options["Surface textures"].Metadata.callback(false)
 card.Options["Glass reflections"].Metadata.callback(false)
@@ -421,7 +502,7 @@ local initialGroundRays=groundRayCount
 card.Options["Surface textures"].Metadata.callback(true)
 frames(5);assert(textureOf(delayed) and #spawned>=1)
 runAllSpawned();frames(60)
-assert(textureOf(delayed).ColorMapContent.Uri=="custom://shaderConcreteTexture")
+assert(textureOf(delayed).Texture=="custom://shaderConcreteTexture")
 groundFail=true
 frames(60)
 assert(textureOf(delayed), "failed floor ray must not stop the world traversal")
@@ -454,6 +535,29 @@ assert(#warnings==warnCount+1,"repeated processing errors are not logged every s
 card.Options["Surface textures"].Metadata.callback(false)
 queryParts={delayed}
 pass("bad surfaces are reported once and do not block other parts")
+
+-- A syntactically valid local URI is not evidence that the renderer loaded it.
+-- Failed, absent, or denied preload status must keep the known Roblox fallback.
+for _,mode in ipairs({"failure","none","throw"}) do
+    preloadMode=mode
+    host.state.resolveAsset=function(name) return "custom://"..name end
+    card.Options["Surface textures"].Metadata.callback(true)
+    frames(10);runAllSpawned();frames(80)
+    assert(textureOf(delayed).ColorMapContent.Uri=="rbxassetid://9920484153",
+        "unconfirmed local colour map replaced fallback on "..mode)
+    card.Options["Surface textures"].Metadata.callback(false)
+end
+preloadMode="success"
+-- On Roblox, local ColorMapContent can be accepted yet fail to render; use
+-- legacy Texture for local URIs, or the official fallback if it is unavailable.
+Instance.failProperty.Texture={Texture=true}
+card.Options["Surface textures"].Metadata.callback(true)
+frames(10);runAllSpawned();frames(80)
+assert(textureOf(delayed).ColorMapContent.Uri=="rbxassetid://9920484153",
+    "unsupported legacy local-texture setter should retain the official fallback")
+card.Options["Surface textures"].Metadata.callback(false)
+Instance.failProperty.Texture=nil
+pass("local art needs successful preload and the compatible legacy texture path")
 
 host.state.resolveAsset=function() return nil,"missing getcustomasset" end
 card.Options["Surface textures"].Metadata.callback(true)
@@ -512,7 +616,7 @@ camera.CFrame={Position=Vector3.new(5000,12,0)};frames(180,1/60)
 assert(textureOf(manyFloors[1]) and textureOf(manyFloors[140]), "moving the camera must not evict earlier floors")
 local stream=part("StreamedWindow",Enum.Material.Glass,Vector3.new(10,10,1));stream.Transparency=0.5
 world.DescendantAdded:Fire(stream);frames(1)
-assert(stream.Reflectance==0.22,"streamed-in parts enter the bounded priority queue")
+assert(stream.Reflectance==0.36,"streamed-in parts enter the bounded priority queue")
 world.DescendantRemoving:Fire(stream);stream.Parent=nil
 assert(stream.Reflectance==0,"streamed-out parts restore their own value")
 card.Options["Surface textures"].Metadata.callback(false)
@@ -540,7 +644,7 @@ for _,p in ipairs(world:GetChildren()) do
         for _,texture in ipairs(children(p,"Texture")) do
             if texture.Name=="ARMShaderTexture" then allTextures+=1 end
         end
-        if p.Reflectance==0.22 then allGlass+=1 end -- includes transparent plastic windows
+        if p.Reflectance==0.36 then allGlass+=1 end -- includes transparent plastic windows
     end
 end
 assert(allTextures==600 and allGlass==1200,"hard map budgets are enforced: "..allTextures.."/"..allGlass)
@@ -550,30 +654,50 @@ card.Options["Glass reflections"].Metadata.callback(false)
 for _,p in ipairs(stress) do assert(not textureOf(p) and p.Reflectance==0);p.Parent=nil end
 pass("large maps have bounded retained objects and a visible limit warning")
 
--- Fog: use the game's atmosphere instead of creating a competing duplicate.
+-- FogEnd only draws while Lighting has no Atmosphere. Preserve the game's
+-- latest values while keeping the requested fog after game-side rewrites.
+local oldFogColor=lighting.FogColor
 card.Options.Fog.Metadata.callback(true)
-local ownFog=byName(lighting,"Atmosphere")
-assert(ownFog and ownFog.Density==0.38 and #children(lighting,"Atmosphere")==1)
+assert(#children(lighting,"Atmosphere")==0 and lighting.FogStart==5 and lighting.FogEnd==180,
+    "legacy fog must use FogEnd instead of inserting a competing Atmosphere")
 local fogFolder=byName(world,"ARMShaderWeather")
 local fogCell=byName(fogFolder,"FogCell");local mist=byName(fogCell,"Fog mist")
 assert(mist and mist.Rate==4 and mist.Transparency.Value==0.86 and activeHandles("Shaders weather")==1)
 local beforeFogRays=rayCount;frames(5)
 assert(mist.Enabled and rayCount==beforeFogRays,"fog particles work independently without roof scans")
+lighting.FogEnd=1400;flushDeferred()
+assert(lighting.FogEnd==180,"a game rewrite must not silently erase active fog")
 local incoming=Instance.new("Atmosphere"); incoming.Name="GameAtmosphere"; incoming.Density=0.16; incoming.Parent=lighting
 flushDeferred()
-assert(ownFog.destroyed and incoming.Density==0.38 and #children(lighting,"Atmosphere")==1)
-incoming.Density=0.77
+assert(lighting.FogEnd==1400 and lighting.FogColor==oldFogColor and incoming.Density==0.45
+    and #children(lighting,"Atmosphere")==1,"switch to the game's real atmosphere and restore FogEnd")
+incoming.Density=0.05;flushDeferred()
+assert(incoming.Density==0.45,"a game rewrite must be reconciled while Fog is active")
+incoming.Density=0.77;flushDeferred()
+assert(incoming.Density==0.77,"already denser game fog must never be weakened")
 card.Options.Fog.Metadata.callback(false);flushDeferred()
 assert(fogFolder.destroyed and not byName(world,"ARMShaderWeather"),"fog particles clean up on OFF")
 assert(incoming.Density==0.77 and incoming.Haze==0.5 and not incoming.destroyed)
 card.Options.Fog.Metadata.callback(true)
 incoming:Destroy()
 local replacement=Instance.new("Atmosphere");replacement.Density=0.23;replacement.Parent=lighting
-flushDeferred();assert(replacement.Density==0.38)
+flushDeferred();assert(replacement.Density==0.45)
+replacement:Destroy();flushDeferred()
+assert(lighting.FogEnd==180,"FogEnd resumes if the game removes its Atmosphere")
 card.Options.Fog.Metadata.callback(false);flushDeferred()
-assert(replacement.Density==0.23 and not replacement.destroyed)
+assert(lighting.FogEnd==1400 and lighting.FogStart==5 and lighting.FogColor==oldFogColor)
 runAllSpawned()
-pass("fog uses atmosphere plus independent particles and restores dynamic replacements")
+-- Roblox may defer property notifications until after our writes have returned.
+propertyEventsDeferred=true
+card.Options.Fog.Metadata.callback(true);flushDeferred()
+lighting.FogEnd=800;flushDeferred()
+assert(lighting.FogEnd==180,"deferred game writes are reasserted without a signal loop")
+lighting.FogEnd=750
+card.Options.Fog.Metadata.callback(false);flushDeferred()
+assert(lighting.FogEnd==750,"disable preserves a newer write even if its signal is still queued")
+propertyEventsDeferred=false
+lighting.FogEnd=1400
+pass("fog selects FogEnd or a game Atmosphere, reasserts and restores their latest values")
 
 card.Options["Water reflections"].Metadata.callback(true)
 assert(terrain.WaterReflectance==0.55)
@@ -598,13 +722,20 @@ assert(rain and #weatherCells(rain)==9 and #children(rain,"Part")==10 and active
 local rainEmitters={}
 for _,p in ipairs(weatherCells(rain)) do
     assert(p.Anchored and not p.CanCollide and not p.CanTouch and not p.CanQuery)
-    local e=byName(p,"Rain");assert(e.Rate==12);table.insert(rainEmitters,e)
+    local e=byName(p,"Rain");assert(e.Rate==18);table.insert(rainEmitters,e)
 end
 local splash=byName(byName(rain,"RainSplashCell"),"Rain splashes")
 splashGround=floor
 rayCount=0;frames(40)
 assert(rayCount<=15 and splash.Emitted>0,"outdoor rain samples can create limited local splashes")
 for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
+-- A denied sky ray must not turn all precipitation off permanently.
+local beforeSkyFailure=#notifications
+roofFail=true;frames(40)
+for _,e in ipairs(rainEmitters) do assert(e.Enabled,"rain survives a failed shelter ray") end
+assert(#notifications==beforeSkyFailure+1 and notifications[#notifications]:find("shelter",1,true))
+frames(40);assert(#notifications==beforeSkyFailure+1,"shelter failure is not spammed")
+roofFail=false
 isCovered=true;frames(40)
 for _,e in ipairs(rainEmitters) do assert(not e.Enabled) end
 roof.Transparency=1;frames(40)
@@ -623,7 +754,7 @@ card.Options.Snow.Metadata.callback(true)
 local combined=byName(world,"ARMShaderWeather")
 assert(rain.destroyed and #weatherCells(combined)==9)
 for _,p in ipairs(weatherCells(combined)) do
-    assert(#children(p,"ParticleEmitter")==2 and byName(p,"Rain").Rate==12 and byName(p,"Snow").Rate==5)
+    assert(#children(p,"ParticleEmitter")==2 and byName(p,"Rain").Rate==18 and byName(p,"Snow").Rate==8)
 end
 runAllSpawned();frames(35)
 assert(byName(weatherCells(combined)[1],"Snow").Texture=="custom://shaderSnowTexture")
@@ -633,7 +764,7 @@ local all=byName(world,"ARMShaderWeather")
 assert(#weatherCells(all)==9 and #children(all,"Part")==11 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==183,"108 rain + 45 snow + 18 leaves + 12 dust particles/s, plus manual splashes")
+assert(totalRate==273,"162 rain + 72 snow + 27 leaves + 12 dust particles/s, plus manual splashes")
 runAllSpawned();frames(35)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
 assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==12 and dust.Size.Value==0.35)
@@ -669,6 +800,65 @@ assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")
 runAllSpawned() -- all cancelled completions must stay dead
 pass("independent rain/snow/leaves/dust, outdoor cells, splashes and camera recovery")
 
+host.state.resolveAsset=function(name) return "custom://"..name end
+preloadMode="failure"
+card.Options.Rain.Metadata.callback(true)
+local failedArt=byName(world,"ARMShaderWeather")
+runAllSpawned();frames(35)
+assert(byName(weatherCells(failedArt)[1],"Rain").Texture=="rbxasset://textures/particles/SquareParticle.png",
+    "an unloadable local particle image must not replace the fallback")
+card.Options.Rain.Metadata.callback(false)
+preloadMode="success"
+
+-- Unsupported rain-specific properties cannot prevent independent snow.
+Instance.failProperty.ParticleEmitter={Rate=true,name="Rain"}
+card.Options.Rain.Metadata.callback(true)
+card.Options.Snow.Metadata.callback(true)
+local isolatedWeather=byName(world,"ARMShaderWeather")
+frames(35)
+assert(card.Enabled and isolatedWeather and byName(weatherCells(isolatedWeather)[1],"Snow").Enabled
+    and not byName(weatherCells(isolatedWeather)[1],"Rain"),
+    "one particle style failing cannot destroy another weather effect")
+Instance.failProperty.ParticleEmitter=nil
+card.Options.Rain.Metadata.callback(false)
+card.Options.Snow.Metadata.callback(false)
+runAllSpawned()
+pass("weather art failures and an incompatible style keep unrelated effects alive")
+
+-- A failing optional emitter is not allowed to take down precipitation.
+for _,case in ipairs({
+    {name="Fog mist",option="Fog",missing="FogCell"},
+    {name="Dust motes",option="Dust motes",missing="DustCell"},
+    {name="Rain splashes",option=nil,missing="RainSplashCell"},
+}) do
+    Instance.failProperty.ParticleEmitter={Speed=true,name=case.name}
+    card.Options.Rain.Metadata.callback(true)
+    if case.option then card.Options[case.option].Metadata.callback(true) end
+    local surviving=byName(world,"ARMShaderWeather")
+    frames(35)
+    assert(surviving and not byName(surviving,case.missing)
+        and byName(weatherCells(surviving)[1],"Rain").Enabled,
+        "a failed "..case.name.." must not disable rain")
+    if case.option=="Fog" then assert(lighting.FogEnd==180,"distance fog remains active without mist particles") end
+    Instance.failProperty.ParticleEmitter=nil
+    if case.option then card.Options[case.option].Metadata.callback(false) end
+    card.Options.Rain.Metadata.callback(false)
+    runAllSpawned()
+end
+pass("fog, dust and splash emitter failures do not disable rain")
+
+local constructor=RaycastParams.new
+RaycastParams.new=function() error("shelter parameters unavailable") end
+local warningsBefore=#notifications
+card.Options.Rain.Metadata.callback(true)
+local noParameters=byName(world,"ARMShaderWeather")
+frames(35)
+assert(noParameters and byName(weatherCells(noParameters)[1],"Rain").Enabled
+    and #notifications==warningsBefore+1 and notifications[#notifications]:find("shelter",1,true),
+    "rain stays visible with a single warning when ray parameters are unavailable")
+RaycastParams.new=constructor
+card.Options.Rain.Metadata.callback(false);runAllSpawned()
+
 host.state.resolveAsset=function() return nil,"not available" end
 card.Options.Rain.Metadata.callback(true)
 local fallback=byName(world,"ARMShaderWeather")
@@ -677,8 +867,9 @@ runAllSpawned()
 assert(fallbackEmitter.Texture=="rbxasset://textures/particles/SquareParticle.png")
 Instance.fail.ParticleEmitter=true
 card.Options.Snow.Metadata.callback(true)
-assert(card.Enabled and renderable(color) and not byName(world,"ARMShaderWeather"))
-assert(notifications[#notifications]:find("Weather unavailable",1,true))
+assert(card.Enabled and renderable(color) and not byName(world,"ARMShaderWeather")
+    and activeHandles("Shaders weather")==0,"no empty weather scheduler when all emitters fail")
+assert(notifications[#notifications]:find("particles unavailable",1,true))
 Instance.fail.ParticleEmitter=nil
 card.Options.Snow.Metadata.callback(false)
 local pending=byName(world,"ARMShaderWeather")
@@ -702,15 +893,48 @@ features.Shaders.toggle(false);runAllSpawned()
 assert(lighting.ExposureCompensation==4.5)
 pass("high original exposure is never reduced by the baseline")
 
-Instance.fail.BloomEffect=true
-local ok=pcall(features.Shaders.toggle,true)
-assert(not ok and not card.Enabled and not byName(lighting,"ARMShaderColor"),"partial construction is cleaned")
-Instance.fail.BloomEffect=nil
+-- Runtime projection/container failures stop the underlying library session.
+-- Retry once, avoid an infinite crash loop, and let an explicit toggle retry.
+card.Options["Floor reflections"].Metadata.callback(true)
 features.Shaders.toggle(true)
-assert(renderable(byName(lighting,"ARMShaderColor")))
+local initialStarts=reflectionStarts
+reflectionSessions[#reflectionSessions]:Stop()
+reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
+flushDeferred()
+assert(reflectionStarts==initialStarts+1 and card.Enabled,"a stopped reflection should get one fresh session")
+reflectionSessions[#reflectionSessions]:Stop()
+reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
+flushDeferred()
+assert(reflectionStarts==initialStarts+1,"persistent failures must not create an endless restart loop")
+card.Options["Floor reflections"].Metadata.callback(false)
+card.Options["Floor reflections"].Metadata.callback(true)
+assert(reflectionStarts==initialStarts+2,"the user can retry after switching the option off and on")
+reflectionSessions[#reflectionSessions]:Stop()
+reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
+card.Options["Floor reflections"].Metadata.callback(false)
+flushDeferred()
+assert(reflectionStarts==initialStarts+2,"switching off cancels an already queued automatic retry")
+features.Shaders.toggle(false);runAllSpawned()
+pass("a stopped floor session is retried once and remains manually recoverable")
+
+-- A single unsupported post effect used to cancel the entire Shaders card.
+card.Options["Floor reflections"].Metadata.callback(true)
+Instance.fail.BloomEffect=true
+local startsBeforeFailure=reflectionStarts
+local ok=pcall(features.Shaders.toggle,true)
+assert(ok and card.Enabled and renderable(byName(lighting,"ARMShaderColor"))
+    and renderable(byName(lighting,"ARMShaderRays")),"a missing Bloom must not stop other post effects")
+assert(not byName(lighting,"ARMShaderBloom") and reflectionStarts>startsBeforeFailure,
+    "floor reflection and other options must start even without Bloom")
+card.Options.Rain.Metadata.callback(true);frames(35)
+assert(byName(world,"ARMShaderWeather"),"weather must remain independent of post effects")
+Instance.fail.BloomEffect=nil
+features.Shaders.toggle(false);runAllSpawned()
+features.Shaders.toggle(true)
+assert(renderable(byName(lighting,"ARMShaderBloom")))
 Shaders.destroy()
 assert(not card.Enabled and activeHandles()==0 and not byName(lighting,"ARMShaderColor"))
-pass("partial construction, re-enable and module destroy")
+pass("a missing post effect is isolated; re-enable and destroy cleanly")
 
 -- Saved toggle values may be delivered synchronously while the UI is built.
 local fallbackHost=table.clone(host);fallbackHost.state={}
@@ -718,15 +942,16 @@ function fallbackHost.addToggleOption(_,name,default,callback)
     callback(if name=="Fog" then true elseif name=="Surface textures" or name=="Floor reflections" then false else default)
     return {callback=callback}
 end
+local savedAtmosphere=Instance.new("Atmosphere");savedAtmosphere.Density=0.23;savedAtmosphere.Parent=lighting
 local fallbackFramework=Framework.init(fallbackHost)
 local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost,libraries=libraries})
 assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
     and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
 local startsBeforeRestore=reflectionStarts
 features.Shaders.toggle(true)
-assert(replacement.Density==0.38 and reflectionStarts==startsBeforeRestore,
+assert(savedAtmosphere.Density==0.45 and reflectionStarts==startsBeforeRestore,
     "a saved OFF floor reflection must not start on module enable")
-Shaders.destroy();flushDeferred();assert(replacement.Density==0.23)
+Shaders.destroy();flushDeferred();assert(savedAtmosphere.Density==0.23)
 pass("synchronous saved-toggle restoration is safe and cannot restore removed looks")
 '''
 

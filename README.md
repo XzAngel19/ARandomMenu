@@ -24,20 +24,21 @@ omitidos, ropa o mallas irregulares pueden verse distintos o no reflejarse.
 
 No hay selector de `Look`. `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`,
 `Wet surfaces`, `Water reflections`, `Surface textures` y `Glass reflections`
-son opciones independientes. Fog combina atmósfera con partículas. Las celdas de
-lluvia y nieve hacen pruebas de techo; las exteriores cercanas pueden verse
-desde interiores. El barrido de superficies recorre progresivamente el mapa,
-sin limitarse al lugar donde camina el jugador, pero solo modifica piezas
-compatibles y tiene límites de recursos; puede tardar y no cubre todas las
-mallas. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes.
-Al apagar se retiran los efectos y se restauran los valores aún controlados.
+son opciones independientes. Fog usa la `Atmosphere` existente o `FogEnd` según
+el juego, y añade partículas locales. Las celdas de lluvia y nieve prueban si
+hay techo; si esa comprobación falla se avisa y pueden atravesarlo. El barrido
+recorre progresivamente el mapa, pero solo modifica piezas compatibles y tiene
+límites de recursos. Las texturas no sustituyen mallas y respetan los decals por
+cara. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes. Al
+apagar se retiran los efectos y se restauran los valores aún controlados.
 
-Las imágenes se descargan bajo demanda y pueden intentar recursos de Roblox como
-respaldo. La disponibilidad depende del executor y la calidad gráfica. No se
-ha probado la apariencia ni el rendimiento en Roblox/Delta: tres viewports,
-partículas y sombras pueden ser costosos. Si notas lag, apaga `Floor reflections`
-o los efectos que no uses. Fuentes, licencias y límites detallados en
-`docs/third-party/shaders/README.md`.
+Las imágenes se descargan bajo demanda; si la precarga local falla se intentan
+recursos de Roblox como respaldo. Una precarga exitosa no garantiza que se
+visualicen. La apariencia depende del juego, el executor y la calidad gráfica;
+no puede garantizarse en todos los juegos. No se ha probado visualmente ni
+medido el rendimiento en Roblox/Delta: tres viewports, partículas y sombras
+pueden ser costosos. Si notas lag, apaga `Floor reflections` o los efectos que
+no uses. Fuentes, licencias y límites: `docs/third-party/shaders/README.md`.
 
 Para comparar, prueba primero `Shaders` con `Floor reflections` encendido y
 apagado en tercera persona sobre un piso sólido. Cierra el menú para comparar:

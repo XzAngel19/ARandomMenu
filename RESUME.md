@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v174-20261103-mm2-ui-reflections`**, con árbol base de
+> **`v175-20261103-client-shader-recovery`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,14 +21,47 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v174: 86 fuentes,
+  4. `bash tools/validate.sh` — debe terminar VERDE (v175: 86 fuentes,
      116 suites, auditoría estática, boots `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v174 — Keybinds MM2, viewport y detalle cercano (2026-11-03)
+## v175 — Recuperación client-side de Shaders (2026-11-03)
+
+El usuario reporta que v174 todavía no mostraba correctamente Floor reflections,
+Surface textures, Glass reflections, Fog, Rain, Snow y demás. No atribuir ese
+reporte a una causa concreta sin prueba visual. Investigación y límites en
+`docs/FIXES-v175.md` y `docs/third-party/shaders/README.md`.
+
+- Se aislaron fallos de postprocesos, estilos de partículas y emisores extra:
+  niebla/polvo/salpicaduras no deben apagar lluvia/nieve en los casos simulados.
+  Un raycast de techo fallido deja partículas visibles y avisa que pueden pasar
+  por techo; sin emisores disponibles no queda una tarea vacía.
+- Fog elige `Lighting.FogStart/FogEnd/FogColor` si no hay `Atmosphere`, o
+  reutiliza la `Atmosphere` del juego (Density/Haze) si existe. Escucha cambios,
+  preserva el último valor conocido y restaura condicionalmente; añade niebla
+  de partículas independiente. No crea ni destruye la atmósfera del juego.
+- El contenido local se precarga asíncronamente con estado: sin éxito reportado
+  se usa el fallback e informa. URI locales van por `Texture.Texture`, no por
+  `ColorMapContent`; no se ha probado cuál dibuja Delta. Decals reservan solo su
+  cara; se incluyen uniones CSG ancladas y vidrio móvil o paneles transparentes
+  finos, sin cambiar física. Glass es reflectancia ambiental, no espejo real.
+- El espejo busca hasta cuatro veces detrás de obstáculos, acepta plataformas
+  móviles y usa cámara a mayor alcance si no hay root; las capas adicionales
+  todavía requieren un piso primario compatible. Una sesión fatal se reintenta
+  una vez y se puede rearmar con el toggle; la generación cancela retries viejos.
+  Se mantienen los límites de viewports y no se aclara físicamente el piso.
+- Presupuesto máximo con todos los climas: 30 emisores, 277 partículas/s más
+  salpicaduras; hasta tres viewports. Son límites de código, no mediciones.
+  `bash tools/validate.sh` pasó 86 fuentes/116 suites, inventario 84/14, boot 0
+  y menú 50/49. Los mocks cubren recuperación, restauración, techo y recursos,
+  no dibujan píxeles ni miden FPS. Sigue pendiente probar en Roblox/Delta y no
+  puede garantizarse compatibilidad con todos los juegos, dispositivos o permisos.
+- No se tocaron módulos MM2, viewport ni Speed. No añadir Look ni presets.
+
+## v174 — Keybinds MM2, viewport y detalle cercano (2026-11-03; histórico)
 
 Detalle y límites: `docs/FIXES-v174.md`; fuentes/licencias de shaders en
 `docs/third-party/shaders/README.md`.
