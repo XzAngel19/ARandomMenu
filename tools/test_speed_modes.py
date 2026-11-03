@@ -66,7 +66,10 @@ local function tick(dt) run.PreSimulation:Fire(dt or 1/60) end
 local function set(name,value) module.Options[name]:Set(value) end
 ''' + '\nlocal Module=(function()\n' + SOURCE + '\nend)()\n' + r'''
 Module.init({host={LocalPlayer=player,workspace=world,RunService=run},framework=framework})
-module:Toggle(true);tick();near(h.WalkSpeed,32);assert(run.PreSimulation:Count()==1)
+assert(module.Options.Mode.Value=='Velocity', 'new configurations start in Velocity mode')
+module:Toggle(true);tick();near(h.WalkSpeed,16);near(root.AssemblyLinearVelocity.X,32)
+assert(run.PreSimulation:Count()==1)
+set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
 for _,value in ipairs({1000,5000,1e12}) do set('Speed',value);tick();near(h.WalkSpeed,value) end
 set('Speed',32);tick();near(h.WalkSpeed,32)
 local walkWrites=h.writes

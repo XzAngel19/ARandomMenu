@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v172-20261102-floor-reflections"
+local SOURCE_STAMP: string = "v173-20261102-map-shaders"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4713,21 +4713,15 @@ ThemeEngine.OnChange(function(_name, changed): ()
 end)
 
 local function refreshFeatureToggle(feature: any): ()
-    if feature.isCategory or feature.isAction then
-
-        state.applyCardSkin(feature, false)
-        if state.floatingUi then
-            state.floatingUi.refreshFeature(feature)
-        end
-        return
-    end
-
     if feature.isHoldAction then
         feature.enabled = feature.active == true
     end
     state.applyCardSkin(feature, false)
     if state.floatingUi then
         state.floatingUi.refreshFeature(feature)
+    end
+    if state.navigator and state.navigator.refreshFeature then
+        state.navigator.refreshFeature(feature)
     end
 end
 

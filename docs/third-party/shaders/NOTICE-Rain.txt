@@ -1,0 +1,23 @@
+Reference: buildthomas/Rain, commit b4088187c457ae4e67c034b6244da680a154b567
+https://github.com/buildthomas/Rain
+
+Original notice (retained unchanged):
+
+	Rain module v1.0 by buildthomas (July 2018)
+
+	This module is licensed under the APLv2:
+	http://www.apache.org/licenses/LICENSE-2.0
+
+	In short, you may use this code only if you agree to the following:
+	* This notice must always be present and may not be modified or removed in any copy of this code or derived code.
+	* You may use this in commercial, closed source projects, and you may modify the source code itself.
+
+	Refer to the license for a full description.
+
+	For questions please reach out on the Developer Forum (@buildthomas)
+	or via Twitter (https://www.twitter.com/buildthomasRBX)
+
+
+Project note: the Rain plugin was inspected for camera-relative precipitation,
+open-sky samples and splash concepts. Our bounded grid and code are a separate
+implementation, and do not embed or run the complete plugin.

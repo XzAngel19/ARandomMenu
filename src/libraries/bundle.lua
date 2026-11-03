@@ -1,5 +1,5 @@
 return {
-    stamp = "v172-20261102-floor-reflections",
+    stamp = "v173-20261102-map-shaders",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -32267,7 +32267,7 @@ function Module.init(context: Runtime): any
         restoreWalk(); teleportElapsed, lastMode = 0, nil
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
-    speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
+    speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=2,Function=changed})
     speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
@@ -38654,7 +38654,8 @@ return Module
 ]],
         ["src/games/universal/Render/Shaders.lua"] = [[
 -- Client-side lighting, an optional local floor reflection and atmosphere.
--- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC).
+-- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC),
+-- with outdoor sampling and splashes informed by buildthomas/Rain (Apache-2.0).
 -- Surface colour maps are CC0 ambientCG assets; they are not PBR normal maps.
 -- Research, pinned sources and licences: docs/third-party/shaders/README.md.
 local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
@@ -38662,13 +38663,13 @@ local card
 
 local WEATHER = {
     Rain = {asset = "shaderRainTexture", fallback = "rbxasset://textures/particles/SquareParticle.png",
-        rate = 15, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
+        rate = 12, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
         transparency = 0.38, spread = 1},
     Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
-        rate = 7, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
+        rate = 5, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
         transparency = 0.18, spread = 12},
     ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
-        rate = 3, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
+        rate = 2, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
         transparency = 0.10, spread = 18},
 }
 local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
@@ -38711,6 +38712,9 @@ function Module.init(context: any): any
     local weatherGeneration: number = 0
 
     local surfaceConnection: any = nil
+    local surfaceAddedConnection: any = nil
+    local surfaceRemovingConnection: any = nil
+    local wakeSurfaceScan: (() -> ())? = nil
     local surfaceGeneration: number = 0
     local surfaceAssets: {[string]: any} = {}
     local surfaceTexturesOn: boolean = false
@@ -38718,9 +38722,13 @@ function Module.init(context: any): any
     local textureCount: number = 0
     local reflectionCount: number = 0
     local textureWarning: boolean = false
-    local MAX_QUERY: number = 240
-    local MAX_TEXTURES: number = 80
-    local MAX_REFLECTIONS: number = 100
+    -- The world is visited incrementally, not restricted to the player's
+    -- neighbourhood. Caps bound retained instances on unusually large maps.
+    local MAX_TEXTURES: number = 600
+    local MAX_REFLECTIONS: number = 1200
+    local MAX_SURFACE_JOBS: number = 4
+    local MAX_TREE_NODES: number = 20
+    local MAX_PENDING: number = 2048
 
     local function enabled(name: string): boolean
         return card ~= nil and card.Enabled and card.Options[name] ~= nil
@@ -38783,19 +38791,14 @@ function Module.init(context: any): any
         end
         -- These engine properties affect material/sky lighting even when a
         -- place's own post effects compete with our colour correction.
-        setMinimum("EnvironmentDiffuseScale", 0.65)
-        setMinimum("EnvironmentSpecularScale", 0.9)
+        -- Do not raise diffuse light or exposure: both can wash out an
+        -- already-bright floor even with the reflection itself switched off.
+        setMinimum("EnvironmentSpecularScale", 0.65)
         setMinimum("ShadowSoftness", 0.35)
         pcall(function(): ()
             lightOriginal.GlobalShadows = lighting.GlobalShadows
             lighting.GlobalShadows = true
             lightApplied.GlobalShadows = lighting.GlobalShadows
-        end)
-        pcall(function(): ()
-            local old: number = lighting.ExposureCompensation
-            lightOriginal.ExposureCompensation = old
-            lighting.ExposureCompensation = math.max(old, math.min(old + 0.12, 3))
-            lightApplied.ExposureCompensation = lighting.ExposureCompensation
         end)
     end
 
@@ -38909,7 +38912,8 @@ function Module.init(context: any): any
             if enabled(name) then table.insert(kinds, name) end
         end
         local dustEnabled: boolean = enabled("Dust motes")
-        if #kinds == 0 and not dustEnabled then updateStatus(); return end
+        local mistEnabled: boolean = enabled("Fog")
+        if #kinds == 0 and not dustEnabled and not mistEnabled then updateStatus(); return end
         local generation: number = weatherGeneration
         local ok: boolean, failure: any = pcall(function(): ()
             local folder: Folder = Instance.new("Folder")
@@ -38930,11 +38934,15 @@ function Module.init(context: any): any
                 return part
             end
             if #kinds > 0 then
+                -- Each cell has its own sky test. The outer ring can remain
+                -- rainy when the camera is sheltered but looks outdoors.
                 for _, offset: Vector3 in ipairs({
-                    Vector3.new(-12, 0, -12), Vector3.new(-12, 0, 12),
-                    Vector3.new(12, 0, -12), Vector3.new(12, 0, 12),
+                    Vector3.new(0, 0, 0),
+                    Vector3.new(-28, 0, -28), Vector3.new(0, 0, -28), Vector3.new(28, 0, -28),
+                    Vector3.new(-28, 0, 0), Vector3.new(28, 0, 0),
+                    Vector3.new(-28, 0, 28), Vector3.new(0, 0, 28), Vector3.new(28, 0, 28),
                 }) do
-                    local part: Part = cellPart("WeatherCell", Vector3.new(24, 0.2, 24))
+                    local part: Part = cellPart("WeatherCell", Vector3.new(26, 0.2, 26))
                     local emitters: {ParticleEmitter} = {}
                     for _, name: string in ipairs(kinds) do
                         local style: any = WEATHER[name]
@@ -38976,6 +38984,38 @@ function Module.init(context: any): any
                 dust.Parent = dustPart
                 remember("shaderSnowTexture", dust)
             end
+            local mistPart: Part? = nil
+            local mist: ParticleEmitter? = nil
+            if mistEnabled then
+                -- Atmosphere handles distance haze; these translucent sprites
+                -- supply a small moving layer near the camera, even indoors.
+                mistPart = cellPart("FogCell", Vector3.new(60, 10, 60))
+                mist = Instance.new("ParticleEmitter")
+                mist.Name, mist.Enabled = "Fog mist", false
+                mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                mist.Shape, mist.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
+                mist.EmissionDirection, mist.Orientation = Enum.NormalId.Top, Enum.ParticleOrientation.FacingCamera
+                mist.Rate, mist.Size, mist.Speed = 4, NumberSequence.new(10), NumberRange.new(0.1, 0.35)
+                mist.Lifetime, mist.Transparency = NumberRange.new(7, 9), NumberSequence.new(0.86)
+                mist.Color, mist.LightEmission, mist.LightInfluence = ColorSequence.new(Color3.fromRGB(202, 213, 219)), 0.1, 0.7
+                mist.Rotation, mist.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
+                mist.Parent = mistPart
+                remember("shaderSnowTexture", mist)
+            end
+            local splashPart: Part? = nil
+            local splash: ParticleEmitter? = nil
+            if enabled("Rain") then
+                splashPart = cellPart("RainSplashCell", Vector3.new(0.2, 0.2, 0.2))
+                splash = Instance.new("ParticleEmitter")
+                splash.Name, splash.Enabled, splash.Rate = "Rain splashes", false, 0
+                splash.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                splash.Orientation, splash.EmissionDirection = Enum.ParticleOrientation.VelocityPerpendicular, Enum.NormalId.Top
+                splash.Size, splash.Speed = NumberSequence.new(1.2), NumberRange.new(0.1, 0.2)
+                splash.Lifetime, splash.Transparency = NumberRange.new(0.2, 0.3), NumberSequence.new(0.55)
+                splash.Color, splash.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
+                splash.Parent = splashPart
+                remember("shaderSnowTexture", splash)
+            end
             local params: RaycastParams = RaycastParams.new()
             params.FilterType, params.IgnoreWater = Enum.RaycastFilterType.Exclude, true
             local previousCharacter: Model? = nil
@@ -38993,6 +39033,7 @@ function Module.init(context: any): any
                         for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = false end
                     end
                     if dust then dust.Enabled = false end
+                    if mist then mist.Enabled = false end
                     lastCamera, lastFocus = nil, nil
                     return
                 end
@@ -39014,6 +39055,7 @@ function Module.init(context: any): any
                     cell.part.Position = focus + cell.offset + Vector3.new(0, 20, 0)
                 end
                 if dustPart and dust then dustPart.Position, dust.Enabled = focus, true end
+                if mistPart and mist then mistPart.Position, mist.Enabled = focus + Vector3.new(0, -2, 0), true end
                 if #weatherCells == 0 then return end
                 roofElapsed += elapsed
                 if roofElapsed < 0.15 then return end
@@ -39023,11 +39065,22 @@ function Module.init(context: any): any
                 local castOk: boolean, hit: any = pcall(function(): any
                     return world:Raycast(focus + cell.offset, Vector3.new(0, 150, 0), params)
                 end)
-                local covered: boolean = castOk and hit ~= nil
-                if covered and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
+                local covered: boolean = not castOk or hit ~= nil
+                if castOk and hit and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
                     covered = false
                 end
                 for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
+                -- One short ground sample per open cell produces inexpensive
+                -- local splashes; it does not run for snow or while sheltered.
+                if not covered and splashPart and splash then
+                    local groundOk: boolean, ground: any = pcall(function(): any
+                        return world:Raycast(focus + cell.offset + Vector3.new(0, 20, 0), Vector3.new(0, -100, 0), params)
+                    end)
+                    if groundOk and ground and ground.Position and ground.Normal then
+                        splashPart.Position = ground.Position + ground.Normal * 0.05
+                        pcall(function(): () (splash :: ParticleEmitter):Emit(1) end)
+                    end
+                end
             end
             weatherConnection = host.TaskManager:Connect(updateWeather, nil, "Shaders weather")
             for assetKey: string, emitters: {any} in pairs(textures) do
@@ -39079,6 +39132,15 @@ function Module.init(context: any): any
             pcall(function(): () surfaceConnection:Disconnect() end)
             surfaceConnection = nil
         end
+        if surfaceAddedConnection then
+            pcall(function(): () surfaceAddedConnection:Disconnect() end)
+            surfaceAddedConnection = nil
+        end
+        if surfaceRemovingConnection then
+            pcall(function(): () surfaceRemovingConnection:Disconnect() end)
+            surfaceRemovingConnection = nil
+        end
+        wakeSurfaceScan = nil
         for part: any, record: any in pairs(surfaceRecords) do removeSurface(part, record) end
         surfaceRecords, surfaceAssets = {}, {}
         textureCount, reflectionCount, textureWarning, surfaceTexturesOn = 0, 0, false, false
@@ -39163,6 +39225,9 @@ function Module.init(context: any): any
                 if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
                 if ok and type(asset) == "string" and asset ~= "" then
                     surfaceAssets[key] = asset
+                    -- Revisit already decorated parts after an async asset
+                    -- resolves, without waiting for a complete world pass.
+                    if wakeSurfaceScan then wakeSurfaceScan() end
                 elseif not textureWarning then
                     textureWarning = true
                     card:Notify("Custom textures unavailable; trying Roblox material images")
@@ -39180,7 +39245,8 @@ function Module.init(context: any): any
             or string.find(name, "glass", 1, true) ~= nil
         if enabled("Glass reflections") and (material == Enum.Material.Glass
             or (plastic and window and part.Transparency >= 0.1)) then return 0.22 end
-        if enabled("Wet surfaces") and plastic and part.Transparency <= 0.05 and floorShape(part) then return 0.16 end
+        if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
+            and material ~= Enum.Material.Glass then return 0.16 end
         return nil
     end
 
@@ -39189,6 +39255,11 @@ function Module.init(context: any): any
         if not safePart(part) then
             if record then removeSurface(part, record) end
             return
+        end
+        if floorReflection and type(floorReflection.Observe) == "function" then
+            -- Share the incremental map walk with the mirror library, even
+            -- when the other surface options are switched off.
+            pcall(floorReflection.Observe, floorReflection, part)
         end
         local reflection: number? = wantedReflection(part)
         if record and record.reflectionApplied ~= nil and record.reflectionTarget ~= reflection then
@@ -39232,8 +39303,10 @@ function Module.init(context: any): any
                     end)
                     if not assigned then texture.Texture = asset end
                     texture.StudsPerTileU, texture.StudsPerTileV = definition.u, definition.v
-                    texture.Transparency = 0.3
-                    texture.Color3 = part.Color:Lerp(Color3.new(1, 1, 1), 0.55)
+                    -- Tint the overlay by the original colour, not a blend
+                    -- towards white (the old blend washed dark floors out).
+                    texture.Transparency = 0.55
+                    texture.Color3 = part.Color
                     texture.Parent = part
                 end)
                 if ok then
@@ -39254,7 +39327,7 @@ function Module.init(context: any): any
             end
         elseif record and record.textures then
             for _, texture: any in ipairs(record.textures) do
-                texture.Color3 = part.Color:Lerp(Color3.new(1, 1, 1), 0.55)
+                texture.Color3 = part.Color
             end
         end
         if record and not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
@@ -39263,10 +39336,10 @@ function Module.init(context: any): any
     local function refreshSurfaces(): ()
         local texturesOn: boolean = enabled("Surface textures")
         local anyOn: boolean = texturesOn or enabled("Glass reflections") or enabled("Wet surfaces")
+            or (enabled("Floor reflections") and floorReflection ~= nil)
         if not anyOn then stopSurfaces(); updateStatus(); return end
         if texturesOn ~= surfaceTexturesOn then
-            -- Cancel late downloads only when this option changes. Switching
-            -- glass/wetness must not destroy unrelated surface textures.
+            -- An old download must never revive a disabled texture option.
             surfaceGeneration += 1
             surfaceAssets, textureWarning, surfaceTexturesOn = {}, false, texturesOn
         end
@@ -39280,100 +39353,155 @@ function Module.init(context: any): any
             end
             if not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
         end
-        if surfaceConnection then updateStatus(); return end
-        local ok: boolean, params: any = pcall(function(): any
-            local overlap: OverlapParams = OverlapParams.new()
-            overlap.FilterType = Enum.RaycastFilterType.Exclude
-            overlap.MaxParts = MAX_QUERY
-            return overlap
-        end)
-        if not ok then params = nil end
-        local groundOk: boolean, groundParams: any = pcall(function(): RaycastParams
-            local ray: RaycastParams = RaycastParams.new()
-            ray.FilterType = Enum.RaycastFilterType.Exclude
-            ray.IgnoreWater = true
-            return ray
-        end)
-        if not groundOk then groundParams = nil end
-        if not params and not groundParams then
-            card:Notify("Surface enhancements unavailable on this client")
+        if surfaceConnection then
+            if wakeSurfaceScan then wakeSurfaceScan() end
+            updateStatus()
             return
         end
-        local elapsed: number = 2
-        local candidates: {any}? = nil
-        local index: number = 1
-        local queryWarned: boolean = false
-        local processWarned: boolean = false
-        local function updateSurfaces(deltaTime: number): ()
-            elapsed += math.clamp(deltaTime, 0, 0.25)
-            if not candidates and elapsed >= 2 then
-                local camera: Camera? = world.CurrentCamera
-                if not camera then return end
-                elapsed = 0
-                local excluded: {Instance} = {}
-                local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
-                if character then table.insert(excluded, character) end
-                if weatherFolder then table.insert(excluded, weatherFolder) end
-                local queryOk: boolean, found: any = false, nil
-                if params then
-                    queryOk, found = pcall(function(): any
-                        params.FilterDescendantsInstances = excluded
-                        return world:GetPartBoundsInRadius(camera.CFrame.Position, 120, params)
-                    end)
-                end
-                if not queryOk or type(found) ~= "table" then
-                    found = {}
-                    if not queryWarned then
-                        queryWarned = true
-                        card:Notify("Nearby scan unavailable; trying the surface under the camera")
+
+        -- Walk the hierarchy in bounded slices; no GetDescendants snapshot and
+        -- no radius eviction. Streaming additions are queued separately and
+        -- a later pass reconciles changed/removed parts even without signals.
+        local stack: {any} = {}
+        local pending: {[number]: any} = {}
+        local pendingSet: {[any]: boolean} = {}
+        local pendingHead, pendingTail = 1, 0
+        local stale: {any} = {}
+        local staleIndex: number = 1
+        local rescanRequested: boolean = true
+        local passWait: number = 0
+        local priorityPending: boolean = false
+        local warned: boolean = false
+        local capWarned: boolean = false
+        local groundParams: any = nil
+        pcall(function(): ()
+            groundParams = RaycastParams.new()
+            groundParams.FilterType, groundParams.IgnoreWater = Enum.RaycastFilterType.Exclude, true
+            pcall(function(): () groundParams.RespectCanCollide = true end)
+        end)
+        local function enqueue(part: any): ()
+            if not part or pendingSet[part] or pendingTail - pendingHead + 1 >= MAX_PENDING then return end
+            pendingTail += 1
+            pending[pendingTail], pendingSet[part] = part, true
+        end
+        local function beginPass(): ()
+            stack = {{items = {world}, index = 1}}
+            stale, staleIndex = {}, 1
+            for part: any in pairs(surfaceRecords) do table.insert(stale, part) end
+            priorityPending, rescanRequested, passWait = true, false, 0
+        end
+        wakeSurfaceScan = function(): () rescanRequested = true end
+
+        local function structural(node: any): boolean
+            return node == world or node:IsA("BasePart") or node:IsA("Model") or node:IsA("Folder")
+        end
+        local function ignoredTree(node: any): boolean
+            if node == world then return false end
+            if not node.Parent or node == world.CurrentCamera or node == weatherFolder
+                or (host.LocalPlayer and node == host.LocalPlayer.Character)
+                or node:IsA("Tool") or node:IsA("Accessory") then return true end
+            if node:IsA("Model") and (node:FindFirstChildOfClass("Humanoid")
+                or node:FindFirstChildOfClass("AnimationController")) then return true end
+            return not structural(node)
+        end
+        local function nextTreeNode(): (any, boolean)
+            while #stack > 0 do
+                local top: any = stack[#stack]
+                local node: any = top.items[top.index]
+                top.index += 1
+                if not node then
+                    table.remove(stack)
+                else
+                    local ok: boolean, ignored: any = pcall(ignoredTree, node)
+                    if ok and not ignored then
+                        local childrenOk: boolean, children: any = pcall(function(): any return node:GetChildren() end)
+                        if childrenOk and type(children) == "table" and #children > 0 then
+                            table.insert(stack, {items = children, index = 1})
+                        end
+                        return node, true
                     end
+                    -- Even skipped children consume the traversal budget.
+                    return nil, true
                 end
-                local seen: {[Instance]: boolean} = {}
-                candidates = {}
-                -- Radius results are not ordered and can fill up with small
-                -- objects. Prioritize the visible floor with one ray per scan.
-                if groundParams and (not params or enabled("Surface textures") or enabled("Wet surfaces")) then
-                    local rayOk: boolean, hit: any = pcall(function(): any
+            end
+            return nil, false
+        end
+        local function processSafely(part: any): ()
+            local ok: boolean, failure: any = pcall(processSurface, part)
+            if not ok and not warned then
+                warned = true
+                warn("[Shaders] A surface could not be enhanced: " .. tostring(failure))
+            end
+            if not capWarned and (textureCount >= MAX_TEXTURES or reflectionCount >= MAX_REFLECTIONS) then
+                capWarned = true
+                card:Notify("Surface limit reached; some parts may be unchanged")
+            end
+        end
+        local function updateSurfaces(deltaTime: number): ()
+            if rescanRequested then beginPass() end
+            if priorityPending then
+                priorityPending = false
+                local camera: Camera? = world.CurrentCamera
+                if camera and groundParams then
+                    local ok: boolean, hit: any = pcall(function(): any
+                        local excluded: {Instance} = {}
+                        local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
+                        if character then table.insert(excluded, character) end
+                        if weatherFolder then table.insert(excluded, weatherFolder) end
                         groundParams.FilterDescendantsInstances = excluded
                         return world:Raycast(camera.CFrame.Position, Vector3.new(0, -80, 0), groundParams)
                     end)
-                    local floor: any = if rayOk and hit then hit.Instance else nil
-                    if floor then
-                        seen[floor] = true
-                        table.insert(candidates :: {any}, floor)
-                    end
-                end
-                for i: number = 1, math.min(#found, MAX_QUERY) do
-                    if #(candidates :: {any}) >= MAX_QUERY then break end
-                    local part: any = found[i]
-                    if not seen[part] then
-                        seen[part] = true
-                        table.insert(candidates :: {any}, part)
-                    end
-                end
-                for part: any, record: any in pairs(surfaceRecords) do
-                    if not seen[part] then removeSurface(part, record) end
-                end
-                index = 1
-            end
-            if not candidates then return end
-            -- Creation and inspection are spread across frames, never an
-            -- unbounded GetDescendants() or an instance loop every frame.
-            for _ = 1, 4 do
-                local part: any = candidates[index]
-                if not part then candidates = nil; break end
-                index += 1
-                local processed: boolean, failure: any = pcall(processSurface, part)
-                if not processed and not processWarned then
-                    processWarned = true
-                    warn("[Shaders] A surface could not be enhanced: " .. tostring(failure))
+                    if ok and hit and hit.Instance then enqueue(hit.Instance) end
                 end
             end
+            -- Reconcile stale records in small batches even if a whole model
+            -- was streamed out and no longer appears in the hierarchy walk.
+            for _ = 1, 8 do
+                local part: any = stale[staleIndex]
+                if not part then break end
+                staleIndex += 1
+                local record: any = surfaceRecords[part]
+                if record then
+                    local ok: boolean, safe: any = pcall(safePart, part)
+                    if not ok or not safe then removeSurface(part, record) end
+                end
+            end
+            local jobs, nodes = 0, 0
+            while jobs < MAX_SURFACE_JOBS and nodes < MAX_TREE_NODES do
+                local part: any = nil
+                if pendingHead <= pendingTail then
+                    part = pending[pendingHead]
+                    pending[pendingHead] = nil
+                    pendingHead += 1
+                    pendingSet[part] = nil
+                    if pendingHead > pendingTail then pending, pendingHead, pendingTail = {}, 1, 0 end
+                else
+                    local node: any, visited: boolean = nextTreeNode()
+                    if not visited then break end
+                    nodes += 1
+                    if node and node:IsA("BasePart") then part = node end
+                end
+                if part then processSafely(part); jobs += 1 end
+            end
+            if #stack == 0 and pendingHead > pendingTail and staleIndex > #stale then
+                passWait += math.clamp(deltaTime, 0, 0.25)
+                if passWait >= 2 then rescanRequested = true end
+            end
+        end
+        if world.DescendantAdded then
+            surfaceAddedConnection = world.DescendantAdded:Connect(function(object: any): ()
+                if object:IsA("BasePart") then enqueue(object) end
+            end)
+        end
+        if world.DescendantRemoving then
+            surfaceRemovingConnection = world.DescendantRemoving:Connect(function(object: any): ()
+                local record: any = surfaceRecords[object]
+                if record then removeSurface(object, record) end
+            end)
         end
         surfaceConnection = host.TaskManager:Connect(updateSurfaces, nil, "Shaders surfaces")
         updateStatus()
     end
-
     local function cleanup(): ()
         stopFloorReflection()
         stopWeather()
@@ -39408,9 +39536,9 @@ function Module.init(context: any): any
                 color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
                 bloom = makeEffect("BloomEffect", "ARMShaderBloom")
                 rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-                color.Brightness, color.Contrast, color.Saturation = 0.035, 0.14, 0.08
-                color.TintColor, color.Enabled = Color3.fromRGB(255, 244, 228), true
-                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.3, 24, 0.9, true
+                color.Brightness, color.Contrast, color.Saturation = 0, 0.08, 0.05
+                color.TintColor, color.Enabled = Color3.fromRGB(255, 247, 236), true
+                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.2, 24, 0.95, true
                 rays.Intensity, rays.Spread, rays.Enabled = 0.1, 0.6, true
                 applyLighting()
                 if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
@@ -39425,16 +39553,18 @@ function Module.init(context: any): any
         end,
     })
 
-    card:CreateToggle({Name = "Floor reflections", Default = true, Function = refreshFloorReflection,
-        Tooltip = "Approximate avatar and nearby scenery on a flat floor; client-only, not screen-space reflections."})
+    card:CreateToggle({Name = "Floor reflections", Default = true, Function = function(): ()
+        refreshFloorReflection(); refreshSurfaces()
+    end,
+        Tooltip = "Client-only mirror approximation on a few visible flat floors; not screen-space reflections."})
     card:CreateToggle({Name = "Surface textures", Default = true, Function = refreshSurfaces,
-        Tooltip = "CC0 colour detail on nearby simple floors and walls; no meshes or existing decals."})
+        Tooltip = "Incremental map-wide colour detail on eligible blocks; no meshes or existing decals."})
     card:CreateToggle({Name = "Glass reflections", Default = true, Function = refreshSurfaces,
-        Tooltip = "Adds a gentle sky reflection to nearby glass and transparent windows."})
-    card:CreateToggle({Name = "Fog", Default = false, Function = refreshFog,
-        Tooltip = "Atmospheric fog; the game's atmosphere is restored when switched off."})
+        Tooltip = "Adds sky reflectance to eligible glass and transparent windows across the map."})
+    card:CreateToggle({Name = "Fog", Default = false, Function = function(): () refreshFog(); changeWeather() end,
+        Tooltip = "Distance haze plus local moving mist particles; restores the game's atmosphere."})
     card:CreateToggle({Name = "Rain", Default = false, Function = changeWeather,
-        Tooltip = "Rain around the camera, with staggered shelter checks."})
+        Tooltip = "Local rain and splashes, with staggered shelter checks and visible outdoor cells."})
     card:CreateToggle({Name = "Snow", Default = false, Function = changeWeather,
         Tooltip = "Falling snow around the camera; can be combined with rain."})
     card:CreateToggle({Name = "Falling leaves", Default = false, Function = changeWeather,
@@ -39442,10 +39572,10 @@ function Module.init(context: any): any
     card:CreateToggle({Name = "Dust motes", Default = false, Function = changeWeather,
         Tooltip = "Soft drifting particles, including indoors."})
     card:CreateToggle({Name = "Wet surfaces", Default = false, Function = refreshSurfaces,
-        Tooltip = "Adds a subtle sky sheen to nearby plastic floors; does not change physics."})
+        Tooltip = "Adds sky sheen to eligible floors across the map; does not change physics."})
     card:CreateToggle({Name = "Water reflections", Default = false, Function = refreshWater,
         Tooltip = "Increases Terrain water reflectance while enabled."})
-    card:CreateNote("Local approximation: flat floors only. Rain and snow stop under a roof; graphics quality affects the result.")
+    card:CreateNote("Client-only approximation. Reflections need flat floors; weather and quality depend on the client.")
 
     Module.Initialized = true
     return card
@@ -43657,6 +43787,7 @@ function Module.init(context: any): any
 
     local navOrdered: {any} = {}
     local navEntries: {TextButton} = {}
+    local navIndex: {[any]: number} = {}
     local navSelected: number = 1
 
     local navCellConnections: {RBXScriptConnection} = {}
@@ -43750,8 +43881,10 @@ function Module.init(context: any): any
         end)
         navOrdered = {}
         navEntries = {}
+        navIndex = {}
         for index: number, feature: any in ipairs(matches) do
             table.insert(navOrdered, feature)
+            navIndex[feature] = index
             local entry: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 Parent = navResults,
@@ -43886,6 +44019,10 @@ function Module.init(context: any): any
     state.navigator = {
         root = navScreen,
         refresh = rebuildNavigator,
+        refreshFeature = function(feature: any): ()
+            local index: number? = navIndex[feature]
+            if navScreen.Visible and index then paintNavEntry(index) end
+        end,
         Open = openNavigator,
         Close = closeNavigator,
     }
@@ -54450,6 +54587,13 @@ local MAX_ACTORS = 3
 local MAX_ACTOR_PARTS = 36
 local MAX_SCENE_PARTS = 18
 local MAX_QUERY = 100
+local MAX_SECONDARY = 2
+local MAX_SECONDARY_PARTS = 32
+local MAX_TRACKED_FLOORS = 600
+local MAX_FLOOR_CHECKS_PER_TICK = 32
+local MAX_FLOOR_SIZE = 256
+local SECONDARY_INTERVAL = 1
+local SECONDARY_POSE_INTERVAL = 1 / 15
 local MAX_CREATIONS_PER_TICK = 3
 local FLOOR_INTERVAL = 0.20
 local SCENE_INTERVAL = 2
@@ -54480,7 +54624,7 @@ local function surfaceProjection(part: BasePart): (CFrame, Vector2, CFrame)
     return surface, size, surface.Rotation * CFrame.Angles(0, math.pi, 0)
 end
 
-local function project(camera: Camera, part: BasePart, gui: SurfaceGui, viewport: ViewportFrame, viewCamera: Camera): boolean
+local function project(camera: Camera, part: BasePart, gui: SurfaceGui, viewport: ViewportFrame, viewCamera: Camera, maxCanvas: number?): boolean
     local surface, size, viewRotation = surfaceProjection(part)
     if size.X <= 0 or size.Y <= 0 then return false end
     local cameraFrame: CFrame = camera.CFrame
@@ -54491,10 +54635,9 @@ local function project(camera: Camera, part: BasePart, gui: SurfaceGui, viewport
     if (surface.Position - cameraFrame.Position):Dot(look) + forwardExtent <= 0 then return false end
     local relative: Vector3 = surface:PointToObjectSpace(cameraFrame.Position)
     local distance: number = -relative.Z
-    if distance <= 0.1 or distance > 80 then return false end
+    if distance <= 0.1 or distance > 160 then return false end
     local offsetX, offsetY = relative.X / size.X, relative.Y / size.Y
-    -- Avoid allocating a very large off-axis viewport when the camera is far
-    -- from the small local patch; it will return when the camera comes closer.
+    -- Bound the off-axis viewport when the camera is well outside this floor.
     if math.max(math.abs(offsetX), math.abs(offsetY)) > 1 then return false end
     local scale: number = 1 + 2 * math.max(math.abs(offsetX), math.abs(offsetY))
     local halfHeight: number = size.Y / 2
@@ -54512,7 +54655,11 @@ local function project(camera: Camera, part: BasePart, gui: SurfaceGui, viewport
     viewport.Size = UDim2.fromScale(scale, scale)
     viewCamera.CFrame = (viewRotation + camera.CFrame.Position)
         * CFrame.new(0, 0, 0, factor, 0, 0, 0, factor, 0, 0, 0, 1)
-    local resolution: number = 512 / math.max(size.X, size.Y)
+    -- The viewport itself is enlarged by `scale`; cap its effective pixel
+    -- extent too. Bucket the divisor to avoid resizing its render target on
+    -- every tiny camera movement.
+    local scaleBudget: number = math.ceil(scale * 2) / 2
+    local resolution: number = (maxCanvas or 1024) / scaleBudget / math.max(size.X, size.Y)
     local canvasSize: Vector2 = Vector2.new(math.max(32, math.floor(size.X * resolution)), math.max(32, math.floor(size.Y * resolution)))
     if gui.CanvasSize ~= canvasSize then gui.CanvasSize = canvasSize end
     return true
@@ -54525,6 +54672,11 @@ function Module.init(host: any): any
         local world: Workspace = host.workspace or workspace
         local player: Player = host.LocalPlayer
         local playerGui: PlayerGui? = host.PlayerGui or (player and player:FindFirstChildOfClass("PlayerGui"))
+        local mobile: boolean = host.state ~= nil and host.state.isMobile == true
+        local primaryCanvas: number = if mobile then 768 else 1024
+        local secondaryCanvas: number = if mobile then 384 else 512
+        local primaryPoseInterval: number = if mobile then 1 / 20 else POSE_INTERVAL
+        local secondaryPoseInterval: number = if mobile then 1 / 10 else SECONDARY_POSE_INTERVAL
         if not world or not player or not playerGui or not host.TaskManager then
             return nil, "PlayerGui or camera services unavailable"
         end
@@ -54543,6 +54695,14 @@ function Module.init(host: any): any
         local records: {[Instance]: any} = {}
         local actors: {[Instance]: any} = {}
         local queue: {any} = {}
+        local candidates: {[Instance]: number} = {}
+        local candidateCount, candidateOrder = 0, 0
+        local secondary: {[Instance]: any} = {}
+        local secondaryElapsed, secondaryPoseElapsed = SECONDARY_INTERVAL, 0
+        local selectionItems: {any}? = nil
+        local selectionIndex: number = 1
+        local selectionChoices: {any} = {}
+        local secondaryFailed, candidateWarned = false, false
         local planePoint: Vector3? = nil
         local planeNormal: Vector3? = nil
         local currentFloor: BasePart? = nil
@@ -54555,10 +54715,21 @@ function Module.init(host: any): any
         local workWarned: boolean = false
         local session: any = {}
 
+        local function clearMirrorCopies(mirror: any): ()
+            for _, record: any in pairs(mirror.records) do pcall(function(): () record.copy:Destroy() end) end
+            for _, actor: any in pairs(mirror.actors) do pcall(function(): () actor:Destroy() end) end
+            mirror.records, mirror.actors, mirror.queue = {}, {}, {}
+        end
+        local function destroyMirror(mirror: any): ()
+            clearMirrorCopies(mirror)
+            if mirror.gui then pcall(function(): () mirror.gui:Destroy() end) end
+            if mirror.plane then pcall(function(): () mirror.plane:Destroy() end) end
+        end
         local function clearCopies(): ()
             for _, record: any in pairs(records) do pcall(function(): () record.copy:Destroy() end) end
             for _, actor: any in pairs(actors) do pcall(function(): () actor:Destroy() end) end
             records, actors, queue = {}, {}, {}
+            for _, mirror: any in pairs(secondary) do clearMirrorCopies(mirror) end
         end
 
         function session:Stop(): ()
@@ -54568,6 +54739,9 @@ function Module.init(host: any): any
             if workConnection then pcall(function(): () workConnection:Disconnect() end); workConnection = nil end
             if renderConnection then pcall(function(): () renderConnection:Disconnect() end); renderConnection = nil end
             clearCopies()
+            for _, mirror: any in pairs(secondary) do destroyMirror(mirror) end
+            secondary, candidates = {}, {}
+            candidateCount = 0
             if gui then pcall(function(): () gui:Destroy() end); gui = nil end
             if folder then pcall(function(): () folder:Destroy() end); folder = nil end
             -- Also destroy partially constructed instances if setup failed.
@@ -54596,11 +54770,11 @@ function Module.init(host: any): any
             gui.SizingMode, gui.ZIndexBehavior = Enum.SurfaceGuiSizingMode.FixedSize, Enum.ZIndexBehavior.Sibling
             gui.AlwaysOnTop, gui.ClipsDescendants = false, true
             gui.LightInfluence, gui.Brightness, gui.ResetOnSpawn = 0, 1, false
-            gui.MaxDistance = 90
+            gui.MaxDistance = 180
             viewport = Instance.new("ViewportFrame")
             viewport.Parent = gui
             viewport.Name, viewport.BackgroundTransparency, viewport.BorderSizePixel = "Reflection", 1, 0
-            viewport.ImageTransparency = 0.46
+            viewport.ImageTransparency = 0.12
             viewport.AnchorPoint = Vector2.new(0.5, 0.5)
             viewport.Ambient = Color3.fromRGB(215, 215, 215)
             viewport.LightColor = Color3.fromRGB(215, 210, 200)
@@ -54619,6 +54793,42 @@ function Module.init(host: any): any
             end)
         end)
         if not ok then session:Stop(); return nil, tostring(failure) end
+
+        local function eligibleFloor(part: any): boolean
+            if not part:IsA("BasePart") or not part.Parent or not part.Anchored
+                or part.Transparency >= 0.95 or part.CFrame.UpVector.Y < 0.97 then return false end
+            local size: Vector3 = part.Size
+            if size.X < 6 or size.Z < 6 or size.Y > math.min(size.X, size.Z) * 0.5 then return false end
+            local parent: any = part.Parent
+            while parent and parent ~= world do
+                if parent == folder or parent == world.CurrentCamera or parent:IsA("Tool") or parent:IsA("Accessory") then
+                    return false
+                end
+                if parent:IsA("Model") and (parent:FindFirstChildOfClass("Humanoid")
+                    or parent:FindFirstChildOfClass("AnimationController")) then return false end
+                parent = parent.Parent
+            end
+            return parent == world
+        end
+
+        -- Called by Shaders' incremental world traversal. A bounded set of
+        -- compatible floors can be considered from the camera, not only from
+        -- the character's downward ray.
+        function session:Observe(part: any): ()
+            if stopped or candidates[part] then return end
+            local valid: boolean, eligible: any = pcall(eligibleFloor, part)
+            if not valid or not eligible then return end
+            if candidateCount >= MAX_TRACKED_FLOORS then
+                if not candidateWarned then
+                    candidateWarned = true
+                    pcall(report, "Floor reflection tracking limit reached; some floors may be skipped")
+                end
+                return
+            end
+            candidateOrder += 1
+            candidates[part] = candidateOrder
+            candidateCount += 1
+        end
 
         local function loseFloor(deltaTime: number, hasRoot: boolean): ()
             if gui then gui.Enabled = false end
@@ -54660,8 +54870,10 @@ function Module.init(host: any): any
             end
             missingElapsed, missingReported = 0, false
             local localHit: Vector3 = floor.CFrame:PointToObjectSpace(hit.Position)
-            local width: number = math.min(floor.Size.X - 0.04, 24)
-            local depth: number = math.min(floor.Size.Z - 0.04, 20)
+            -- Cover the complete rectangular floor up to a bounded 256-stud
+            -- surface instead of just a 24x20 patch under the player.
+            local width: number = math.min(floor.Size.X - 0.04, MAX_FLOOR_SIZE)
+            local depth: number = math.min(floor.Size.Z - 0.04, MAX_FLOOR_SIZE)
             local x: number = math.clamp(localHit.X, (width - floor.Size.X) / 2, (floor.Size.X - width) / 2)
             local z: number = math.clamp(localHit.Z, (depth - floor.Size.Z) / 2, (floor.Size.Z - depth) / 2)
             plane.Size = Vector3.new(width, 0.04, depth)
@@ -54704,8 +54916,8 @@ function Module.init(host: any): any
         -- Classic clothing needs a Model with a Humanoid; copying only loose
         -- body parts loses shirts and pants. Never clone the original Humanoid
         -- or its scripts/joints. Layered clothing can still differ in a viewport.
-        local function actorModel(character: Model): Model?
-            if actors[character] and actors[character].Parent then return actors[character] end
+        local function actorModel(character: Model, targetScene: WorldModel, actorTable: {[Instance]: any}): Model?
+            if actorTable[character] and actorTable[character].Parent then return actorTable[character] end
             local model: Model? = nil
             local ok: boolean = pcall(function(): ()
                 model = Instance.new("Model")
@@ -54731,13 +54943,13 @@ function Module.init(host: any): any
                         end
                     end
                 end
-                model.Parent = scene
+                model.Parent = targetScene
             end)
             if not ok then
                 if model then pcall(function(): () model:Destroy() end) end
                 return nil
             end
-            actors[character] = model
+            actorTable[character] = model
             return model
         end
 
@@ -54746,6 +54958,8 @@ function Module.init(host: any): any
             local desired: {[Instance]: boolean} = {}
             local desiredActors: {[Instance]: boolean} = {}
             local pending: {any} = {}
+            local focusRoot: any = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+            local scanPosition: Vector3 = if focusRoot then focusRoot.Position else plane.Position
             local dynamicCount, actorCount = 0, 0
             local function remember(part: any, dynamic: boolean, parent: any?): ()
                 if desired[part] then return end
@@ -54786,7 +55000,7 @@ function Module.init(host: any): any
                     selectPart(descendants[i])
                 end
                 if #parts == 0 then return end
-                local model: Model? = actorModel(character)
+                local model: Model? = actorModel(character, scene :: WorldModel, actors)
                 if not model then
                     if character == currentCharacter and not avatarWarned then
                         avatarWarned = true
@@ -54811,7 +55025,7 @@ function Module.init(host: any): any
                         if other ~= player and other.Character then
                             table.insert(otherCharacters, other.Character)
                             local root: any = other.Character:FindFirstChild("HumanoidRootPart")
-                            if root and (root.Position - plane.Position).Magnitude <= 30 then
+                            if root and (root.Position - scanPosition).Magnitude <= 30 then
                                 includeCharacter(other.Character, 12)
                             end
                         end
@@ -54824,7 +55038,7 @@ function Module.init(host: any): any
                 for _, character: any in ipairs(otherCharacters) do table.insert(excluded, character) end
                 local queryOk: boolean, nearby: any = pcall(function(): any
                     overlapParams.FilterDescendantsInstances = excluded
-                    return world:GetPartBoundsInRadius(plane.Position, 32, overlapParams)
+                    return world:GetPartBoundsInRadius(scanPosition, 32, overlapParams)
                 end)
                 if queryOk and type(nearby) == "table" then
                     local candidates: {any} = {}
@@ -54832,7 +55046,7 @@ function Module.init(host: any): any
                         local part: any = nearby[i]
                         local valid: boolean, eligible: any = pcall(isScenePart, part)
                         if valid and eligible then
-                            local distance: number = (part.Position - plane.Position).Magnitude
+                            local distance: number = (part.Position - scanPosition).Magnitude
                             local size: Vector3 = part.Size
                             local weight: number = math.max(1, math.min(12, math.max(size.X, size.Y, size.Z)))
                             table.insert(candidates, {part = part, score = distance / weight})
@@ -54857,11 +55071,9 @@ function Module.init(host: any): any
             queue = pending
         end
 
-        local function makeCopy(item: any): ()
-            local source: any = item.source
-            if not source or not source.Parent or records[source] or not scene then return end
+        local function copyPrepared(source: any, parent: any, point: Vector3, normal: Vector3): any
             local cloneOk: boolean, copy: any = pcall(function(): any return source:Clone() end)
-            if not cloneOk or not copy then return end
+            if not cloneOk or not copy then return nil end
             local prepared: boolean = pcall(function(): ()
                 -- Clone only visible geometry. Never parent scripts, joints,
                 -- emitters, GUIs or tools into the PlayerGui/WorldModel.
@@ -54875,11 +55087,20 @@ function Module.init(host: any): any
                 copy.Anchored = true
                 copy.CanCollide, copy.CanTouch, copy.CanQuery = false, false, false
                 copy.CastShadow, copy.LocalTransparencyModifier = false, 0
-                copy.CFrame = reflectedFrame(source.CFrame, planePoint :: Vector3, planeNormal :: Vector3)
-                copy.Parent = item.parent or scene
+                copy.CFrame = reflectedFrame(source.CFrame, point, normal)
+                copy.Parent = parent
             end)
-            if not prepared then pcall(function(): () copy:Destroy() end); return end
-            records[source] = {copy = copy, dynamic = item.dynamic, frame = source.CFrame, planeVersion = planeVersion}
+            if not prepared then pcall(function(): () copy:Destroy() end); return nil end
+            return copy
+        end
+
+        local function makeCopy(item: any): ()
+            local source: any = item.source
+            if not source or not source.Parent or records[source] or not scene then return end
+            local copy: any = copyPrepared(source, item.parent or scene, planePoint :: Vector3, planeNormal :: Vector3)
+            if copy then
+                records[source] = {copy = copy, dynamic = item.dynamic, frame = source.CFrame, planeVersion = planeVersion}
+            end
         end
 
         local function updateCopies(): ()
@@ -54903,22 +55124,261 @@ function Module.init(host: any): any
             end
         end
 
+        -- Secondary mirrors trade complete SSR for a bounded number of actual
+        -- additional ViewportFrames. They reuse a subset of the primary scene's
+        -- sources but project them onto each floor's own plane.
+        local function positionMirror(mirror: any, camera: Camera): ()
+            local floor: any = mirror.floor
+            local size: Vector3 = floor.Size
+            local width: number = math.min(size.X - 0.04, MAX_FLOOR_SIZE)
+            local depth: number = math.min(size.Z - 0.04, MAX_FLOOR_SIZE)
+            local localCamera: Vector3 = floor.CFrame:PointToObjectSpace(camera.CFrame.Position)
+            local x: number = math.clamp(localCamera.X, (width - size.X) / 2, (size.X - width) / 2)
+            local z: number = math.clamp(localCamera.Z, (depth - size.Z) / 2, (size.Z - depth) / 2)
+            mirror.plane.Size = Vector3.new(width, 0.04, depth)
+            mirror.plane.CFrame = floor.CFrame * CFrame.new(x, size.Y / 2 + 0.04, z)
+            local point: Vector3 = floor.CFrame:PointToWorldSpace(Vector3.new(0, size.Y / 2, 0))
+            local normal: Vector3 = floor.CFrame.UpVector
+            if not mirror.point or not mirror.normal
+                or math.abs((point - mirror.point):Dot(normal)) > 0.04
+                or (normal - mirror.normal).Magnitude > 0.01 then
+                mirror.version += 1
+            end
+            mirror.point, mirror.normal = point, normal
+        end
+
+        local function makeMirror(floor: any, camera: Camera): any
+            local mirror: any = {floor = floor, records = {}, actors = {}, queue = {}, version = 0, syncElapsed = 1}
+            local success: boolean, reason: any = pcall(function(): ()
+                mirror.plane = Instance.new("Part")
+                local surface: Part = mirror.plane
+                surface.Name, surface.Parent, surface.Anchored = "ReflectionSurfaceRemote", folder, true
+                surface.CanCollide, surface.CanTouch, surface.CanQuery = false, false, false
+                surface.CastShadow, surface.Transparency = false, 1
+                positionMirror(mirror, camera)
+                mirror.gui = Instance.new("SurfaceGui")
+                local surfaceGui: SurfaceGui = mirror.gui
+                surfaceGui.Name, surfaceGui.Parent, surfaceGui.Adornee = "ARMShaderFloorReflectionRemote", playerGui, surface
+                surfaceGui.Face, surfaceGui.Enabled = Enum.NormalId.Top, false
+                surfaceGui.SizingMode, surfaceGui.ZIndexBehavior = Enum.SurfaceGuiSizingMode.FixedSize, Enum.ZIndexBehavior.Sibling
+                surfaceGui.AlwaysOnTop, surfaceGui.ClipsDescendants = false, true
+                surfaceGui.LightInfluence, surfaceGui.Brightness, surfaceGui.ResetOnSpawn = 0, 1, false
+                surfaceGui.MaxDistance = 180
+                mirror.viewport = Instance.new("ViewportFrame")
+                local frame: ViewportFrame = mirror.viewport
+                frame.Name, frame.Parent = "Reflection", surfaceGui
+                frame.BackgroundTransparency, frame.BorderSizePixel, frame.ImageTransparency = 1, 0, 0.12
+                frame.AnchorPoint = Vector2.new(0.5, 0.5)
+                frame.Ambient, frame.LightColor = Color3.fromRGB(215, 215, 215), Color3.fromRGB(215, 210, 200)
+                frame.LightDirection = Vector3.new(-1, -1, -1)
+                mirror.camera = Instance.new("Camera")
+                mirror.camera.Parent = frame
+                frame.CurrentCamera = mirror.camera
+                mirror.scene = Instance.new("WorldModel")
+                mirror.scene.Name, mirror.scene.Parent = "ReflectedScene", frame
+            end)
+            if not success then
+                destroyMirror(mirror)
+                if mirror.viewport then pcall(function(): () mirror.viewport:Destroy() end) end
+                if mirror.camera then pcall(function(): () mirror.camera:Destroy() end) end
+                if mirror.scene then pcall(function(): () mirror.scene:Destroy() end) end
+                warn("[Shaders:AdditionalFloor] " .. tostring(reason))
+                return nil
+            end
+            return mirror
+        end
+
+        local function chooseMirrors(): number
+            local camera: Camera? = world.CurrentCamera
+            if not camera or secondaryFailed then selectionItems = nil; return 0 end
+            if not selectionItems then
+                selectionItems, selectionIndex, selectionChoices = {}, 1, {}
+                for floor: any, order: number in pairs(candidates) do
+                    table.insert(selectionItems :: {any}, {floor = floor, order = order})
+                end
+            end
+            local items: {any} = selectionItems :: {any}
+            local frame: CFrame = camera.CFrame
+            local look: Vector3 = frame.LookVector
+            -- A large map can have hundreds of floors: inspect only a slice
+            -- per tick and keep the best two instead of sorting the whole map.
+            -- Reserve two checks to revalidate winners at the end of a pass.
+            for _ = 1, MAX_FLOOR_CHECKS_PER_TICK - MAX_SECONDARY do
+                local item: any = items[selectionIndex]
+                if not item then break end
+                selectionIndex += 1
+                local floor: any, order: number = item.floor, item.order
+                local ok: boolean, eligible: any = pcall(eligibleFloor, floor)
+                if not ok or not eligible then
+                    if candidates[floor] then candidates[floor] = nil; candidateCount -= 1 end
+                elseif floor ~= currentFloor then
+                    local localCamera: Vector3 = floor.CFrame:PointToObjectSpace(frame.Position)
+                    local size: Vector3 = floor.Size
+                    local dx: number = math.max(0, math.abs(localCamera.X) - size.X / 2)
+                    local dz: number = math.max(0, math.abs(localCamera.Z) - size.Z / 2)
+                    local dy: number = math.abs(localCamera.Y - size.Y / 2)
+                    local distance: number = math.sqrt(dx * dx + dy * dy + dz * dz)
+                    local extent: number = math.abs(floor.CFrame.RightVector:Dot(look)) * size.X / 2
+                        + math.abs(floor.CFrame.ZVector:Dot(look)) * size.Z / 2
+                    local width, depth = math.min(size.X - 0.04, MAX_FLOOR_SIZE), math.min(size.Z - 0.04, MAX_FLOOR_SIZE)
+                    local patchX: number = math.clamp(localCamera.X, (width - size.X) / 2, (size.X - width) / 2)
+                    local patchZ: number = math.clamp(localCamera.Z, (depth - size.Z) / 2, (size.Z - depth) / 2)
+                    local canProject: boolean = localCamera.Y > size.Y / 2 + 0.14
+                        and math.abs(localCamera.X - patchX) / width <= 1
+                        and math.abs(localCamera.Z - patchZ) / depth <= 1
+                    if canProject and distance <= 160 and (floor.Position - frame.Position):Dot(look) + extent > 0 then
+                        table.insert(selectionChoices, {
+                            floor = floor, score = distance - (if secondary[floor] then 8 else 0), order = order,
+                        })
+                        table.sort(selectionChoices, function(a: any, b: any): boolean
+                            return if a.score == b.score then a.order < b.order else a.score < b.score
+                        end)
+                        if #selectionChoices > MAX_SECONDARY then table.remove(selectionChoices) end
+                    end
+                end
+            end
+            if selectionIndex <= #items then return 0 end
+            selectionItems = nil
+            local choices: {any} = {}
+            for _, choice: any in ipairs(selectionChoices) do
+                local ok: boolean, eligible: any = pcall(eligibleFloor, choice.floor)
+                if ok and eligible and choice.floor ~= currentFloor then table.insert(choices, choice) end
+            end
+            selectionChoices = {}
+            local desired: {[Instance]: boolean} = {}
+            for _, choice: any in ipairs(choices) do desired[choice.floor] = true end
+            for floor: any, mirror: any in pairs(secondary) do
+                if not desired[floor] then destroyMirror(mirror); secondary[floor] = nil end
+            end
+            local created: number = 0
+            for _, choice: any in ipairs(choices) do
+                local floor: any = choice.floor
+                local mirror: any = secondary[floor]
+                if not mirror then
+                    -- A partially constructed plane also consumes this tick's
+                    -- creation budget if a later SurfaceGui allocation fails.
+                    created += 1
+                    mirror = makeMirror(floor, camera)
+                    if not mirror then
+                        secondaryFailed = true
+                        pcall(report, "Additional floor reflections unavailable; the main reflection remains active")
+                        break
+                    end
+                    secondary[floor] = mirror
+                else
+                    positionMirror(mirror, camera)
+                end
+            end
+            return created
+        end
+        local function syncMirror(mirror: any): ()
+            local wanted: {[Instance]: boolean} = {}
+            local dynamic, static = 0, 0
+            for source: any, record: any in pairs(records) do
+                if record.dynamic and dynamic < MAX_SECONDARY_PARTS - 8
+                    and (source.Position - mirror.point):Dot(mirror.normal) >= -0.25 then
+                    wanted[source] = true
+                    dynamic += 1
+                end
+            end
+            for source: any, record: any in pairs(records) do
+                if not record.dynamic and static < 8
+                    and (source.Position - mirror.point):Dot(mirror.normal) >= -0.25 then
+                    wanted[source] = true
+                    static += 1
+                end
+            end
+            mirror.queue = {}
+            for source: any, record: any in pairs(mirror.records) do
+                if not wanted[source] or not source.Parent or not record.copy.Parent then
+                    pcall(function(): () record.copy:Destroy() end)
+                    mirror.records[source] = nil
+                end
+            end
+            for character: any, actor: any in pairs(mirror.actors) do
+                if not actors[character] then
+                    pcall(function(): () actor:Destroy() end)
+                    mirror.actors[character] = nil
+                end
+            end
+            for source: any in pairs(wanted) do
+                if not mirror.records[source] then table.insert(mirror.queue, source) end
+            end
+        end
+
+        local function makeMirrorCopy(mirror: any, source: any): ()
+            local primary: any = records[source]
+            if not primary or not source.Parent or mirror.records[source] then return end
+            local destination: any = mirror.scene
+            for character: any, actor: any in pairs(actors) do
+                if primary.copy.Parent == actor then
+                    destination = actorModel(character, mirror.scene, mirror.actors) or mirror.scene
+                    break
+                end
+            end
+            local copy: any = copyPrepared(source, destination, mirror.point, mirror.normal)
+            if copy then
+                mirror.records[source] = {copy = copy, dynamic = primary.dynamic, frame = source.CFrame, planeVersion = mirror.version}
+            end
+        end
+
+        local function updateMirrorCopies(mirror: any): ()
+            for source: any, record: any in pairs(mirror.records) do
+                if not source.Parent or not record.copy.Parent or not records[source] then
+                    pcall(function(): () record.copy:Destroy() end)
+                    mirror.records[source] = nil
+                else
+                    local frame: CFrame = source.CFrame
+                    if record.dynamic then
+                        if record.copy.Transparency ~= source.Transparency then record.copy.Transparency = source.Transparency end
+                        if record.copy.Color ~= source.Color then record.copy.Color = source.Color end
+                        if record.copy.Size ~= source.Size then record.copy.Size = source.Size end
+                    end
+                    if record.dynamic or frame ~= record.frame or record.planeVersion ~= mirror.version then
+                        record.copy.CFrame = reflectedFrame(frame, mirror.point, mirror.normal)
+                        record.frame, record.planeVersion = frame, mirror.version
+                    end
+                end
+            end
+        end
+
         local function updateWork(deltaTime: number): ()
             local dt: number = math.clamp(deltaTime, 0, 0.25)
             floorElapsed += dt
             sceneElapsed += dt
             poseElapsed += dt
+            secondaryElapsed += dt
+            secondaryPoseElapsed += dt
             if floorElapsed >= FLOOR_INTERVAL then
                 local elapsed: number = floorElapsed
                 floorElapsed = 0
                 findFloor(elapsed)
             end
             if not currentFloor then return end
+            local budget: number = MAX_CREATIONS_PER_TICK
+            if selectionItems ~= nil or secondaryElapsed >= SECONDARY_INTERVAL then
+                if selectionItems == nil then secondaryElapsed = 0 end
+                budget -= chooseMirrors()
+            end
             if sceneElapsed >= SCENE_INTERVAL then sceneElapsed = 0; scanScene() end
-            for _ = 1, MAX_CREATIONS_PER_TICK do
+            while budget > 0 do
                 local item: any = table.remove(queue, 1)
                 if not item then break end
                 makeCopy(item)
+                budget -= 1
+            end
+            for _, mirror: any in pairs(secondary) do
+                mirror.syncElapsed += dt
+                if mirror.syncElapsed >= 0.4 then
+                    mirror.syncElapsed = 0
+                    syncMirror(mirror)
+                end
+                while budget > 0 do
+                    local source: any = table.remove(mirror.queue, 1)
+                    if not source then break end
+                    makeMirrorCopy(mirror, source)
+                    budget -= 1
+                end
             end
             if #queue == 0 and not avatarWarned and currentCharacter and actors[currentCharacter] then
                 local found: boolean = false
@@ -54933,7 +55393,19 @@ function Module.init(host: any): any
                     pcall(report, "Avatar parts could not be copied for the floor reflection")
                 end
             end
-            if poseElapsed >= POSE_INTERVAL then poseElapsed = 0; updateCopies() end
+            local anyVisible: boolean = gui ~= nil and gui.Enabled == true
+            if not anyVisible then
+                for _, mirror: any in pairs(secondary) do
+                    if mirror.gui.Enabled then anyVisible = true; break end
+                end
+            end
+            if anyVisible and poseElapsed >= primaryPoseInterval then poseElapsed = 0; updateCopies() end
+            if anyVisible and secondaryPoseElapsed >= secondaryPoseInterval then
+                secondaryPoseElapsed = 0
+                for _, mirror: any in pairs(secondary) do
+                    if mirror.gui.Enabled then updateMirrorCopies(mirror) end
+                end
+            end
         end
 
         local function work(deltaTime: number): ()
@@ -54954,9 +55426,10 @@ function Module.init(host: any): any
             local camera: Camera? = world.CurrentCamera
             if not camera or not currentFloor or not gui or not plane or not viewport or not viewCamera then
                 if gui then gui.Enabled = false end
+                for _, mirror: any in pairs(secondary) do mirror.gui.Enabled = false end
                 return
             end
-            local projected: boolean, visible: any = pcall(project, camera, plane, gui, viewport, viewCamera)
+            local projected: boolean, visible: any = pcall(project, camera, plane, gui, viewport, viewCamera, primaryCanvas)
             if not projected then
                 warn("[Shaders:FloorProjection] " .. tostring(visible))
                 session:Stop()
@@ -54964,6 +55437,10 @@ function Module.init(host: any): any
                 return
             end
             gui.Enabled = visible == true
+            for _, mirror: any in pairs(secondary) do
+                local ok: boolean, shown: any = pcall(project, camera, mirror.plane, mirror.gui, mirror.viewport, mirror.camera, secondaryCanvas)
+                mirror.gui.Enabled = ok and shown == true
+            end
         end
         local connected: boolean, connectFailure: any = pcall(function(): ()
             workConnection = host.TaskManager:Connect(work, nil, "Shaders floor reflection")

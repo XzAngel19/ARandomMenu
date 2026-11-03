@@ -55,7 +55,8 @@ for key, (name, dimensions, digest, cache_name) in FIXTURES.items():
     assert f"{key} = {{" in WURST and f'Assets/Shaders/{name}' in WURST
     assert f'asset = "{key}"' in SHADERS
 for name in ("LICENSE-Photoreal-MIT.txt", "LICENSE-Weather-ISC.txt",
-             "LICENSE-Kenney-CC0.txt", "LICENSE-RPicster-CC0.txt", "LICENSE-ambientCG-CC0.txt"):
+             "LICENSE-Kenney-CC0.txt", "LICENSE-RPicster-CC0.txt", "LICENSE-ambientCG-CC0.txt",
+             "LICENSE-Rain-Apache-2.0.txt", "NOTICE-Rain.txt"):
     assert (ROOT / "docs/third-party/shaders" / name).is_file(), name
 
 block = WURST[WURST.index("local AssetManager: any = {"):

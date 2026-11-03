@@ -1,5 +1,6 @@
 -- Client-side lighting, an optional local floor reflection and atmosphere.
--- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC).
+-- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC),
+-- with outdoor sampling and splashes informed by buildthomas/Rain (Apache-2.0).
 -- Surface colour maps are CC0 ambientCG assets; they are not PBR normal maps.
 -- Research, pinned sources and licences: docs/third-party/shaders/README.md.
 local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
@@ -7,13 +8,13 @@ local card
 
 local WEATHER = {
     Rain = {asset = "shaderRainTexture", fallback = "rbxasset://textures/particles/SquareParticle.png",
-        rate = 15, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
+        rate = 12, size = 0.45, speedMin = 45, speedMax = 50, lifetime = 0.85,
         transparency = 0.38, spread = 1},
     Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
-        rate = 7, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
+        rate = 5, size = 0.35, speedMin = 6, speedMax = 9, lifetime = 4,
         transparency = 0.18, spread = 12},
     ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
-        rate = 3, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
+        rate = 2, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
         transparency = 0.10, spread = 18},
 }
 local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
@@ -56,6 +57,9 @@ function Module.init(context: any): any
     local weatherGeneration: number = 0
 
     local surfaceConnection: any = nil
+    local surfaceAddedConnection: any = nil
+    local surfaceRemovingConnection: any = nil
+    local wakeSurfaceScan: (() -> ())? = nil
     local surfaceGeneration: number = 0
     local surfaceAssets: {[string]: any} = {}
     local surfaceTexturesOn: boolean = false
@@ -63,9 +67,13 @@ function Module.init(context: any): any
     local textureCount: number = 0
     local reflectionCount: number = 0
     local textureWarning: boolean = false
-    local MAX_QUERY: number = 240
-    local MAX_TEXTURES: number = 80
-    local MAX_REFLECTIONS: number = 100
+    -- The world is visited incrementally, not restricted to the player's
+    -- neighbourhood. Caps bound retained instances on unusually large maps.
+    local MAX_TEXTURES: number = 600
+    local MAX_REFLECTIONS: number = 1200
+    local MAX_SURFACE_JOBS: number = 4
+    local MAX_TREE_NODES: number = 20
+    local MAX_PENDING: number = 2048
 
     local function enabled(name: string): boolean
         return card ~= nil and card.Enabled and card.Options[name] ~= nil
@@ -128,19 +136,14 @@ function Module.init(context: any): any
         end
         -- These engine properties affect material/sky lighting even when a
         -- place's own post effects compete with our colour correction.
-        setMinimum("EnvironmentDiffuseScale", 0.65)
-        setMinimum("EnvironmentSpecularScale", 0.9)
+        -- Do not raise diffuse light or exposure: both can wash out an
+        -- already-bright floor even with the reflection itself switched off.
+        setMinimum("EnvironmentSpecularScale", 0.65)
         setMinimum("ShadowSoftness", 0.35)
         pcall(function(): ()
             lightOriginal.GlobalShadows = lighting.GlobalShadows
             lighting.GlobalShadows = true
             lightApplied.GlobalShadows = lighting.GlobalShadows
-        end)
-        pcall(function(): ()
-            local old: number = lighting.ExposureCompensation
-            lightOriginal.ExposureCompensation = old
-            lighting.ExposureCompensation = math.max(old, math.min(old + 0.12, 3))
-            lightApplied.ExposureCompensation = lighting.ExposureCompensation
         end)
     end
 
@@ -254,7 +257,8 @@ function Module.init(context: any): any
             if enabled(name) then table.insert(kinds, name) end
         end
         local dustEnabled: boolean = enabled("Dust motes")
-        if #kinds == 0 and not dustEnabled then updateStatus(); return end
+        local mistEnabled: boolean = enabled("Fog")
+        if #kinds == 0 and not dustEnabled and not mistEnabled then updateStatus(); return end
         local generation: number = weatherGeneration
         local ok: boolean, failure: any = pcall(function(): ()
             local folder: Folder = Instance.new("Folder")
@@ -275,11 +279,15 @@ function Module.init(context: any): any
                 return part
             end
             if #kinds > 0 then
+                -- Each cell has its own sky test. The outer ring can remain
+                -- rainy when the camera is sheltered but looks outdoors.
                 for _, offset: Vector3 in ipairs({
-                    Vector3.new(-12, 0, -12), Vector3.new(-12, 0, 12),
-                    Vector3.new(12, 0, -12), Vector3.new(12, 0, 12),
+                    Vector3.new(0, 0, 0),
+                    Vector3.new(-28, 0, -28), Vector3.new(0, 0, -28), Vector3.new(28, 0, -28),
+                    Vector3.new(-28, 0, 0), Vector3.new(28, 0, 0),
+                    Vector3.new(-28, 0, 28), Vector3.new(0, 0, 28), Vector3.new(28, 0, 28),
                 }) do
-                    local part: Part = cellPart("WeatherCell", Vector3.new(24, 0.2, 24))
+                    local part: Part = cellPart("WeatherCell", Vector3.new(26, 0.2, 26))
                     local emitters: {ParticleEmitter} = {}
                     for _, name: string in ipairs(kinds) do
                         local style: any = WEATHER[name]
@@ -321,6 +329,38 @@ function Module.init(context: any): any
                 dust.Parent = dustPart
                 remember("shaderSnowTexture", dust)
             end
+            local mistPart: Part? = nil
+            local mist: ParticleEmitter? = nil
+            if mistEnabled then
+                -- Atmosphere handles distance haze; these translucent sprites
+                -- supply a small moving layer near the camera, even indoors.
+                mistPart = cellPart("FogCell", Vector3.new(60, 10, 60))
+                mist = Instance.new("ParticleEmitter")
+                mist.Name, mist.Enabled = "Fog mist", false
+                mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                mist.Shape, mist.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
+                mist.EmissionDirection, mist.Orientation = Enum.NormalId.Top, Enum.ParticleOrientation.FacingCamera
+                mist.Rate, mist.Size, mist.Speed = 4, NumberSequence.new(10), NumberRange.new(0.1, 0.35)
+                mist.Lifetime, mist.Transparency = NumberRange.new(7, 9), NumberSequence.new(0.86)
+                mist.Color, mist.LightEmission, mist.LightInfluence = ColorSequence.new(Color3.fromRGB(202, 213, 219)), 0.1, 0.7
+                mist.Rotation, mist.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
+                mist.Parent = mistPart
+                remember("shaderSnowTexture", mist)
+            end
+            local splashPart: Part? = nil
+            local splash: ParticleEmitter? = nil
+            if enabled("Rain") then
+                splashPart = cellPart("RainSplashCell", Vector3.new(0.2, 0.2, 0.2))
+                splash = Instance.new("ParticleEmitter")
+                splash.Name, splash.Enabled, splash.Rate = "Rain splashes", false, 0
+                splash.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                splash.Orientation, splash.EmissionDirection = Enum.ParticleOrientation.VelocityPerpendicular, Enum.NormalId.Top
+                splash.Size, splash.Speed = NumberSequence.new(1.2), NumberRange.new(0.1, 0.2)
+                splash.Lifetime, splash.Transparency = NumberRange.new(0.2, 0.3), NumberSequence.new(0.55)
+                splash.Color, splash.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
+                splash.Parent = splashPart
+                remember("shaderSnowTexture", splash)
+            end
             local params: RaycastParams = RaycastParams.new()
             params.FilterType, params.IgnoreWater = Enum.RaycastFilterType.Exclude, true
             local previousCharacter: Model? = nil
@@ -338,6 +378,7 @@ function Module.init(context: any): any
                         for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = false end
                     end
                     if dust then dust.Enabled = false end
+                    if mist then mist.Enabled = false end
                     lastCamera, lastFocus = nil, nil
                     return
                 end
@@ -359,6 +400,7 @@ function Module.init(context: any): any
                     cell.part.Position = focus + cell.offset + Vector3.new(0, 20, 0)
                 end
                 if dustPart and dust then dustPart.Position, dust.Enabled = focus, true end
+                if mistPart and mist then mistPart.Position, mist.Enabled = focus + Vector3.new(0, -2, 0), true end
                 if #weatherCells == 0 then return end
                 roofElapsed += elapsed
                 if roofElapsed < 0.15 then return end
@@ -368,11 +410,22 @@ function Module.init(context: any): any
                 local castOk: boolean, hit: any = pcall(function(): any
                     return world:Raycast(focus + cell.offset, Vector3.new(0, 150, 0), params)
                 end)
-                local covered: boolean = castOk and hit ~= nil
-                if covered and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
+                local covered: boolean = not castOk or hit ~= nil
+                if castOk and hit and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
                     covered = false
                 end
                 for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
+                -- One short ground sample per open cell produces inexpensive
+                -- local splashes; it does not run for snow or while sheltered.
+                if not covered and splashPart and splash then
+                    local groundOk: boolean, ground: any = pcall(function(): any
+                        return world:Raycast(focus + cell.offset + Vector3.new(0, 20, 0), Vector3.new(0, -100, 0), params)
+                    end)
+                    if groundOk and ground and ground.Position and ground.Normal then
+                        splashPart.Position = ground.Position + ground.Normal * 0.05
+                        pcall(function(): () (splash :: ParticleEmitter):Emit(1) end)
+                    end
+                end
             end
             weatherConnection = host.TaskManager:Connect(updateWeather, nil, "Shaders weather")
             for assetKey: string, emitters: {any} in pairs(textures) do
@@ -424,6 +477,15 @@ function Module.init(context: any): any
             pcall(function(): () surfaceConnection:Disconnect() end)
             surfaceConnection = nil
         end
+        if surfaceAddedConnection then
+            pcall(function(): () surfaceAddedConnection:Disconnect() end)
+            surfaceAddedConnection = nil
+        end
+        if surfaceRemovingConnection then
+            pcall(function(): () surfaceRemovingConnection:Disconnect() end)
+            surfaceRemovingConnection = nil
+        end
+        wakeSurfaceScan = nil
         for part: any, record: any in pairs(surfaceRecords) do removeSurface(part, record) end
         surfaceRecords, surfaceAssets = {}, {}
         textureCount, reflectionCount, textureWarning, surfaceTexturesOn = 0, 0, false, false
@@ -508,6 +570,9 @@ function Module.init(context: any): any
                 if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
                 if ok and type(asset) == "string" and asset ~= "" then
                     surfaceAssets[key] = asset
+                    -- Revisit already decorated parts after an async asset
+                    -- resolves, without waiting for a complete world pass.
+                    if wakeSurfaceScan then wakeSurfaceScan() end
                 elseif not textureWarning then
                     textureWarning = true
                     card:Notify("Custom textures unavailable; trying Roblox material images")
@@ -525,7 +590,8 @@ function Module.init(context: any): any
             or string.find(name, "glass", 1, true) ~= nil
         if enabled("Glass reflections") and (material == Enum.Material.Glass
             or (plastic and window and part.Transparency >= 0.1)) then return 0.22 end
-        if enabled("Wet surfaces") and plastic and part.Transparency <= 0.05 and floorShape(part) then return 0.16 end
+        if enabled("Wet surfaces") and part.Transparency <= 0.05 and floorShape(part)
+            and material ~= Enum.Material.Glass then return 0.16 end
         return nil
     end
 
@@ -534,6 +600,11 @@ function Module.init(context: any): any
         if not safePart(part) then
             if record then removeSurface(part, record) end
             return
+        end
+        if floorReflection and type(floorReflection.Observe) == "function" then
+            -- Share the incremental map walk with the mirror library, even
+            -- when the other surface options are switched off.
+            pcall(floorReflection.Observe, floorReflection, part)
         end
         local reflection: number? = wantedReflection(part)
         if record and record.reflectionApplied ~= nil and record.reflectionTarget ~= reflection then
@@ -577,8 +648,10 @@ function Module.init(context: any): any
                     end)
                     if not assigned then texture.Texture = asset end
                     texture.StudsPerTileU, texture.StudsPerTileV = definition.u, definition.v
-                    texture.Transparency = 0.3
-                    texture.Color3 = part.Color:Lerp(Color3.new(1, 1, 1), 0.55)
+                    -- Tint the overlay by the original colour, not a blend
+                    -- towards white (the old blend washed dark floors out).
+                    texture.Transparency = 0.55
+                    texture.Color3 = part.Color
                     texture.Parent = part
                 end)
                 if ok then
@@ -599,7 +672,7 @@ function Module.init(context: any): any
             end
         elseif record and record.textures then
             for _, texture: any in ipairs(record.textures) do
-                texture.Color3 = part.Color:Lerp(Color3.new(1, 1, 1), 0.55)
+                texture.Color3 = part.Color
             end
         end
         if record and not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
@@ -608,10 +681,10 @@ function Module.init(context: any): any
     local function refreshSurfaces(): ()
         local texturesOn: boolean = enabled("Surface textures")
         local anyOn: boolean = texturesOn or enabled("Glass reflections") or enabled("Wet surfaces")
+            or (enabled("Floor reflections") and floorReflection ~= nil)
         if not anyOn then stopSurfaces(); updateStatus(); return end
         if texturesOn ~= surfaceTexturesOn then
-            -- Cancel late downloads only when this option changes. Switching
-            -- glass/wetness must not destroy unrelated surface textures.
+            -- An old download must never revive a disabled texture option.
             surfaceGeneration += 1
             surfaceAssets, textureWarning, surfaceTexturesOn = {}, false, texturesOn
         end
@@ -625,100 +698,155 @@ function Module.init(context: any): any
             end
             if not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
         end
-        if surfaceConnection then updateStatus(); return end
-        local ok: boolean, params: any = pcall(function(): any
-            local overlap: OverlapParams = OverlapParams.new()
-            overlap.FilterType = Enum.RaycastFilterType.Exclude
-            overlap.MaxParts = MAX_QUERY
-            return overlap
-        end)
-        if not ok then params = nil end
-        local groundOk: boolean, groundParams: any = pcall(function(): RaycastParams
-            local ray: RaycastParams = RaycastParams.new()
-            ray.FilterType = Enum.RaycastFilterType.Exclude
-            ray.IgnoreWater = true
-            return ray
-        end)
-        if not groundOk then groundParams = nil end
-        if not params and not groundParams then
-            card:Notify("Surface enhancements unavailable on this client")
+        if surfaceConnection then
+            if wakeSurfaceScan then wakeSurfaceScan() end
+            updateStatus()
             return
         end
-        local elapsed: number = 2
-        local candidates: {any}? = nil
-        local index: number = 1
-        local queryWarned: boolean = false
-        local processWarned: boolean = false
-        local function updateSurfaces(deltaTime: number): ()
-            elapsed += math.clamp(deltaTime, 0, 0.25)
-            if not candidates and elapsed >= 2 then
-                local camera: Camera? = world.CurrentCamera
-                if not camera then return end
-                elapsed = 0
-                local excluded: {Instance} = {}
-                local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
-                if character then table.insert(excluded, character) end
-                if weatherFolder then table.insert(excluded, weatherFolder) end
-                local queryOk: boolean, found: any = false, nil
-                if params then
-                    queryOk, found = pcall(function(): any
-                        params.FilterDescendantsInstances = excluded
-                        return world:GetPartBoundsInRadius(camera.CFrame.Position, 120, params)
-                    end)
-                end
-                if not queryOk or type(found) ~= "table" then
-                    found = {}
-                    if not queryWarned then
-                        queryWarned = true
-                        card:Notify("Nearby scan unavailable; trying the surface under the camera")
+
+        -- Walk the hierarchy in bounded slices; no GetDescendants snapshot and
+        -- no radius eviction. Streaming additions are queued separately and
+        -- a later pass reconciles changed/removed parts even without signals.
+        local stack: {any} = {}
+        local pending: {[number]: any} = {}
+        local pendingSet: {[any]: boolean} = {}
+        local pendingHead, pendingTail = 1, 0
+        local stale: {any} = {}
+        local staleIndex: number = 1
+        local rescanRequested: boolean = true
+        local passWait: number = 0
+        local priorityPending: boolean = false
+        local warned: boolean = false
+        local capWarned: boolean = false
+        local groundParams: any = nil
+        pcall(function(): ()
+            groundParams = RaycastParams.new()
+            groundParams.FilterType, groundParams.IgnoreWater = Enum.RaycastFilterType.Exclude, true
+            pcall(function(): () groundParams.RespectCanCollide = true end)
+        end)
+        local function enqueue(part: any): ()
+            if not part or pendingSet[part] or pendingTail - pendingHead + 1 >= MAX_PENDING then return end
+            pendingTail += 1
+            pending[pendingTail], pendingSet[part] = part, true
+        end
+        local function beginPass(): ()
+            stack = {{items = {world}, index = 1}}
+            stale, staleIndex = {}, 1
+            for part: any in pairs(surfaceRecords) do table.insert(stale, part) end
+            priorityPending, rescanRequested, passWait = true, false, 0
+        end
+        wakeSurfaceScan = function(): () rescanRequested = true end
+
+        local function structural(node: any): boolean
+            return node == world or node:IsA("BasePart") or node:IsA("Model") or node:IsA("Folder")
+        end
+        local function ignoredTree(node: any): boolean
+            if node == world then return false end
+            if not node.Parent or node == world.CurrentCamera or node == weatherFolder
+                or (host.LocalPlayer and node == host.LocalPlayer.Character)
+                or node:IsA("Tool") or node:IsA("Accessory") then return true end
+            if node:IsA("Model") and (node:FindFirstChildOfClass("Humanoid")
+                or node:FindFirstChildOfClass("AnimationController")) then return true end
+            return not structural(node)
+        end
+        local function nextTreeNode(): (any, boolean)
+            while #stack > 0 do
+                local top: any = stack[#stack]
+                local node: any = top.items[top.index]
+                top.index += 1
+                if not node then
+                    table.remove(stack)
+                else
+                    local ok: boolean, ignored: any = pcall(ignoredTree, node)
+                    if ok and not ignored then
+                        local childrenOk: boolean, children: any = pcall(function(): any return node:GetChildren() end)
+                        if childrenOk and type(children) == "table" and #children > 0 then
+                            table.insert(stack, {items = children, index = 1})
+                        end
+                        return node, true
                     end
+                    -- Even skipped children consume the traversal budget.
+                    return nil, true
                 end
-                local seen: {[Instance]: boolean} = {}
-                candidates = {}
-                -- Radius results are not ordered and can fill up with small
-                -- objects. Prioritize the visible floor with one ray per scan.
-                if groundParams and (not params or enabled("Surface textures") or enabled("Wet surfaces")) then
-                    local rayOk: boolean, hit: any = pcall(function(): any
+            end
+            return nil, false
+        end
+        local function processSafely(part: any): ()
+            local ok: boolean, failure: any = pcall(processSurface, part)
+            if not ok and not warned then
+                warned = true
+                warn("[Shaders] A surface could not be enhanced: " .. tostring(failure))
+            end
+            if not capWarned and (textureCount >= MAX_TEXTURES or reflectionCount >= MAX_REFLECTIONS) then
+                capWarned = true
+                card:Notify("Surface limit reached; some parts may be unchanged")
+            end
+        end
+        local function updateSurfaces(deltaTime: number): ()
+            if rescanRequested then beginPass() end
+            if priorityPending then
+                priorityPending = false
+                local camera: Camera? = world.CurrentCamera
+                if camera and groundParams then
+                    local ok: boolean, hit: any = pcall(function(): any
+                        local excluded: {Instance} = {}
+                        local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
+                        if character then table.insert(excluded, character) end
+                        if weatherFolder then table.insert(excluded, weatherFolder) end
                         groundParams.FilterDescendantsInstances = excluded
                         return world:Raycast(camera.CFrame.Position, Vector3.new(0, -80, 0), groundParams)
                     end)
-                    local floor: any = if rayOk and hit then hit.Instance else nil
-                    if floor then
-                        seen[floor] = true
-                        table.insert(candidates :: {any}, floor)
-                    end
-                end
-                for i: number = 1, math.min(#found, MAX_QUERY) do
-                    if #(candidates :: {any}) >= MAX_QUERY then break end
-                    local part: any = found[i]
-                    if not seen[part] then
-                        seen[part] = true
-                        table.insert(candidates :: {any}, part)
-                    end
-                end
-                for part: any, record: any in pairs(surfaceRecords) do
-                    if not seen[part] then removeSurface(part, record) end
-                end
-                index = 1
-            end
-            if not candidates then return end
-            -- Creation and inspection are spread across frames, never an
-            -- unbounded GetDescendants() or an instance loop every frame.
-            for _ = 1, 4 do
-                local part: any = candidates[index]
-                if not part then candidates = nil; break end
-                index += 1
-                local processed: boolean, failure: any = pcall(processSurface, part)
-                if not processed and not processWarned then
-                    processWarned = true
-                    warn("[Shaders] A surface could not be enhanced: " .. tostring(failure))
+                    if ok and hit and hit.Instance then enqueue(hit.Instance) end
                 end
             end
+            -- Reconcile stale records in small batches even if a whole model
+            -- was streamed out and no longer appears in the hierarchy walk.
+            for _ = 1, 8 do
+                local part: any = stale[staleIndex]
+                if not part then break end
+                staleIndex += 1
+                local record: any = surfaceRecords[part]
+                if record then
+                    local ok: boolean, safe: any = pcall(safePart, part)
+                    if not ok or not safe then removeSurface(part, record) end
+                end
+            end
+            local jobs, nodes = 0, 0
+            while jobs < MAX_SURFACE_JOBS and nodes < MAX_TREE_NODES do
+                local part: any = nil
+                if pendingHead <= pendingTail then
+                    part = pending[pendingHead]
+                    pending[pendingHead] = nil
+                    pendingHead += 1
+                    pendingSet[part] = nil
+                    if pendingHead > pendingTail then pending, pendingHead, pendingTail = {}, 1, 0 end
+                else
+                    local node: any, visited: boolean = nextTreeNode()
+                    if not visited then break end
+                    nodes += 1
+                    if node and node:IsA("BasePart") then part = node end
+                end
+                if part then processSafely(part); jobs += 1 end
+            end
+            if #stack == 0 and pendingHead > pendingTail and staleIndex > #stale then
+                passWait += math.clamp(deltaTime, 0, 0.25)
+                if passWait >= 2 then rescanRequested = true end
+            end
+        end
+        if world.DescendantAdded then
+            surfaceAddedConnection = world.DescendantAdded:Connect(function(object: any): ()
+                if object:IsA("BasePart") then enqueue(object) end
+            end)
+        end
+        if world.DescendantRemoving then
+            surfaceRemovingConnection = world.DescendantRemoving:Connect(function(object: any): ()
+                local record: any = surfaceRecords[object]
+                if record then removeSurface(object, record) end
+            end)
         end
         surfaceConnection = host.TaskManager:Connect(updateSurfaces, nil, "Shaders surfaces")
         updateStatus()
     end
-
     local function cleanup(): ()
         stopFloorReflection()
         stopWeather()
@@ -753,9 +881,9 @@ function Module.init(context: any): any
                 color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
                 bloom = makeEffect("BloomEffect", "ARMShaderBloom")
                 rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-                color.Brightness, color.Contrast, color.Saturation = 0.035, 0.14, 0.08
-                color.TintColor, color.Enabled = Color3.fromRGB(255, 244, 228), true
-                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.3, 24, 0.9, true
+                color.Brightness, color.Contrast, color.Saturation = 0, 0.08, 0.05
+                color.TintColor, color.Enabled = Color3.fromRGB(255, 247, 236), true
+                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.2, 24, 0.95, true
                 rays.Intensity, rays.Spread, rays.Enabled = 0.1, 0.6, true
                 applyLighting()
                 if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
@@ -770,16 +898,18 @@ function Module.init(context: any): any
         end,
     })
 
-    card:CreateToggle({Name = "Floor reflections", Default = true, Function = refreshFloorReflection,
-        Tooltip = "Approximate avatar and nearby scenery on a flat floor; client-only, not screen-space reflections."})
+    card:CreateToggle({Name = "Floor reflections", Default = true, Function = function(): ()
+        refreshFloorReflection(); refreshSurfaces()
+    end,
+        Tooltip = "Client-only mirror approximation on a few visible flat floors; not screen-space reflections."})
     card:CreateToggle({Name = "Surface textures", Default = true, Function = refreshSurfaces,
-        Tooltip = "CC0 colour detail on nearby simple floors and walls; no meshes or existing decals."})
+        Tooltip = "Incremental map-wide colour detail on eligible blocks; no meshes or existing decals."})
     card:CreateToggle({Name = "Glass reflections", Default = true, Function = refreshSurfaces,
-        Tooltip = "Adds a gentle sky reflection to nearby glass and transparent windows."})
-    card:CreateToggle({Name = "Fog", Default = false, Function = refreshFog,
-        Tooltip = "Atmospheric fog; the game's atmosphere is restored when switched off."})
+        Tooltip = "Adds sky reflectance to eligible glass and transparent windows across the map."})
+    card:CreateToggle({Name = "Fog", Default = false, Function = function(): () refreshFog(); changeWeather() end,
+        Tooltip = "Distance haze plus local moving mist particles; restores the game's atmosphere."})
     card:CreateToggle({Name = "Rain", Default = false, Function = changeWeather,
-        Tooltip = "Rain around the camera, with staggered shelter checks."})
+        Tooltip = "Local rain and splashes, with staggered shelter checks and visible outdoor cells."})
     card:CreateToggle({Name = "Snow", Default = false, Function = changeWeather,
         Tooltip = "Falling snow around the camera; can be combined with rain."})
     card:CreateToggle({Name = "Falling leaves", Default = false, Function = changeWeather,
@@ -787,10 +917,10 @@ function Module.init(context: any): any
     card:CreateToggle({Name = "Dust motes", Default = false, Function = changeWeather,
         Tooltip = "Soft drifting particles, including indoors."})
     card:CreateToggle({Name = "Wet surfaces", Default = false, Function = refreshSurfaces,
-        Tooltip = "Adds a subtle sky sheen to nearby plastic floors; does not change physics."})
+        Tooltip = "Adds sky sheen to eligible floors across the map; does not change physics."})
     card:CreateToggle({Name = "Water reflections", Default = false, Function = refreshWater,
         Tooltip = "Increases Terrain water reflectance while enabled."})
-    card:CreateNote("Local approximation: flat floors only. Rain and snow stop under a roof; graphics quality affects the result.")
+    card:CreateNote("Client-only approximation. Reflections need flat floors; weather and quality depend on the client.")
 
     Module.Initialized = true
     return card

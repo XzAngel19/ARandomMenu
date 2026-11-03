@@ -65,6 +65,12 @@ assert(speed.Options.Sprint and speed.SprintFrame)
 local press,release=speed.Options.Sprint.fn,speed.Options.Sprint.release
 press();assert(not speed.Enabled and speed.SprintHeld and humanoid.WalkSpeed==30 and standalone)
 release();assert(not standalone and humanoid.WalkSpeed==16 and not speed.SprintHeld)
+assert(speed.Options.Mode.Value=='Velocity','Speed defaults to Velocity')
+speed:Toggle(true);loop(1/60);assert(humanoid.WalkSpeed==16 and root.AssemblyLinearVelocity.X==32)
+press();assert(root.AssemblyLinearVelocity.X==32 and root:FindFirstChild('Wurst_SprintTail').Enabled)
+release();speed:Toggle(false);assert(humanoid.WalkSpeed==16)
+-- The following restoration checks intentionally exercise the saved/selected WalkSpeed mode.
+speed.Options.Mode:Set('WalkSpeed')
 speed:Toggle(true);loop(1/60);assert(humanoid.WalkSpeed==32)
 press();assert(humanoid.WalkSpeed==32 and root:FindFirstChild('Wurst_SprintTail').Enabled)
 local oldHumanoid=humanoid;local oldRoot=root

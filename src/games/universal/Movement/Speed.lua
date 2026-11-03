@@ -146,7 +146,7 @@ function Module.init(context: Runtime): any
         restoreWalk(); teleportElapsed, lastMode = 0, nil
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
-    speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=1,Function=changed})
+    speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=2,Function=changed})
     speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})

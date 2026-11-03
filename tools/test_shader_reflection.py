@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/libraries/ShaderReflection.lua').read_text(encoding='utf-8')
+SHADERS = (ROOT / 'src/games/universal/Render/Shaders.lua').read_text(encoding='utf-8')
 
 PRELUDE = r'''
 local vmeta = {}
@@ -88,8 +89,10 @@ local warns={}
 warn=function(s) table.insert(warns,tostring(s)) end
 
 local all,created={},{}
+local candidateChecks=0
 local methods={}
 function methods:IsA(name)
+    if name=='BasePart' and tostring(self.Name):find('ProbeFloor',1,true) then candidateChecks+=1 end
     return self.ClassName==name or (name=='BasePart' and (self.ClassName=='Part' or self.ClassName=='MeshPart'))
         or (name=='Decal' and self.ClassName=='Texture')
         or (name=='DataModelMesh' and self.ClassName=='SpecialMesh')
@@ -171,7 +174,7 @@ local players={GetPlayers=function() return {player,other} end}
 local floor=parent('Part','Floor',world);floor.Anchored=true;floor.Size=Vector3.new(60,1,60);floor.Position=Vector3.new(0,-0.5,0)
 local hit={Instance=floor,Position=Vector3.new(0,0,0),Normal=Vector3.new(0,1,0)}
 local hitEnabled=true
-local rayCount,queryCount=0,0
+local rayCount,queryCount,lastQueryPosition=0,0,nil
 function methods:Raycast(origin,direction,params)
     assert(params.FilterType=='Exclude' and #params.FilterDescendantsInstances==2)
     assert(direction.Y==-15 and params.IgnoreWater)
@@ -189,7 +192,8 @@ local npc=parent('Model','NPC',world);parent('Humanoid','Humanoid',npc)
 local npcPart=parent('Part','NPCPart',npc);npcPart.Anchored=true;table.insert(nearby,1,npcPart)
 local tool=parent('Tool','Tool',world);local toolPart=parent('Part','ToolPart',tool);toolPart.Anchored=true;table.insert(nearby,1,toolPart)
 function methods:GetPartBoundsInRadius(position,radius,params)
-    queryCount+=1;assert(radius==32 and params.MaxParts==100 and params.FilterType=='Exclude')
+    queryCount+=1;lastQueryPosition=position
+    assert(radius==32 and params.MaxParts==100 and params.FilterType=='Exclude')
     return table.clone(nearby)
 end
 local camera=parent('Camera','Camera',world);camera.CFrame=CFrame.new(0,10,10);world.CurrentCamera=camera
@@ -239,12 +243,12 @@ local scene=find(viewport,'ReflectedScene')
 assert(gui.Parent==playerGui and gui.Adornee==plane and gui.Face=='Top' and gui.ClipsDescendants)
 assert(gui.SizingMode=='FixedSize' and not gui.AlwaysOnTop and gui.ResetOnSpawn==false)
 assert(plane.Transparency==1 and plane.Anchored and not plane.CanCollide and not plane.CanQuery and not plane.CanTouch)
-assert(viewport.BackgroundTransparency==1 and viewport.ImageTransparency==0.46)
+assert(viewport.BackgroundTransparency==1 and viewport.ImageTransparency==0.12)
 frames(40,0.1)
 assert(gui.Enabled and countParts(scene)==54,'24 local + 12 other + 18 static copies')
 assert(queryCount<=3 and rayCount<=21,'bounded floor probes and scene queries')
 assert(floor.Transparency==0 and floor.CanCollide and floor.Anchored and floor.Size.X==60)
-assert(plane.Size.X==24 and plane.Size.Z==20)
+near(plane.Size.X,59.96);near(plane.Size.Z,59.96)
 near(plane.Position.Y,0.04)
 local copy=findDeep(scene,'Local1');assert(copy)
 local model=copy.Parent;local mirrorHumanoid=find(model,'Humanoid')
@@ -261,12 +265,21 @@ assert(#copy:GetChildren()==2 and find(copy,'Face') and find(copy,'Shape'))
 assert(#find(copy,'Face'):GetChildren()==0 and #find(copy,'Shape'):GetChildren()==0)
 assert(find(body[1],'must-not-run') and #find(body[1],'Face'):GetChildren()==1,'source hierarchy untouched')
 assert(not findDeep(scene,'ToolPart') and not findDeep(scene,'NPCPart') and not findDeep(scene,'BelowMirror'))
-near(viewport.Position.X.Scale,0);near(viewport.Position.Y.Scale,0.5)
-near(viewport.Size.X.Scale,2);near(viewport.Size.Y.Scale,2)
-near(viewCamera.FieldOfView,math.deg(2*math.atan2(12,9.94)))
-near(viewCamera.CFrame.RightVector.Magnitude,0.5)
-assert(gui.CanvasSize.X<=512 and gui.CanvasSize.Y<=512)
-pass('off-axis view, PlayerGui Adornee, mirrored pose, safe bounded copies and original floor')
+local offset=10/59.96;local scale=1+2*offset
+near(viewport.Position.X.Scale,0.5-offset);near(viewport.Position.Y.Scale,0.5)
+near(viewport.Size.X.Scale,scale);near(viewport.Size.Y.Scale,scale)
+assert(viewCamera.FieldOfView==120)
+near(viewCamera.CFrame.RightVector.Magnitude,9.94*math.tan(math.rad(60))/29.98/scale)
+assert(gui.CanvasSize.X<=1024 and gui.CanvasSize.Y<=1024
+    and gui.CanvasSize.X*viewport.Size.X.Scale<=1024
+    and gui.CanvasSize.Y*viewport.Size.Y.Scale<=1024,
+    'off-axis viewport enlargement must stay within the effective pixel budget')
+pass('stronger full-floor off-axis view, mirrored pose, bounded copies and original floor')
+
+root.Position=Vector3.new(24,3,0);hit.Position=Vector3.new(24,0,0);frames(25,0.1)
+near(plane.Position.X,0.02);near(lastQueryPosition.X,24)
+root.Position=Vector3.new(0,3,0);hit.Position=Vector3.new(0,0,0);frames(3,0.1)
+pass('scene scanning follows the avatar rather than the centre of a large floor')
 
 body[1].CFrame=CFrame.new(2,6,3)*CFrame.Angles(0,math.pi/3,0)
 frames(1,0.05)
@@ -279,10 +292,10 @@ pass('animated avatar positions and proper-handed orientation are updated')
 camera.CFrame=CFrame.new(0,0.2,0);frames(1,0.05)
 assert(gui.Enabled and viewCamera.FieldOfView==120 and viewCamera.CFrame.RightVector.Magnitude>0)
 camera.CFrame=CFrame.new(0,-1,0);frames(1,0.05);assert(not gui.Enabled)
-camera.CFrame=CFrame.new(0,100,0);frames(1,0.05);assert(not gui.Enabled)
+camera.CFrame=CFrame.new(0,200,0);frames(1,0.05);assert(not gui.Enabled)
 camera.CFrame=CFrame.fromMatrix(Vector3.new(0,10,0),Vector3.new(1,0,0),Vector3.new(0,0,1),Vector3.new(0,-1,0))
 frames(1,0.05);assert(not gui.Enabled,'do not render the patch behind an upward-looking camera')
-camera.CFrame=CFrame.new(0,10,30);frames(1,0.05);assert(not gui.Enabled,'off-axis size stays bounded')
+camera.CFrame=CFrame.new(0,10,150);frames(1,0.05);assert(not gui.Enabled,'off-axis size stays bounded')
 world.CurrentCamera=nil;frames(1,0.05);assert(not gui.Enabled)
 world.CurrentCamera=camera;camera.CFrame=CFrame.new(0,10,10);frames(1,0.05);assert(gui.Enabled)
 pass('near-plane FOV clamp, under-floor/far-camera culling and camera recovery')
@@ -370,6 +383,117 @@ pass('uncloneable avatars and runtime failures are reported without leaking call
 local a=assert(api:Start(report));local b=assert(api:Start(report));assert(liveHandles()==4)
 Module.destroy();assert(liveHandles()==0 and not find(world,'ARMShaderFloorReflection') and not find(playerGui,'ARMShaderFloorReflection'))
 pass('library destruction stops every outstanding session')
+
+-- The map walker reports other floors even when the avatar is not on them.
+-- No more than two additional viewports may exist, each with at most 32
+-- cloned parts; their planes and poses are tested, not rendered pixels.
+local again=Module.init(host)
+local multi=assert(again:Start(report))
+local extra={}
+for i,position in ipairs({Vector3.new(-28,1.5,-18),Vector3.new(28,1.5,-18),Vector3.new(0,1.5,-24)}) do
+    local p=parent('Part','DistantFloor'..i,world);p.Anchored=true
+    p.Size=Vector3.new(40,1,35);p.Position=position;table.insert(extra,p);multi:Observe(p)
+end
+multi:Observe(nextFloor) -- primary is never duplicated
+frames(120,0.1)
+local function remotes()
+    local out={}
+    for _,child in ipairs(playerGui:GetChildren()) do
+        if child.Name=='ARMShaderFloorReflectionRemote' then table.insert(out,child) end
+    end
+    return out
+end
+local remote=remotes();assert(#remote==2,'two visible floors besides the main one should get viewports')
+for _,g in ipairs(remote) do
+    local frame=find(g,'Reflection');local mirrorScene=find(frame,'ReflectedScene')
+    assert(g.Adornee and g.Adornee.Parent==find(world,'ARMShaderFloorReflection') and g.Enabled)
+    assert(frame.ImageTransparency==0.12 and countParts(mirrorScene)>0 and countParts(mirrorScene)<=32)
+    local mirroredBody=findDeep(mirrorScene,'ReplacementBody');assert(mirroredBody)
+    near(mirroredBody.Position.Y,-2)
+    assert(not findDeep(mirrorScene,'ToolPart') and not findDeep(mirrorScene,'NPCPart'))
+end
+local replaced=remote[1];local removedFloor
+for _,f in ipairs(extra) do if math.abs(f.Position.X-replaced.Adornee.Position.X)<1 then removedFloor=f end end
+assert(removedFloor);removedFloor.Parent=nil
+frames(25,0.1)
+assert(replaced.destroyed and #remotes()==2,'a streamed-out floor is replaced by another visible candidate')
+multi:Stop()
+assert(#remotes()==0 and liveHandles()==0 and not extra[2].destroyed and not extra[3].destroyed)
+pass('map-observed floors get bounded independent mirrors and streaming cleanup')
+
+local isolated=assert(again:Start(report))
+Instance.failClass='SurfaceGui'
+isolated:Observe(extra[3]);local beforeFailure=#notices;frames(20,0.1)
+assert(liveHandles()==2 and #remotes()==0 and #notices==beforeFailure+1
+    and notices[#notices]:find('Additional floor reflections unavailable',1,true),
+    'secondary allocation failure must not disable or leak the primary reflection')
+Instance.failClass=nil;isolated:Stop();Module.destroy();assert(liveHandles()==0)
+pass('secondary viewport setup failure is isolated and cleaned up')
+
+-- Integration: the real Shaders traversal must discover floors and feed the
+-- real reflection library even when both texture and glass options are OFF.
+Enum.Material={Plastic='Plastic',SmoothPlastic='SmoothPlastic',Glass='Glass',Concrete='Concrete',
+    Asphalt='Asphalt',Pavement='Pavement',Wood='Wood',WoodPlanks='WoodPlanks',Brick='Brick',Grass='Grass',Marble='Marble'}
+local originalRay=methods.Raycast
+function methods:Raycast(origin,direction,params)
+    if direction.Y==-80 then return {Instance=nextFloor} end
+    return originalRay(self,origin,direction,params)
+end
+local lighting=Instance.new('Lighting')
+lighting.EnvironmentSpecularScale=0.1;lighting.ShadowSoftness=0.1;lighting.GlobalShadows=false
+host.Lighting=lighting;host.state={}
+local shaderCard
+local framework={Categories={Render={CreateModule=function(_,definition)
+    shaderCard={Options={},Enabled=false,cleanups={}}
+    function shaderCard:Clean(f) table.insert(self.cleanups,f) end
+    function shaderCard:SetStatus(_) end
+    function shaderCard:Notify(_) end
+    function shaderCard:CreateNote(_) end
+    function shaderCard:CreateToggle(option)
+        self.Options[option.Name]={Value=option.Name=='Floor reflections'}
+    end
+    function shaderCard:Toggle(value)
+        self.Enabled=value
+        if not value then for _,f in ipairs(self.cleanups) do f() end;self.cleanups={} end
+        definition.Function(value)
+    end
+    return shaderCard
+end}}}
+local reflectionApi=Module.init(host)
+local shader=assert(loadstring(SHADERS_SOURCE))()
+shader.init({host=host,framework=framework,libraries={shaderreflection=reflectionApi}})
+shaderCard:Toggle(true)
+assert(shaderCard.Options['Floor reflections'].Value and not shaderCard.Options['Surface textures'].Value
+    and not shaderCard.Options['Glass reflections'].Value)
+frames(180,0.05)
+assert(#remotes()==2 and liveHandles()==3,
+    'real floor-only scanner must discover two extra floors and retain bounded scheduler handles')
+shader.destroy()
+assert(#remotes()==0 and liveHandles()==0 and not find(world,'ARMShaderFloorReflection'))
+Module.destroy();methods.Raycast=originalRay
+pass('real Shaders traversal feeds the reflection library with other options off')
+
+local boundedApi=Module.init(host);local bounded=assert(boundedApi:Start(report));local probes={}
+for i=1,200 do
+    local p=parent('Part','ProbeFloor'..i,world);p.Anchored=true;p.Size=Vector3.new(10,1,10)
+    p.Position=Vector3.new(10000+i*20,1.5,-40);table.insert(probes,p);bounded:Observe(p)
+end
+candidateChecks=0;frames(1,0.05)
+assert(candidateChecks<=32, 'large candidate selection is sliced across ticks')
+frames(7,0.05);assert(candidateChecks==200, 'the bounded scan eventually inspects every candidate')
+bounded:Stop();Module.destroy();for _,p in ipairs(probes) do p:Destroy() end
+pass('additional-floor candidate selection is incrementally bounded')
+
+host.state={isMobile=true}
+local mobileApi=Module.init(host)
+local mobile=assert(mobileApi:Start(report));mobile:Observe(extra[2]);mobile:Observe(extra[3])
+frames(100,0.1)
+local mobileGui=find(playerGui,'ARMShaderFloorReflection')
+assert(mobileGui.CanvasSize.X<=768 and mobileGui.CanvasSize.Y<=768)
+for _,g in ipairs(remotes()) do assert(g.CanvasSize.X<=384 and g.CanvasSize.Y<=384) end
+mobile:Stop();Module.destroy();host.state={}
+assert(liveHandles()==0 and #remotes()==0)
+pass('mobile viewport resolution is bounded separately from desktop')
 '''
 
 
@@ -378,5 +502,5 @@ def quote(value):
 
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'shader_reflection.luau'
-    path.write_text(PRELUDE + '\nlocal SOURCE=' + quote(SOURCE) + '\n' + BODY, encoding='utf-8')
+    path.write_text(PRELUDE + '\nlocal SOURCE=' + quote(SOURCE) + '\nlocal SHADERS_SOURCE=' + quote(SHADERS) + '\n' + BODY, encoding='utf-8')
     subprocess.run([os.environ.get('LUAU', 'luau'), str(path)], check=True)

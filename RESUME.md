@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v172-20261102-floor-reflections`**, con árbol base de
+> **`v173-20261102-map-shaders`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -21,14 +21,38 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v169: 85 fuentes,
-     110 suites, auditoría estática, boots `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v173: 86 fuentes,
+     113 suites, auditoría estática, boots `failures=0`, menú 50/49).
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v172 — Reflejo local y Vehicle Speed retirado (2026-11-02)
+## v173 — Superficies, clima y sincronización de teclado (2026-11-02)
+
+Detalle, pruebas, fuentes y límites: `docs/FIXES-v173.md` y
+`docs/third-party/shaders/README.md`.
+
+- Shaders recorre las superficies del mapa incrementalmente, sin descartarlas
+  por distancia. Las texturas ya no se mezclan hacia blanco y no se fuerza más
+  exposición/luz difusa. Hay topes de 600 texturas, 1.200 reflectancias y 600
+  pisos candidatos: no se promete cobertura universal ni toda geometría.
+- Floor reflections se refuerza y amplía el piso principal hasta 256×256 studs,
+  con hasta dos pisos adicionales elegidos para la cámara. Límites de copias,
+  tamaños efectivos, creación y frecuencia también se reducen en móvil. No es
+  SSR/RTX; Terrain y algunas apariencias no se reflejan, y tres viewports no
+  cubren todas las superficies al mismo tiempo.
+- Fog combina Atmosphere y partículas. Rain/Snow/hojas usan nueve celdas con
+  pruebas escalonadas de techo; Rain añade salpicaduras. Se investigó el plugin
+  Rain solicitado y se conservan licencia Apache y aviso en `docs/third-party`.
+  Los toggles siguen siendo visuales, de cliente e independientes, sin Look.
+- El Navigator abierto repinta su tarjeta al cambiar un módulo por teclado;
+  pruebas con señales reales cubren tecla, clic y HackList. Speed inicia en
+  `Velocity`, pero respeta un modo guardado. Vehicle Speed continúa retirado.
+- Mocks y boot no prueban píxeles, calidad gráfica, FPS ni funcionamiento real
+  en Roblox/Delta. Varios viewports y partículas pueden causar lag en móvil.
+
+## v172 — Reflejo local y Vehicle Speed retirado (2026-11-02; histórico)
 
 Detalle, límites y pruebas: `docs/FIXES-v172.md`; atribuciones y licencias MIT
 para la proyección en `docs/third-party/shaders/README.md`.
@@ -1661,6 +1685,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-02 · v172. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-02 · v173. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

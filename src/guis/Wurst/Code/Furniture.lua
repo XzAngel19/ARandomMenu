@@ -928,6 +928,7 @@ function Module.init(context: any): any
 
     local navOrdered: {any} = {}
     local navEntries: {TextButton} = {}
+    local navIndex: {[any]: number} = {}
     local navSelected: number = 1
 
     local navCellConnections: {RBXScriptConnection} = {}
@@ -1021,8 +1022,10 @@ function Module.init(context: any): any
         end)
         navOrdered = {}
         navEntries = {}
+        navIndex = {}
         for index: number, feature: any in ipairs(matches) do
             table.insert(navOrdered, feature)
+            navIndex[feature] = index
             local entry: TextButton = (create("TextButton", {
                 TextTruncate = Enum.TextTruncate.AtEnd,
                 Parent = navResults,
@@ -1157,6 +1160,10 @@ function Module.init(context: any): any
     state.navigator = {
         root = navScreen,
         refresh = rebuildNavigator,
+        refreshFeature = function(feature: any): ()
+            local index: number? = navIndex[feature]
+            if navScreen.Visible and index then paintNavEntry(index) end
+        end,
         Open = openNavigator,
         Close = closeNavigator,
     }
