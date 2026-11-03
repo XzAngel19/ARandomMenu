@@ -1,4 +1,4 @@
--- Client-side lighting, selected surface detail and optional atmosphere.
+-- Client-side lighting, an optional local floor reflection and atmosphere.
 -- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC).
 -- Surface colour maps are CC0 ambientCG assets; they are not PBR normal maps.
 -- Research, pinned sources and licences: docs/third-party/shaders/README.md.
@@ -40,6 +40,7 @@ function Module.init(context: any): any
     local waterOriginal: any = nil
     local waterApplied: any = nil
     local waterTerrain: any = nil
+    local floorReflection: any = nil
 
     local fogAtmosphere: Atmosphere? = nil
     local fogOwned: boolean = false
@@ -78,6 +79,32 @@ function Module.init(context: any): any
             if enabled(name) then table.insert(parts, name) end
         end
         card:SetStatus(if #parts == 0 then nil else table.concat(parts, " · "))
+    end
+
+    local function stopFloorReflection(): ()
+        if floorReflection then
+            pcall(function(): () floorReflection:Stop() end)
+            floorReflection = nil
+        end
+    end
+
+    local function refreshFloorReflection(): ()
+        if not enabled("Floor reflections") then stopFloorReflection(); return end
+        if floorReflection then return end
+        local library: any = context.libraries and context.libraries.shaderreflection
+        if not library or type(library.Start) ~= "function" then
+            card:Notify("Floor reflection library unavailable")
+            return
+        end
+        local ok: boolean, result: any, failure: any = pcall(library.Start, library, function(message: string): ()
+            if card and card.Enabled then card:Notify(message) end
+        end)
+        if not ok or not result then
+            warn("[Shaders] Floor reflection unavailable: " .. tostring(if ok then failure else result))
+            card:Notify("Floor reflection unavailable; other effects are still active")
+            return
+        end
+        floorReflection = result
     end
 
     local function restoreProperties(object: any, original: {[string]: any}, applied: {[string]: any}): ()
@@ -282,13 +309,13 @@ function Module.init(context: any): any
             local dustPart: Part? = nil
             local dust: ParticleEmitter? = nil
             if dustEnabled then
-                dustPart = cellPart("DustCell", Vector3.new(28, 8, 28))
+                dustPart = cellPart("DustCell", Vector3.new(20, 6, 20))
                 dust = Instance.new("ParticleEmitter")
                 dust.Name, dust.Enabled = "Dust motes", false
                 dust.Texture = "rbxasset://textures/particles/smoke_main.dds"
                 dust.Shape, dust.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
                 dust.EmissionDirection, dust.Orientation = Enum.NormalId.Top, Enum.ParticleOrientation.FacingCamera
-                dust.Rate, dust.Size, dust.Speed = 7, NumberSequence.new(0.22), NumberRange.new(0.1, 0.4)
+                dust.Rate, dust.Size, dust.Speed = 12, NumberSequence.new(0.35), NumberRange.new(0.1, 0.4)
                 dust.Lifetime, dust.Transparency = NumberRange.new(5), NumberSequence.new(0.35)
                 dust.Color, dust.LightEmission, dust.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 232, 180)), 0.35, 0.5
                 dust.Parent = dustPart
@@ -693,6 +720,7 @@ function Module.init(context: any): any
     end
 
     local function cleanup(): ()
+        stopFloorReflection()
         stopWeather()
         stopSurfaces()
         releaseWater()
@@ -716,7 +744,7 @@ function Module.init(context: any): any
 
     card = context.framework.Categories.Render:CreateModule({
         Name = "Shaders", Category = "Render", ConfigKey = "Universal.Shaders",
-        Tooltip = "Realistic lighting, nearby surface detail and optional atmosphere.",
+        Tooltip = "Warm lighting, local floor reflections and optional atmosphere.",
         Function = function(on: boolean): ()
             if not on then card:SetStatus(nil); return end
             cleanup()
@@ -725,15 +753,16 @@ function Module.init(context: any): any
                 color = makeEffect("ColorCorrectionEffect", "ARMShaderColor")
                 bloom = makeEffect("BloomEffect", "ARMShaderBloom")
                 rays = makeEffect("SunRaysEffect", "ARMShaderRays")
-                color.Brightness, color.Contrast, color.Saturation = 0.04, 0.12, 0.08
-                color.TintColor, color.Enabled = Color3.fromRGB(255, 252, 246), true
-                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.35, 24, 1.5, true
+                color.Brightness, color.Contrast, color.Saturation = 0.035, 0.14, 0.08
+                color.TintColor, color.Enabled = Color3.fromRGB(255, 244, 228), true
+                bloom.Intensity, bloom.Size, bloom.Threshold, bloom.Enabled = 0.3, 24, 0.9, true
                 rays.Intensity, rays.Spread, rays.Enabled = 0.1, 0.6, true
                 applyLighting()
                 if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
                 if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end
                 refreshFog()
                 refreshWater()
+                refreshFloorReflection()
                 refreshSurfaces()
                 changeWeather()
             end)
@@ -741,6 +770,8 @@ function Module.init(context: any): any
         end,
     })
 
+    card:CreateToggle({Name = "Floor reflections", Default = true, Function = refreshFloorReflection,
+        Tooltip = "Approximate avatar and nearby scenery on a flat floor; client-only, not screen-space reflections."})
     card:CreateToggle({Name = "Surface textures", Default = true, Function = refreshSurfaces,
         Tooltip = "CC0 colour detail on nearby simple floors and walls; no meshes or existing decals."})
     card:CreateToggle({Name = "Glass reflections", Default = true, Function = refreshSurfaces,
@@ -759,7 +790,7 @@ function Module.init(context: any): any
         Tooltip = "Adds a subtle sky sheen to nearby plastic floors; does not change physics."})
     card:CreateToggle({Name = "Water reflections", Default = false, Function = refreshWater,
         Tooltip = "Increases Terrain water reflectance while enabled."})
-    card:CreateNote("Local visual effects. Graphics quality and custom-asset support affect what is visible.")
+    card:CreateNote("Local approximation: flat floors only. Rain and snow stop under a roof; graphics quality affects the result.")
 
     Module.Initialized = true
     return card

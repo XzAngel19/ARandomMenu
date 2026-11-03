@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v171-20261102-realistic-surfaces`**, con árbol base de
+> **`v172-20261102-floor-reflections`**, con árbol base de
 > `arena/76bc3f2f-arandommenu` en el commit `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
@@ -28,7 +28,37 @@
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v171 — Shaders sin modos, superficies y efectos (2026-11-02)
+## v172 — Reflejo local y Vehicle Speed retirado (2026-11-02)
+
+Detalle, límites y pruebas: `docs/FIXES-v172.md`; atribuciones y licencias MIT
+para la proyección en `docs/third-party/shaders/README.md`.
+
+- El usuario mostró una referencia con reflejo de avatar/entorno sobre el suelo;
+  v171 solo cambiaba `Reflectance` ambiental y no podía producir ese reflejo.
+  Se retiró **Vehicle Speed** y sus controles/código, sin quitar Speed a pie.
+  Al sentarse se restaura WalkSpeed y no se altera ningún vehículo/asiento.
+- Shaders agrega `Floor reflections`, toggle independiente activado por defecto:
+  un SurfaceGui en PlayerGui con Adornee a una parte invisible en un piso
+  plano cercano; ViewportFrame con copias acotadas y sanitizadas del avatar,
+  algunos personajes y entorno. Adapta proyección MIT de ViewportStencil y
+  EgoMoose. No modifica transparencia, colisión ni geometría del piso.
+  Soporta prendas clásicas con un Humanoid nuevo, pero el resultado de mallas,
+  ropa en capas, luces y sombras puede diferir; no es SSR/ReShade/RTX.
+- Se aumentó ligeramente la calidez y visibilidad del bloom y polvo. Rain,
+  Snow y hojas siguen inhibidos bajo techo. Opciones individuales, sin Look.
+  Un error en el reflejo se notifica y no debe apagar las otras opciones.
+- Presupuestos: un plano de hasta 24 × 20 studs, raycast cada 0,2 s, consulta
+  de 100 piezas cada 2 s, hasta 36 partes de actores y 18 del entorno, tres
+  copias por tick y poses a 30 Hz; canvas 512 y culling, pero el ViewportFrame
+  añade coste GPU. Máximo de clima 112 partículas/s. Son límites, no FPS.
+- Validación offline: 86 fuentes, 112 suites, 84 fuentes en bundle/14 assets,
+  boots sin fallos y menú 50/49. Las pruebas matemáticas/lifecycle y boots son
+  simulados. No se ha probado visualmente ni medido GPU/FPS en Roblox/Delta:
+  pedir captura, calidad y mapa, y comparar Floor reflections ON/OFF sobre piso
+  sólido si no se nota.
+  No afirmar que se ve igual que la referencia.
+
+## v171 — Shaders sin modos, superficies y efectos (2026-11-02; histórico)
 
 Detalle y límites: `docs/FIXES-v171.md`, fuentes/licencias en
 `docs/third-party/shaders/README.md`.
@@ -1631,6 +1661,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-02 · v169. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-02 · v172. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

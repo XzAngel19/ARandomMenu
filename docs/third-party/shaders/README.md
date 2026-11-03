@@ -1,9 +1,34 @@
 # Shaders: investigación, recursos y licencias
 
-El módulo usa únicamente capacidades visuales del cliente Roblox. No descarga ni
-ejecuta código de los proyectos estudiados. La disponibilidad y apariencia en
-Delta dependen del executor, la calidad gráfica y el juego; las pruebas de este
+El módulo usa capacidades visuales del cliente Roblox. Incluye una adaptación de
+las ecuaciones MIT de proyección indicadas abajo, pero no descarga ni ejecuta
+repositorios externos completos. La disponibilidad y apariencia en Delta
+dependen del executor, la calidad gráfica y el juego; las pruebas de este
 repositorio no representan imágenes ni FPS reales.
+
+## Reflejo local de un piso
+
+- [ViewportStencil, commit `6130e70df7e732666a96dd28c59aff11d75988b6`](https://github.com/sebasvcx/ViewportStencil/tree/6130e70df7e732666a96dd28c59aff11d75988b6),
+  copyright © 2026 Aziorux (Sebas_Devv), [MIT](LICENSE-ViewportStencil-MIT.txt).
+  `src/libraries/ShaderReflection.lua` adapta el cálculo de `Projection.lua`
+  para orientar la cámara de un `ViewportFrame` fuera del eje, con límite de
+  FOV y `CFrame` escalado. También sigue el montaje documentado del `SurfaceGui`
+  en PlayerGui con `Adornee` a una parte invisible. El seguimiento limitado de
+  actores/mapa, la reflexión geométrica y la limpieza son propios del menú.
+- La proyección de ViewportStencil se basa en
+  [EgoMoose/rbx-viewport-window, commit `d62f04651afa8f56459bdb42efa69d8cd65e04b0`](https://github.com/EgoMoose/rbx-viewport-window/tree/d62f04651afa8f56459bdb42efa69d8cd65e04b0),
+  copyright © 2025 EgoMoose, [MIT](LICENSE-EgoMoose-MIT.txt). Se incluyen ambos
+  avisos de licencia porque se adapta el código derivado.
+- [Storm99999/Reflections, commit `4b317526e8d00750c4c7c5e3db830ad95f1d1c47`](https://github.com/Storm99999/Reflections/tree/4b317526e8d00750c4c7c5e3db830ad95f1d1c47)
+  (MIT) se inspeccionó, pero su enfoque con suelo translúcido no se incorporó:
+  no se quiere alterar la transparencia ni la física del mapa.
+- [ViewportFrame de Roblox](https://create.roblox.com/docs/ui/viewport-frames)
+  solo dibuja la escena copiada y tiene restricciones de luces, sombras,
+  materiales y posprocesado. Las prendas clásicas requieren un Model/Humanoid
+  como en este [ejemplo de avatares](https://devforum.roblox.com/t/how-to-render-a-character-within-a-viewportframe/524239);
+  la copia limitada no garantiza fidelidad de ropa en capas o mallas asimétricas.
+  No es SSR ni render de la escena original: una superficie grande, curvas,
+  mallas irregulares y objetos omitidos pueden producir bordes o faltar.
 
 ## Superficies: cinco imágenes de color CC0
 
@@ -33,9 +58,10 @@ sustituyen `Material`, mallas, colisiones ni propiedades físicas. Solo se cubre
 caras de bloques anclados elegibles próximos a la cámara: ciertos suelos y
 paredes; no `MeshPart`, variantes, `SpecialMesh`, partes con decals existentes,
 personajes ni herramientas. En un mapa que no tenga esas superficies no habrá
-cambios de textura. Los reflejos usan `Reflectance` en vidrio/ventanas y, con
-`Wet surfaces`, en suelos de plástico; dependen del render y no son espejos o
-ray tracing en tiempo real. La opción de agua actúa en `Terrain.WaterReflectance`.
+cambios de textura. `Glass reflections` y `Wet surfaces` usan `Reflectance`
+en vidrio/ventanas y suelos de plástico: es brillo ambiental, no refleja
+personajes. `Floor reflections` usa el viewport local descrito arriba. La
+opción de agua actúa en `Terrain.WaterReflectance`.
 
 Mientras se descarga cada imagen CC0 se intenta el ColorMap del material
 correspondiente publicado en la tabla oficial de
@@ -115,9 +141,14 @@ una superficie visible, aun si falla la consulta de radio. Procesa como máximo
 cambios de reflectancia a la vez. Las descargas, el streaming de mapas y los
 cambios de cámara se gestionan sin recorrer `GetDescendants()` por frame. Se
 pueden activar lluvia, nieve, hojas y polvo a la vez: máximo 13 emisores,
-107 partículas nuevas por segundo, posiciones actualizadas hasta 20 Hz y una
+112 partículas nuevas por segundo, posiciones actualizadas hasta 20 Hz y una
 comprobación de techo cada 0,15 s para toda la cuadrícula. El número de
 partículas vivas depende de su duración. Si no hay ninguna de esas opciones, no
 hay tarea de clima; si todas las opciones de superficies están apagadas, no hay
 barrido. Sombras globales, texturas y partículas pueden afectar el rendimiento.
-Estos presupuestos no sustituyen medir FPS y memoria en Roblox/Delta.
+Además, el reflejo del piso tiene su propia consulta de hasta 100 piezas cada
+2 s, hasta 54 partes copiadas (36 de hasta tres personajes y 18 de entorno),
+tres copias nuevas por tick y poses hasta 30 Hz. Usa un solo viewport con lado
+máximo 512 en el canvas y una superficie de hasta 24 × 20 studs. Al ocultarlo
+por distancia/orientación se detiene su render, no necesariamente las tareas de
+seguimiento. Estos presupuestos no sustituyen medir FPS y memoria en Roblox/Delta.

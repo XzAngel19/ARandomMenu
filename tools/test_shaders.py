@@ -220,14 +220,25 @@ BODY = r'''
 local Framework=assert(loadstring(FRAMEWORK_SOURCE))()
 local framework=Framework.init(host)
 local Shaders=assert(loadstring(SHADERS_SOURCE))()
-local card=Shaders.init({framework=framework,host=host})
+local reflectionStarts,reflectionStops=0,0
+local reflectionLibrary={fail=false}
+function reflectionLibrary:Start(report)
+    if self.fail then return nil,"simulated unavailable" end
+    reflectionStarts+=1
+    local active=true
+    return {Stop=function()
+        if active then active=false;reflectionStops+=1 end
+    end}
+end
+local libraries={shaderreflection=reflectionLibrary}
+local card=Shaders.init({framework=framework,host=host,libraries=libraries})
 assert(card==framework.Modules.Shaders)
 assert(not card.Options.Look and not card.Options.Weather and not card.Options.Advanced,
     "no old look or mode selector remains")
-local names={"Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
+local names={"Floor reflections","Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
 assert(#card.OptionMetadata==#names)
 for i,name in ipairs(names) do assert(card.OptionMetadata[i].label==name and card.OptionMetadata[i].type=="toggle") end
-assert(card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
+assert(card.Options["Floor reflections"].Value and card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
 for _,name in ipairs({"Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}) do
     assert(not card.Options[name].Value)
 end
@@ -256,13 +267,25 @@ queryParts={floor,wood,wall,grass,marble,glass,window,avatarFloor,npcFloor,toolF
 features.Shaders.toggle(true)
 local color,bloom,rays=byName(lighting,"ARMShaderColor"),byName(lighting,"ARMShaderBloom"),byName(lighting,"ARMShaderRays")
 assert(card.Enabled and renderable(color) and renderable(bloom) and renderable(rays))
-assert(color.Brightness==0.04 and color.Contrast==0.12 and color.Saturation==0.08)
-assert(bloom.Intensity==0.35 and rays.Intensity==0.1)
+assert(color.Brightness==0.035 and color.Contrast==0.14 and color.Saturation==0.08
+    and color.TintColor==Color3.fromRGB(255,244,228))
+assert(bloom.Intensity==0.3 and bloom.Threshold==0.9 and rays.Intensity==0.1)
 assert(lighting.EnvironmentDiffuseScale==0.65 and lighting.EnvironmentSpecularScale==0.9
     and lighting.ShadowSoftness==0.35 and lighting.GlobalShadows and lighting.ExposureCompensation==0.12)
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
 assert(activeHandles("Shaders surfaces")==1 and #spawned==0,"surface art is lazy, not downloaded at boot")
-pass("enabling immediately applies native lighting and starts only a bounded surface scan")
+assert(reflectionStarts==1 and reflectionStops==0)
+card.Options["Floor reflections"].Metadata.callback(false)
+assert(reflectionStops==1 and card.Enabled and renderable(color) and activeHandles("Shaders surfaces")==1)
+reflectionLibrary.fail=true
+card.Options["Floor reflections"].Metadata.callback(true)
+assert(reflectionStarts==1 and card.Enabled and renderable(color)
+    and notifications[#notifications]:find("Floor reflection unavailable",1,true))
+card.Options["Floor reflections"].Metadata.callback(false)
+reflectionLibrary.fail=false
+card.Options["Floor reflections"].Metadata.callback(true)
+assert(reflectionStarts==2 and reflectionStops==1)
+pass("warm baseline, floor reflection lifecycle and independent failure isolation")
 
 frames(25)
 assert(glass.Reflectance==0.22 and window.Reflectance==0.22)
@@ -530,10 +553,14 @@ local all=byName(world,"ARMShaderWeather")
 assert(#children(all,"Part")==5 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==107,"60 rain + 28 snow + 12 leaves + 7 dust particles/s")
+assert(totalRate==112,"60 rain + 28 snow + 12 leaves + 12 dust particles/s")
 runAllSpawned();frames(30)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
-assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture")
+assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==12 and dust.Size.Value==0.35)
+isCovered=true;frames(20)
+assert(dust.Enabled and not byName(children(all,"Part")[1],"Rain").Enabled,
+    "dust stays active indoors while rain respects the roof")
+isCovered=false
 world.CurrentCamera=nil;frames(2)
 assert(not dust.Enabled)
 world.CurrentCamera=camera;frames(30);assert(dust.Enabled)
@@ -596,14 +623,17 @@ pass("partial construction, re-enable and module destroy")
 -- Saved toggle values may be delivered synchronously while the UI is built.
 local fallbackHost=table.clone(host);fallbackHost.state={}
 function fallbackHost.addToggleOption(_,name,default,callback)
-    callback(if name=="Fog" then true elseif name=="Surface textures" then false else default)
+    callback(if name=="Fog" then true elseif name=="Surface textures" or name=="Floor reflections" then false else default)
     return {callback=callback}
 end
 local fallbackFramework=Framework.init(fallbackHost)
-local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost})
-assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value and not saved.Options.Look)
+local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost,libraries=libraries})
+assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
+    and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
+local startsBeforeRestore=reflectionStarts
 features.Shaders.toggle(true)
-assert(replacement.Density==0.38)
+assert(replacement.Density==0.38 and reflectionStarts==startsBeforeRestore,
+    "a saved OFF floor reflection must not start on module enable")
 Shaders.destroy();flushDeferred();assert(replacement.Density==0.23)
 pass("synchronous saved-toggle restoration is safe and cannot restore removed looks")
 '''

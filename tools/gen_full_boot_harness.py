@@ -49,6 +49,15 @@ Vector3.zero = Vector3.new(0, 0, 0)
 Vector3.xAxis = Vector3.new(1, 0, 0)
 Vector3.yAxis = Vector3.new(0, 1, 0)
 Vector3.zAxis = Vector3.new(0, 0, 1)
+-- The floor-reflection library builds a Top-face projection basis at load.
+-- This boot mock only needs that basis; mathematical projection is tested in
+-- test_shader_reflection.py with full vector/CFrame operations.
+function Vector3.FromNormalId(_) return Vector3.yAxis end
+function Vector3:Cross(b)
+    local out = Vector3.new(self.Y*b.Z-self.Z*b.Y, self.Z*b.X-self.X*b.Z, self.X*b.Y-self.Y*b.X)
+    out.Unit = out
+    return out
+end
 CFrame = {}
 CFrame.__index = CFrame
 CFrame.__mul = function(a, b) return CFrame.new((a.Position or a[1]) + (b.Position or b[1])) end
@@ -59,6 +68,9 @@ function CFrame.lookAt(a, b) return CFrame.new(a) end
 function CFrame:ToObjectSpace(other) return CFrame.new(other.Position - self.Position) end
 function CFrame:Inverse() return CFrame.new(-self.Position) end
 function CFrame.fromMatrix(pos) return CFrame.new(pos) end
+function CFrame.fromAxisAngle(_, _)
+    return setmetatable({}, {__mul = function(_, _) return Vector3.zAxis end})
+end
 CFrame.identity = CFrame.new()
 UDim = {new = function(s, o) return {Scale = s, Offset = o} end}
 UDim2 = {}
@@ -305,6 +317,7 @@ LocalPlayer.props.Name = "HarnessPlayer"
 LocalPlayer.props.DisplayName = "HarnessPlayer"
 LocalPlayer.props.UserId = 1
 LocalPlayer.PlayerGui = PlayerGui
+PlayerGui.Parent = LocalPlayer -- WaitForChild("PlayerGui") must return this same instance.
 function LocalPlayer:GetMouse()
     return newInst("Mouse")
 end
@@ -814,16 +827,22 @@ do
     -- Booted bundle + real Framework + real widgets: PostEffects have to be
     -- direct Lighting children, not descendants of an inert Folder.
     local shaders = ex.state.framework:GetModule("Shaders")
-    assert(shaders and shaders.Options["Surface textures"] and shaders.Options["Glass reflections"]
-      and shaders.Options.Fog and not shaders.Options.Look and not shaders.Options.Weather,
+    assert(shaders and shaders.Options["Floor reflections"] and shaders.Options["Surface textures"]
+      and shaders.Options["Glass reflections"] and shaders.Options.Fog
+      and not shaders.Options.Look and not shaders.Options.Weather,
       "Shaders must boot without a look or weather mode selector")
     shaders:Toggle(true)
     local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
     local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
     local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
+    local floorGui = PlayerGui:FindFirstChild("ARMShaderFloorReflection")
+    local floorFolder = workspaceService:FindFirstChild("ARMShaderFloorReflection")
+    assert(floorGui and floorFolder and floorGui.Adornee == floorFolder:FindFirstChild("ReflectionSurface")
+      and floorGui:FindFirstChild("Reflection"),
+      "default floor reflection must start its PlayerGui viewport")
     assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
       "ColorCorrectionEffect must be enabled directly under Lighting")
-    assert(shaderColor.Contrast == 0.12 and shaderColor.Saturation == 0.08,
+    assert(shaderColor.Contrast == 0.14 and shaderColor.Saturation == 0.08,
       "realistic baseline is active without choosing a look")
     assert(Lighting.EnvironmentSpecularScale == 0.9 and Lighting.GlobalShadows == true,
       "native environment and shadows must be applied")
@@ -833,6 +852,9 @@ do
     assert(not Lighting:FindFirstChild("ARMShaderColor")
       and not Lighting:FindFirstChild("ARMShaderBloom") and not Lighting:FindFirstChild("ARMShaderRays"),
       "disabling Shaders must remove its effects")
+    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
+      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
+      "disabling Shaders must remove its viewport and plane")
     assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
       "disabling Shaders must restore unchanged Lighting properties")
     print("[HARNESS] SHADERS REALISM + LIGHTING RESTORE")

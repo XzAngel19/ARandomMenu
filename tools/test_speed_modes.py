@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute whole Speed source: native movement, driver-only engines, ownership and teardown."""
+"""Execute on-foot Speed: all modes, seated safety, ownership and teardown."""
 import os
 import subprocess
 import tempfile
@@ -8,7 +8,6 @@ from test_mm2_precision import PRELUDE
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT/'src/games/universal/Movement/Speed.lua').read_text()
 script = PRELUDE + r'''
-Enum.ActuatorType={Motor='Motor',Servo='Servo'}
 Enum.HumanoidStateType={Running='Running',Jumping='Jumping',Climbing='Climbing',Swimming='Swimming',Physics='Physics',PlatformStanding='PlatformStanding'}
 local paramCount=0
 local RaycastParams={new=function() paramCount+=1;return {} end}
@@ -105,48 +104,21 @@ set('Auto jump',true);h.FloorMaterial='Ground';local changes=h.changes
 module.SetSprintHeld(true);near(h.WalkSpeed,30);assert(h.changes==changes,'Sprint OFF must not activate Auto jump')
 module.SetSprintHeld(false);near(h.WalkSpeed,16);set('Auto jump',false)
 pass('foot: all five modes, analog input, zero-input braking, Y preserved, wall volume, hitch/burst timing, external WalkSpeed, respawn, Fly/state skips and Sprint OFF')
-local model={Parent=true,motors={},DescendantAdded=signal(),FindFirstAncestorOfClass=function() return nil end}
-function model:GetDescendants() return self.motors end
-local chassis={Parent=model,Anchored=false,AssemblyLinearVelocity=Vector3.new(4,7,8),IsDescendantOf=function(_,obj) return obj==model end}
-local seat=setmetatable({Parent=model,AssemblyRootPart=chassis,Occupant=h,_max=40,_torque=10,writes=0,ThrottleFloat=1,CFrame=CFrame.new(),
- IsA=function(_,class) return class=='VehicleSeat' end,FindFirstAncestorOfClass=function() return model end},{
- __index=function(self,key) if key=='MaxSpeed' then return self._max elseif key=='Torque' then return self._torque end end,
- __newindex=function(self,key,value)
-  if key=='MaxSpeed' then self._max=value;self.writes+=1 elseif key=='Torque' then self._torque=value;self.writes+=1 else rawset(self,key,value) end
- end})
-h.Sit=true;h.SeatPart=seat;set('Vehicle speed',true);module:Toggle(true);tick();near(seat.MaxSpeed,80);near(seat.Torque,20);near(h.WalkSpeed,16)
-local seatWrites=seat.writes
-for _=1,120 do tick() end;near(seat.MaxSpeed,80);near(seat.Torque,20)
-assert(seat.writes==seatWrites,'unchanged vehicle engine values should not be rewritten')
-seat.MaxSpeed=30;seat.Torque=15;tick();near(seat.MaxSpeed,60);near(seat.Torque,30)
-set('Vehicle mode','Seat');near(seat.MaxSpeed,30);near(seat.Torque,15);tick();near(seat.MaxSpeed,80)
-seat.Occupant={};tick();near(seat.MaxSpeed,30);seat.Occupant=h
-set('Vehicle mode','Velocity');seat.ThrottleFloat=-.5;tick();near(chassis.AssemblyLinearVelocity.Z,40);near(chassis.AssemblyLinearVelocity.Y,7)
-for _=1,120 do tick() end;near(chassis.AssemblyLinearVelocity.Z,40)
-seat.ThrottleFloat=0;tick();near(chassis.AssemblyLinearVelocity.Z,40)
-seat.IsA=function() return false end;chassis.AssemblyLinearVelocity=Vector3.new(3,7,4);tick();near(chassis.AssemblyLinearVelocity.X,3);near(chassis.AssemblyLinearVelocity.Z,4)
-seat.IsA=function(_,class) return class=='VehicleSeat' end
-local function motor(value)
- return {Parent=model,ActuatorType='Motor',AngularVelocity=value,MotorMaxTorque=500,
- IsA=function(_,class) return class=='HingeConstraint' end,IsDescendantOf=function(self,obj) return self.Parent==obj end}
+assert(not module.Options['Vehicle speed'] and not module.Options['Vehicle mode']
+    and not module.Options['Vehicle multiplier'] and not module.Options['Vehicle speed value']
+    and not module.Options['Motor torque'], 'all vehicle controls must be removed')
+local seat={MaxSpeed=40,Torque=10}
+module:Toggle(true);set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
+local initialVelocity=root.AssemblyLinearVelocity
+h.Sit=true;h.SeatPart=seat
+for _,mode in ipairs({'WalkSpeed','Velocity','Impulse','CFrame','Teleport'}) do
+ set('Mode',mode);tick();near(h.WalkSpeed,16)
+ assert(seat.MaxSpeed==40 and seat.Torque==10 and root.AssemblyLinearVelocity==initialVelocity,
+    'seated Speed must not alter the seat or character velocity')
 end
-local wheel=motor(10);table.insert(model.motors,wheel)
-set('Vehicle mode','Motors');seat.ThrottleFloat=1;tick();near(wheel.AngularVelocity,20);near(wheel.MotorMaxTorque,50000);assert(model.DescendantAdded:Count()==1)
-for _=1,120 do tick() end;near(wheel.AngularVelocity,20)
-wheel.AngularVelocity=-12;seat.ThrottleFloat=-1;tick();near(wheel.AngularVelocity,-24)
-seat.ThrottleFloat=0;tick();near(wheel.AngularVelocity,0)
-set('Vehicle mode','Seat');near(wheel.AngularVelocity,0);near(wheel.MotorMaxTorque,500);assert(model.DescendantAdded:Count()==0)
-wheel.AngularVelocity=13;seat.ThrottleFloat=0;set('Vehicle mode','Motors');tick();near(wheel.AngularVelocity,0)
-set('Vehicle mode','Seat');near(wheel.AngularVelocity,0)
-wheel.AngularVelocity=10;seat.ThrottleFloat=1;set('Vehicle mode','Motors');tick()
-local newWheel=motor(6);model.DescendantAdded:Fire(newWheel);tick();near(newWheel.AngularVelocity,12)
-newWheel.Parent={};tick();near(newWheel.AngularVelocity,6);near(newWheel.MotorMaxTorque,500)
-set('Vehicle speed',false);near(wheel.AngularVelocity,10);near(wheel.MotorMaxTorque,500);assert(model.DescendantAdded:Count()==0)
-set('Vehicle speed',true);set('Vehicle mode','Multiplier');tick();near(seat.MaxSpeed,60)
-chassis.Anchored=true;tick();near(seat.MaxSpeed,30);chassis.Anchored=false;tick();near(seat.MaxSpeed,60)
-h.SeatPart=nil;h.Sit=false;tick();near(seat.MaxSpeed,30);near(seat.Torque,15)
-Module.destroy();near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0 and model.DescendantAdded:Count()==0)
-pass('vehicles: driver/passenger discrimination, four modes, no exponential boost, external engine updates, reverse/coast, motor discovery/removal, zero-throttle restoration, anchored/exit/disable/destroy cleanup')
+h.SeatPart=nil;h.Sit=false;set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
+Module.destroy();near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0)
+pass('vehicle controls removed; on-foot Speed stays inactive while seated and resumes on exit')
 '''
 with tempfile.TemporaryDirectory(prefix='speed-') as d:
     path=Path(d)/'speed.luau';path.write_text(script)
