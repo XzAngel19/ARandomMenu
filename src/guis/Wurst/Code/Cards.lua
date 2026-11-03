@@ -526,7 +526,14 @@ function Module.init(context: any): any
                 shortcutButton,
                 feature.configKey,
                 name,
-                activateFeature
+                activateFeature,
+                {
+                    -- Read the live state after the handler ran, so the toast
+                    -- matches the card even for a module that refuses to start.
+                    feedback = function(): string
+                        return name .. (feature.enabled == true and " on" or " off")
+                    end,
+                }
             )
         end
 

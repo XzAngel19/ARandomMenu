@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v175-20261103-client-shader-recovery"
+local SOURCE_STAMP: string = "v176-20261103-weather-density-keybinds"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -4847,11 +4847,16 @@ local function bindActionShortcut(
     local binding: any = {
         id = shortcutId,
         button = button,
+        label = label,
         hold = configuration.hold == true,
         key = Enum.KeyCode.Unknown,
         pressed = false,
         onPress = configuration.onPress or callback,
         onRelease = configuration.onRelease,
+        -- v176: a shortcut fired with the menu closed used to change state with
+        -- no visible proof. The toast is how the user (and MM2, where several
+        -- keys belong to the game) can tell the bind actually ran.
+        feedback = configuration.feedback,
     }
     local savedName: any = configData.values[optionKey]
     if type(savedName) == "string" and savedName ~= "" then
@@ -4953,10 +4958,14 @@ state.bindFeatureActivationKey = function(
     end
 end
 
+-- v176: gameProcessed only says that the place (or the core GUI) already used
+-- the input. Games such as MM2 bind their own actions to common keys, and one
+-- of them was enough to make a menu keybind look dead while a card click
+-- worked. The menu now honours its own shortcut even then; typing is still
+-- blocked, because a focused TextBox keeps the key for itself.
 do
-local function shortcutInputAllowed(gameProcessed: boolean): boolean
-    return not gameProcessed
-        and not state.keyCaptureCallback
+local function shortcutInputAllowed(_gameProcessed: boolean): boolean
+    return not state.keyCaptureCallback
         and not state.waitingForKey
         and UserInputService:GetFocusedTextBox() == nil
 end
@@ -4976,7 +4985,15 @@ state.globalShortcutBeganConnection = UserInputService.InputBegan:Connect(
                 if binding.hold then
                     setShortcutPressed(binding, true)
                 elseif binding.onPress then
-                    task.spawn(binding.onPress)
+                    task.spawn(function(): ()
+                        binding.onPress()
+                        if type(binding.feedback) == "function" then
+                            local ok: boolean, text: any = pcall(binding.feedback)
+                            if ok and type(text) == "string" and text ~= "" then
+                                notify(text)
+                            end
+                        end
+                    end)
                 end
             end
         end

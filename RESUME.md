@@ -4,9 +4,11 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** rama fija `arena/9492e6b6-arandommenu`, build
-> **`v175-20261103-client-shader-recovery`**, con árbol base de
-> `arena/76bc3f2f-arandommenu` en el commit `9395998`.
+> **Estado al escribir esto:** build
+> **`v176-20261103-weather-density-keybinds`**. La rama de trabajo de la sesión
+> es `arena/979b8402-arandommenu`, un fork exacto de
+> `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
+> `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -16,17 +18,57 @@
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle**: `getgenv().WURST_BRANCH = "arena/9492e6b6-arandommenu"`.
+- El loader carga el **bundle**. La rama publicada por defecto en
+  `src/Wurst.lua` (`RUNTIME_BRANCH`) sigue siendo
+  `arena/9492e6b6-arandommenu`, pero se puede sobrescribir:
+  `getgenv().WURST_BRANCH = "<rama>"` **antes** de cargar `Wurst.lua`. Para
+  probar el trabajo de esta sesión hay que apuntar a
+  `arena/979b8402-arandommenu`; sin ese override el cliente sigue bajando el
+  bundle de la rama vieja.
 - **Protocolo de publicación (obligatorio, sin excepciones):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v175: 86 fuentes,
-     116 suites, auditoría estática, boots `failures=0`, menú 50/49).
-  5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
-     sin reescribir historia, sin trabajar en otra rama.
+  4. `bash tools/validate.sh` — debe terminar VERDE (v176: 84 fuentes en el
+     bundle, 117 suites, auditoría estática, boots `failures=0`, menú 50/49).
+  5. Commit + push **normales** a la rama de la sesión
+     (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
+     historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v176 — Densidad de clima real y keybinds en juego (2026-11-03)
+
+El usuario reportó poca lluvia, poca nieve, fog «muy suave», y que Shaders no
+respondía bien a los keybinds, sobre todo en MM2. Detalle, presupuestos y límites
+en `docs/FIXES-v176.md`; el procedimiento reutilizable está en
+`docs/skills/shader-weather-repair.md`.
+
+- **Densidad:** perfil por capas. Lluvia 150/s + 90/s por celda, nieve 34/s,
+  hojas 3/s, celdas de 40×40 con offsets ±36. Topes del motor respetados (400/s
+  por emisor en escritorio, 100/s en móvil) y presupuesto compartido
+  `MAX_WEATHER_RATE = 3000` con escalado proporcional. En móvil se crea el perfil
+  reducido directamente (una capa de lluvia a 92/s).
+- **Bug de parpadeo:** v175 apagaba **todos** los emisores en cada movimiento de
+  cámara > 30 studs y reactivaba una celda cada 0,15 s. Ahora se conserva la
+  visibilidad y el sondeo escalonado corrige; `Enabled` solo se escribe cuando
+  una celda cambia de estado. `RespectCanCollide` evita que decoración
+  no-colisionable cuente como techo.
+- **Fog:** `Atmosphere.Density` ≥ 0,58 y `Haze` ≥ 4,5 (antes 0,45/1,25); sin
+  atmósfera, `FogEnd` ≤ 110 y `FogStart` ≤ 8 con gris-azul legible. Niebla de
+  partículas `Rate 14`, `Size 30`, `Transparency 0,80`. Se conserva el contrato
+  de restauración condicional de v175.
+- **Keybinds:** `shortcutInputAllowed` ya no descarta por `gameProcessed` (el
+  juego ya usó la tecla); siguen bloqueando TextBox, captura y espera de tecla.
+  El binding guarda `label`/`feedback` y avisa `Shaders on`/`Shaders off` al
+  disparar con el menú cerrado.
+- **Pruebas:** `tools/test_shaders.py` ampliado (densidad, cámara en movimiento,
+  `RespectCanCollide`, sin reescrituras de `Enabled`, presupuesto, perfil móvil,
+  fog/nieve) y `tools/test_shortcut_game_input.py` nueva sobre el bloque real de
+  `Wurst.lua`. `validate.sh` verde: 117 suites, boot 0, menú 50/49.
+- **Límites:** son presupuestos de código. No se ha probado visualmente ni se ha
+  medido FPS/GPU en Roblox/Delta; el coste de 39 emisores en móvil sigue sin
+  medirse. La niebla de partículas no es volumétrica.
 
 ## v175 — Recuperación client-side de Shaders (2026-11-03)
 
@@ -1744,6 +1786,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-02 · v173. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-03 · v176. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

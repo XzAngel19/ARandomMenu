@@ -132,10 +132,13 @@ world.CurrentCamera=camera
 world.DescendantAdded,world.DescendantRemoving=signal(),signal()
 local roof={Transparency=0,IsA=function(_,name) return name=="BasePart" end}
 local rayCount,groundRayCount,isCovered,roofHeight,groundHit,groundFail=0,0,false,nil,nil,false
+local lastRayParams=nil
+local cellEnabledWrites=0
 local roofFail=false
 local roofRadius,splashGround=nil,nil
 function world:Raycast(origin,direction,params)
     assert(params.FilterType==Enum.RaycastFilterType.Exclude and #params.FilterDescendantsInstances>=1)
+    lastRayParams=params
     if direction.Y<0 then
         groundRayCount+=1
         if groundFail then error("ground ray denied") end
@@ -204,6 +207,11 @@ function Instance.new(class)
                     error("property denied: "..class.."."..key)
                 end
                 local old=store[key];store[key]=value
+                -- A write that does not change the value still restarts the
+                -- emitter's internal budget in the real engine, so v176 must
+                -- not rewrite Enabled on every poll.
+                if class=="ParticleEmitter" and key=="Enabled" and store.Parent
+                    and store.Parent.Name=="WeatherCell" then cellEnabledWrites+=1 end
                 if old~=value and propertySignals[key] then fireProperty(propertySignals[key]) end
             end
         end,
@@ -658,21 +666,24 @@ pass("large maps have bounded retained objects and a visible limit warning")
 -- latest values while keeping the requested fog after game-side rewrites.
 local oldFogColor=lighting.FogColor
 card.Options.Fog.Metadata.callback(true)
-assert(#children(lighting,"Atmosphere")==0 and lighting.FogStart==5 and lighting.FogEnd==180,
+assert(#children(lighting,"Atmosphere")==0 and lighting.FogStart==5 and lighting.FogEnd==110,
     "legacy fog must use FogEnd instead of inserting a competing Atmosphere")
+assert(lighting.FogColor==Color3.fromRGB(176,188,196),"legacy fog keeps a readable grey-blue tint")
 local fogFolder=byName(world,"ARMShaderWeather")
 local fogCell=byName(fogFolder,"FogCell");local mist=byName(fogCell,"Fog mist")
-assert(mist and mist.Rate==4 and mist.Transparency.Value==0.86 and activeHandles("Shaders weather")==1)
+assert(mist and mist.Rate==14 and mist.Size.Value==30 and mist.Transparency.Value==0.80
+    and activeHandles("Shaders weather")==1,"local mist must be visible, not a 0,86 ghost")
 local beforeFogRays=rayCount;frames(5)
 assert(mist.Enabled and rayCount==beforeFogRays,"fog particles work independently without roof scans")
 lighting.FogEnd=1400;flushDeferred()
-assert(lighting.FogEnd==180,"a game rewrite must not silently erase active fog")
+assert(lighting.FogEnd==110,"a game rewrite must not silently erase active fog")
 local incoming=Instance.new("Atmosphere"); incoming.Name="GameAtmosphere"; incoming.Density=0.16; incoming.Parent=lighting
 flushDeferred()
-assert(lighting.FogEnd==1400 and lighting.FogColor==oldFogColor and incoming.Density==0.45
-    and #children(lighting,"Atmosphere")==1,"switch to the game's real atmosphere and restore FogEnd")
+assert(lighting.FogEnd==1400 and lighting.FogColor==oldFogColor and incoming.Density==0.58
+    and incoming.Haze==4.5 and #children(lighting,"Atmosphere")==1,
+    "switch to the game's real atmosphere, raise Density and Haze, restore FogEnd")
 incoming.Density=0.05;flushDeferred()
-assert(incoming.Density==0.45,"a game rewrite must be reconciled while Fog is active")
+assert(incoming.Density==0.58,"a game rewrite must be reconciled while Fog is active")
 incoming.Density=0.77;flushDeferred()
 assert(incoming.Density==0.77,"already denser game fog must never be weakened")
 card.Options.Fog.Metadata.callback(false);flushDeferred()
@@ -681,9 +692,9 @@ assert(incoming.Density==0.77 and incoming.Haze==0.5 and not incoming.destroyed)
 card.Options.Fog.Metadata.callback(true)
 incoming:Destroy()
 local replacement=Instance.new("Atmosphere");replacement.Density=0.23;replacement.Parent=lighting
-flushDeferred();assert(replacement.Density==0.45)
+flushDeferred();assert(replacement.Density==0.58)
 replacement:Destroy();flushDeferred()
-assert(lighting.FogEnd==180,"FogEnd resumes if the game removes its Atmosphere")
+assert(lighting.FogEnd==110,"FogEnd resumes if the game removes its Atmosphere")
 card.Options.Fog.Metadata.callback(false);flushDeferred()
 assert(lighting.FogEnd==1400 and lighting.FogStart==5 and lighting.FogColor==oldFogColor)
 runAllSpawned()
@@ -691,7 +702,7 @@ runAllSpawned()
 propertyEventsDeferred=true
 card.Options.Fog.Metadata.callback(true);flushDeferred()
 lighting.FogEnd=800;flushDeferred()
-assert(lighting.FogEnd==180,"deferred game writes are reasserted without a signal loop")
+assert(lighting.FogEnd==110,"deferred game writes are reasserted without a signal loop")
 lighting.FogEnd=750
 card.Options.Fog.Metadata.callback(false);flushDeferred()
 assert(lighting.FogEnd==750,"disable preserves a newer write even if its signal is still queued")
@@ -716,19 +727,49 @@ local function weatherCells(folder)
     for _,p in ipairs(children(folder,"Part")) do if p.Name=="WeatherCell" then table.insert(out,p) end end
     return out
 end
+local function emittersOf(part)
+    return children(part,"ParticleEmitter")
+end
 card.Options.Rain.Metadata.callback(true)
 local rain=byName(world,"ARMShaderWeather")
 assert(rain and #weatherCells(rain)==9 and #children(rain,"Part")==10 and activeHandles("Shaders weather")==1)
 local rainEmitters={}
+local rainRate=0
 for _,p in ipairs(weatherCells(rain)) do
     assert(p.Anchored and not p.CanCollide and not p.CanTouch and not p.CanQuery)
-    local e=byName(p,"Rain");assert(e.Rate==18);table.insert(rainEmitters,e)
+    assert(p.Size.X==40 and p.Size.Z==40,"cells must cover a usable area, not a 26-stud pad")
+    local streak=byName(p,"Rain");local close=byName(p,"Rain 2")
+    assert(streak and close,"rain needs a streak layer and a close layer")
+    -- v176: 18/s per cell was ~15 visible drops per cell; a downpour needs
+    -- two layers and hundreds of particles per second (engine cap: 400 per
+    -- emitter, 100 on mobile).
+    assert(streak.Rate==150 and close.Rate==90,"rain density must be raised")
+    assert(streak.Lifetime.Min==0.85 and streak.Size.Value==1.15)
+    assert(streak.Squash and streak.Squash.Value<0,"VelocityParallel rain must use negative squash")
+    assert(streak.Orientation==Enum.ParticleOrientation.VelocityParallel)
+    assert(streak.Acceleration and streak.Acceleration.Y<0,"rain must accelerate downwards")
+    assert(streak.Texture=="rbxassetid://1822883048","fallback must be a streak, not a square")
+    assert(streak.LightEmission and streak.LightEmission>0)
+    rainRate+=streak.Rate+close.Rate
+    table.insert(rainEmitters,streak);table.insert(rainEmitters,close)
 end
+assert(rainRate==2160,"nine cells of two rain layers")
+local perCellAlive=150*0.85+90*0.5
+assert(perCellAlive>150,"alive drops per cell must actually fill the column")
 local splash=byName(byName(rain,"RainSplashCell"),"Rain splashes")
+assert(splash.Texture=="rbxassetid://1822856633" and splash.Size.Value==2.2,
+    "splashes need a dedicated sprite and a readable size")
 splashGround=floor
 rayCount=0;frames(40)
 assert(rayCount<=15 and splash.Emitted>0,"outdoor rain samples can create limited local splashes")
+assert(lastRayParams.RespectCanCollide==true,
+    "only collidable geometry is a roof; non-collidable decoration must not hide the rain")
 for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
+-- No wasteful rewrite: with a stable sky the loop must not touch Enabled.
+local writesBefore=cellEnabledWrites
+frames(40)
+assert(cellEnabledWrites==writesBefore,
+    "a settled cell must not rewrite Enabled every poll; that restarts emission")
 -- A denied sky ray must not turn all precipitation off permanently.
 local beforeSkyFailure=#notifications
 roofFail=true;frames(40)
@@ -743,19 +784,36 @@ for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
 roof.Transparency=0;isCovered=false;roofHeight=camera.CFrame.Position.Y+5;frames(40)
 for _,e in ipairs(rainEmitters) do assert(not e.Enabled,"low ceiling blocks rain") end
 roofHeight=nil;roofRadius=10;frames(40)
-assert(not rainEmitters[1].Enabled,"the centre cell is sheltered")
-for i=2,#rainEmitters do assert(rainEmitters[i].Enabled,"outdoor cells stay visible beyond a roof") end
+for _,e in ipairs(emittersOf(weatherCells(rain)[1])) do
+    assert(not e.Enabled,"the centre cell is sheltered")
+end
+for index=2,#weatherCells(rain) do
+    for _,e in ipairs(emittersOf(weatherCells(rain)[index])) do
+        assert(e.Enabled,"outdoor cells stay visible beyond a roof")
+    end
+end
 roofRadius=nil;splashGround=nil;frames(40)
 local beforeJumps=rayCount
 for i=1,120 do camera.CFrame={Position=Vector3.new(if i%6<3 then 100 else 0,12,0)};frames(1,1/60) end
 assert(rayCount-beforeJumps<=15,"rapid camera jumps cannot bypass ray limit")
+for _,e in ipairs(rainEmitters) do
+    assert(e.Enabled,"v175 switched every emitter off on a camera move: rain came in bursts")
+end
 camera.CFrame={Position=Vector3.new(0,12,0)}
 card.Options.Snow.Metadata.callback(true)
 local combined=byName(world,"ARMShaderWeather")
 assert(rain.destroyed and #weatherCells(combined)==9)
+local snowRate=0
 for _,p in ipairs(weatherCells(combined)) do
-    assert(#children(p,"ParticleEmitter")==2 and byName(p,"Rain").Rate==18 and byName(p,"Snow").Rate==8)
+    assert(#emittersOf(p)==3 and byName(p,"Rain").Rate==150 and byName(p,"Snow"))
+    local snow=byName(p,"Snow")
+    assert(snow.Rate==34 and snow.Size.Value==1.25 and snow.Lifetime.Min==6.2,
+        "snow needs volume, not 8 flakes/s")
+    assert(snow.LightEmission>=0.5,"flakes must stay visible in dark maps")
+    assert(snow.SpreadAngle.X>=20 and snow.Acceleration and snow.Acceleration.X>0,"snow needs drift")
+    snowRate+=snow.Rate
 end
+assert(snowRate==306,"nine cells of snow")
 runAllSpawned();frames(35)
 assert(byName(weatherCells(combined)[1],"Snow").Texture=="custom://shaderSnowTexture")
 card.Options["Falling leaves"].Metadata.callback(true)
@@ -764,7 +822,8 @@ local all=byName(world,"ARMShaderWeather")
 assert(#weatherCells(all)==9 and #children(all,"Part")==11 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==273,"162 rain + 72 snow + 27 leaves + 12 dust particles/s, plus manual splashes")
+assert(totalRate==2505,"2160 rain + 306 snow + 27 leaves + 12 dust particles/s, plus manual splashes")
+assert(totalRate<=3000,"the shared weather budget must hold whatever the toggles ask for")
 runAllSpawned();frames(35)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
 assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==12 and dust.Size.Value==0.35)
@@ -798,14 +857,30 @@ local dustRays=rayCount;frames(50);assert(rayCount==dustRays,"dust alone needs n
 card.Options["Dust motes"].Metadata.callback(false)
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
 runAllSpawned() -- all cancelled completions must stay dead
-pass("independent rain/snow/leaves/dust, outdoor cells, splashes and camera recovery")
+pass("dense rain/snow, real fog, independent weather, outdoor cells, splashes and camera recovery")
+
+-- Mobile must ask for less at the emitter, not after paying for the desktop
+-- profile: one rain layer at 92/s, no close layer, same number of parts.
+host.state.isMobile=true
+card.Options.Rain.Metadata.callback(true)
+local mobileRain=byName(world,"ARMShaderWeather")
+frames(35)
+for _,p in ipairs(weatherCells(mobileRain)) do
+    local list=emittersOf(p)
+    assert(#list==1 and list[1].Rate==92,"mobile keeps one bounded rain layer")
+    assert(list[1].Rate<=100,"a mobile emitter cannot exceed 100 particles/s")
+end
+card.Options.Rain.Metadata.callback(false)
+host.state.isMobile=false
+runAllSpawned()
+pass("mobile density is scaled at creation, below the engine cap")
 
 host.state.resolveAsset=function(name) return "custom://"..name end
 preloadMode="failure"
 card.Options.Rain.Metadata.callback(true)
 local failedArt=byName(world,"ARMShaderWeather")
 runAllSpawned();frames(35)
-assert(byName(weatherCells(failedArt)[1],"Rain").Texture=="rbxasset://textures/particles/SquareParticle.png",
+assert(byName(weatherCells(failedArt)[1],"Rain").Texture=="rbxassetid://1822883048",
     "an unloadable local particle image must not replace the fallback")
 card.Options.Rain.Metadata.callback(false)
 preloadMode="success"
@@ -839,7 +914,7 @@ for _,case in ipairs({
     assert(surviving and not byName(surviving,case.missing)
         and byName(weatherCells(surviving)[1],"Rain").Enabled,
         "a failed "..case.name.." must not disable rain")
-    if case.option=="Fog" then assert(lighting.FogEnd==180,"distance fog remains active without mist particles") end
+    if case.option=="Fog" then assert(lighting.FogEnd==110,"distance fog remains active without mist particles") end
     Instance.failProperty.ParticleEmitter=nil
     if case.option then card.Options[case.option].Metadata.callback(false) end
     card.Options.Rain.Metadata.callback(false)
@@ -864,7 +939,7 @@ card.Options.Rain.Metadata.callback(true)
 local fallback=byName(world,"ARMShaderWeather")
 local fallbackEmitter=byName(weatherCells(fallback)[1],"Rain")
 runAllSpawned()
-assert(fallbackEmitter.Texture=="rbxasset://textures/particles/SquareParticle.png")
+assert(fallbackEmitter.Texture=="rbxassetid://1822883048","the streak fallback survives a missing local image")
 Instance.fail.ParticleEmitter=true
 card.Options.Snow.Metadata.callback(true)
 assert(card.Enabled and renderable(color) and not byName(world,"ARMShaderWeather")
@@ -949,7 +1024,7 @@ assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
     and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
 local startsBeforeRestore=reflectionStarts
 features.Shaders.toggle(true)
-assert(savedAtmosphere.Density==0.45 and reflectionStarts==startsBeforeRestore,
+assert(savedAtmosphere.Density==0.58 and reflectionStarts==startsBeforeRestore,
     "a saved OFF floor reflection must not start on module enable")
 Shaders.destroy();flushDeferred();assert(savedAtmosphere.Density==0.23)
 pass("synchronous saved-toggle restoration is safe and cannot restore removed looks")

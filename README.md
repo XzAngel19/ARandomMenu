@@ -24,9 +24,15 @@ omitidos, ropa o mallas irregulares pueden verse distintos o no reflejarse.
 
 No hay selector de `Look`. `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`,
 `Wet surfaces`, `Water reflections`, `Surface textures` y `Glass reflections`
-son opciones independientes. Fog usa la `Atmosphere` existente o `FogEnd` según
-el juego, y añade partículas locales. Las celdas de lluvia y nieve prueban si
-hay techo; si esa comprobación falla se avisa y pueden atravesarlo. El barrido
+son opciones independientes. Desde v176 el clima tiene densidad real: lluvia en
+dos capas (trazo y gotas cercanas) y nieve con copos grandes, cada una repartida
+en nueve celdas que siguen a la cámara; se respetan los topes del motor (400
+partículas/s por emisor en escritorio, 100 en móvil) y hay un presupuesto total
+de 3.000 partículas/s. Fog sube `Atmosphere.Density`/`Haze` (0,58/4,5) o acerca
+`FogEnd` a 110 si el juego no tiene atmósfera, y añade una niebla local densa.
+Las celdas de lluvia y nieve prueban si hay techo con `RespectCanCollide`: solo
+la geometría sólida tapa el clima, y mover la cámara ya no lo apaga. Si esa
+comprobación falla se avisa y las partículas pueden atravesar el techo. El barrido
 recorre progresivamente el mapa, pero solo modifica piezas compatibles y tiene
 límites de recursos. Las texturas no sustituyen mallas y respetan los decals por
 cara. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes. Al
@@ -39,6 +45,12 @@ no puede garantizarse en todos los juegos. No se ha probado visualmente ni
 medido el rendimiento en Roblox/Delta: tres viewports, partículas y sombras
 pueden ser costosos. Si notas lag, apaga `Floor reflections` o los efectos que
 no uses. Fuentes, licencias y límites: `docs/third-party/shaders/README.md`.
+
+Los **keybinds** funcionan aunque el juego ya haya usado la tecla (MM2 liga
+varias): solo se bloquean al escribir en un `TextBox`, durante la captura de una
+tecla o mientras el menú espera una tecla nueva. Al disparar un atajo con el
+menú cerrado aparece un aviso (`Shaders on`/`Shaders off`) que confirma que el
+atajo corrió.
 
 Para comparar, prueba primero `Shaders` con `Floor reflections` encendido y
 apagado en tercera persona sobre un piso sólido. Cierra el menú para comparar:

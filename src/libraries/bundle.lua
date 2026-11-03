@@ -1,5 +1,5 @@
 return {
-    stamp = "v175-20261103-client-shader-recovery",
+    stamp = "v176-20261103-weather-density-keybinds",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -38661,16 +38661,51 @@ return Module
 local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
 local card
 
+-- v176: one emitter cannot make heavy weather — Roblox caps a single
+-- ParticleEmitter at 400 particles/s on desktop and 100 on mobile
+-- (create.roblox.com/docs/effects/particle-emitters). Density therefore comes
+-- from a few layers per cell, with the mobile pass declared next to the desktop
+-- one so a phone never asks for the full budget. Partículas vivas are
+-- Rate × Lifetime, which is what actually fills the screen; the old profile
+-- (18/s × 0,85 s ≈ 15 drops per cell) could not read as rain.
+-- Textures: the local CC0 sprites stay the primary source. When the executor
+-- cannot load them, the fallbacks are Roblox-hosted public assets from the Rain
+-- module reference (streak `1822883048`, splash/top-down `1822856633`) instead
+-- of a square, which never resembles a raindrop.
+local MAX_EMITTER_RATE: number = 320
+local MAX_WEATHER_RATE: number = 3000
+local MAX_CELL_EMITTERS: number = 4
 local WEATHER = {
-    Rain = {asset = "shaderRainTexture", fallback = "rbxasset://textures/particles/SquareParticle.png",
-        rate = 18, size = 0.6, speedMin = 45, speedMax = 50, lifetime = 0.85,
-        transparency = 0.30, spread = 1},
+    Rain = {asset = "shaderRainTexture", fallback = "rbxassetid://1822883048",
+        layers = {
+            -- Streak layer: fast, thin, squashed along its own velocity.
+            {rate = 150, mobileRate = 92, size = 1.15, speedMin = 62, speedMax = 80,
+                lifetime = 0.85, transparency = 0.26, spread = 2, squash = -3.2,
+                color = {205, 219, 235}, lightEmission = 0.10, lightInfluence = 0.85,
+                acceleration = Vector3.new(2, -12, 0)},
+            -- Close layer: shorter-lived drops near the camera make the fall
+            -- read as dense without another cell or another part.
+            {rate = 90, mobileRate = 0, size = 0.65, speedMin = 48, speedMax = 66,
+                lifetime = 0.5, transparency = 0.18, spread = 4, squash = -2.4,
+                color = {214, 226, 240}, lightEmission = 0.14, lightInfluence = 0.8,
+                acceleration = Vector3.new(2, -10, 0)},
+        }},
     Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
-        rate = 8, size = 0.45, speedMin = 6, speedMax = 9, lifetime = 4,
-        transparency = 0.18, spread = 12},
+        layers = {
+            -- Slow, large, lit flakes. LightEmission keeps them visible in the
+            -- dark maps (MM2 has night rounds) instead of grey-on-grey.
+            {rate = 34, mobileRate = 20, size = 1.25, speedMin = 4.5, speedMax = 7,
+                lifetime = 6.2, transparency = 0.12, spread = 28, spin = 45,
+                color = {252, 253, 255}, lightEmission = 0.55, lightInfluence = 0.35,
+                acceleration = Vector3.new(3, 0, 1.5)},
+        }},
     ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
-        rate = 3, size = 0.9, speedMin = 4, speedMax = 6, lifetime = 4,
-        transparency = 0.10, spread = 18},
+        layers = {
+            {rate = 3, mobileRate = 2, size = 1.1, speedMin = 4, speedMax = 6, lifetime = 6,
+                transparency = 0.10, spread = 24, spin = 60,
+                color = {255, 214, 150}, lightEmission = 0.15, lightInfluence = 0.8,
+                acceleration = Vector3.new(2.5, 0, 1)},
+        }},
 }
 local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
 -- Roblox documents these ColorMap IDs for its base materials. They let a
@@ -38885,12 +38920,19 @@ function Module.init(context: any): any
 
     local function fogValue(target: any, property: string, original: any): any
         if target == lighting then
-            if property == "FogStart" then return math.min(original, 20) end
-            if property == "FogEnd" then return math.min(original, 180) end
-            return Color3.fromRGB(181, 193, 201)
+            -- v176: the previous values (start 20, end 180) were readable but
+            -- soft; the engine's FogEnd is what a place without an Atmosphere
+            -- actually draws, so pull the wall in and keep a light grey-blue
+            -- tint instead of the place's original colour.
+            if property == "FogStart" then return math.min(original, 8) end
+            if property == "FogEnd" then return math.min(original, 110) end
+            return Color3.fromRGB(176, 188, 196)
         end
-        if property == "Density" then return math.max(original, 0.45) end
-        return math.max(original, 1.25) -- Haze
+        -- Atmosphere supersedes FogEnd. Density 0-1 and Haze 0-10 are the
+        -- documented ranges (create.roblox.com/docs/environment/atmosphere);
+        -- 0,45/1,25 sat below a visible haze.
+        if property == "Density" then return math.max(original, 0.58) end
+        return math.max(original, 4.5) -- Haze
     end
 
     local function refreshFog(): ()
@@ -39048,51 +39090,77 @@ function Module.init(context: any): any
                 -- rainy when the camera is sheltered but looks outdoors.
                 for _, offset: Vector3 in ipairs({
                     Vector3.new(0, 0, 0),
-                    Vector3.new(-28, 0, -28), Vector3.new(0, 0, -28), Vector3.new(28, 0, -28),
-                    Vector3.new(-28, 0, 0), Vector3.new(28, 0, 0),
-                    Vector3.new(-28, 0, 28), Vector3.new(0, 0, 28), Vector3.new(28, 0, 28),
+                    Vector3.new(-36, 0, -36), Vector3.new(0, 0, -36), Vector3.new(36, 0, -36),
+                    Vector3.new(-36, 0, 0), Vector3.new(36, 0, 0),
+                    Vector3.new(-36, 0, 36), Vector3.new(0, 0, 36), Vector3.new(36, 0, 36),
                 }) do
-                    local part: Part = cellPart("WeatherCell", Vector3.new(26, 0.2, 26))
+                    local part: Part = cellPart("WeatherCell", Vector3.new(40, 0.2, 40))
                     local emitters: {ParticleEmitter} = {}
                     for _, name: string in ipairs(kinds) do
                         local style: any = WEATHER[name]
-                        local emitter: any = nil
-                        local created: boolean, failure: any = pcall(function(): ()
-                            emitter = Instance.new("ParticleEmitter")
-                            emitter.Name, emitter.Enabled, emitter.Texture = name, false, style.fallback
-                            -- Newer particle properties are optional: a client
-                            -- lacking them should still draw the basic emitter.
-                            pcall(function(): ()
-                                emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
-                            end)
-                            emitter.EmissionDirection = Enum.NormalId.Bottom
-                            pcall(function(): ()
-                                emitter.Orientation = if name == "Rain" then Enum.ParticleOrientation.VelocityParallel
-                                    else Enum.ParticleOrientation.FacingCamera
-                            end)
-                            emitter.Rate, emitter.Size = style.rate, NumberSequence.new(style.size)
-                            emitter.Speed, emitter.Lifetime = NumberRange.new(style.speedMin, style.speedMax), NumberRange.new(style.lifetime)
-                            emitter.Transparency, emitter.SpreadAngle = NumberSequence.new(style.transparency), Vector2.new(style.spread, style.spread)
-                            emitter.LightInfluence, emitter.LightEmission = 0.8, if name == "Snow" then 0.2 else 0.05
-                            if name == "Rain" then
-                                pcall(function(): () emitter.Squash = NumberSequence.new(-2.5) end)
-                                emitter.Color = ColorSequence.new(Color3.fromRGB(205, 219, 235))
-                            else
-                                emitter.Rotation, emitter.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-45, 45)
+                        for index, layer: any in ipairs(style.layers) do
+                            if #emitters < MAX_CELL_EMITTERS then
+                                local mobile: boolean = host.state ~= nil and host.state.isMobile == true
+                                local rate: number = if mobile then layer.mobileRate or 0 else layer.rate
+                                -- A mobile client is capped at 100 particles/s per
+                                -- emitter; asking for more only wastes a write.
+                                rate = math.min(rate, MAX_EMITTER_RATE)
+                                if mobile then rate = math.min(rate, 100) end
+                                if rate > 0 then
+                                    local emitter: any = nil
+                                    local created: boolean, failure: any = pcall(function(): ()
+                                        emitter = Instance.new("ParticleEmitter")
+                                        emitter.Name = if index == 1 then name else name .. " " .. index
+                                        emitter.Enabled, emitter.Texture = false, style.fallback
+                                        -- Newer particle properties are optional: a
+                                        -- client lacking them should still draw the
+                                        -- basic emitter.
+                                        pcall(function(): ()
+                                            emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
+                                        end)
+                                        emitter.EmissionDirection = Enum.NormalId.Bottom
+                                        pcall(function(): ()
+                                            emitter.Orientation = if name == "Rain" then Enum.ParticleOrientation.VelocityParallel
+                                                else Enum.ParticleOrientation.FacingCamera
+                                        end)
+                                        emitter.Rate, emitter.Size = rate, NumberSequence.new(layer.size)
+                                        emitter.Speed = NumberRange.new(layer.speedMin, layer.speedMax)
+                                        emitter.Lifetime = NumberRange.new(layer.lifetime)
+                                        emitter.Transparency = NumberSequence.new(layer.transparency)
+                                        emitter.SpreadAngle = Vector2.new(layer.spread, layer.spread)
+                                        emitter.LightInfluence = layer.lightInfluence or 0.8
+                                        emitter.LightEmission = layer.lightEmission or 0.05
+                                        pcall(function(): () emitter.Acceleration = layer.acceleration end)
+                                        if name == "Rain" then
+                                            -- Roblox documents negative Squash for
+                                            -- VelocityParallel: it stretches the
+                                            -- sprite along its travel direction.
+                                            pcall(function(): () emitter.Squash = NumberSequence.new(layer.squash or -3) end)
+                                        else
+                                            local spin: number = layer.spin or 0
+                                            if spin > 0 then
+                                                emitter.Rotation = NumberRange.new(0, 360)
+                                                emitter.RotSpeed = NumberRange.new(-spin, spin)
+                                            end
+                                        end
+                                        local tint: {number} = layer.color
+                                        emitter.Color = ColorSequence.new(Color3.fromRGB(tint[1], tint[2], tint[3]))
+                                        emitter.Parent = part
+                                    end)
+                                    if created then
+                                        table.insert(emitters, emitter)
+                                        styleCounts[name] = (styleCounts[name] or 0) + 1
+                                        remember(style.asset, emitter)
+                                    else
+                                        if emitter then pcall(function(): () emitter:Destroy() end) end
+                                        particleFailure(name, failure)
+                                    end
+                                end
                             end
-                            emitter.Parent = part
-                        end)
-                        if created then
-                            table.insert(emitters, emitter)
-                            styleCounts[name] = (styleCounts[name] or 0) + 1
-                            remember(style.asset, emitter)
-                        else
-                            if emitter then pcall(function(): () emitter:Destroy() end) end
-                            particleFailure(name, failure)
                         end
                     end
                     if #emitters > 0 then
-                        table.insert(weatherCells, {part = part, emitters = emitters, offset = offset})
+                        table.insert(weatherCells, {part = part, emitters = emitters, offset = offset, covered = false})
                     else
                         part:Destroy()
                     end
@@ -39117,15 +39185,19 @@ function Module.init(context: any): any
             if mistEnabled then
                 -- Distance haze and its local mist are independent: a failed
                 -- optional particle must not cancel fog, rain or snow.
-                mistPart, mist = extraEmitter("FogCell", "Fog mist", Vector3.new(60, 10, 60), "shaderSnowTexture", function(emitter: any): ()
+                -- v176: the old mist (Rate 4, Size 10, Transparency 0,86) was
+                -- almost invisible. A wider, denser sheet of large soft sprites
+                -- that follow the camera is what reads as local fog; the place's
+                -- own Atmosphere/FogEnd still supplies the distance haze.
+                mistPart, mist = extraEmitter("FogCell", "Fog mist", Vector3.new(80, 16, 80), "shaderSnowTexture", function(emitter: any): ()
                     emitter.Name, emitter.Enabled = "Fog mist", false
                     emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
                     pcall(function(): () emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
                     emitter.EmissionDirection = Enum.NormalId.Top
                     pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.FacingCamera end)
-                    emitter.Rate, emitter.Size, emitter.Speed = 4, NumberSequence.new(10), NumberRange.new(0.1, 0.35)
-                    emitter.Lifetime, emitter.Transparency = NumberRange.new(7, 9), NumberSequence.new(0.86)
-                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(202, 213, 219)), 0.1, 0.7
+                    emitter.Rate, emitter.Size, emitter.Speed = 14, NumberSequence.new(30), NumberRange.new(0.1, 0.4)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(8, 10), NumberSequence.new(0.80)
+                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(208, 218, 226)), 0.12, 0.9
                     emitter.Rotation, emitter.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
                 end)
             end
@@ -39134,24 +39206,56 @@ function Module.init(context: any): any
             if (styleCounts.Rain or 0) > 0 then
                 splashPart, splash = extraEmitter("RainSplashCell", "Rain splashes", Vector3.new(0.2, 0.2, 0.2), "shaderSnowTexture", function(emitter: any): ()
                     emitter.Name, emitter.Enabled, emitter.Rate = "Rain splashes", false, 0
-                    emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
+                    emitter.Texture = "rbxassetid://1822856633"
                     emitter.EmissionDirection = Enum.NormalId.Top
                     pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.VelocityPerpendicular end)
-                    emitter.Size, emitter.Speed = NumberSequence.new(1.2), NumberRange.new(0.1, 0.2)
-                    emitter.Lifetime, emitter.Transparency = NumberRange.new(0.2, 0.3), NumberSequence.new(0.55)
+                    -- v176: bigger and longer-lived than the old 1,2/0,25 pair,
+                    -- so a ground hit is actually readable as a splash ring.
+                    emitter.Size, emitter.Speed = NumberSequence.new(2.2), NumberRange.new(0.1, 0.2)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(0.28, 0.36), NumberSequence.new(0.45)
                     emitter.Color, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
+                    emitter.LightEmission = 0.15
                 end)
+            end
+            -- One shared budget: whatever the toggles ask for, the module never
+            -- exceeds MAX_WEATHER_RATE total particles/s. Scaling every emitter
+            -- keeps the mix instead of silently dropping a weather type.
+            local function clampWeatherBudget(): boolean
+                local total: number = 0
+                for _, cellData: any in ipairs(weatherCells) do
+                    for _, emitter: ParticleEmitter in ipairs(cellData.emitters) do total += emitter.Rate end
+                end
+                local extras: {any} = {}
+                if dust then table.insert(extras, dust) end
+                if mist then table.insert(extras, mist) end
+                for _, emitter: any in ipairs(extras) do total += emitter.Rate end
+                if total <= MAX_WEATHER_RATE or total <= 0 then return false end
+                local scale: number = MAX_WEATHER_RATE / total
+                for _, cellData: any in ipairs(weatherCells) do
+                    for _, emitter: ParticleEmitter in ipairs(cellData.emitters) do
+                        pcall(function(): () emitter.Rate = math.max(1, math.floor(emitter.Rate * scale)) end)
+                    end
+                end
+                for _, emitter: any in ipairs(extras) do
+                    pcall(function(): () emitter.Rate = math.max(1, math.floor(emitter.Rate * scale)) end)
+                end
+                return true
+            end
+            if clampWeatherBudget() then
+                card:Notify("Weather density capped to the local particle budget")
             end
             if particleCount == 0 then stopWeather(); return end
             local paramsOk: boolean, params: any = pcall(function(): any
                 local value: RaycastParams = RaycastParams.new()
                 value.FilterType, value.IgnoreWater = Enum.RaycastFilterType.Exclude, true
+                -- Only collidable geometry is a roof. Maps are full of invisible
+                -- or non-collidable decoration above the camera, and treating it
+                -- as a ceiling was hiding the rain for entire rounds.
+                pcall(function(): () value.RespectCanCollide = true end)
                 return value
             end)
             if not paramsOk then params = nil end
             local previousCharacter: Model? = nil
-            local lastFocus: Vector3? = nil
-            local lastCamera: Camera? = nil
             local moveElapsed, roofElapsed, roofIndex = 0, 0.15, 0
             local shelterWarned: boolean = false
             local function updateWeather(deltaTime: number): ()
@@ -39166,16 +39270,14 @@ function Module.init(context: any): any
                     end
                     if dust then dust.Enabled = false end
                     if mist then mist.Enabled = false end
-                    lastCamera, lastFocus = nil, nil
                     return
                 end
                 local focus: Vector3 = camera.CFrame.Position
-                if camera ~= lastCamera or (lastFocus and (focus - lastFocus).Magnitude > 30) then
-                    for _, cell: any in ipairs(weatherCells) do
-                        for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = false end
-                    end
-                end
-                lastCamera, lastFocus = camera, focus
+                -- v175 switched every emitter off on each camera move and
+                -- re-enabled one cell per 0,15 s poll, so walking showed rain in
+                -- bursts or not at all while moving. Keep the last known
+                -- visibility: the staggered sky test corrects one cell per
+                -- 0,15 s ray (bounded), and the cells follow the camera below.
                 local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
                 if params and #weatherCells > 0 and (character ~= previousCharacter or roofIndex == 0) then
                     previousCharacter = character
@@ -39191,6 +39293,7 @@ function Module.init(context: any): any
                 if #weatherCells == 0 then return end
                 if not params then
                     for _, cell: any in ipairs(weatherCells) do
+                        cell.applied = false
                         for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = true end
                     end
                     if not shelterWarned then
@@ -39218,7 +39321,13 @@ function Module.init(context: any): any
                 if castOk and hit and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
                     covered = false
                 end
-                for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
+                -- Write Enabled only when a cell changes state: the old code
+                -- rewrote every emitter of the sampled cell on each poll, and a
+                -- write to Enabled restarts the emitter's particle budget.
+                if cell.applied ~= covered then
+                    cell.applied = covered
+                    for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
+                end
                 -- One short ground sample per open cell produces inexpensive
                 -- local splashes; it does not run for snow or while sheltered.
                 if castOk and not covered and splashPart and splash then
@@ -39227,7 +39336,7 @@ function Module.init(context: any): any
                     end)
                     if groundOk and ground and ground.Position and ground.Normal then
                         splashPart.Position = ground.Position + ground.Normal * 0.05
-                        pcall(function(): () (splash :: ParticleEmitter):Emit(1) end)
+                        pcall(function(): () (splash :: ParticleEmitter):Emit(2) end)
                     end
                 end
             end
@@ -40656,7 +40765,14 @@ function Module.init(context: any): any
                 shortcutButton,
                 feature.configKey,
                 name,
-                activateFeature
+                activateFeature,
+                {
+                    -- Read the live state after the handler ran, so the toast
+                    -- matches the card even for a module that refuses to start.
+                    feedback = function(): string
+                        return name .. (feature.enabled == true and " on" or " off")
+                    end,
+                }
             )
         end
 

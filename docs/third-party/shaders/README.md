@@ -129,7 +129,11 @@ puede fallar por permisos/calidad: ambos caminos requieren prueba real.
   utilizado para nieve, polvo, niebla y salpicaduras.
 
 Las tres imágenes de clima suman 72.807 bytes y tienen respaldo nativo/ID si no
-se pueden descargar o la precarga no informa éxito. Fog utiliza la `Atmosphere`
+se pueden descargar o la precarga no informa éxito. Desde v176 esos respaldos son
+los assets públicos del módulo de referencia —`1822883048` (trazo de lluvia) y
+`1822856633` (impacto/top-down)—, porque un cuadrado no puede leerse como gota.
+Se **referencian por ID**, no se copian ni se redistribuyen, y su disponibilidad
+en el cliente sigue dependiendo de Roblox. Fog utiliza la `Atmosphere`
 del juego cuando existe; de lo contrario utiliza `Lighting.FogStart/FogEnd` y
 `FogColor`. Añade partículas translúcidas sin crear ni borrar la atmósfera del
 juego. Mientras está activo reacciona a cambios; al apagar restaura el último
@@ -200,14 +204,20 @@ Los viewports no comparten escena ni reflejan todos los objetos del mapa. Un
 piso grande sin otros espejos consume ahora dos viewports, no uno: puede costar
 más GPU aunque el máximo total no aumentó.
 
-Fog, Rain, Snow, hojas y polvo suman hasta 30 emisores y 277 partículas/s
-(162 lluvia, 72 nieve, 27 hojas, 12 polvo y 4 niebla), más hasta una salpicadura
-por muestra abierta: unas 6,7/s como máximo. Las posiciones se actualizan hasta
-20 Hz y se reparte una prueba de techo cada 0,15 s entre nueve celdas; la lluvia
-exterior puede verse desde un interior cercano, no recortar perfectamente cada
-borde. Si la comprobación de techo falla, se notifica y los emisores siguen
-visibles, incluso bajo techo. El número de partículas vivas depende de su
-duración. Sin emisores disponibles no queda tarea de clima; sin texturas,
-reflectancia ni espejo no hay barrido superficial. Son presupuestos de código,
-**no mediciones de FPS, GPU ni memoria** en Roblox/Delta. Las sombras, los
+Fog, Rain, Snow, hojas y polvo suman hasta 39 emisores y 2.519 partículas/s de
+escritorio (2.160 lluvia en dos capas, 306 nieve, 27 hojas, 12 polvo y 14
+niebla), más hasta dos salpicaduras por muestra abierta: unas 13/s como máximo.
+En móvil se crea directamente el perfil reducido (≈1.052 partículas/s) porque un
+emisor está limitado a 100/s. El tope de `Rate` por emisor es 320 en escritorio
+y 100 en móvil, y la suma total se recorta a `MAX_WEATHER_RATE = 3000` escalando
+todas las capas. Las posiciones se actualizan hasta 20 Hz y se reparte una prueba
+de techo cada 0,15 s entre nueve celdas; la lluvia exterior puede verse desde un
+interior cercano, no recortar perfectamente cada borde. Solo la geometría
+colisionable cuenta como techo (`RespectCanCollide`), mover la cámara no apaga los
+emisores y `Enabled` solo se reescribe cuando una celda cambia de estado. Si la
+comprobación de techo falla, se notifica y los emisores siguen visibles, incluso
+bajo techo. Las partículas vivas son `Rate × Lifetime`: ≈1.550 de lluvia y ≈1.900
+de nieve con todo activo. Sin emisores disponibles no queda tarea de clima; sin
+texturas, reflectancia ni espejo no hay barrido superficial. Son presupuestos de
+código, **no mediciones de FPS, GPU ni memoria** en Roblox/Delta. Las sombras, los
 assets, los sprites y tres `ViewportFrame` pueden resultar costosos en móvil.
