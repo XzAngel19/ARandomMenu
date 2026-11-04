@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v181-20261104-gui-fixes-and-six-emotes"
+local SOURCE_STAMP: string = "v182-20261104-mm2-ui-calibration-repair"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3837,14 +3837,17 @@ local function confirmDialog(options: any): Frame?
     local onYes: any = options.onYes
     local onNo: any = options.onNo
 
-    local previous: Instance? = PopupLayer:FindFirstChild("ConfirmDialog")
+    -- PopupLayer has the menu's UIScale and is anchored at the top left.
+    -- A 50% position inside it therefore is not the viewport centre when the
+    -- menu is scaled. Put the modal directly in the unscaled ScreenGui.
+    local previous: Instance? = ScreenGui:FindFirstChild("ConfirmDialog")
     while previous do
         previous:Destroy()
-        previous = PopupLayer:FindFirstChild("ConfirmDialog")
+        previous = ScreenGui:FindFirstChild("ConfirmDialog")
     end
 
     local backdrop: TextButton = (create("TextButton", {
-        Parent = PopupLayer,
+        Parent = ScreenGui,
         Name = "ConfirmDialog",
         Text = "",
         AutoButtonColor = false,
@@ -3862,11 +3865,16 @@ local function confirmDialog(options: any): Frame?
         Active = true,
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(340, 176),
+        Size = UDim2.new(1, -32, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundColor3 = Theme.surface,
         BorderSizePixel = 0,
         ZIndex = 401,
     }) :: any) :: Frame
+    create("UISizeConstraint", {
+        Parent = panel,
+        MaxSize = Vector2.new(340, 10000),
+    })
     create("UICorner", {
         Parent = panel,
         CornerRadius = cornerRadius(UI_RADIUS.panel),
@@ -3918,7 +3926,7 @@ local function confirmDialog(options: any): Frame?
         TextWrapped = true,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Top,
-        Size = UDim2.new(1, 0, 0, 60),
+        Size = UDim2.new(1, 0, 0, 0),
         ZIndex = 402,
     }) :: any) :: TextLabel
 

@@ -545,6 +545,7 @@ end
     chunks += [r'''
 do
 local state={}
+local configData={states={['MM2.Calibration.Consent']=true}}
 local runtime={active=true,dirty=true,revision=0,startedAt=0,events={},motionBuckets={},sessionGunAttempts=1,sessionGunConfirmed=1,sessionKnifeAttempts=2,sessionKnifeConfirmed=1,
     gunAcceptance={count=1,mean=120,m2=0,minimum=120,maximum=120},
     knifeSpeed={count=1,mean=96,m2=0,minimum=96,maximum=96},

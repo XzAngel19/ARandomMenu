@@ -51,6 +51,15 @@ workspace.CurrentCamera:GetPropertyChangedSignal('ViewportSize'):Fire()
 near(scale.Scale,1.2)
 print('PASS MM2 menu scale: zero viewport at boot recovers')
 '''
+stale_values = r'''
+local function near(a,b) assert(type(a)=='number' and math.abs(a-b)<0.00001,tostring(a)..' ~= '..tostring(b)) end
+near(ex.configData.values['UI.MenuScale'],1.3)
+near(ex.configData.values['ClickGUI.Menuscale'],1.3)
+near(ex.configData.values['ClickGUI.Opacity'],0.15)
+near(ex.state.clickGui.scale.Scale,0.8*1.3)
+near(ex.state.windows.bodyTransparency,0.85)
+print('PASS MM2 menu scale: stale bounded values are migrated')
+'''
 saved_anchor = '["Universal.Speed.Speed"] = 5000'
 viewport_anchor = 'ViewportSize = Vector2.new(1280, 720),'
 assert source.count(saved_anchor) == 1 and source.count(viewport_anchor) == 1
@@ -59,6 +68,10 @@ with tempfile.TemporaryDirectory(prefix='mm2-menu-scale-') as tmp:
         ('default', source, '\nSAVED_SCALE=1\n' + probe),
         ('saved', source.replace(saved_anchor, saved_anchor + ', ["UI.MenuScale"] = 1.2', 1),
             '\nSAVED_SCALE=1.2\n' + probe),
+        ('stale-bounds', source.replace(saved_anchor, saved_anchor
+            + ', ["UI.MenuScale"] = 3, ["ClickGUI.Menuscale"] = 9, ["ClickGUI.Opacity"] = -1', 1)
+            .replace('    ui = {},\n}]]', '    ui = {wurstSchema = 3},\n}]]', 1),
+            stale_values),
         ('zero-at-boot', source.replace(viewport_anchor, 'ViewportSize = Vector2.new(0, 0),', 1), boot_zero),
     ):
         path = Path(tmp) / f'{name}.luau'

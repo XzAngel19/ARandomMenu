@@ -700,16 +700,22 @@ function Module.init(context: any): WidgetLibrary
         maximum: number,
         callback: (number) -> (),
         hintText: string?,
-        stepValue: number?
+        stepValue: number?,
+        boundTyped: boolean?
     ): Frame
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        -- The interval is a drag guide, not a limit on typed/profile values.
+        -- The interval is normally just a drag guide, not a limit on typed or
+        -- profile values. UI controls may explicitly opt into bounded input.
         local value: number = isNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
+        if boundTyped then
+            if value == math.huge or value == -math.huge then value = defaultValue end
+            value = math.clamp(value, minimum, maximum)
+        end
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
             and maximum % 1 == 0
@@ -858,12 +864,19 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = "Any number (type inf for infinity)"
+        valueInput.PlaceholderText = boundTyped
+            and (formatCompactNumber(minimum) .. "–" .. formatCompactNumber(maximum))
+            or "Any number (type inf for infinity)"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
-            if not fromSlider then return raw end
+            if not fromSlider then
+                -- Most gameplay sliders intentionally accept values outside
+                -- their drag range. Bounded UI controls opt in explicitly so
+                -- the displayed/saved value matches what they can apply.
+                return boundTyped and math.clamp(raw, minimum, maximum) or raw
+            end
             -- When maximum is infinite, skip the upper clamp and stepping
             -- so an infinity typed or dragged in passes through untouched.
             if maximum == math.huge then
@@ -912,13 +925,8 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
-        local function updateFromScreenX(screenX: number): ()
-            local width: number = math.max(track.AbsoluteSize.X, 1)
-            local alpha: number = math.clamp(
-                (screenX - track.AbsolutePosition.X) / width,
-                0,
-                1
-            )
+        local function updateFromScreenX(screenX: number, origin: number, width: number): ()
+            local alpha: number = math.clamp((screenX - origin) / width, 0, 1)
             setValue(minimum + (effectiveMax(minimum, maximum) - minimum) * alpha, true, true)
         end
 
@@ -941,9 +949,16 @@ function Module.init(context: any): WidgetLibrary
             if input.Position.X > track.AbsolutePosition.X + track.AbsoluteSize.X then
                 return
             end
-            updateFromScreenX(input.Position.X)
+            -- Rescaling the menu moves the track under the pointer. Keep the
+            -- starting screen interval fixed for the duration of this drag.
+            local dragOrigin: number = track.AbsolutePosition.X
+            local dragWidth: number = math.max(track.AbsoluteSize.X, 1)
+            local function updateDrag(screenX: number): ()
+                updateFromScreenX(screenX, dragOrigin, dragWidth)
+            end
+            updateDrag(input.Position.X)
             activeSlider = {
-                update = updateFromScreenX,
+                update = updateDrag,
                 finish = function(): ()
                     notify(
                         labelText
@@ -974,7 +989,11 @@ function Module.init(context: any): WidgetLibrary
 
         task.defer(function(): ()
             if option.Parent then
-                setValue(value, false, false)
+                -- Migrate stale out-of-range UI values too; gameplay controls
+                -- deliberately leave their old open-range profiles intact.
+                local corrected: boolean = boundTyped == true and storedValue ~= nil
+                    and storedValue ~= value
+                setValue(value, corrected, false)
             end
         end)
         return option

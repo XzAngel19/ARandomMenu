@@ -17,46 +17,45 @@ function Module.init(runtime: any): any
 
     type EmoteDef = {
         id: string,
-        name: string,
+        label: string,
         command: string,
         animationId: string,
         looped: boolean?,
     }
 
-    -- The six emotes MM2 sells or hands out from crates. The default avatar
-    -- emotes (wave, cheer, laugh, point, dance1-3) are not shop entries and are
-    -- never granted. Confirmed against the TestingStuff place capture
-    -- (place, source.rbxlx -> Database.Sync.Emotes): ninja 650, zen 800 (Rare),
-    -- dab 700, floss 750 (Rare), zombie and headless NotForSale but still real
-    -- catalog entries with their own AnimationID.
-    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie", "headless" }
-
-    -- Fallback catalog from the TestingStuff client snapshot; the live Sync
-    -- module wins when it is available.
-    local BUILTIN_EMOTES: {EmoteDef} = {
-        { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
-        { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
-        { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
-        { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
-        { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
-        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
+    -- The five shop animations plus the two event animations the player asked
+    -- to keep. These are a fallback from the captured MM2 Database.Sync.Emotes;
+    -- the live catalog can contribute other playable non-default emotes too.
+    local EMOTES: {EmoteDef} = {
+        { id = "sit", label = "Sit", command = "sit2", animationId = "rbxassetid://2431845940", looped = true },
+        { id = "ninja", label = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
+        { id = "zen", label = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
+        { id = "dab", label = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
+        { id = "floss", label = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
+        { id = "zombie", label = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
+        { id = "headless", label = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
     }
-
-    -- The cycle lists the same six emotes, in the order a player expects.
-    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" }
-
-    local LABEL_TO_EMOTE_ID: {[string]: string} = {
-        ["Ninja Rest"] = "ninja",
-        ["Zen"] = "zen",
-        ["Dab"] = "dab",
-        ["Floss"] = "floss",
-        ["Zombie"] = "zombie",
-        ["Headless"] = "headless",
+    local LABELS: {string} = {}
+    local ID_BY_LABEL: {[string]: string} = {}
+    local KNOWN_IDS: {[string]: boolean} = {}
+    local DEFAULT_IDS: {[string]: boolean} = {
+        back = true, wave = true, cheer = true, laugh = true, point = true,
+        dance = true, dance1 = true, dance2 = true, dance3 = true,
     }
+    for _, def: EmoteDef in ipairs(EMOTES) do
+        table.insert(LABELS, def.label)
+        ID_BY_LABEL[def.label] = def.id
+        KNOWN_IDS[def.id] = true
+    end
 
-    local selectedEmoteLabel: string = "Floss"
+    local selectedLabel: string = "Floss"
+    local selectionTouched: boolean = false
     local activeTrack: any = nil
-    local GetAllEmotesFeature: any = nil
+    local feature: any = nil
+    local generation: number = 0
+    local grantInFlight: boolean = false
+    local catalogInFlight: boolean = false
+    local activated: boolean = false
 
     local function stopActiveTrack(): ()
         if activeTrack then
@@ -75,253 +74,270 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- The live Sync table, restricted to the shop ids. Anything the game adds
-    -- that is not in SHOP_EMOTE_IDS is ignored on purpose.
-    local function collectEmotes(): ({EmoteDef}, {[string]: EmoteDef})
-        local list: {EmoteDef} = {}
-        local byId: {[string]: EmoteDef} = {}
-
-        for _, def: EmoteDef in ipairs(BUILTIN_EMOTES) do
-            local copy: EmoteDef = table.clone(def)
-            byId[copy.id] = copy
-            table.insert(list, copy)
+    -- New MM2 animations should not be silently excluded just because the
+    -- captured catalog is older. Admit only playable catalog entries, never
+    -- the known Roblox defaults or the non-emote Back row. This runs in the
+    -- asynchronous grant path, since require may wait for game data.
+    local function discoverLiveEmotes(ticket: number): ()
+        local rs: Instance = game:GetService("ReplicatedStorage")
+        local db: Instance? = rs:FindFirstChild("Database")
+        local sync: Instance? = db and db:FindFirstChild("Sync")
+        local emotesModule: Instance? = sync and sync:FindFirstChild("Emotes")
+        if not emotesModule then return end
+        local ok: boolean, catalog: any = pcall(require, emotesModule)
+        if ticket ~= generation or not Module.Initialized
+            or not ok or type(catalog) ~= "table" then
+            return
         end
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local db: Instance? = rs and rs:FindFirstChild("Database")
-            local syncFolder: Instance? = db and db:FindFirstChild("Sync")
-            local emotesModule: Instance? = syncFolder and syncFolder:FindFirstChild("Emotes")
-            if not emotesModule then
-                return
+        local extra: {string} = {}
+        for id: any, live: any in pairs(catalog) do
+            if type(id) == "string" and not KNOWN_IDS[id]
+                and not DEFAULT_IDS[string.lower(id)] and type(live) == "table"
+                and type(live.Command) == "string" and live.Command ~= ""
+                and not DEFAULT_IDS[string.lower(live.Command)]
+                and animationUri(live.AnimationID) then
+                table.insert(extra, id)
             end
-            local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
-            if not okReq or type(syncEmotes) ~= "table" then
-                return
+        end
+        table.sort(extra)
+        for _, id: string in ipairs(extra) do
+            local live: any = catalog[id]
+            local label: string = type(live.Name) == "string" and live.Name ~= "" and live.Name or id
+            if ID_BY_LABEL[label] then label ..= " (" .. id .. ")" end
+            local def: EmoteDef = {
+                id = id,
+                label = label,
+                command = live.Command,
+                animationId = animationUri(live.AnimationID) :: string,
+                looped = live.Loop == true,
+            }
+            table.insert(EMOTES, def)
+            table.insert(LABELS, label)
+            ID_BY_LABEL[label] = id
+            KNOWN_IDS[id] = true
+        end
+        -- A saved selection for a newly discovered emote was not available
+        -- when the cycle was built. Restore it silently unless the user has
+        -- already chosen another value during this session.
+        local values: any = type(configData) == "table" and configData.values or nil
+        local saved: any = type(values) == "table" and values["MM2.GetAllEmotes.SelectEmote"] or nil
+        local index: number? = type(saved) == "string" and table.find(LABELS, saved) or nil
+        if not selectionTouched and index and ID_BY_LABEL[saved] then
+            selectedLabel = saved
+            local control: any = state.valueControls and state.valueControls["MM2.GetAllEmotes.SelectEmote"]
+            if control and type(control.setIndex) == "function" then
+                control.setIndex(index)
             end
-            for _, emoteId: string in ipairs(SHOP_EMOTE_IDS) do
-                local info: any = syncEmotes[emoteId]
-                if type(info) == "table" then
-                    local entry: EmoteDef = byId[emoteId]
-                        or {
-                            id = emoteId,
-                            name = emoteId,
-                            command = emoteId,
-                            animationId = "",
-                        }
-                    if not byId[emoteId] then
-                        byId[emoteId] = entry
-                        table.insert(list, entry)
-                    end
-                    if type(info.Name) == "string" and info.Name ~= "" then
-                        entry.name = info.Name
-                    end
-                    if type(info.Command) == "string" and info.Command ~= "" then
-                        entry.command = info.Command
-                    end
-                    local asset: string? = animationUri(info.AnimationID)
-                    if asset then
-                        entry.animationId = asset
-                    end
-                    entry.looped = info.Loop == true
-                end
-            end
-        end)
-
-        return list, byId
+        end
     end
 
-    -- The emote window the game itself builds: PlayerGui.<x>.Game.Emotes. The
-    -- client script publishes it as _G.EmoteFrame and on the module as
-    -- EmoteModule.EmoteGUI.
-    local function emoteGui(): any
-        local found: any = nil
+    local function emoteDefinition(id: string): EmoteDef?
+        local result: EmoteDef? = nil
+        for _, def: EmoteDef in ipairs(EMOTES) do
+            if def.id == id then
+                result = table.clone(def)
+                break
+            end
+        end
+        if not result then
+            return nil
+        end
         pcall(function(): ()
-            local globals: any = _G :: any
-            if globals.EmoteFrame then
-                found = globals.EmoteFrame
-                return
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local db: Instance? = rs:FindFirstChild("Database")
+            local sync: Instance? = db and db:FindFirstChild("Sync")
+            local emotesModule: Instance? = sync and sync:FindFirstChild("Emotes")
+            if not emotesModule then return end
+            local ok: boolean, catalog: any = pcall(require, emotesModule)
+            local live: any = ok and type(catalog) == "table" and catalog[id] or nil
+            if type(live) ~= "table" then return end
+            local def: EmoteDef = result :: EmoteDef
+            if type(live.Command) == "string" and live.Command ~= "" then
+                def.command = live.Command
             end
-            local players: any = game:GetService("Players")
-            local player: any = players and players.LocalPlayer
-            local playerGui: any = player and player:FindFirstChildOfClass("PlayerGui")
-            if not playerGui then
-                return
-            end
-            for _, child: any in ipairs(playerGui:GetChildren()) do
-                local gameFolder: any = child:FindFirstChild("Game")
-                local emotesFrame: any = gameFolder and gameFolder:FindFirstChild("Emotes")
-                if emotesFrame and emotesFrame:FindFirstChild("EmotePages") then
-                    found = emotesFrame
-                    return
-                end
-            end
+            local asset: string? = animationUri(live.AnimationID)
+            if asset then def.animationId = asset end
+            def.looped = live.Loop == true
         end)
-        return found
+        return result
     end
 
-    -- Rebuild the game's own emote window from ProfileData, exactly like the
-    -- client does after InventoryDataChanged: EmoteModule.GenerateEmotes(owned,
-    -- gui). GenerateEmotes paginates six per page and re-clones its own
-    -- Page/Container/Emote templates, so every granted id shows up with its
-    -- icon, name, hotkey and a click handler that fires Remotes.Misc.PlayEmote.
-    local function refreshEmoteWindow(owned: {string}): boolean
-        if #owned <= 0 then
+    -- The old menu has a separate GenerateEmotes method. The current
+    -- CrossPlatform GUI does not: it listens to InventoryDataChanged instead.
+    -- Never require the old EmoteModule without its controller/GUI: that module
+    -- waits indefinitely for _G.EmoteController in the newer interface.
+    local function refreshLegacyGui(rs: Instance, owned: {string}): boolean
+        local globals: any = _G :: any
+        local gui: any = globals and globals.EmoteFrame
+        if not gui or type(globals.EmoteController) ~= "table" then return false end
+        local valid: boolean, pages: any = pcall(function(): any
+            return gui:FindFirstChild("EmotePages")
+        end)
+        if not valid or not pages then return false end
+        local modules: Instance? = rs:FindFirstChild("Modules")
+        local scriptModule: Instance? = modules and modules:FindFirstChild("EmoteModule")
+        if not scriptModule then return false end
+        local ok: boolean, emoteModule: any = pcall(require, scriptModule)
+        if not ok or type(emoteModule) ~= "table"
+            or type(emoteModule.GenerateEmotes) ~= "function" then
             return false
         end
-        local rebuilt: boolean = false
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
-            local emoteInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
-            if not emoteInst then
-                return
-            end
-            local okEm: boolean, emoteModule: any = pcall(require, emoteInst)
-            if not okEm or type(emoteModule) ~= "table" then
-                return
-            end
-            local gui: any = emoteModule.EmoteGUI or emoteGui()
-            if gui == nil then
-                return
-            end
-            if type(emoteModule.GenerateEmotes) ~= "function" then
-                return
-            end
-            emoteModule.EmoteGUI = gui
-            local ok: boolean = pcall(emoteModule.GenerateEmotes, owned, gui)
-            rebuilt = ok
-        end)
-        return rebuilt
+        emoteModule.EmoteGUI = gui
+        return pcall(emoteModule.GenerateEmotes, owned, gui)
     end
 
-    -- Write the six shop ids into the client's ProfileData and wake the
-    -- inventory UI. The ProfileData module returns the live profile table the
-    -- emote window reads, so appending to Emotes.Owned is what makes the
-    -- window show them; the InventoryDataChanged BindableEvent is then fired
-    -- exactly like the client does, which rebuilds the window from ProfileData.
-    -- Ownership stays local: the server still owns the real list.
-    local function grantShopEmotes(showNotification: boolean?): number
-        local list: {EmoteDef} = collectEmotes()
-        local granted: number = 0
-        local ownedList: {string}? = nil
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            if not rs then
-                return
+    -- Modifying ProfileData is client-side only. The native BindableEvent must
+    -- be fired on the instance itself: .Event is an RBXScriptSignal and has no
+    -- Fire method. Both old and CrossPlatform controllers listen to .Event.
+    local function grantShopEmotes(ticket: number): (boolean, number, boolean)
+        if ticket ~= generation or not Module.Initialized then return false, 0, false end
+        local ok: boolean, ready: any, added: any, refreshed: any = pcall(function(): (boolean, number, boolean)
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local modules: Instance? = rs:FindFirstChild("Modules")
+            local profileModule: Instance? = modules and modules:FindFirstChild("ProfileData")
+            if not profileModule then return false, 0, false end
+            local profileOk: boolean, profile: any = pcall(require, profileModule)
+            if ticket ~= generation or not Module.Initialized then return false, 0, false end
+            if not profileOk or type(profile) ~= "table"
+                or type(profile.Emotes) ~= "table"
+                or type(profile.Emotes.Owned) ~= "table" then
+                return false, 0, false
             end
-
-            -- 1. ReplicatedStorage.Modules.ProfileData.Emotes.Owned
-            local owned: {string}? = nil
-            local modulesFolder: Instance? = rs:FindFirstChild("Modules")
-            local profileDataMod: Instance? = modulesFolder
-                and modulesFolder:FindFirstChild("ProfileData")
-            if profileDataMod then
-                local okProf: boolean, profileData: any = pcall(require, profileDataMod)
-                if okProf and type(profileData) == "table" then
-                    if type(profileData.Emotes) ~= "table" then
-                        profileData.Emotes = { Owned = {} }
-                    elseif type(profileData.Emotes.Owned) ~= "table" then
-                        profileData.Emotes.Owned = {}
-                    end
-                    owned = profileData.Emotes.Owned
-                end
-            end
-
+            local owned: {string} = profile.Emotes.Owned
             local known: {[string]: boolean} = {}
-            if owned then
-                for _, existingId: any in ipairs(owned) do
-                    if type(existingId) == "string" then
-                        known[existingId] = true
-                    end
+            for _, existing: any in ipairs(owned) do
+                if type(existing) == "string" then known[existing] = true end
+            end
+            local newIds: {string} = {}
+            for _, def: EmoteDef in ipairs(EMOTES) do
+                if not known[def.id] then
+                    table.insert(owned, def.id)
+                    known[def.id] = true
+                    table.insert(newIds, def.id)
                 end
-                for _, def: EmoteDef in ipairs(list) do
-                    if not known[def.id] then
-                        known[def.id] = true
-                        table.insert(owned, def.id)
-                        granted += 1
-                    end
-                end
-                ownedList = owned
             end
 
-            -- 2. InventoryDataChanged. In MM2 this is a RemoteEvent whose
-            -- client-side channel is the inner BindableEvent (`.Event`); the
-            -- old code fired the RemoteEvent itself, which does not exist
-            -- client-side, so the emote window never rebuilt.
-            local remotesFolder: Instance? = rs:FindFirstChild("Remotes")
-            local invRemotes: Instance? = remotesFolder and remotesFolder:FindFirstChild("Inventory")
-            local invChanged: any = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
-            if invChanged and owned then
-                for _, def: EmoteDef in ipairs(list) do
-                    if known[def.id] then
-                        pcall(function(): ()
-                            if invChanged.Event and type(invChanged.Event.Fire) == "function" then
-                                invChanged.Event:Fire("Emotes", def.id, 1)
-                            elseif type(invChanged.Fire) == "function" then
-                                invChanged:Fire("Emotes", def.id, 1)
-                            end
-                        end)
-                    end
+            local remotes: Instance? = rs:FindFirstChild("Remotes")
+            local inventory: Instance? = remotes and remotes:FindFirstChild("Inventory")
+            local changed: any = inventory and inventory:FindFirstChild("InventoryDataChanged")
+            local signalled: boolean = false
+            if changed then
+                -- Incremental inventory listeners need each new ID. An
+                -- idempotent repeat still wakes the emote window once.
+                local wakeIds: {string} = #newIds > 0 and newIds or { EMOTES[1].id }
+                for _, id: string in ipairs(wakeIds) do
+                    local fired: boolean = pcall(function(): ()
+                        changed:Fire("Emotes", id, 1)
+                    end)
+                    signalled = signalled or fired
                 end
             end
+            if not signalled then
+                signalled = refreshLegacyGui(rs, owned)
+            end
+            return true, #newIds, signalled
         end)
-
-        if ownedList then
-            refreshEmoteWindow(ownedList)
-        end
-
-        if GetAllEmotesFeature then
-            GetAllEmotesFeature:SetStatus(string.format("%d shop emotes", #list))
-        end
-        if showNotification and type(notify) == "function" then
-            pcall(
-                notify,
-                string.format(
-                    "Get All Emotes: %d shop emotes written to the local profile "
-                        .. "(%d new). The server still decides what plays.",
-                    #list,
-                    granted
-                )
-            )
-        end
-        return granted
+        if not ok then return false, 0, false end
+        return ready == true, tonumber(added) or 0, refreshed == true
     end
 
-    -- The game's own PlayEmote BindableEvent (Remotes.Misc.PlayEmote) takes the
-    -- emote id; the Animator is only the fallback when the game refuses.
-    local function requestEmotePlayback(emoteId: string): boolean
-        stopActiveTrack()
-        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectEmotes()
-        local def: EmoteDef? = byId[emoteId]
-        local firedGameEvent: boolean = false
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
-            local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
-            local playEmoteEvent: any = misc and misc:FindFirstChild("PlayEmote")
-            if playEmoteEvent and type(playEmoteEvent.Fire) == "function" then
-                playEmoteEvent:Fire(emoteId)
-                firedGameEvent = true
+    local function requestGrant(showNotification: boolean): ()
+        if grantInFlight then
+            if showNotification and type(notify) == "function" then
+                pcall(notify, "Get All Emotes: waiting for the MM2 profile.")
+            end
+            return
+        end
+        grantInFlight = true
+        local ticket: number = generation
+        -- ProfileData's require can yield while the game loads; keep the menu
+        -- responsive and ignore the result if this instance was destroyed.
+        task.spawn(function(): ()
+            local ready: boolean, added: number, refreshed: boolean = grantShopEmotes(ticket)
+            if ticket ~= generation or not Module.Initialized then return end
+            grantInFlight = false
+            if not ready then
+                if feature then feature:SetStatus("profile not ready") end
+                if showNotification and type(notify) == "function" then
+                    pcall(notify, "Get All Emotes: MM2 profile unavailable or not ready; try again after the game loads.")
+                end
+                return
+            end
+            local count: number = #EMOTES
+            if feature then
+                feature:SetStatus(refreshed and (tostring(count) .. " local emotes")
+                    or (tostring(count) .. " local · UI not refreshed"))
+            end
+            if showNotification and type(notify) == "function" then
+                local suffix: string = refreshed
+                    and "The emote UI was notified."
+                    or "The MM2 emote UI could not be notified; try again after it loads."
+                pcall(notify, string.format(
+                    "Get All Emotes: %d local entries (%d new). %s Server ownership is not verified.",
+                    count, added, suffix
+                ))
+            end
+            -- Do not let a slow/hung catalog require block the seven known
+            -- entries. If it finds extras later, add and signal them in a
+            -- second pass; at most one discovery may be waiting at a time.
+            if not catalogInFlight then
+                catalogInFlight = true
+                task.spawn(function(): ()
+                    if ticket ~= generation or not Module.Initialized then
+                        catalogInFlight = false
+                        return
+                    end
+                    local previous: number = #EMOTES
+                    pcall(discoverLiveEmotes, ticket)
+                    catalogInFlight = false
+                    if ticket == generation and Module.Initialized and #EMOTES > previous then
+                        requestGrant(false)
+                    end
+                end)
             end
         end)
+    end
 
-        if firedGameEvent then
-            return true
+    local function activate(): ()
+        activated = true
+        if featureConnections.MM2GetAllEmotesRespawn or not (LocalPlayer and LocalPlayer.CharacterAdded) then
+            return
         end
+        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
+            local ticket: number = generation
+            task.delay(0.5, function(): ()
+                if ticket == generation and Module.Initialized and activated then
+                    requestGrant(false)
+                end
+            end)
+        end)
+    end
 
-        if not def or def.animationId == "" then
-            return false
-        end
-        local playedFallback: boolean = false
+    -- A successful :Fire is just a request, not confirmation of playback or
+    -- replication. Fall back to the local Animator only when no native event
+    -- could be fired; doing both would play two tracks at once.
+    local function requestEmotePlayback(id: string): boolean
+        stopActiveTrack()
+        local def: EmoteDef? = emoteDefinition(id)
+        if not def then return false end
+        local fired: boolean = false
+        pcall(function(): ()
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local remotes: Instance? = rs:FindFirstChild("Remotes")
+            local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
+            local event: any = misc and misc:FindFirstChild("PlayEmote")
+            if event then
+                fired = pcall(function(): () event:Fire(id) end)
+            end
+        end)
+        if fired then return true end
+        if def.animationId == "" then return false end
+
+        local played: boolean = false
         pcall(function(): ()
             local character: Model? = LocalPlayer and LocalPlayer.Character
             local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-            if not humanoid or humanoid.Health <= 0 then
-                return
-            end
+            if not humanoid or humanoid.Health <= 0 then return end
             local anim: Animation = Instance.new("Animation")
             anim.Name = def.command
             anim.AnimationId = def.animationId
@@ -332,59 +348,33 @@ function Module.init(runtime: any): any
             end)
             if loaded and track then
                 activeTrack = track
-                playedFallback = pcall(function(): ()
+                played = pcall(function(): ()
                     track.Looped = def.looped == true
                     track:Play(0.1)
                 end)
             end
             anim:Destroy()
         end)
-
-        return playedFallback
+        return played
     end
 
-    -- One click: grant the six shop emotes and rebuild the game's window.
-    local function runGetAllEmotes(): ()
-        local granted: number = grantShopEmotes(true)
-        if GetAllEmotesFeature then
-            GetAllEmotesFeature:SetStatus(
-                string.format("%d shop emotes", #collectEmotes())
-            )
-        end
-        if granted == 0 and type(notify) == "function" then
-            pcall(notify, "Get All Emotes: the six shop emotes were already in the local profile.")
+    local function playSelected(): ()
+        activate()
+        requestGrant(false)
+        local id: string = ID_BY_LABEL[selectedLabel] or "floss"
+        if not requestEmotePlayback(id) and type(notify) == "function" then
+            pcall(notify, "Could not request that emote; check the character and animation permissions.")
         end
     end
 
-    -- Re-apply after a respawn/reset: the game can rebuild the profile and the
-    -- emote window, and the grant is local-only, so a fresh character gets it
-    -- again without the player pressing the button.
-    local function hookRespawn(): ()
-        if featureConnections.MM2GetAllEmotesRespawn then
-            return
-        end
-        if not (LocalPlayer and LocalPlayer.CharacterAdded) then
-            return
-        end
-        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(
-            function(): ()
-                task.delay(0.5, function(): ()
-                    if Module.Initialized then
-                        pcall(grantShopEmotes, false)
-                    end
-                end)
-            end
-        )
-    end
-
-    GetAllEmotesFeature = createUniversalFeature(
+    feature = createUniversalFeature(
         "Get All Emotes",
-        "Button: writes the six MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
-            .. "Zombie, Headless) into the live emote profile and rebuilds the "
-            .. "game's emote window. Server ownership is not guaranteed.",
+        "Adds MM2's playable non-default emotes locally, including Sit, Ninja Rest, Zen, Dab, Floss, Zombie and Headless. "
+            .. "It does not grant server ownership; playback and replication depend on the game.",
         11,
         function(): ()
-            runGetAllEmotes()
+            activate()
+            requestGrant(true)
         end,
         {
             categoryName = "Utilities",
@@ -395,60 +385,30 @@ function Module.init(runtime: any): any
             configKey = "MM2.GetAllEmotes",
         }
     )
-    state.mm2GetAllEmotesFeature = GetAllEmotesFeature
+    state.mm2GetAllEmotesFeature = feature
 
-    -- The cycle widget calls the callback once at creation with the saved
-    -- value. That is a restore, not a choice: playing an emote there fired a
-    -- toast on every single boot.
+    -- Restoring the saved selection at boot must not play/grant anything.
     local cycleRestored: boolean = false
-    addCycleOption(
-        GetAllEmotesFeature,
-        "Select Emote",
-        EMOTE_LABELS,
-        4,
-        function(value: string): ()
-            selectedEmoteLabel = value
-            if not cycleRestored then
-                cycleRestored = true
-                return
-            end
-            local emoteId: string = LABEL_TO_EMOTE_ID[value] or "floss"
-            -- v180: choosing an emote plays it right away. Before this the cycle
-            -- only stored a label and the player had to press Play afterwards,
-            -- which read as "Select Emote does nothing".
-            grantShopEmotes(false)
-            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
-                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
-            end
-        end,
-        "Pick an emote and play it immediately through the game."
-    )
-
-    addActionOption(
-        GetAllEmotesFeature,
-        "Play Emote",
-        function(): ()
-            local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
-            grantShopEmotes(false)
-            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
-                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
-            end
-        end,
-        "Replay the emote chosen in Select Emote."
-    )
-
-    addInformationOption(
-        GetAllEmotesFeature,
-        "Button, not a toggle: one click grants the shop emotes. The button "
-            .. "stays idle until you press it again."
-    )
-
-    hookRespawn()
+    addCycleOption(feature, "Select Emote", LABELS, 5, function(value: string): ()
+        selectedLabel = value
+        if not cycleRestored then
+            cycleRestored = true
+            return
+        end
+        selectionTouched = true
+        playSelected()
+    end, "Select and request an MM2 emote; server ownership is not changed.")
+    addActionOption(feature, "Play Emote", playSelected, "Request the selected emote again.")
+    addInformationOption(feature,
+        "MM2's playable emotes are added locally. Existing inventory is preserved; avatar defaults "
+            .. "are not added, and the server controls ownership and replication.")
 
     activeCleanup = function(): ()
+        generation += 1
+        activated = false
         disconnectFeatureConnection("MM2GetAllEmotesRespawn")
         stopActiveTrack()
-        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then
+        if state.mm2GetAllEmotesFeature == feature then
             state.mm2GetAllEmotesFeature = nil
         end
     end
@@ -458,9 +418,7 @@ function Module.init(runtime: any): any
 end
 
 function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
+    if not Module.Initialized then return end
     Module.Initialized = false
     pcall(activeCleanup)
     activeCleanup = function(): () end

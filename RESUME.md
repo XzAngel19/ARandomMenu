@@ -4,12 +4,15 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado al escribir esto:** build
-> **`v179-20261103-names-and-precision`**. La rama de trabajo de la sesión
-> es `arena/979b8402-arandommenu`, un fork exacto de
-> `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
-> `arena/76bc3f2f-arandommenu` en `9395998`.
+> **Estado actual:** build **`v182-20261104-mm2-ui-calibration-repair`**.
+> Esta sesión trabaja exclusivamente en `arena/9492e6b6-arandommenu`; integró
+> v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
+> El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
+>
+> Las secciones antiguas son **historia**, no instrucciones vigentes: v179
+> eliminó Shaders por petición posterior del usuario y v180 restauró la política
+> previa de predicción/Knife. No reintroducirlos por leer secciones v178 o v179.
 
 ---
 
@@ -18,29 +21,62 @@
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle**. La rama publicada por defecto en
-  `src/Wurst.lua` (`RUNTIME_BRANCH`) sigue siendo
-  `arena/9492e6b6-arandommenu`, pero se puede sobrescribir:
-  `getgenv().WURST_BRANCH = "<rama>"` **antes** de cargar `Wurst.lua`. Para
-  probar el trabajo de esta sesión hay que apuntar a
-  `arena/979b8402-arandommenu`; sin ese override el cliente sigue bajando el
-  bundle de la rama vieja.
+- El loader carga el **bundle** de `arena/9492e6b6-arandommenu` por defecto
+  (`RUNTIME_BRANCH` en `src/Wurst.lua`). `getgenv().WURST_BRANCH = "<rama>"`
+  antes de cargarlo puede cambiar ese origen; quitar overrides de sesiones
+  anteriores si se desea probar esta rama.
 - **Protocolo de publicación (obligatorio, sin excepciones):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v179: 82 fuentes en el
-     bundle, 114 suites, auditoría estática, boots `failures=0`, arranque
-     silencioso, menú 49/48).
-  5. Commit + push **normales** a la rama de la sesión
-     (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
-     historia, sin trabajar en otra rama.
+  4. `bash tools/validate.sh` — debe terminar VERDE: fuentes compiladas, suites,
+     auditorías, boot `failures=0` y menús de depuración/release coherentes.
+  5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
+     sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v179 — Nombres con espacio, Shaders fuera y precisión de Shoot/Knife (2026-11-03)
+## v182 — Reparación MM2/UI (2026-11-04)
 
-El usuario pidió tres cosas en la misma tanda: **eliminar `Shaders`** del menú,
+Detalle y límites en `docs/FIXES-v182.md`. La versión v181 de
+`arena/979b8402-arandommenu` se integró antes de reparar. Las decisiones vigentes:
+
+- **Get All Emotes:** siete IDs confirmados `sit, ninja, zen, dab, floss,
+  zombie, headless`; también descubre otros emotes reproducibles del catálogo
+  vivo, sin defaults. El usuario confirmó conservar Zombie y Headless. Se
+  modifica el perfil local y se dispara el BindableEvent real
+  `InventoryDataChanged:Fire`, no `.Event:Fire`. No hay prueba de propiedad o
+  replicación en servidor y no se debe prometerlas.
+- **UI:** el ajuste automático de viewport se multiplica por la preferencia del
+  usuario, la geometría del deslizador se congela durante el arrastre y Opacity
+  compone las ventanas normales con CanvasGroup. `Menu scale`/`Opacity` tienen
+  rango escrito limitado; los sliders de movimiento siguen aceptando negativos
+  y valores superiores al máximo de arrastre. Las posiciones manuales guardadas
+  sobreviven al reflow. CanvasGroup recorta y usa memoria de textura; los mocks
+  no prueban su aspecto o rendimiento en móviles.
+- **Calibration:** diálogo no escalado bajo `ScreenGui`, centrado y con altura
+  automática; la copia del historial se hace y verifica solamente tras Yes y
+  antes de sobrescribir. Un archivo cambiado o backup fallido bloquea guardado.
+  No intenta borrar backups antiguos y la eliminación con No depende de
+  `delfile`. El estado refleja el buffer real de hasta 8 muestras, sin afirmar
+  convergencia.
+- Los nuevos tests de Emotes, escala/reflow, modal/opacidad y consentimiento
+  ejecutan fuentes/bundle con mocks. Roblox/Delta, visualización real, FPS,
+  permisos y servidor siguen sin validación directa.
+
+## v180–v181 — Estado integrado
+
+v180 restauró la trayectoria de disparo/cuchillo anterior a v179 (sin prior de
+aceptación ni corrección aprendida aplicada al filo), reintrodujo Calibration con
+consentimiento y añadió Power/Retries a Fling. v181 corrigió visibilidad de
+Freeze Movements, HackList y otras piezas GUI. La documentación de esas versiones
+es histórica: las reparaciones de escala, opacidad, Emotes y consentimiento se
+actualizaron en v182.
+
+## v179 — Nombres con espacio, Shaders fuera y precisión de Shoot/Knife (2026-11-03; histórico)
+
+La parte de predicción descrita a continuación fue revertida en v180; Shaders
+sigue eliminado. El usuario pidió tres cosas en la misma tanda: **eliminar `Shaders`** del menú,
 **renombrar** `Jesus` → `Swim Walk`, `Jump` → `Jump Hack` y `Speed` →
 `Speed Hack` (todas con espacio, en Exploits) y **subir la precisión** de Shoot
 y Knife «sin reescribirlos». Adjuntó 11 exportaciones

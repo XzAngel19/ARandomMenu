@@ -32,7 +32,16 @@ def long_bracket(body: str) -> str:
 PRELUDE = r'''
 -- ================= full boot harness =================
 Vector2 = {}
-function Vector2.new(x, y) return {X = x or 0, Y = y or 0} end
+Vector2.__index = Vector2
+Vector2.__add = function(a, b) return Vector2.new(a.X + b.X, a.Y + b.Y) end
+Vector2.__sub = function(a, b) return Vector2.new(a.X - b.X, a.Y - b.Y) end
+Vector2.__mul = function(a, b)
+    if type(a) == "number" then a, b = b, a end
+    return Vector2.new(a.X * b, a.Y * b)
+end
+Vector2.__div = function(a, b) return Vector2.new(a.X / b, a.Y / b) end
+function Vector2.new(x, y) return setmetatable({X = x or 0, Y = y or 0}, Vector2) end
+Vector2.zero = Vector2.new(0, 0)
 Vector3 = {}
 Vector3.__index = Vector3
 Vector3.__add = function(a, b) return Vector3.new(a.X + b.X, a.Y + b.Y, a.Z + b.Z) end
@@ -233,7 +242,7 @@ function newInst(class)
     end
     function methods:IsA(class)
         return self.ClassName == class
-            or (class == "GuiObject" and (self.ClassName == "Frame"
+            or (class == "GuiObject" and (self.ClassName == "Frame" or self.ClassName == "CanvasGroup"
                 or self.ClassName == "TextButton" or self.ClassName == "TextLabel"
                 or self.ClassName == "TextBox" or self.ClassName == "ScrollingFrame"
                 or self.ClassName == "ImageLabel"))

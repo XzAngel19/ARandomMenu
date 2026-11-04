@@ -15,7 +15,7 @@ local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
 
-    local OPACITY: number = 0.5
+    local OPACITY: number = 0.85
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
@@ -2051,13 +2051,13 @@ function Module.init(context: any): any
         warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
 
-    addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
-        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 0.85)
+    addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 1, function(value: number): ()
+        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 1)
         uiSettingsValues["Opacity"] = wanted
-        -- The whole window fades together (frame, header, rows), so the slider
-        -- behaves like one opacity instead of only thinning the panel frame.
+        -- Composite each complete menu panel once. Individual rows, hover
+        -- styles, text and icons keep their normal relative contrast.
         windows.SetOpacity(wanted)
-    end)
+    end, "Controls the opacity of each complete menu window.", 0.01, true)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
     if state.featureTooltip then
@@ -2106,17 +2106,8 @@ function Module.init(context: any): any
                 if type(state.refreshLayout) == "function" then
                     state.refreshLayout(true)
                 end
-                local windowsManager: any = state.windows
-                if windowsManager then
-                    if type(windowsManager.Reclamp) == "function" then
-                        pcall(windowsManager.Reclamp)
-                    end
-                    if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
-                        state.clickGui.ApplyScale()
-                    end
-                end
             end)
-        end)
+        end, "Adjust the size of menu windows on this device.", 0.01, true)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value

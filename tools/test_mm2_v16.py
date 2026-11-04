@@ -85,16 +85,15 @@ local state={}
               section(BASE, '    local function applyLearnedSeeds(): boolean', '    local function loadSavedHistory(): ()'),
               section(BASE, '    local function loadSavedHistory()', '    local function vectorArray('), r'''
 loadSavedHistory()
-assert(files[runtime.historyBackup]=="original bytes" and files.out=="original bytes")
+assert(runtime.historyBackup==nil and runtime.pendingHistoryBackup=="original bytes" and files.out=="original bytes",
+    "history import is read-only; backup waits for authorised save")
 assert(runtime.sessionGunAttempts==0 and #runtime.events==0 and next(runtime.motionBuckets)==nil)
 assert(runtime.gunAcceptance.count==51 and runtime.knifeSpeed.mean==96)
 assert(runtime.knifeSpawnDelay.count==nil,"corrupt stats imported")
-runtime.persistenceBlocked=false; failBackup=true; loadSavedHistory()
-assert(runtime.persistenceBlocked and files.out=="original bytes")
-failBackup=false; environment.readfile=function() error("permission denied") end
+environment.readfile=function() error("permission denied") end
 runtime.persistenceBlocked=false; loadSavedHistory(); assert(runtime.persistenceBlocked)
 files.out=nil; runtime.persistenceBlocked=false; loadSavedHistory(); assert(not runtime.persistenceBlocked)
-pass("migration: byte-exact backup; poisoned totals/events quarantined; valid stats kept; failures protected")
+pass("migration: read-only import; poisoned totals/events quarantined; valid stats kept; failures protected")
 end
 
 ''']

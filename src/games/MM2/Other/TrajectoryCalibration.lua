@@ -38,9 +38,9 @@ function Module.init(runtime: any): any
         state.mm2CalibrationFeature = TrajectoryFeature
     end
 
-    -- Three samples make a correction live and the window holds eight; twenty
-    -- is a settled median, which is what a dozen or two matches should reach.
-    local LEAD_SAMPLES_FOR_CONFIDENCE: number = 20
+    -- The predictor keeps at most eight recent samples per mode. Reporting a
+    -- goal of twenty was impossible to reach and did not prove convergence.
+    local LEAD_WINDOW_SIZE: number = 8
 
     local askedThisSession: boolean = false
 
@@ -62,22 +62,32 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function setConsent(value: boolean?): ()
+    local function setConsent(value: boolean?): boolean
         if type(trajectoryCalibration) ~= "table"
             or type(trajectoryCalibration.setConsent) ~= "function" then
-            return
+            return false
         end
-        pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        local ok: boolean, result: any = pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        local success: boolean = ok and result == true
         if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
             TrajectoryFeature:SetStatus(
-                value == true and "giving calibration"
+                value == true and (success and "giving calibration" or "saving unavailable")
                     or (value == false and "off" or nil)
             )
         end
+        return success
     end
 
-    -- The centred question. Yes starts saving; No guarantees nothing is saved
-    -- (and removes the file a previous Yes wrote).
+    local function enableSaving(): ()
+        if setConsent(true) then
+            notify("Calibration ON: saving to your workspace/Telemetry folder.")
+        else
+            notify("Calibration could not save. Check the console and your executor's file support.")
+        end
+    end
+
+    -- The centred question. No stops saving and tries to remove the current
+    -- file; deletion depends on executor support.
     local function askConsent(): ()
         askedThisSession = true
         local dialog: any = state.confirmDialog
@@ -96,11 +106,7 @@ function Module.init(runtime: any): any
             yes = "Yes",
             no = "No",
             onYes = function(): ()
-                setConsent(true)
-                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
-                    TrajectoryFeature:SetStatus("giving calibration")
-                end
-                notify("Calibration ON: saving to your workspace/Telemetry folder.")
+                enableSaving()
             end,
             onNo = function(): ()
                 setConsent(false)
@@ -115,8 +121,8 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- The point of the calibration is a predictor that is right after a dozen
-    -- matches, so the card has to say how far that has come.
+    -- Report the actual recent sample window and applied correction. Sample
+    -- count alone is not proof that a predictor has converged or will hit.
     local function learningSummary(): string
         local predictor: any = state and state.mm2Prediction
         if type(predictor) ~= "table" then
@@ -140,7 +146,7 @@ function Module.init(runtime: any): any
                         "%s %d/%d %+d ms",
                         mode,
                         samples,
-                        LEAD_SAMPLES_FOR_CONFIDENCE,
+                        LEAD_WINDOW_SIZE,
                         math.round(applied * 1000)
                     )
                 )
@@ -164,14 +170,13 @@ function Module.init(runtime: any): any
     end, "Shows what the recorder has measured so far.")
 
     addActionOption(TrajectoryFeature, "Give calibration", function(): ()
-        setConsent(true)
-        notify("Calibration ON: saving to your workspace/Telemetry folder.")
+        enableSaving()
     end, "Answer Yes again and start saving the current session.")
 
     addActionOption(TrajectoryFeature, "Stop giving calibration", function(): ()
         setConsent(false)
-        notify("Calibration OFF: nothing will be saved and the file was removed.")
-    end, "Answer No: stop saving and delete the file this menu wrote.")
+        notify("Calibration OFF: saving stopped. File deletion depends on executor support.")
+    end, "Stop saving and try to delete the current calibration file.")
 
     addActionOption(TrajectoryFeature, "Ask again", function(): ()
         setConsent(nil)

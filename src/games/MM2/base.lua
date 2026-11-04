@@ -2044,7 +2044,7 @@ local function createTrajectoryCalibration(): any
         -- v180: nothing is written to the executor workspace until the player
         -- answers the calibration prompt with Yes.
         getConsent: (self: Controller) -> boolean?,
-        setConsent: (self: Controller, value: boolean?) -> (),
+        setConsent: (self: Controller, value: boolean?) -> boolean,
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -2072,6 +2072,7 @@ local function createTrajectoryCalibration(): any
         buildStamp = tostring(host.SOURCE_STAMP or "unknown"),
         shotSequence = 0,
         historyBackup = nil :: string?,
+        pendingHistoryBackup = nil :: string?,
         persistenceBlocked = false,
         rawKnifeActivations = 0,
         unmatchedGunSignals = 0,
@@ -2213,18 +2214,16 @@ local function createTrajectoryCalibration(): any
             runtime.persistenceBlocked = not (okExists and exists == false)
             return
         end
-        if type(raw) ~= "string" then runtime.persistenceBlocked = true; return end
-        if #raw == 0 then return end
-        local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
-        local okBackup: boolean = type(environment.writefile) == "function"
-            and pcall(environment.writefile, backup, raw)
-        local okVerify, backedUp = pcall(environment.readfile, backup)
-        if not okBackup or not okVerify or backedUp ~= raw then
-            runtime.persistenceBlocked = true
-            warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+        if type(raw) ~= "string" then
+            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
+            runtime.persistenceBlocked = not (okExists and exists == false)
             return
         end
-        runtime.historyBackup = backup
+        if #raw == 0 then return end
+        -- Importing the old data is read-only. Making a backup here used to
+        -- write to the workspace before the player answered the consent modal.
+        -- The first authorised save verifies and backs up these exact bytes.
+        runtime.pendingHistoryBackup = raw
         local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
         if not ok or type(decoded) ~= "table" then return end
         -- Only plausible statistical estimates are portable. Counts such as
@@ -2551,11 +2550,10 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
-        -- Unconsented sessions never schedule a write. Read straight from the
-        -- saved config so the writer slices stay self-contained; without a
-        -- config table (unit harness) nothing is gated.
+        -- Unconsented sessions never schedule a write. An absent config is
+        -- also unanswered, not implicit permission.
         local states: any = type(configData) == "table" and configData.states or nil
-        if states and states["MM2.Calibration.Consent"] ~= true then
+        if not states or states["MM2.Calibration.Consent"] ~= true then
             return
         end
         if runtime.saveScheduled then
@@ -2980,7 +2978,7 @@ local function createTrajectoryCalibration(): any
         -- memory and never touches the workspace, so a player who answers No
         -- leaves no calibration file behind.
         local consentStates: any = type(configData) == "table" and configData.states or nil
-        if consentStates and consentStates["MM2.Calibration.Consent"] ~= true then
+        if not consentStates or consentStates["MM2.Calibration.Consent"] ~= true then
             return false
         end
         if runtime.persistenceBlocked
@@ -2990,6 +2988,27 @@ local function createTrajectoryCalibration(): any
         if type(environment.writefile) ~= "function" then
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
+        end
+        local prior: any = runtime.pendingHistoryBackup
+        if type(prior) == "string" then
+            -- A different writer may have changed the file while the consent
+            -- dialog was open. Never replace bytes we did not import/back up.
+            local okCurrent, current = pcall(environment.readfile, OUTPUT_PATH)
+            if not okCurrent or current ~= prior then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History changed before consent; it will not be overwritten.")
+                return false
+            end
+            local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
+            local okBackup: boolean = pcall(environment.writefile, backup, prior)
+            local okVerify, backedUp = pcall(environment.readfile, backup)
+            if not okBackup or not okVerify or backedUp ~= prior then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+                return false
+            end
+            runtime.historyBackup = backup
+            runtime.pendingHistoryBackup = nil
         end
 
         -- History is loaded once. Re-merging the on-disk totals at each save
@@ -3047,7 +3066,7 @@ local function createTrajectoryCalibration(): any
                         knife = okKnife and knives or nil,
                     }
                 end
-                out.readyFor = "3+ samples per mode makes the correction live; 20+ is a settled median"
+                out.readyFor = "3+ recent samples activate a correction; each mode retains up to 8 (not proof of convergence)"
                 return out
             end)(),
             estimator = {
@@ -4246,10 +4265,11 @@ local function createTrajectoryCalibration(): any
         return consentValue()
     end
 
-    -- `true` starts saving on the next confirmed shot (and writes the current
-    -- session immediately), `false` stops every write and removes the file this
-    -- menu wrote, `nil` leaves the question unanswered.
-    function controller:setConsent(value: boolean?): ()
+    -- `true` attempts an immediate save, `false` stops every write and tries
+    -- to remove the current file, `nil` leaves the question unanswered.
+    -- Return whether the requested transition/save succeeded so the UI does
+    -- not claim a file was saved when backup or executor IO failed.
+    function controller:setConsent(value: boolean?): boolean
         local nextValue: boolean? = nil
         if value == true then
             nextValue = true
@@ -4264,18 +4284,24 @@ local function createTrajectoryCalibration(): any
         end
         if nextValue == true then
             runtime.dirty = true
-            saveSnapshot("consent")
-            return
+            return saveSnapshot("consent")
         end
         runtime.saveScheduled = false
         runtime.dirty = false
-        if runtime.persistenceBlocked then
-            return
+        if nextValue == nil then
+            -- Reopening the question is not an answer and must not delete the
+            -- file (nor discard the pending protection backup).
+            return true
         end
-        -- A No must not leave the file the previous consent wrote behind.
+        runtime.pendingHistoryBackup = nil
+        if runtime.persistenceBlocked then
+            return true
+        end
+        -- A No stops saving and removes the current file when supported.
         if type(environment.delfile) == "function" then
             pcall(environment.delfile, OUTPUT_PATH)
         end
+        return true
     end
 
     function controller:save(reason: string?): boolean
@@ -4290,9 +4316,12 @@ local function createTrajectoryCalibration(): any
     function controller:reset(): ()
         clearHistory()
         runtime.dirty = false
+        runtime.pendingHistoryBackup = nil
         if type(environment.delfile) == "function" then
             pcall(environment.delfile, OUTPUT_PATH)
-        elseif type(environment.writefile) == "function" then
+        elseif consentValue() == true and type(environment.writefile) == "function" then
+            -- An executor without delfile can clear by writing an empty file,
+            -- but never write even that fallback without an explicit Yes.
             pcall(environment.writefile, OUTPUT_PATH, "{}")
         end
         print(trajectoryLogPrefix .. " History cleared.")
@@ -4500,7 +4529,9 @@ local function createTrajectoryCalibration(): any
             bucketCount += 1
         end
         local consent: boolean? = consentValue()
-        local consentText: string = consent == true and "giving calibration"
+        local consentText: string = consent == true
+                and ((runtime.persistenceBlocked or type(environment.writefile) ~= "function")
+                    and "saving unavailable; see console" or "giving calibration")
             or (consent == false and "not giving calibration")
             or "calibration not answered"
         return string.format(

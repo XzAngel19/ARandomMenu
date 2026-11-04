@@ -14,8 +14,8 @@ export type WindowDefinition = {
 
 export type Window = {
     id: string,
-    root: Frame,
-    body: Frame,
+    root: GuiObject,
+    body: GuiObject,
     header: Frame?,
     closeButton: TextButton?,
     collapsed: boolean,
@@ -193,7 +193,9 @@ function Module.init(context: any): any
     -- mostly its own, exactly like the reclamp cascade but at open.
     function manager.Deoverlap(window: any): ()
         local root: any = window and window.root
-        if not root then
+        if not root or window.userMoved then
+            -- A manually saved position belongs to the user, even if they
+            -- deliberately chose to overlap another window.
             return
         end
         local size: Vector2 = Vector2.new(
@@ -204,6 +206,7 @@ function Module.init(context: any): any
             root.Position.X.Offset,
             root.Position.Y.Offset
         )
+        local initial: Vector2 = position
         for _ = 1, 10 do
             local stacked: boolean = false
             for _, other: any in ipairs(manager.list) do
@@ -231,6 +234,10 @@ function Module.init(context: any): any
             position = clamp(position + Vector2.new(30, 30), size)
         end
         root.Position = UDim2.fromOffset(position.X, position.Y)
+        if (position.X ~= initial.X or position.Y ~= initial.Y)
+            and type(manager.SetHome) == "function" then
+            manager.SetHome(window, position)
+        end
     end
 
     function manager.MeasureWindow(window: any): Vector2
@@ -273,6 +280,14 @@ function Module.init(context: any): any
     -- the screen again cannot put the window back (the pile-up in
     -- the report). Reclamp below always derives from home.
     local homePositions: {[string]: Vector2} = {}
+
+    -- Automatic tiling/placement establishes a new home too. Otherwise the
+    -- next scale/viewport refresh snaps windows back to their creation slots.
+    function manager.SetHome(window: any, position: Vector2): ()
+        if window and window.id and position then
+            homePositions[window.id] = Vector2.new(position.X, position.Y)
+        end
+    end
 
     local function persist(window: any): ()
         local home: Vector2? = homePositions[window.id]
@@ -347,7 +362,7 @@ function Module.init(context: any): any
         end
     end
 
-    function manager.Adopt(root: Frame, definition: any): any
+    function manager.Adopt(root: GuiObject, definition: any): any
         root:SetAttribute("SelectorOwner", true)
         local id: string = definition.id
         local saved: any = configData.ui.windows[id]
@@ -380,21 +395,23 @@ function Module.init(context: any): any
             return connection
         end
 
+        local savedHome: Vector2? = nil
         if type(saved) == "table" and saved.x and saved.y then
-
             local savedX: number? = tonumber(saved.x)
             local savedY: number? = tonumber(saved.y)
             if savedX and savedY then
+                savedHome = Vector2.new(savedX, savedY)
                 local landed: Vector2 = clamp(
-                    Vector2.new(savedX, savedY),
+                    savedHome,
                     Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
                 )
                 root.Position = UDim2.fromOffset(landed.X, landed.Y)
-
                 window.userMoved = true
             end
         end
-        homePositions[id] = Vector2.new(
+        -- Do not replace an off-screen saved position with a temporary clamp;
+        -- it becomes reachable again when the viewport grows.
+        homePositions[id] = savedHome or Vector2.new(
             root.Position.X.Offset,
             root.Position.Y.Offset
         )
@@ -577,26 +594,26 @@ function Module.init(context: any): any
         position = clamp(position, definition.size)
         homePositions[id] = position
 
-        local root: Frame = create("Frame", {
+        -- A single alpha is applied after composing the panel, rather than
+        -- independently fading overlapping rows, labels, icons and strokes.
+        -- Keep chromeless/floating overlays as Frames: CanvasGroup clips its
+        -- descendants and should not change those overlays' separate styling.
+        local root: any = create(bare and "Frame" or "CanvasGroup", {
             Parent = PopupLayer,
             Name = "Window_" .. id,
             Active = true,
-            BackgroundTransparency = bare and 1 or manager.bodyTransparency,
+            BackgroundTransparency = bare and 1 or 0,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
             Position = UDim2.fromOffset(position.X, position.Y),
             Size = UDim2.fromOffset(definition.size.X, definition.size.Y),
             Visible = false,
             ZIndex = BASE_Z,
-        }) :: Frame
-        bind(root, "BackgroundColor3", "background")
-        if manager.ApplyOpacity then
-            task.defer(function(): ()
-                if root.Parent then
-                    manager.ApplyOpacity(root)
-                end
-            end)
+        })
+        if not bare then
+            root.GroupTransparency = 1 - (manager.opacity or 0.85)
         end
+        bind(root, "BackgroundColor3", "background")
 
         local window: any = nil
         local paintChrome: {() -> ()} = {}
@@ -969,6 +986,10 @@ function Module.init(context: any): any
         )
         window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         manager.ClampWindow(window)
+        manager.SetHome(window, Vector2.new(
+            window.root.Position.X.Offset,
+            window.root.Position.Y.Offset
+        ))
     end
 
     function manager.ReflowWindow(window: any): ()
@@ -992,6 +1013,10 @@ function Module.init(context: any): any
         )
         window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         manager.ClampWindow(window)
+        manager.SetHome(window, Vector2.new(
+            window.root.Position.X.Offset,
+            window.root.Position.Y.Offset
+        ))
     end
 
     local function categoryAnchor(feature: any): any
@@ -1228,53 +1253,21 @@ function Module.init(context: any): any
         end
     end)
 
-    manager.bodyTransparency = 0.5
-    -- One opacity for the whole menu. Fading only the window frame left every
-    -- row opaque, so the "Opacity" slider looked like it was tearing the menu
-    -- apart: the panel went see-through while the rows stayed solid on top.
-    local opacityBases: {[GuiObject]: number} = setmetatable({}, {__mode = "k"})
-    local function fadeSubtree(root: any, alpha: number): ()
-        if not root then
-            return
-        end
-        local ok: boolean, descendants: any = pcall(function(): any
-            return root:GetDescendants()
-        end)
-        if not ok or type(descendants) ~= "table" then
-            return
-        end
-        for _, object: any in ipairs(descendants) do
-            if object:IsA("GuiObject") then
-                local base: number? = opacityBases[object]
-                if base == nil then
-                    local current: number = tonumber(object.BackgroundTransparency) or 1
-                    if current < 0.99 then
-                        base = current
-                        opacityBases[object] = base
-                    end
-                end
-                if base ~= nil then
-                    local faded: number = 1 - alpha * (1 - (base :: number))
-                    object.BackgroundTransparency = math.clamp(faded, 0, 1)
-                end
-            end
-        end
-    end
+    manager.opacity = 0.85
+    -- Kept as a public value for callers which display the selected alpha.
+    manager.bodyTransparency = 1 - manager.opacity
 
     function manager.SetOpacity(alpha: number): ()
-        local wanted: number = math.clamp(alpha, 0.15, 1)
+        local wanted: number = tonumber(alpha) or 0.85
+        if wanted ~= wanted then wanted = 0.85 end
+        wanted = math.clamp(wanted, 0.15, 1)
         manager.opacity = wanted
-        manager.bodyTransparency = math.clamp(1 - wanted, 0, 1)
+        manager.bodyTransparency = 1 - wanted
         for _, window: any in ipairs(manager.list) do
-            if window.root then
-                window.root.BackgroundTransparency = manager.bodyTransparency
-                fadeSubtree(window.root, wanted)
+            local root: any = window.root
+            if root and root:IsA("CanvasGroup") then
+                root.GroupTransparency = 1 - wanted
             end
-        end
-    end
-    manager.ApplyOpacity = function(root: any): ()
-        if root and (manager.opacity or 1) < 0.999 then
-            fadeSubtree(root, manager.opacity)
         end
     end
 

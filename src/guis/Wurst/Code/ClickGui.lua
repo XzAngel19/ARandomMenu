@@ -88,11 +88,16 @@ function Module.init(context: any): any
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
         local viewport: Vector2 = viewportSize()
-        local fit: number = math.min(
+        -- Clamp the automatic fit, not the product. Clamping the product to
+        -- 0.7 made every slider value on a small phone yield exactly 0.7.
+        -- Keeping the preference as a multiplier also makes both endpoints
+        -- responsive on larger screens without changing the default fit.
+        local fit: number = math.clamp(math.min(
             viewport.X / CALIBRATION_WIDTH,
             viewport.Y / CALIBRATION_HEIGHT
-        )
-        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
+        ), SCALE_MINIMUM, SCALE_MAXIMUM)
+        if wanted ~= wanted then wanted = 1 end
+        return fit * math.clamp(wanted, 0.7, 1.3)
     end
 
     local function logicalViewport(): Vector2
@@ -309,6 +314,9 @@ function Module.init(context: any): any
                     record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
                 )
                 record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+                if type(windows.SetHome) == "function" then
+                    windows.SetHome(record.window, slot)
+                end
                 if type(windows.ClampWindow) == "function" then
                     windows.ClampWindow(record.window)
                 end
@@ -366,18 +374,29 @@ function Module.init(context: any): any
     state.onLayout(function(): ()
         scale.Scale = viewportScale()
         ClickGui.RefreshHeights()
+        local userMoved: boolean = false
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow? = ClickGui.categories[name]
+            if record and record.window.userMoved == true then
+                userMoved = true
+                break
+            end
+        end
+        if not userMoved then
+            ClickGui.Retile()
+        end
+        -- WindowManager's listener can run before this one: reclamp again
+        -- after the new scale is installed, using the correct logical viewport.
+        if type(windows.Reclamp) == "function" then
+            windows.Reclamp()
+        end
     end)
     ClickGui.scale = scale
 
-    -- Rescale without rebuilding anything: the sliders need immediate feedback
-    -- while they are being dragged, and the heavy reflow is debounced by the
-    -- settings page.
+    -- Only update UIScale during the drag. Re-measure/reclamp after it settles.
     ClickGui.ApplyScale = function(): ()
         if ClickGui.scale then
             ClickGui.scale.Scale = viewportScale()
-        end
-        if type(ClickGui.RefreshHeights) == "function" then
-            pcall(ClickGui.RefreshHeights)
         end
     end
 

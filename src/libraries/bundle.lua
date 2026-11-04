@@ -1,5 +1,5 @@
 return {
-    stamp = "v181-20261104-gui-fixes-and-six-emotes",
+    stamp = "v182-20261104-mm2-ui-calibration-repair",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -10671,46 +10671,45 @@ function Module.init(runtime: any): any
 
     type EmoteDef = {
         id: string,
-        name: string,
+        label: string,
         command: string,
         animationId: string,
         looped: boolean?,
     }
 
-    -- The six emotes MM2 sells or hands out from crates. The default avatar
-    -- emotes (wave, cheer, laugh, point, dance1-3) are not shop entries and are
-    -- never granted. Confirmed against the TestingStuff place capture
-    -- (place, source.rbxlx -> Database.Sync.Emotes): ninja 650, zen 800 (Rare),
-    -- dab 700, floss 750 (Rare), zombie and headless NotForSale but still real
-    -- catalog entries with their own AnimationID.
-    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie", "headless" }
-
-    -- Fallback catalog from the TestingStuff client snapshot; the live Sync
-    -- module wins when it is available.
-    local BUILTIN_EMOTES: {EmoteDef} = {
-        { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
-        { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
-        { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
-        { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
-        { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
-        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
+    -- The five shop animations plus the two event animations the player asked
+    -- to keep. These are a fallback from the captured MM2 Database.Sync.Emotes;
+    -- the live catalog can contribute other playable non-default emotes too.
+    local EMOTES: {EmoteDef} = {
+        { id = "sit", label = "Sit", command = "sit2", animationId = "rbxassetid://2431845940", looped = true },
+        { id = "ninja", label = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
+        { id = "zen", label = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
+        { id = "dab", label = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
+        { id = "floss", label = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
+        { id = "zombie", label = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
+        { id = "headless", label = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
     }
-
-    -- The cycle lists the same six emotes, in the order a player expects.
-    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" }
-
-    local LABEL_TO_EMOTE_ID: {[string]: string} = {
-        ["Ninja Rest"] = "ninja",
-        ["Zen"] = "zen",
-        ["Dab"] = "dab",
-        ["Floss"] = "floss",
-        ["Zombie"] = "zombie",
-        ["Headless"] = "headless",
+    local LABELS: {string} = {}
+    local ID_BY_LABEL: {[string]: string} = {}
+    local KNOWN_IDS: {[string]: boolean} = {}
+    local DEFAULT_IDS: {[string]: boolean} = {
+        back = true, wave = true, cheer = true, laugh = true, point = true,
+        dance = true, dance1 = true, dance2 = true, dance3 = true,
     }
+    for _, def: EmoteDef in ipairs(EMOTES) do
+        table.insert(LABELS, def.label)
+        ID_BY_LABEL[def.label] = def.id
+        KNOWN_IDS[def.id] = true
+    end
 
-    local selectedEmoteLabel: string = "Floss"
+    local selectedLabel: string = "Floss"
+    local selectionTouched: boolean = false
     local activeTrack: any = nil
-    local GetAllEmotesFeature: any = nil
+    local feature: any = nil
+    local generation: number = 0
+    local grantInFlight: boolean = false
+    local catalogInFlight: boolean = false
+    local activated: boolean = false
 
     local function stopActiveTrack(): ()
         if activeTrack then
@@ -10729,253 +10728,270 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    -- The live Sync table, restricted to the shop ids. Anything the game adds
-    -- that is not in SHOP_EMOTE_IDS is ignored on purpose.
-    local function collectEmotes(): ({EmoteDef}, {[string]: EmoteDef})
-        local list: {EmoteDef} = {}
-        local byId: {[string]: EmoteDef} = {}
-
-        for _, def: EmoteDef in ipairs(BUILTIN_EMOTES) do
-            local copy: EmoteDef = table.clone(def)
-            byId[copy.id] = copy
-            table.insert(list, copy)
+    -- New MM2 animations should not be silently excluded just because the
+    -- captured catalog is older. Admit only playable catalog entries, never
+    -- the known Roblox defaults or the non-emote Back row. This runs in the
+    -- asynchronous grant path, since require may wait for game data.
+    local function discoverLiveEmotes(ticket: number): ()
+        local rs: Instance = game:GetService("ReplicatedStorage")
+        local db: Instance? = rs:FindFirstChild("Database")
+        local sync: Instance? = db and db:FindFirstChild("Sync")
+        local emotesModule: Instance? = sync and sync:FindFirstChild("Emotes")
+        if not emotesModule then return end
+        local ok: boolean, catalog: any = pcall(require, emotesModule)
+        if ticket ~= generation or not Module.Initialized
+            or not ok or type(catalog) ~= "table" then
+            return
         end
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local db: Instance? = rs and rs:FindFirstChild("Database")
-            local syncFolder: Instance? = db and db:FindFirstChild("Sync")
-            local emotesModule: Instance? = syncFolder and syncFolder:FindFirstChild("Emotes")
-            if not emotesModule then
-                return
+        local extra: {string} = {}
+        for id: any, live: any in pairs(catalog) do
+            if type(id) == "string" and not KNOWN_IDS[id]
+                and not DEFAULT_IDS[string.lower(id)] and type(live) == "table"
+                and type(live.Command) == "string" and live.Command ~= ""
+                and not DEFAULT_IDS[string.lower(live.Command)]
+                and animationUri(live.AnimationID) then
+                table.insert(extra, id)
             end
-            local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
-            if not okReq or type(syncEmotes) ~= "table" then
-                return
+        end
+        table.sort(extra)
+        for _, id: string in ipairs(extra) do
+            local live: any = catalog[id]
+            local label: string = type(live.Name) == "string" and live.Name ~= "" and live.Name or id
+            if ID_BY_LABEL[label] then label ..= " (" .. id .. ")" end
+            local def: EmoteDef = {
+                id = id,
+                label = label,
+                command = live.Command,
+                animationId = animationUri(live.AnimationID) :: string,
+                looped = live.Loop == true,
+            }
+            table.insert(EMOTES, def)
+            table.insert(LABELS, label)
+            ID_BY_LABEL[label] = id
+            KNOWN_IDS[id] = true
+        end
+        -- A saved selection for a newly discovered emote was not available
+        -- when the cycle was built. Restore it silently unless the user has
+        -- already chosen another value during this session.
+        local values: any = type(configData) == "table" and configData.values or nil
+        local saved: any = type(values) == "table" and values["MM2.GetAllEmotes.SelectEmote"] or nil
+        local index: number? = type(saved) == "string" and table.find(LABELS, saved) or nil
+        if not selectionTouched and index and ID_BY_LABEL[saved] then
+            selectedLabel = saved
+            local control: any = state.valueControls and state.valueControls["MM2.GetAllEmotes.SelectEmote"]
+            if control and type(control.setIndex) == "function" then
+                control.setIndex(index)
             end
-            for _, emoteId: string in ipairs(SHOP_EMOTE_IDS) do
-                local info: any = syncEmotes[emoteId]
-                if type(info) == "table" then
-                    local entry: EmoteDef = byId[emoteId]
-                        or {
-                            id = emoteId,
-                            name = emoteId,
-                            command = emoteId,
-                            animationId = "",
-                        }
-                    if not byId[emoteId] then
-                        byId[emoteId] = entry
-                        table.insert(list, entry)
-                    end
-                    if type(info.Name) == "string" and info.Name ~= "" then
-                        entry.name = info.Name
-                    end
-                    if type(info.Command) == "string" and info.Command ~= "" then
-                        entry.command = info.Command
-                    end
-                    local asset: string? = animationUri(info.AnimationID)
-                    if asset then
-                        entry.animationId = asset
-                    end
-                    entry.looped = info.Loop == true
-                end
-            end
-        end)
-
-        return list, byId
+        end
     end
 
-    -- The emote window the game itself builds: PlayerGui.<x>.Game.Emotes. The
-    -- client script publishes it as _G.EmoteFrame and on the module as
-    -- EmoteModule.EmoteGUI.
-    local function emoteGui(): any
-        local found: any = nil
+    local function emoteDefinition(id: string): EmoteDef?
+        local result: EmoteDef? = nil
+        for _, def: EmoteDef in ipairs(EMOTES) do
+            if def.id == id then
+                result = table.clone(def)
+                break
+            end
+        end
+        if not result then
+            return nil
+        end
         pcall(function(): ()
-            local globals: any = _G :: any
-            if globals.EmoteFrame then
-                found = globals.EmoteFrame
-                return
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local db: Instance? = rs:FindFirstChild("Database")
+            local sync: Instance? = db and db:FindFirstChild("Sync")
+            local emotesModule: Instance? = sync and sync:FindFirstChild("Emotes")
+            if not emotesModule then return end
+            local ok: boolean, catalog: any = pcall(require, emotesModule)
+            local live: any = ok and type(catalog) == "table" and catalog[id] or nil
+            if type(live) ~= "table" then return end
+            local def: EmoteDef = result :: EmoteDef
+            if type(live.Command) == "string" and live.Command ~= "" then
+                def.command = live.Command
             end
-            local players: any = game:GetService("Players")
-            local player: any = players and players.LocalPlayer
-            local playerGui: any = player and player:FindFirstChildOfClass("PlayerGui")
-            if not playerGui then
-                return
-            end
-            for _, child: any in ipairs(playerGui:GetChildren()) do
-                local gameFolder: any = child:FindFirstChild("Game")
-                local emotesFrame: any = gameFolder and gameFolder:FindFirstChild("Emotes")
-                if emotesFrame and emotesFrame:FindFirstChild("EmotePages") then
-                    found = emotesFrame
-                    return
-                end
-            end
+            local asset: string? = animationUri(live.AnimationID)
+            if asset then def.animationId = asset end
+            def.looped = live.Loop == true
         end)
-        return found
+        return result
     end
 
-    -- Rebuild the game's own emote window from ProfileData, exactly like the
-    -- client does after InventoryDataChanged: EmoteModule.GenerateEmotes(owned,
-    -- gui). GenerateEmotes paginates six per page and re-clones its own
-    -- Page/Container/Emote templates, so every granted id shows up with its
-    -- icon, name, hotkey and a click handler that fires Remotes.Misc.PlayEmote.
-    local function refreshEmoteWindow(owned: {string}): boolean
-        if #owned <= 0 then
+    -- The old menu has a separate GenerateEmotes method. The current
+    -- CrossPlatform GUI does not: it listens to InventoryDataChanged instead.
+    -- Never require the old EmoteModule without its controller/GUI: that module
+    -- waits indefinitely for _G.EmoteController in the newer interface.
+    local function refreshLegacyGui(rs: Instance, owned: {string}): boolean
+        local globals: any = _G :: any
+        local gui: any = globals and globals.EmoteFrame
+        if not gui or type(globals.EmoteController) ~= "table" then return false end
+        local valid: boolean, pages: any = pcall(function(): any
+            return gui:FindFirstChild("EmotePages")
+        end)
+        if not valid or not pages then return false end
+        local modules: Instance? = rs:FindFirstChild("Modules")
+        local scriptModule: Instance? = modules and modules:FindFirstChild("EmoteModule")
+        if not scriptModule then return false end
+        local ok: boolean, emoteModule: any = pcall(require, scriptModule)
+        if not ok or type(emoteModule) ~= "table"
+            or type(emoteModule.GenerateEmotes) ~= "function" then
             return false
         end
-        local rebuilt: boolean = false
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
-            local emoteInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
-            if not emoteInst then
-                return
-            end
-            local okEm: boolean, emoteModule: any = pcall(require, emoteInst)
-            if not okEm or type(emoteModule) ~= "table" then
-                return
-            end
-            local gui: any = emoteModule.EmoteGUI or emoteGui()
-            if gui == nil then
-                return
-            end
-            if type(emoteModule.GenerateEmotes) ~= "function" then
-                return
-            end
-            emoteModule.EmoteGUI = gui
-            local ok: boolean = pcall(emoteModule.GenerateEmotes, owned, gui)
-            rebuilt = ok
-        end)
-        return rebuilt
+        emoteModule.EmoteGUI = gui
+        return pcall(emoteModule.GenerateEmotes, owned, gui)
     end
 
-    -- Write the six shop ids into the client's ProfileData and wake the
-    -- inventory UI. The ProfileData module returns the live profile table the
-    -- emote window reads, so appending to Emotes.Owned is what makes the
-    -- window show them; the InventoryDataChanged BindableEvent is then fired
-    -- exactly like the client does, which rebuilds the window from ProfileData.
-    -- Ownership stays local: the server still owns the real list.
-    local function grantShopEmotes(showNotification: boolean?): number
-        local list: {EmoteDef} = collectEmotes()
-        local granted: number = 0
-        local ownedList: {string}? = nil
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            if not rs then
-                return
+    -- Modifying ProfileData is client-side only. The native BindableEvent must
+    -- be fired on the instance itself: .Event is an RBXScriptSignal and has no
+    -- Fire method. Both old and CrossPlatform controllers listen to .Event.
+    local function grantShopEmotes(ticket: number): (boolean, number, boolean)
+        if ticket ~= generation or not Module.Initialized then return false, 0, false end
+        local ok: boolean, ready: any, added: any, refreshed: any = pcall(function(): (boolean, number, boolean)
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local modules: Instance? = rs:FindFirstChild("Modules")
+            local profileModule: Instance? = modules and modules:FindFirstChild("ProfileData")
+            if not profileModule then return false, 0, false end
+            local profileOk: boolean, profile: any = pcall(require, profileModule)
+            if ticket ~= generation or not Module.Initialized then return false, 0, false end
+            if not profileOk or type(profile) ~= "table"
+                or type(profile.Emotes) ~= "table"
+                or type(profile.Emotes.Owned) ~= "table" then
+                return false, 0, false
             end
-
-            -- 1. ReplicatedStorage.Modules.ProfileData.Emotes.Owned
-            local owned: {string}? = nil
-            local modulesFolder: Instance? = rs:FindFirstChild("Modules")
-            local profileDataMod: Instance? = modulesFolder
-                and modulesFolder:FindFirstChild("ProfileData")
-            if profileDataMod then
-                local okProf: boolean, profileData: any = pcall(require, profileDataMod)
-                if okProf and type(profileData) == "table" then
-                    if type(profileData.Emotes) ~= "table" then
-                        profileData.Emotes = { Owned = {} }
-                    elseif type(profileData.Emotes.Owned) ~= "table" then
-                        profileData.Emotes.Owned = {}
-                    end
-                    owned = profileData.Emotes.Owned
-                end
-            end
-
+            local owned: {string} = profile.Emotes.Owned
             local known: {[string]: boolean} = {}
-            if owned then
-                for _, existingId: any in ipairs(owned) do
-                    if type(existingId) == "string" then
-                        known[existingId] = true
-                    end
+            for _, existing: any in ipairs(owned) do
+                if type(existing) == "string" then known[existing] = true end
+            end
+            local newIds: {string} = {}
+            for _, def: EmoteDef in ipairs(EMOTES) do
+                if not known[def.id] then
+                    table.insert(owned, def.id)
+                    known[def.id] = true
+                    table.insert(newIds, def.id)
                 end
-                for _, def: EmoteDef in ipairs(list) do
-                    if not known[def.id] then
-                        known[def.id] = true
-                        table.insert(owned, def.id)
-                        granted += 1
-                    end
-                end
-                ownedList = owned
             end
 
-            -- 2. InventoryDataChanged. In MM2 this is a RemoteEvent whose
-            -- client-side channel is the inner BindableEvent (`.Event`); the
-            -- old code fired the RemoteEvent itself, which does not exist
-            -- client-side, so the emote window never rebuilt.
-            local remotesFolder: Instance? = rs:FindFirstChild("Remotes")
-            local invRemotes: Instance? = remotesFolder and remotesFolder:FindFirstChild("Inventory")
-            local invChanged: any = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
-            if invChanged and owned then
-                for _, def: EmoteDef in ipairs(list) do
-                    if known[def.id] then
-                        pcall(function(): ()
-                            if invChanged.Event and type(invChanged.Event.Fire) == "function" then
-                                invChanged.Event:Fire("Emotes", def.id, 1)
-                            elseif type(invChanged.Fire) == "function" then
-                                invChanged:Fire("Emotes", def.id, 1)
-                            end
-                        end)
-                    end
+            local remotes: Instance? = rs:FindFirstChild("Remotes")
+            local inventory: Instance? = remotes and remotes:FindFirstChild("Inventory")
+            local changed: any = inventory and inventory:FindFirstChild("InventoryDataChanged")
+            local signalled: boolean = false
+            if changed then
+                -- Incremental inventory listeners need each new ID. An
+                -- idempotent repeat still wakes the emote window once.
+                local wakeIds: {string} = #newIds > 0 and newIds or { EMOTES[1].id }
+                for _, id: string in ipairs(wakeIds) do
+                    local fired: boolean = pcall(function(): ()
+                        changed:Fire("Emotes", id, 1)
+                    end)
+                    signalled = signalled or fired
                 end
             end
+            if not signalled then
+                signalled = refreshLegacyGui(rs, owned)
+            end
+            return true, #newIds, signalled
         end)
-
-        if ownedList then
-            refreshEmoteWindow(ownedList)
-        end
-
-        if GetAllEmotesFeature then
-            GetAllEmotesFeature:SetStatus(string.format("%d shop emotes", #list))
-        end
-        if showNotification and type(notify) == "function" then
-            pcall(
-                notify,
-                string.format(
-                    "Get All Emotes: %d shop emotes written to the local profile "
-                        .. "(%d new). The server still decides what plays.",
-                    #list,
-                    granted
-                )
-            )
-        end
-        return granted
+        if not ok then return false, 0, false end
+        return ready == true, tonumber(added) or 0, refreshed == true
     end
 
-    -- The game's own PlayEmote BindableEvent (Remotes.Misc.PlayEmote) takes the
-    -- emote id; the Animator is only the fallback when the game refuses.
-    local function requestEmotePlayback(emoteId: string): boolean
-        stopActiveTrack()
-        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectEmotes()
-        local def: EmoteDef? = byId[emoteId]
-        local firedGameEvent: boolean = false
-
-        pcall(function(): ()
-            local rs: Instance? = game:GetService("ReplicatedStorage")
-            local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
-            local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
-            local playEmoteEvent: any = misc and misc:FindFirstChild("PlayEmote")
-            if playEmoteEvent and type(playEmoteEvent.Fire) == "function" then
-                playEmoteEvent:Fire(emoteId)
-                firedGameEvent = true
+    local function requestGrant(showNotification: boolean): ()
+        if grantInFlight then
+            if showNotification and type(notify) == "function" then
+                pcall(notify, "Get All Emotes: waiting for the MM2 profile.")
+            end
+            return
+        end
+        grantInFlight = true
+        local ticket: number = generation
+        -- ProfileData's require can yield while the game loads; keep the menu
+        -- responsive and ignore the result if this instance was destroyed.
+        task.spawn(function(): ()
+            local ready: boolean, added: number, refreshed: boolean = grantShopEmotes(ticket)
+            if ticket ~= generation or not Module.Initialized then return end
+            grantInFlight = false
+            if not ready then
+                if feature then feature:SetStatus("profile not ready") end
+                if showNotification and type(notify) == "function" then
+                    pcall(notify, "Get All Emotes: MM2 profile unavailable or not ready; try again after the game loads.")
+                end
+                return
+            end
+            local count: number = #EMOTES
+            if feature then
+                feature:SetStatus(refreshed and (tostring(count) .. " local emotes")
+                    or (tostring(count) .. " local · UI not refreshed"))
+            end
+            if showNotification and type(notify) == "function" then
+                local suffix: string = refreshed
+                    and "The emote UI was notified."
+                    or "The MM2 emote UI could not be notified; try again after it loads."
+                pcall(notify, string.format(
+                    "Get All Emotes: %d local entries (%d new). %s Server ownership is not verified.",
+                    count, added, suffix
+                ))
+            end
+            -- Do not let a slow/hung catalog require block the seven known
+            -- entries. If it finds extras later, add and signal them in a
+            -- second pass; at most one discovery may be waiting at a time.
+            if not catalogInFlight then
+                catalogInFlight = true
+                task.spawn(function(): ()
+                    if ticket ~= generation or not Module.Initialized then
+                        catalogInFlight = false
+                        return
+                    end
+                    local previous: number = #EMOTES
+                    pcall(discoverLiveEmotes, ticket)
+                    catalogInFlight = false
+                    if ticket == generation and Module.Initialized and #EMOTES > previous then
+                        requestGrant(false)
+                    end
+                end)
             end
         end)
+    end
 
-        if firedGameEvent then
-            return true
+    local function activate(): ()
+        activated = true
+        if featureConnections.MM2GetAllEmotesRespawn or not (LocalPlayer and LocalPlayer.CharacterAdded) then
+            return
         end
+        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
+            local ticket: number = generation
+            task.delay(0.5, function(): ()
+                if ticket == generation and Module.Initialized and activated then
+                    requestGrant(false)
+                end
+            end)
+        end)
+    end
 
-        if not def or def.animationId == "" then
-            return false
-        end
-        local playedFallback: boolean = false
+    -- A successful :Fire is just a request, not confirmation of playback or
+    -- replication. Fall back to the local Animator only when no native event
+    -- could be fired; doing both would play two tracks at once.
+    local function requestEmotePlayback(id: string): boolean
+        stopActiveTrack()
+        local def: EmoteDef? = emoteDefinition(id)
+        if not def then return false end
+        local fired: boolean = false
+        pcall(function(): ()
+            local rs: Instance = game:GetService("ReplicatedStorage")
+            local remotes: Instance? = rs:FindFirstChild("Remotes")
+            local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
+            local event: any = misc and misc:FindFirstChild("PlayEmote")
+            if event then
+                fired = pcall(function(): () event:Fire(id) end)
+            end
+        end)
+        if fired then return true end
+        if def.animationId == "" then return false end
+
+        local played: boolean = false
         pcall(function(): ()
             local character: Model? = LocalPlayer and LocalPlayer.Character
             local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid")
-            if not humanoid or humanoid.Health <= 0 then
-                return
-            end
+            if not humanoid or humanoid.Health <= 0 then return end
             local anim: Animation = Instance.new("Animation")
             anim.Name = def.command
             anim.AnimationId = def.animationId
@@ -10986,59 +11002,33 @@ function Module.init(runtime: any): any
             end)
             if loaded and track then
                 activeTrack = track
-                playedFallback = pcall(function(): ()
+                played = pcall(function(): ()
                     track.Looped = def.looped == true
                     track:Play(0.1)
                 end)
             end
             anim:Destroy()
         end)
-
-        return playedFallback
+        return played
     end
 
-    -- One click: grant the six shop emotes and rebuild the game's window.
-    local function runGetAllEmotes(): ()
-        local granted: number = grantShopEmotes(true)
-        if GetAllEmotesFeature then
-            GetAllEmotesFeature:SetStatus(
-                string.format("%d shop emotes", #collectEmotes())
-            )
-        end
-        if granted == 0 and type(notify) == "function" then
-            pcall(notify, "Get All Emotes: the six shop emotes were already in the local profile.")
+    local function playSelected(): ()
+        activate()
+        requestGrant(false)
+        local id: string = ID_BY_LABEL[selectedLabel] or "floss"
+        if not requestEmotePlayback(id) and type(notify) == "function" then
+            pcall(notify, "Could not request that emote; check the character and animation permissions.")
         end
     end
 
-    -- Re-apply after a respawn/reset: the game can rebuild the profile and the
-    -- emote window, and the grant is local-only, so a fresh character gets it
-    -- again without the player pressing the button.
-    local function hookRespawn(): ()
-        if featureConnections.MM2GetAllEmotesRespawn then
-            return
-        end
-        if not (LocalPlayer and LocalPlayer.CharacterAdded) then
-            return
-        end
-        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(
-            function(): ()
-                task.delay(0.5, function(): ()
-                    if Module.Initialized then
-                        pcall(grantShopEmotes, false)
-                    end
-                end)
-            end
-        )
-    end
-
-    GetAllEmotesFeature = createUniversalFeature(
+    feature = createUniversalFeature(
         "Get All Emotes",
-        "Button: writes the six MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
-            .. "Zombie, Headless) into the live emote profile and rebuilds the "
-            .. "game's emote window. Server ownership is not guaranteed.",
+        "Adds MM2's playable non-default emotes locally, including Sit, Ninja Rest, Zen, Dab, Floss, Zombie and Headless. "
+            .. "It does not grant server ownership; playback and replication depend on the game.",
         11,
         function(): ()
-            runGetAllEmotes()
+            activate()
+            requestGrant(true)
         end,
         {
             categoryName = "Utilities",
@@ -11049,60 +11039,30 @@ function Module.init(runtime: any): any
             configKey = "MM2.GetAllEmotes",
         }
     )
-    state.mm2GetAllEmotesFeature = GetAllEmotesFeature
+    state.mm2GetAllEmotesFeature = feature
 
-    -- The cycle widget calls the callback once at creation with the saved
-    -- value. That is a restore, not a choice: playing an emote there fired a
-    -- toast on every single boot.
+    -- Restoring the saved selection at boot must not play/grant anything.
     local cycleRestored: boolean = false
-    addCycleOption(
-        GetAllEmotesFeature,
-        "Select Emote",
-        EMOTE_LABELS,
-        4,
-        function(value: string): ()
-            selectedEmoteLabel = value
-            if not cycleRestored then
-                cycleRestored = true
-                return
-            end
-            local emoteId: string = LABEL_TO_EMOTE_ID[value] or "floss"
-            -- v180: choosing an emote plays it right away. Before this the cycle
-            -- only stored a label and the player had to press Play afterwards,
-            -- which read as "Select Emote does nothing".
-            grantShopEmotes(false)
-            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
-                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
-            end
-        end,
-        "Pick an emote and play it immediately through the game."
-    )
-
-    addActionOption(
-        GetAllEmotesFeature,
-        "Play Emote",
-        function(): ()
-            local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
-            grantShopEmotes(false)
-            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
-                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
-            end
-        end,
-        "Replay the emote chosen in Select Emote."
-    )
-
-    addInformationOption(
-        GetAllEmotesFeature,
-        "Button, not a toggle: one click grants the shop emotes. The button "
-            .. "stays idle until you press it again."
-    )
-
-    hookRespawn()
+    addCycleOption(feature, "Select Emote", LABELS, 5, function(value: string): ()
+        selectedLabel = value
+        if not cycleRestored then
+            cycleRestored = true
+            return
+        end
+        selectionTouched = true
+        playSelected()
+    end, "Select and request an MM2 emote; server ownership is not changed.")
+    addActionOption(feature, "Play Emote", playSelected, "Request the selected emote again.")
+    addInformationOption(feature,
+        "MM2's playable emotes are added locally. Existing inventory is preserved; avatar defaults "
+            .. "are not added, and the server controls ownership and replication.")
 
     activeCleanup = function(): ()
+        generation += 1
+        activated = false
         disconnectFeatureConnection("MM2GetAllEmotesRespawn")
         stopActiveTrack()
-        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then
+        if state.mm2GetAllEmotesFeature == feature then
             state.mm2GetAllEmotesFeature = nil
         end
     end
@@ -11112,9 +11072,7 @@ function Module.init(runtime: any): any
 end
 
 function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
+    if not Module.Initialized then return end
     Module.Initialized = false
     pcall(activeCleanup)
     activeCleanup = function(): () end
@@ -11640,9 +11598,9 @@ function Module.init(runtime: any): any
         state.mm2CalibrationFeature = TrajectoryFeature
     end
 
-    -- Three samples make a correction live and the window holds eight; twenty
-    -- is a settled median, which is what a dozen or two matches should reach.
-    local LEAD_SAMPLES_FOR_CONFIDENCE: number = 20
+    -- The predictor keeps at most eight recent samples per mode. Reporting a
+    -- goal of twenty was impossible to reach and did not prove convergence.
+    local LEAD_WINDOW_SIZE: number = 8
 
     local askedThisSession: boolean = false
 
@@ -11664,22 +11622,32 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function setConsent(value: boolean?): ()
+    local function setConsent(value: boolean?): boolean
         if type(trajectoryCalibration) ~= "table"
             or type(trajectoryCalibration.setConsent) ~= "function" then
-            return
+            return false
         end
-        pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        local ok: boolean, result: any = pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        local success: boolean = ok and result == true
         if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
             TrajectoryFeature:SetStatus(
-                value == true and "giving calibration"
+                value == true and (success and "giving calibration" or "saving unavailable")
                     or (value == false and "off" or nil)
             )
         end
+        return success
     end
 
-    -- The centred question. Yes starts saving; No guarantees nothing is saved
-    -- (and removes the file a previous Yes wrote).
+    local function enableSaving(): ()
+        if setConsent(true) then
+            notify("Calibration ON: saving to your workspace/Telemetry folder.")
+        else
+            notify("Calibration could not save. Check the console and your executor's file support.")
+        end
+    end
+
+    -- The centred question. No stops saving and tries to remove the current
+    -- file; deletion depends on executor support.
     local function askConsent(): ()
         askedThisSession = true
         local dialog: any = state.confirmDialog
@@ -11698,11 +11666,7 @@ function Module.init(runtime: any): any
             yes = "Yes",
             no = "No",
             onYes = function(): ()
-                setConsent(true)
-                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
-                    TrajectoryFeature:SetStatus("giving calibration")
-                end
-                notify("Calibration ON: saving to your workspace/Telemetry folder.")
+                enableSaving()
             end,
             onNo = function(): ()
                 setConsent(false)
@@ -11717,8 +11681,8 @@ function Module.init(runtime: any): any
         end
     end
 
-    -- The point of the calibration is a predictor that is right after a dozen
-    -- matches, so the card has to say how far that has come.
+    -- Report the actual recent sample window and applied correction. Sample
+    -- count alone is not proof that a predictor has converged or will hit.
     local function learningSummary(): string
         local predictor: any = state and state.mm2Prediction
         if type(predictor) ~= "table" then
@@ -11742,7 +11706,7 @@ function Module.init(runtime: any): any
                         "%s %d/%d %+d ms",
                         mode,
                         samples,
-                        LEAD_SAMPLES_FOR_CONFIDENCE,
+                        LEAD_WINDOW_SIZE,
                         math.round(applied * 1000)
                     )
                 )
@@ -11766,14 +11730,13 @@ function Module.init(runtime: any): any
     end, "Shows what the recorder has measured so far.")
 
     addActionOption(TrajectoryFeature, "Give calibration", function(): ()
-        setConsent(true)
-        notify("Calibration ON: saving to your workspace/Telemetry folder.")
+        enableSaving()
     end, "Answer Yes again and start saving the current session.")
 
     addActionOption(TrajectoryFeature, "Stop giving calibration", function(): ()
         setConsent(false)
-        notify("Calibration OFF: nothing will be saved and the file was removed.")
-    end, "Answer No: stop saving and delete the file this menu wrote.")
+        notify("Calibration OFF: saving stopped. File deletion depends on executor support.")
+    end, "Stop saving and try to delete the current calibration file.")
 
     addActionOption(TrajectoryFeature, "Ask again", function(): ()
         setConsent(nil)
@@ -16846,7 +16809,7 @@ local function createTrajectoryCalibration(): any
         -- v180: nothing is written to the executor workspace until the player
         -- answers the calibration prompt with Yes.
         getConsent: (self: Controller) -> boolean?,
-        setConsent: (self: Controller, value: boolean?) -> (),
+        setConsent: (self: Controller, value: boolean?) -> boolean,
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -16874,6 +16837,7 @@ local function createTrajectoryCalibration(): any
         buildStamp = tostring(host.SOURCE_STAMP or "unknown"),
         shotSequence = 0,
         historyBackup = nil :: string?,
+        pendingHistoryBackup = nil :: string?,
         persistenceBlocked = false,
         rawKnifeActivations = 0,
         unmatchedGunSignals = 0,
@@ -17015,18 +16979,16 @@ local function createTrajectoryCalibration(): any
             runtime.persistenceBlocked = not (okExists and exists == false)
             return
         end
-        if type(raw) ~= "string" then runtime.persistenceBlocked = true; return end
-        if #raw == 0 then return end
-        local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
-        local okBackup: boolean = type(environment.writefile) == "function"
-            and pcall(environment.writefile, backup, raw)
-        local okVerify, backedUp = pcall(environment.readfile, backup)
-        if not okBackup or not okVerify or backedUp ~= raw then
-            runtime.persistenceBlocked = true
-            warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+        if type(raw) ~= "string" then
+            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
+            runtime.persistenceBlocked = not (okExists and exists == false)
             return
         end
-        runtime.historyBackup = backup
+        if #raw == 0 then return end
+        -- Importing the old data is read-only. Making a backup here used to
+        -- write to the workspace before the player answered the consent modal.
+        -- The first authorised save verifies and backs up these exact bytes.
+        runtime.pendingHistoryBackup = raw
         local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
         if not ok or type(decoded) ~= "table" then return end
         -- Only plausible statistical estimates are portable. Counts such as
@@ -17353,11 +17315,10 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
-        -- Unconsented sessions never schedule a write. Read straight from the
-        -- saved config so the writer slices stay self-contained; without a
-        -- config table (unit harness) nothing is gated.
+        -- Unconsented sessions never schedule a write. An absent config is
+        -- also unanswered, not implicit permission.
         local states: any = type(configData) == "table" and configData.states or nil
-        if states and states["MM2.Calibration.Consent"] ~= true then
+        if not states or states["MM2.Calibration.Consent"] ~= true then
             return
         end
         if runtime.saveScheduled then
@@ -17782,7 +17743,7 @@ local function createTrajectoryCalibration(): any
         -- memory and never touches the workspace, so a player who answers No
         -- leaves no calibration file behind.
         local consentStates: any = type(configData) == "table" and configData.states or nil
-        if consentStates and consentStates["MM2.Calibration.Consent"] ~= true then
+        if not consentStates or consentStates["MM2.Calibration.Consent"] ~= true then
             return false
         end
         if runtime.persistenceBlocked
@@ -17792,6 +17753,27 @@ local function createTrajectoryCalibration(): any
         if type(environment.writefile) ~= "function" then
             warn(trajectoryLogPrefix .. " writefile is unavailable; data was not saved.")
             return false
+        end
+        local prior: any = runtime.pendingHistoryBackup
+        if type(prior) == "string" then
+            -- A different writer may have changed the file while the consent
+            -- dialog was open. Never replace bytes we did not import/back up.
+            local okCurrent, current = pcall(environment.readfile, OUTPUT_PATH)
+            if not okCurrent or current ~= prior then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History changed before consent; it will not be overwritten.")
+                return false
+            end
+            local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
+            local okBackup: boolean = pcall(environment.writefile, backup, prior)
+            local okVerify, backedUp = pcall(environment.readfile, backup)
+            if not okBackup or not okVerify or backedUp ~= prior then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+                return false
+            end
+            runtime.historyBackup = backup
+            runtime.pendingHistoryBackup = nil
         end
 
         -- History is loaded once. Re-merging the on-disk totals at each save
@@ -17849,7 +17831,7 @@ local function createTrajectoryCalibration(): any
                         knife = okKnife and knives or nil,
                     }
                 end
-                out.readyFor = "3+ samples per mode makes the correction live; 20+ is a settled median"
+                out.readyFor = "3+ recent samples activate a correction; each mode retains up to 8 (not proof of convergence)"
                 return out
             end)(),
             estimator = {
@@ -19048,10 +19030,11 @@ local function createTrajectoryCalibration(): any
         return consentValue()
     end
 
-    -- `true` starts saving on the next confirmed shot (and writes the current
-    -- session immediately), `false` stops every write and removes the file this
-    -- menu wrote, `nil` leaves the question unanswered.
-    function controller:setConsent(value: boolean?): ()
+    -- `true` attempts an immediate save, `false` stops every write and tries
+    -- to remove the current file, `nil` leaves the question unanswered.
+    -- Return whether the requested transition/save succeeded so the UI does
+    -- not claim a file was saved when backup or executor IO failed.
+    function controller:setConsent(value: boolean?): boolean
         local nextValue: boolean? = nil
         if value == true then
             nextValue = true
@@ -19066,18 +19049,24 @@ local function createTrajectoryCalibration(): any
         end
         if nextValue == true then
             runtime.dirty = true
-            saveSnapshot("consent")
-            return
+            return saveSnapshot("consent")
         end
         runtime.saveScheduled = false
         runtime.dirty = false
-        if runtime.persistenceBlocked then
-            return
+        if nextValue == nil then
+            -- Reopening the question is not an answer and must not delete the
+            -- file (nor discard the pending protection backup).
+            return true
         end
-        -- A No must not leave the file the previous consent wrote behind.
+        runtime.pendingHistoryBackup = nil
+        if runtime.persistenceBlocked then
+            return true
+        end
+        -- A No stops saving and removes the current file when supported.
         if type(environment.delfile) == "function" then
             pcall(environment.delfile, OUTPUT_PATH)
         end
+        return true
     end
 
     function controller:save(reason: string?): boolean
@@ -19092,9 +19081,12 @@ local function createTrajectoryCalibration(): any
     function controller:reset(): ()
         clearHistory()
         runtime.dirty = false
+        runtime.pendingHistoryBackup = nil
         if type(environment.delfile) == "function" then
             pcall(environment.delfile, OUTPUT_PATH)
-        elseif type(environment.writefile) == "function" then
+        elseif consentValue() == true and type(environment.writefile) == "function" then
+            -- An executor without delfile can clear by writing an empty file,
+            -- but never write even that fallback without an explicit Yes.
             pcall(environment.writefile, OUTPUT_PATH, "{}")
         end
         print(trajectoryLogPrefix .. " History cleared.")
@@ -19302,7 +19294,9 @@ local function createTrajectoryCalibration(): any
             bucketCount += 1
         end
         local consent: boolean? = consentValue()
-        local consentText: string = consent == true and "giving calibration"
+        local consentText: string = consent == true
+                and ((runtime.persistenceBlocked or type(environment.writefile) ~= "function")
+                    and "saving unavailable; see console" or "giving calibration")
             or (consent == false and "not giving calibration")
             or "calibration not answered"
         return string.format(
@@ -40991,11 +40985,16 @@ function Module.init(context: any): any
         local shape: any = host.ThemeEngine and host.ThemeEngine.shape
         local wanted: number = shape and tonumber(shape.scale) or 1
         local viewport: Vector2 = viewportSize()
-        local fit: number = math.min(
+        -- Clamp the automatic fit, not the product. Clamping the product to
+        -- 0.7 made every slider value on a small phone yield exactly 0.7.
+        -- Keeping the preference as a multiplier also makes both endpoints
+        -- responsive on larger screens without changing the default fit.
+        local fit: number = math.clamp(math.min(
             viewport.X / CALIBRATION_WIDTH,
             viewport.Y / CALIBRATION_HEIGHT
-        )
-        return math.clamp(wanted * fit, SCALE_MINIMUM, SCALE_MAXIMUM)
+        ), SCALE_MINIMUM, SCALE_MAXIMUM)
+        if wanted ~= wanted then wanted = 1 end
+        return fit * math.clamp(wanted, 0.7, 1.3)
     end
 
     local function logicalViewport(): Vector2
@@ -41212,6 +41211,9 @@ function Module.init(context: any): any
                     record.window.fullHeight or WINDOW_MAX_HEIGHT * 0.5
                 )
                 record.window.root.Position = UDim2.fromOffset(slot.X, slot.Y)
+                if type(windows.SetHome) == "function" then
+                    windows.SetHome(record.window, slot)
+                end
                 if type(windows.ClampWindow) == "function" then
                     windows.ClampWindow(record.window)
                 end
@@ -41269,18 +41271,29 @@ function Module.init(context: any): any
     state.onLayout(function(): ()
         scale.Scale = viewportScale()
         ClickGui.RefreshHeights()
+        local userMoved: boolean = false
+        for _, name: string in ipairs(ClickGui.order) do
+            local record: CategoryWindow? = ClickGui.categories[name]
+            if record and record.window.userMoved == true then
+                userMoved = true
+                break
+            end
+        end
+        if not userMoved then
+            ClickGui.Retile()
+        end
+        -- WindowManager's listener can run before this one: reclamp again
+        -- after the new scale is installed, using the correct logical viewport.
+        if type(windows.Reclamp) == "function" then
+            windows.Reclamp()
+        end
     end)
     ClickGui.scale = scale
 
-    -- Rescale without rebuilding anything: the sliders need immediate feedback
-    -- while they are being dragged, and the heavy reflow is debounced by the
-    -- settings page.
+    -- Only update UIScale during the drag. Re-measure/reclamp after it settles.
     ClickGui.ApplyScale = function(): ()
         if ClickGui.scale then
             ClickGui.scale.Scale = viewportScale()
-        end
-        if type(ClickGui.RefreshHeights) == "function" then
-            pcall(ClickGui.RefreshHeights)
         end
     end
 
@@ -45550,7 +45563,7 @@ local TITLE_HEIGHT: number = 26
 
 function Module.init(context: any): any
 
-    local OPACITY: number = 0.5
+    local OPACITY: number = 0.85
     local TOOLTIP_OPACITY: number = 0.75
     local MAX_HEIGHT: number = 200
     local MAX_SETTINGS_HEIGHT: number = 200
@@ -47586,13 +47599,13 @@ function Module.init(context: any): any
         warn("[Wurst:Settings] palette rows skipped: " .. tostring(paletteError))
     end
 
-    addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
-        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 0.85)
+    addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 1, function(value: number): ()
+        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 1)
         uiSettingsValues["Opacity"] = wanted
-        -- The whole window fades together (frame, header, rows), so the slider
-        -- behaves like one opacity instead of only thinning the panel frame.
+        -- Composite each complete menu panel once. Individual rows, hover
+        -- styles, text and icons keep their normal relative contrast.
         windows.SetOpacity(wanted)
-    end)
+    end, "Controls the opacity of each complete menu window.", 0.01, true)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
     if state.featureTooltip then
@@ -47641,17 +47654,8 @@ function Module.init(context: any): any
                 if type(state.refreshLayout) == "function" then
                     state.refreshLayout(true)
                 end
-                local windowsManager: any = state.windows
-                if windowsManager then
-                    if type(windowsManager.Reclamp) == "function" then
-                        pcall(windowsManager.Reclamp)
-                    end
-                    if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
-                        state.clickGui.ApplyScale()
-                    end
-                end
             end)
-        end)
+        end, "Adjust the size of menu windows on this device.", 0.01, true)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
         uiSettingsValues["Keep after teleport"] = value
@@ -48485,16 +48489,22 @@ function Module.init(context: any): WidgetLibrary
         maximum: number,
         callback: (number) -> (),
         hintText: string?,
-        stepValue: number?
+        stepValue: number?,
+        boundTyped: boolean?
     ): Frame
         local optionKey: string =
             feature.configKey .. "." .. labelText:gsub("%W", "")
         local storedValue: number? = tonumber(configData.values[optionKey])
 
-        -- The interval is a drag guide, not a limit on typed/profile values.
+        -- The interval is normally just a drag guide, not a limit on typed or
+        -- profile values. UI controls may explicitly opt into bounded input.
         local value: number = isNumber(storedValue)
             and (storedValue :: number)
             or defaultValue
+        if boundTyped then
+            if value == math.huge or value == -math.huge then value = defaultValue end
+            value = math.clamp(value, minimum, maximum)
+        end
         local integerOnly: boolean = defaultValue % 1 == 0
             and minimum % 1 == 0
             and maximum % 1 == 0
@@ -48643,12 +48653,19 @@ function Module.init(context: any): WidgetLibrary
             (valueStroke :: UIStroke).Transparency = 1
         end
 
-        valueInput.PlaceholderText = "Any number (type inf for infinity)"
+        valueInput.PlaceholderText = boundTyped
+            and (formatCompactNumber(minimum) .. "–" .. formatCompactNumber(maximum))
+            or "Any number (type inf for infinity)"
 
         local editing: boolean = false
 
         local function quantize(raw: number, fromSlider: boolean): number
-            if not fromSlider then return raw end
+            if not fromSlider then
+                -- Most gameplay sliders intentionally accept values outside
+                -- their drag range. Bounded UI controls opt in explicitly so
+                -- the displayed/saved value matches what they can apply.
+                return boundTyped and math.clamp(raw, minimum, maximum) or raw
+            end
             -- When maximum is infinite, skip the upper clamp and stepping
             -- so an infinity typed or dragged in passes through untouched.
             if maximum == math.huge then
@@ -48697,13 +48714,8 @@ function Module.init(context: any): WidgetLibrary
             end
         end
 
-        local function updateFromScreenX(screenX: number): ()
-            local width: number = math.max(track.AbsoluteSize.X, 1)
-            local alpha: number = math.clamp(
-                (screenX - track.AbsolutePosition.X) / width,
-                0,
-                1
-            )
+        local function updateFromScreenX(screenX: number, origin: number, width: number): ()
+            local alpha: number = math.clamp((screenX - origin) / width, 0, 1)
             setValue(minimum + (effectiveMax(minimum, maximum) - minimum) * alpha, true, true)
         end
 
@@ -48726,9 +48738,16 @@ function Module.init(context: any): WidgetLibrary
             if input.Position.X > track.AbsolutePosition.X + track.AbsoluteSize.X then
                 return
             end
-            updateFromScreenX(input.Position.X)
+            -- Rescaling the menu moves the track under the pointer. Keep the
+            -- starting screen interval fixed for the duration of this drag.
+            local dragOrigin: number = track.AbsolutePosition.X
+            local dragWidth: number = math.max(track.AbsoluteSize.X, 1)
+            local function updateDrag(screenX: number): ()
+                updateFromScreenX(screenX, dragOrigin, dragWidth)
+            end
+            updateDrag(input.Position.X)
             activeSlider = {
-                update = updateFromScreenX,
+                update = updateDrag,
                 finish = function(): ()
                     notify(
                         labelText
@@ -48759,7 +48778,11 @@ function Module.init(context: any): WidgetLibrary
 
         task.defer(function(): ()
             if option.Parent then
-                setValue(value, false, false)
+                -- Migrate stale out-of-range UI values too; gameplay controls
+                -- deliberately leave their old open-range profiles intact.
+                local corrected: boolean = boundTyped == true and storedValue ~= nil
+                    and storedValue ~= value
+                setValue(value, corrected, false)
             end
         end)
         return option
@@ -50675,8 +50698,8 @@ export type WindowDefinition = {
 
 export type Window = {
     id: string,
-    root: Frame,
-    body: Frame,
+    root: GuiObject,
+    body: GuiObject,
     header: Frame?,
     closeButton: TextButton?,
     collapsed: boolean,
@@ -50854,7 +50877,9 @@ function Module.init(context: any): any
     -- mostly its own, exactly like the reclamp cascade but at open.
     function manager.Deoverlap(window: any): ()
         local root: any = window and window.root
-        if not root then
+        if not root or window.userMoved then
+            -- A manually saved position belongs to the user, even if they
+            -- deliberately chose to overlap another window.
             return
         end
         local size: Vector2 = Vector2.new(
@@ -50865,6 +50890,7 @@ function Module.init(context: any): any
             root.Position.X.Offset,
             root.Position.Y.Offset
         )
+        local initial: Vector2 = position
         for _ = 1, 10 do
             local stacked: boolean = false
             for _, other: any in ipairs(manager.list) do
@@ -50892,6 +50918,10 @@ function Module.init(context: any): any
             position = clamp(position + Vector2.new(30, 30), size)
         end
         root.Position = UDim2.fromOffset(position.X, position.Y)
+        if (position.X ~= initial.X or position.Y ~= initial.Y)
+            and type(manager.SetHome) == "function" then
+            manager.SetHome(window, position)
+        end
     end
 
     function manager.MeasureWindow(window: any): Vector2
@@ -50934,6 +50964,14 @@ function Module.init(context: any): any
     -- the screen again cannot put the window back (the pile-up in
     -- the report). Reclamp below always derives from home.
     local homePositions: {[string]: Vector2} = {}
+
+    -- Automatic tiling/placement establishes a new home too. Otherwise the
+    -- next scale/viewport refresh snaps windows back to their creation slots.
+    function manager.SetHome(window: any, position: Vector2): ()
+        if window and window.id and position then
+            homePositions[window.id] = Vector2.new(position.X, position.Y)
+        end
+    end
 
     local function persist(window: any): ()
         local home: Vector2? = homePositions[window.id]
@@ -51008,7 +51046,7 @@ function Module.init(context: any): any
         end
     end
 
-    function manager.Adopt(root: Frame, definition: any): any
+    function manager.Adopt(root: GuiObject, definition: any): any
         root:SetAttribute("SelectorOwner", true)
         local id: string = definition.id
         local saved: any = configData.ui.windows[id]
@@ -51041,21 +51079,23 @@ function Module.init(context: any): any
             return connection
         end
 
+        local savedHome: Vector2? = nil
         if type(saved) == "table" and saved.x and saved.y then
-
             local savedX: number? = tonumber(saved.x)
             local savedY: number? = tonumber(saved.y)
             if savedX and savedY then
+                savedHome = Vector2.new(savedX, savedY)
                 local landed: Vector2 = clamp(
-                    Vector2.new(savedX, savedY),
+                    savedHome,
                     Vector2.new(root.Size.X.Offset, root.Size.Y.Offset)
                 )
                 root.Position = UDim2.fromOffset(landed.X, landed.Y)
-
                 window.userMoved = true
             end
         end
-        homePositions[id] = Vector2.new(
+        -- Do not replace an off-screen saved position with a temporary clamp;
+        -- it becomes reachable again when the viewport grows.
+        homePositions[id] = savedHome or Vector2.new(
             root.Position.X.Offset,
             root.Position.Y.Offset
         )
@@ -51238,26 +51278,26 @@ function Module.init(context: any): any
         position = clamp(position, definition.size)
         homePositions[id] = position
 
-        local root: Frame = create("Frame", {
+        -- A single alpha is applied after composing the panel, rather than
+        -- independently fading overlapping rows, labels, icons and strokes.
+        -- Keep chromeless/floating overlays as Frames: CanvasGroup clips its
+        -- descendants and should not change those overlays' separate styling.
+        local root: any = create(bare and "Frame" or "CanvasGroup", {
             Parent = PopupLayer,
             Name = "Window_" .. id,
             Active = true,
-            BackgroundTransparency = bare and 1 or manager.bodyTransparency,
+            BackgroundTransparency = bare and 1 or 0,
             BorderSizePixel = 0,
             ClipsDescendants = not bare,
             Position = UDim2.fromOffset(position.X, position.Y),
             Size = UDim2.fromOffset(definition.size.X, definition.size.Y),
             Visible = false,
             ZIndex = BASE_Z,
-        }) :: Frame
-        bind(root, "BackgroundColor3", "background")
-        if manager.ApplyOpacity then
-            task.defer(function(): ()
-                if root.Parent then
-                    manager.ApplyOpacity(root)
-                end
-            end)
+        })
+        if not bare then
+            root.GroupTransparency = 1 - (manager.opacity or 0.85)
         end
+        bind(root, "BackgroundColor3", "background")
 
         local window: any = nil
         local paintChrome: {() -> ()} = {}
@@ -51630,6 +51670,10 @@ function Module.init(context: any): any
         )
         window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         manager.ClampWindow(window)
+        manager.SetHome(window, Vector2.new(
+            window.root.Position.X.Offset,
+            window.root.Position.Y.Offset
+        ))
     end
 
     function manager.ReflowWindow(window: any): ()
@@ -51653,6 +51697,10 @@ function Module.init(context: any): any
         )
         window.root.Position = UDim2.fromOffset(landed.X, landed.Y)
         manager.ClampWindow(window)
+        manager.SetHome(window, Vector2.new(
+            window.root.Position.X.Offset,
+            window.root.Position.Y.Offset
+        ))
     end
 
     local function categoryAnchor(feature: any): any
@@ -51889,53 +51937,21 @@ function Module.init(context: any): any
         end
     end)
 
-    manager.bodyTransparency = 0.5
-    -- One opacity for the whole menu. Fading only the window frame left every
-    -- row opaque, so the "Opacity" slider looked like it was tearing the menu
-    -- apart: the panel went see-through while the rows stayed solid on top.
-    local opacityBases: {[GuiObject]: number} = setmetatable({}, {__mode = "k"})
-    local function fadeSubtree(root: any, alpha: number): ()
-        if not root then
-            return
-        end
-        local ok: boolean, descendants: any = pcall(function(): any
-            return root:GetDescendants()
-        end)
-        if not ok or type(descendants) ~= "table" then
-            return
-        end
-        for _, object: any in ipairs(descendants) do
-            if object:IsA("GuiObject") then
-                local base: number? = opacityBases[object]
-                if base == nil then
-                    local current: number = tonumber(object.BackgroundTransparency) or 1
-                    if current < 0.99 then
-                        base = current
-                        opacityBases[object] = base
-                    end
-                end
-                if base ~= nil then
-                    local faded: number = 1 - alpha * (1 - (base :: number))
-                    object.BackgroundTransparency = math.clamp(faded, 0, 1)
-                end
-            end
-        end
-    end
+    manager.opacity = 0.85
+    -- Kept as a public value for callers which display the selected alpha.
+    manager.bodyTransparency = 1 - manager.opacity
 
     function manager.SetOpacity(alpha: number): ()
-        local wanted: number = math.clamp(alpha, 0.15, 1)
+        local wanted: number = tonumber(alpha) or 0.85
+        if wanted ~= wanted then wanted = 0.85 end
+        wanted = math.clamp(wanted, 0.15, 1)
         manager.opacity = wanted
-        manager.bodyTransparency = math.clamp(1 - wanted, 0, 1)
+        manager.bodyTransparency = 1 - wanted
         for _, window: any in ipairs(manager.list) do
-            if window.root then
-                window.root.BackgroundTransparency = manager.bodyTransparency
-                fadeSubtree(window.root, wanted)
+            local root: any = window.root
+            if root and root:IsA("CanvasGroup") then
+                root.GroupTransparency = 1 - wanted
             end
-        end
-    end
-    manager.ApplyOpacity = function(root: any): ()
-        if root and (manager.opacity or 1) < 0.999 then
-            fadeSubtree(root, manager.opacity)
         end
     end
 
