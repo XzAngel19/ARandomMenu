@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** build
-> **`v176-20261103-weather-density-keybinds`**. La rama de trabajo de la sesión
+> **`v177-20261103-visible-effects-diagnose`**. La rama de trabajo de la sesión
 > es `arena/979b8402-arandommenu`, un fork exacto de
 > `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
 > `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -29,13 +29,36 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v176: 84 fuentes en el
-     bundle, 117 suites, auditoría estática, boots `failures=0`, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v177: 84 fuentes en el
+     bundle, 117 suites, auditoría estática, boots `failures=0`, arranque
+     silencioso, menú 50/49).
   5. Commit + push **normales** a la rama de la sesión
      (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
      historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v177 — Efectos visibles o explicados, y diagnóstico en el cliente (2026-11-03)
+
+El usuario envió una captura de **MM2** (granja de Halloween, de noche) donde
+`Floor reflections`, `Surface textures`, `Glass reflections`, `Falling leaves`,
+`Dust motes`, `Wet surfaces` y `Water reflections` no se veían con el toggle ON.
+Detalle y límites en `docs/FIXES-v177.md`.
+
+- **Toggle hijo con la tarjeta apagada** avisaba nada: ahora `card:Notify`. La
+  restauración de valores guardados al construir la UI no avisa (solo cuenta
+  después de que la tarjeta se haya encendido alguna vez).
+- **Hojas y polvo realzados:** hojas `12/s` (6 móvil), `Size 1,6`,
+  `Lifetime 8`, `LightEmission 0,4`; polvo `30/s`, `Size 0,55`, caja
+  `26×8×26` con `Acceleration`.
+- **Reflejos:** glass `0,5`, wet `0,32`, agua `0,75`; `Water reflections` avisa
+  cuando el mapa no tiene Terrain. Texturas de superficie a `0,42`.
+- **Materiales nuevos:** `stone`, `sand`, `ice` sobre los álbedos ya usados
+  (tiling 8×4 / 16×8 / 8×8), construidos con `pcall` sobre `Enum.Material`.
+- **`Diagnose`**: botón en la tarjeta que imprime el estado real (superficies,
+  espejo, clima, Terrain, cámara). `ShaderReflection` expone
+  `session:Describe()` y limpia `currentFloor` al parar. El status de la
+  tarjeta cuenta las diez familias con tope de cuatro + `+N`.
 
 ## v176 — Densidad de clima real y keybinds en juego (2026-11-03)
 
@@ -1786,6 +1809,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-03 · v176. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-03 · v177. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

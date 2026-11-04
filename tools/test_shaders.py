@@ -313,13 +313,30 @@ assert(card==framework.Modules.Shaders)
 assert(not card.Options.Look and not card.Options.Weather and not card.Options.Advanced,
     "no old look or mode selector remains")
 local names={"Floor reflections","Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
-assert(#card.OptionMetadata==#names)
+-- v177: one action entry ("Diagnose") follows the toggles; no presets return.
+assert(#card.OptionMetadata==#names+1)
 for i,name in ipairs(names) do assert(card.OptionMetadata[i].label==name and card.OptionMetadata[i].type=="toggle") end
+assert(card.OptionMetadata[#names+1].label=="Diagnose" and card.OptionMetadata[#names+1].type=="action")
 assert(card.Options["Floor reflections"].Value and card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
 for _,name in ipairs({"Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}) do
     assert(not card.Options[name].Value)
 end
 pass("simple individual toggles, no Look/preset/weather selector")
+
+
+-- v177: Diagnose prints the facts the module tracks, so a missing effect on a
+-- specific map can be explained from the client instead of guessed.
+local captured={}
+local realPrint=print
+print=function(text) table.insert(captured,tostring(text)) end
+card.Options["Diagnose"].Metadata.callback()
+print=realPrint
+local joined=table.concat(captured,"\n")
+for _,needle in ipairs({"stamp=","surfaces:","reflectance:","mirror:","weather:","water:","camera="}) do
+    assert(joined:find(needle,1,true),"diagnose must report "..needle)
+end
+assert(joined:find("emitters=",1,true) and joined:find("scanned=",1,true))
+pass("diagnose reports surfaces, mirror, weather, water and camera facts")
 
 local gameEffect=Instance.new("ColorCorrectionEffect"); gameEffect.Name="GameOwned"; gameEffect.Brightness=-0.2; gameEffect.Parent=lighting
 local cameraEffect=Instance.new("ColorCorrectionEffect"); cameraEffect.Parent=camera
@@ -373,12 +390,40 @@ card.Options["Floor reflections"].Metadata.callback(true)
 assert(reflectionStarts==2 and reflectionStops==1)
 pass("warm baseline, floor reflection lifecycle and independent failure isolation")
 
+-- v177: a toggle pressed while the Shaders card is off used to swap its box and
+-- do nothing, which reads as a broken effect. It must say why instead.
+local beforeNotify=#notifications
+card.Enabled=false
+card.Options["Falling leaves"].Value=true
+card.Options["Falling leaves"].Metadata.callback(true)
+card.Enabled=true
+assert(#notifications==beforeNotify+1 and notifications[#notifications]:find("Shaders is off",1,true),
+    "a child toggle while the card is off must explain itself")
+card.Options["Falling leaves"].Value=false
+pass("child toggle outside the enabled card reports instead of silently ignoring")
+
+-- v177: the status line must mention non-weather subsystems too, capped so the
+-- card header stays readable.
+for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) do
+    card.Options[name].Value=true
+end
+card.Options["Glass reflections"].Metadata.callback(true)
+assert(features.Shaders.status=="Floor · Surfaces · Glass · Wet · +4",
+    "status must count every enabled kind and cap at four: "..tostring(features.Shaders.status))
+for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) do
+    card.Options[name].Value=false
+end
+card.Options["Glass reflections"].Metadata.callback(true)
+assert(features.Shaders.status=="Floor · Surfaces · Glass",
+    "disabling kinds must shrink the status line: "..tostring(features.Shaders.status))
+pass("status names floor/surface/glass/wet/water and caps with a remainder")
+
 frames(25)
 assert(reflectionObservations[floor] and reflectionObservations[wood],
     "the world traversal must feed eligible map surfaces to the mirror library")
-assert(glass.Reflectance==0.36 and window.Reflectance==0.36 and anonymousPane.Reflectance==0.36,
+assert(glass.Reflectance==0.5 and window.Reflectance==0.5 and anonymousPane.Reflectance==0.5,
     "transparent thin panes need not be literally named Window")
-assert(movingWindow.Reflectance==0.36 and not movingWindow.Anchored and movingWindow.CanCollide
+assert(movingWindow.Reflectance==0.5 and not movingWindow.Anchored and movingWindow.CanCollide
     and avatarGlass.Reflectance==0,"moving map glass can be enhanced without touching physics or avatar glass")
 assert(textureOf(union),"compatible CSG floors should use the same per-face texture API")
 assert(#assetRequests==0 and #spawned==5,"only five detected materials request art asynchronously")
@@ -398,7 +443,7 @@ assert(textureOf(marble).Texture=="custom://shaderMarbleTexture")
 local brickTextures=children(wall,"Texture")
 assert(#brickTextures==2 and brickTextures[1].Texture=="custom://shaderBrickTexture")
 assert(brickTextures[1].Face==Enum.NormalId.Front and brickTextures[2].Face==Enum.NormalId.Back)
-assert(textureOf(floor).Face==Enum.NormalId.Top and textureOf(floor).Transparency==0.55
+assert(textureOf(floor).Face==Enum.NormalId.Top and textureOf(floor).Transparency==0.42
     and textureOf(floor).Color3==floor.Color, "dark floors must not be tinted towards white")
 assert(not textureOf(avatarFloor) and not textureOf(npcFloor) and not textureOf(toolFloor)
     and not textureOf(moving) and not textureOf(mesh) and not textureOf(decorated)
@@ -426,12 +471,12 @@ assert(textureOf(floor)==originalFloorTexture and not originalFloorTexture.destr
 card.Options["Glass reflections"].Metadata.callback(true)
 card.Options["Wet surfaces"].Metadata.callback(true)
 frames(80)
-assert(glass.Reflectance==0.36 and floor.Reflectance==0.16)
+assert(glass.Reflectance==0.5 and floor.Reflectance==0.32)
 card.Options["Wet surfaces"].Metadata.callback(false)
-assert(floor.Reflectance==0 and glass.Reflectance==0.36 and textureOf(floor)==originalFloorTexture)
+assert(floor.Reflectance==0 and glass.Reflectance==0.5 and textureOf(floor)==originalFloorTexture)
 window.Reflectance=0.02 -- the game writes after we enabled the glass option
 frames(80)
-assert(window.Reflectance==0.36,"glass remains enhanced after a game-side rewrite")
+assert(window.Reflectance==0.5,"glass remains enhanced after a game-side rewrite")
 glass.Reflectance=0.66 -- the game changes this while the option is active
 card.Options["Glass reflections"].Metadata.callback(false)
 assert(glass.Reflectance==0.66 and window.Reflectance==0.02 and anonymousPane.Reflectance==0,
@@ -624,7 +669,7 @@ camera.CFrame={Position=Vector3.new(5000,12,0)};frames(180,1/60)
 assert(textureOf(manyFloors[1]) and textureOf(manyFloors[140]), "moving the camera must not evict earlier floors")
 local stream=part("StreamedWindow",Enum.Material.Glass,Vector3.new(10,10,1));stream.Transparency=0.5
 world.DescendantAdded:Fire(stream);frames(1)
-assert(stream.Reflectance==0.36,"streamed-in parts enter the bounded priority queue")
+assert(stream.Reflectance==0.5,"streamed-in parts enter the bounded priority queue")
 world.DescendantRemoving:Fire(stream);stream.Parent=nil
 assert(stream.Reflectance==0,"streamed-out parts restore their own value")
 card.Options["Surface textures"].Metadata.callback(false)
@@ -652,7 +697,7 @@ for _,p in ipairs(world:GetChildren()) do
         for _,texture in ipairs(children(p,"Texture")) do
             if texture.Name=="ARMShaderTexture" then allTextures+=1 end
         end
-        if p.Reflectance==0.36 then allGlass+=1 end -- includes transparent plastic windows
+        if p.Reflectance==0.5 then allGlass+=1 end -- includes transparent plastic windows
     end
 end
 assert(allTextures==600 and allGlass==1200,"hard map budgets are enforced: "..allTextures.."/"..allGlass)
@@ -711,7 +756,7 @@ lighting.FogEnd=1400
 pass("fog selects FogEnd or a game Atmosphere, reasserts and restores their latest values")
 
 card.Options["Water reflections"].Metadata.callback(true)
-assert(terrain.WaterReflectance==0.55)
+assert(terrain.WaterReflectance==0.75,"v177: water sheen must be visible, not a 0.03 nudge")
 card.Options["Water reflections"].Metadata.callback(false)
 assert(terrain.WaterReflectance==0.12)
 card.Options["Water reflections"].Metadata.callback(true)
@@ -822,11 +867,12 @@ local all=byName(world,"ARMShaderWeather")
 assert(#weatherCells(all)==9 and #children(all,"Part")==11 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==2505,"2160 rain + 306 snow + 27 leaves + 12 dust particles/s, plus manual splashes")
+assert(totalRate==2604,"2160 rain + 306 snow + 108 leaves + 30 dust particles/s, plus manual splashes")
 assert(totalRate<=3000,"the shared weather budget must hold whatever the toggles ask for")
 runAllSpawned();frames(35)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
-assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==12 and dust.Size.Value==0.35)
+assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==30 and dust.Size.Value==0.55,
+    "v177: 12 motes of 0.35 studs were invisible on a dark map")
 card.Options.Fog.Metadata.callback(true)
 local withFog=byName(world,"ARMShaderWeather")
 assert(byName(byName(withFog,"FogCell"),"Fog mist") and byName(weatherCells(withFog)[1],"Rain"))
@@ -1023,7 +1069,10 @@ local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost,librarie
 assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
     and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
 local startsBeforeRestore=reflectionStarts
+local restoreNotifications=#notifications
 features.Shaders.toggle(true)
+assert(#notifications==restoreNotifications,
+    "v177: replaying saved toggle values must not toast about a disabled card")
 assert(savedAtmosphere.Density==0.58 and reflectionStarts==startsBeforeRestore,
     "a saved OFF floor reflection must not start on module enable")
 Shaders.destroy();flushDeferred();assert(savedAtmosphere.Density==0.23)

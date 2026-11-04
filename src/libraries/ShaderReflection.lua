@@ -162,6 +162,9 @@ function Module.init(host: any): any
             if workConnection then pcall(function(): () workConnection:Disconnect() end); workConnection = nil end
             if renderConnection then pcall(function(): () renderConnection:Disconnect() end); renderConnection = nil end
             clearCopies()
+            -- v177: a stopped session must not keep describing a floor it no
+            -- longer renders.
+            currentFloor, planePoint, planeNormal = nil, nil, nil
             for _, mirror: any in pairs(secondary) do destroyMirror(mirror) end
             secondary, candidates = {}, {}
             candidateCount = 0
@@ -935,6 +938,32 @@ function Module.init(host: any): any
                 local ok: boolean, shown: any = pcall(project, camera, mirror.plane, mirror.gui, mirror.viewport, mirror.camera, secondaryCanvas)
                 mirror.gui.Enabled = ok and shown == true
             end
+        end
+        -- v177: state the mirror actually reached, so the Shaders card can print
+        -- facts instead of the user guessing from a screenshot.
+        function session:Describe(): {[string]: any}
+            local copies: number = 0
+            for _: any in pairs(records) do copies += 1 end
+            local actorCount: number = 0
+            for _: any in pairs(actors) do actorCount += 1 end
+            local mirrors: number = 0
+            for _: any in pairs(secondary) do mirrors += 1 end
+            local floorName: string? = nil
+            if currentFloor then
+                local named: boolean, full: any = pcall(function(): any
+                    return (currentFloor :: BasePart):GetFullName()
+                end)
+                floorName = if named and type(full) == "string" then full else (currentFloor :: BasePart).Name
+            end
+            return {
+                floor = floorName,
+                gui = gui ~= nil and gui.Enabled == true,
+                sceneParts = copies,
+                actors = actorCount,
+                candidates = candidateCount,
+                secondary = mirrors,
+                stopped = stopped,
+            }
         end
         local connected: boolean, connectFailure: any = pcall(function(): ()
             workConnection = host.TaskManager:Connect(work, nil, "Shaders floor reflection")

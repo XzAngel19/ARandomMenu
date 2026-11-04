@@ -37,6 +37,13 @@ recorre progresivamente el mapa, pero solo modifica piezas compatibles y tiene
 límites de recursos. Las texturas no sustituyen mallas y respetan los decals por
 cara. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes. Al
 apagar se retiran los efectos y se restauran los valores aún controlados.
+Desde v177 la tarjeta tiene un botón **`Diagnose`**: imprime y muestra lo que
+cada efecto alcanzó en ese cliente (superficies encontradas y reservadas por
+decals, suelo del espejo, emisores del clima, Terrain y cámara). Úsalo cuando un
+toggle parezca no hacer nada: dice si el mapa no tiene superficies compatibles,
+si no hay Terrain para `Water reflections` o si el clima existe pero está
+oculto. Con la tarjeta apagada, un toggle hijo ahora avisa en vez de cambiar la
+casilla sin efecto.
 
 Las imágenes se descargan bajo demanda; si la precarga local falla se intentan
 recursos de Roblox como respaldo. Una precarga exitosa no garantiza que se

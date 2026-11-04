@@ -284,6 +284,16 @@ assert(gui.CanvasSize.X<=1024 and gui.CanvasSize.Y<=1024
     'off-axis viewport enlargement must stay within the effective pixel budget')
 pass('stronger full-floor off-axis view, mirrored pose, bounded copies and original floor')
 
+-- v177: the Shaders card asks the mirror what it actually reached. A floor, a
+-- visible gui and copied scene parts must all be observable without guessing.
+local described=session:Describe()
+assert(described.floor~=nil and described.gui==true and described.stopped==false,
+    'Describe must report the current floor and a visible gui')
+assert(described.sceneParts==54 and described.actors>0
+    and described.candidates>=0 and described.secondary>=0,
+    'Describe must count copied scene parts, actors and tracked floor candidates')
+pass('mirror describes floor, gui, copied parts, actors and candidates')
+
 root.Position=Vector3.new(24,3,0);hit.Position=Vector3.new(24,0,0);frames(25,0.1)
 near(plane.Position.X,0.02);near(lastQueryPosition.X,24)
 root.Position=Vector3.new(0,3,0);hit.Position=Vector3.new(0,0,0);frames(3,0.1)
@@ -375,6 +385,9 @@ newBody:Destroy();frames(2,0.1);assert(not findDeep(scene,'NewBody'))
 pass('respawn, streamed-out parts and cleanup of stale avatar copies')
 
 session:Stop();session:Stop()
+local stoppedReport=session:Describe()
+assert(stoppedReport.stopped==true and stoppedReport.floor==nil and stoppedReport.gui==false,
+    'v177: a stopped session describes itself as stopped and floorless')
 assert(liveHandles()==0 and folder.destroyed and plane.destroyed and gui.destroyed and scene.destroyed)
 assert(not find(world,'ARMShaderFloorReflection') and not find(playerGui,'ARMShaderFloorReflection'))
 assert(not oldFloor.destroyed and not nextFloor.destroyed and not character.destroyed)
@@ -533,6 +546,9 @@ local framework={Categories={Render={CreateModule=function(_,definition)
     function shaderCard:SetStatus(_) end
     function shaderCard:Notify(_) end
     function shaderCard:CreateNote(_) end
+    function shaderCard:CreateButton(option)
+        self.Options[option.Name]={Value=false,Metadata={callback=option.Function}}
+    end
     function shaderCard:CreateToggle(option)
         self.Options[option.Name]={Value=option.Name=='Floor reflections'}
     end

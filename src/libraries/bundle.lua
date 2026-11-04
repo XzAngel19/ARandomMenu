@@ -1,5 +1,5 @@
 return {
-    stamp = "v176-20261103-weather-density-keybinds",
+    stamp = "v177-20261103-visible-effects-diagnose",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -38699,12 +38699,15 @@ local WEATHER = {
                 color = {252, 253, 255}, lightEmission = 0.55, lightInfluence = 0.35,
                 acceleration = Vector3.new(3, 0, 1.5)},
         }},
+    -- v177: three leaves per cell was 27 in a 112-stud square, i.e. invisible.
+    -- A leaf is also a lit object, not a dust speck: bigger, longer-lived and
+    -- with LightEmission high enough to survive a night map.
     ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
         layers = {
-            {rate = 3, mobileRate = 2, size = 1.1, speedMin = 4, speedMax = 6, lifetime = 6,
-                transparency = 0.10, spread = 24, spin = 60,
-                color = {255, 214, 150}, lightEmission = 0.15, lightInfluence = 0.8,
-                acceleration = Vector3.new(2.5, 0, 1)},
+            {rate = 12, mobileRate = 6, size = 1.6, speedMin = 3, speedMax = 5.5, lifetime = 8,
+                transparency = 0.05, spread = 30, spin = 90,
+                color = {255, 196, 120}, lightEmission = 0.4, lightInfluence = 0.55,
+                acceleration = Vector3.new(3, 0, 2)},
         }},
 }
 local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
@@ -38717,7 +38720,36 @@ local SURFACE_STYLES = {
     brick = {asset = "shaderBrickTexture", fallback = "rbxassetid://9920482813", u = 12, v = 6},
     grass = {asset = "shaderGrassTexture", fallback = "rbxassetid://9920551868", u = 12, v = 12},
     marble = {asset = "shaderMarbleTexture", fallback = "rbxassetid://9439430596", u = 12, v = 12},
+    -- v177: MM2-style maps are mostly stone, not Wood or Marble. These reuse the
+    -- concrete/marble albedos with their own tiling (no new download): the point
+    -- is coverage of the materials the maps actually use.
+    stone = {asset = "shaderConcreteTexture", fallback = "rbxassetid://9920484153", u = 8, v = 4},
+    sand = {asset = "shaderConcreteTexture", fallback = "rbxassetid://9920484153", u = 16, v = 8},
+    ice = {asset = "shaderMarbleTexture", fallback = "rbxassetid://9439430596", u = 8, v = 8},
 }
+-- Built once with pcall: a client that lacks a newer Enum.Material must simply
+-- not map it, not throw while scanning the map.
+local MATERIAL_STYLES: {[any]: string} = {}
+do
+    local groups: {[string]: {string}} = {
+        concrete = {"Concrete", "Asphalt", "Pavement"},
+        stone = {"Cobblestone", "Slate", "Rock", "Basalt", "Sandstone", "Limestone", "Granite", "Pebble"},
+        sand = {"Sand", "Ground", "Mud"},
+        ice = {"Ice", "Glacier"},
+        wood = {"Wood", "WoodPlanks"},
+        brick = {"Brick"},
+        grass = {"Grass", "LeafyGrass"},
+        marble = {"Marble"},
+    }
+    for style: string, names: {string} in pairs(groups) do
+        for _, name: string in ipairs(names) do
+            local ok: boolean, value: any = pcall(function(): any
+                return (Enum.Material :: any)[name]
+            end)
+            if ok and value ~= nil then MATERIAL_STYLES[value] = style end
+        end
+    end
+end
 
 function Module.init(context: any): any
     local host: any = context.host
@@ -38733,6 +38765,7 @@ function Module.init(context: any): any
     local waterTerrain: any = nil
     local floorReflection: any = nil
     local floorGeneration: number = 0
+    local cardEverEnabled: boolean = false
     local floorRetries: number = 0
 
     local fogTarget: any = nil
@@ -38760,6 +38793,10 @@ function Module.init(context: any): any
     local textureCount: number = 0
     local reflectionCount: number = 0
     local textureWarning: boolean = false
+    -- v177 diagnostics: "it does nothing" needs numbers, not guesses.
+    local surfaceSeen: number = 0
+    local surfaceReserved: number = 0
+    local surfaceNoStyle: number = 0
     -- The world is visited incrementally, not restricted to the player's
     -- neighbourhood. Caps bound retained instances on unusually large maps.
     local MAX_TEXTURES: number = 600
@@ -38799,12 +38836,31 @@ function Module.init(context: any): any
         return loaded and seenSuccess and not seenFailure
     end
 
+    -- v177: the card status used to list only weather, so Floor/Surface/Glass/
+    -- Water toggles looked inert from the menu itself.
+    local STATUS_LABELS: {{option: string, label: string}} = {
+        {option = "Floor reflections", label = "Floor"},
+        {option = "Surface textures", label = "Surfaces"},
+        {option = "Glass reflections", label = "Glass"},
+        {option = "Wet surfaces", label = "Wet"},
+        {option = "Water reflections", label = "Water"},
+        {option = "Fog", label = "Fog"},
+        {option = "Rain", label = "Rain"},
+        {option = "Snow", label = "Snow"},
+        {option = "Falling leaves", label = "Leaves"},
+        {option = "Dust motes", label = "Dust"},
+    }
     local function updateStatus(): ()
         if not card or not card.Enabled then return end
         local parts: {string} = {}
-        for _, name: string in ipairs({"Fog", "Rain", "Snow", "Falling leaves", "Dust motes", "Wet surfaces"}) do
-            if enabled(name) then table.insert(parts, name) end
+        local shown: number = 0
+        for _, entry: {option: string, label: string} in ipairs(STATUS_LABELS) do
+            if enabled(entry.option) then
+                shown += 1
+                if shown <= 4 then table.insert(parts, entry.label) end
+            end
         end
+        if shown > #parts then table.insert(parts, "+" .. tostring(shown - #parts)) end
         card:SetStatus(if #parts == 0 then nil else table.concat(parts, " · "))
     end
 
@@ -38894,16 +38950,27 @@ function Module.init(context: any): any
         end
     end
 
+    local waterWarned: boolean = false
     local function refreshWater(): ()
         releaseWater()
         if not enabled("Water reflections") then return end
+        local applied: boolean = false
         pcall(function(): ()
             local terrain: any = world:FindFirstChildOfClass("Terrain")
             if not terrain then return end
             local old: number = terrain.WaterReflectance
-            terrain.WaterReflectance = math.max(old, 0.55)
+            if terrain.WaterReflectance == nil then return end
+            terrain.WaterReflectance = math.max(old, 0.75)
             waterTerrain, waterOriginal, waterApplied = terrain, old, terrain.WaterReflectance
+            applied = true
         end)
+        -- A place without Terrain cannot show water at all. Saying so once is
+        -- better than a checked box that never does anything (MM2 has no water).
+        if not applied and not waterWarned then
+            waterWarned = true
+            card:Notify("Water reflections needs Terrain water; this place has none")
+        end
+        updateStatus()
     end
 
     local function releaseFog(): ()
@@ -39169,15 +39236,19 @@ function Module.init(context: any): any
             local dustPart: Part? = nil
             local dust: ParticleEmitter? = nil
             if dustEnabled then
-                dustPart, dust = extraEmitter("DustCell", "Dust motes", Vector3.new(20, 6, 20), "shaderSnowTexture", function(emitter: any): ()
+                -- v177: 12 motes of 0,35 studs at 0,35 transparency could not be
+                -- seen. Bigger, brighter, longer-lived and in a wider box so the
+                -- motes drift past the camera instead of sitting in one spot.
+                dustPart, dust = extraEmitter("DustCell", "Dust motes", Vector3.new(26, 8, 26), "shaderSnowTexture", function(emitter: any): ()
                     emitter.Name, emitter.Enabled = "Dust motes", false
                     emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
                     pcall(function(): () emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
                     emitter.EmissionDirection = Enum.NormalId.Top
                     pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.FacingCamera end)
-                    emitter.Rate, emitter.Size, emitter.Speed = 12, NumberSequence.new(0.35), NumberRange.new(0.1, 0.4)
-                    emitter.Lifetime, emitter.Transparency = NumberRange.new(5), NumberSequence.new(0.35)
-                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 232, 180)), 0.35, 0.5
+                    emitter.Rate, emitter.Size, emitter.Speed = 30, NumberSequence.new(0.55), NumberRange.new(0.15, 0.5)
+                    emitter.Lifetime, emitter.Transparency = NumberRange.new(6), NumberSequence.new(0.26)
+                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 238, 200)), 0.5, 0.35
+                    pcall(function(): () emitter.Acceleration = Vector3.new(0.15, 0.05, 0.1) end)
                 end)
             end
             local mistPart: Part? = nil
@@ -39450,14 +39521,8 @@ function Module.init(context: any): any
         if (not block and part.ClassName ~= "UnionOperation") or not part.Anchored
             or part.Transparency > 0.05 or part.MaterialVariant ~= "" then return nil, nil end
         local material: any = part.Material
-        local style: string? = nil
-        if material == Enum.Material.Concrete or material == Enum.Material.Asphalt
-            or material == Enum.Material.Pavement then style = "concrete"
-        elseif material == Enum.Material.Wood or material == Enum.Material.WoodPlanks then style = "wood"
-        elseif material == Enum.Material.Brick then style = "brick"
-        elseif material == Enum.Material.Grass then style = "grass"
-        elseif material == Enum.Material.Marble then style = "marble"
-        elseif (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic)
+        local style: string? = MATERIAL_STYLES[material]
+        if not style and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic)
             and floorShape(part) and part.Size.X >= 12 and part.Size.Z >= 12 and part.Size.Y <= 3 then
             -- Many simple maps use plain plastic for their floors.
             style = "concrete"
@@ -39540,14 +39605,18 @@ function Module.init(context: any): any
             or (math.min(size.X, size.Y, size.Z) <= 2 and math.max(size.X, size.Y, size.Z) >= 4)
         -- Thin transparent plastic panes frequently have only the default
         -- name "Part". This is sky/environment reflectance, not a mirror.
+        -- v177: 0,16/0,36 reflectance was washed out by the place's own lighting,
+        -- especially at night. These are still sky/environment reflectance, not a
+        -- mirror: the visible amount still depends on the map and the quality.
         if enabled("Glass reflections") and (material == Enum.Material.Glass
-            or (plastic and window and part.Transparency >= 0.1)) then return 0.36 end
+            or (plastic and window and part.Transparency >= 0.1)) then return 0.5 end
         if enabled("Wet surfaces") and part.Anchored and part.Transparency <= 0.05 and floorShape(part)
-            and material ~= Enum.Material.Glass then return 0.16 end
+            and material ~= Enum.Material.Glass then return 0.32 end
         return nil
     end
 
     local function processSurface(part: any): ()
+        surfaceSeen += 1
         local record: any = surfaceRecords[part]
         if not safePart(part) then
             if record then removeSurface(part, record) end
@@ -39588,8 +39657,12 @@ function Module.init(context: any): any
         local style, faces = nil, nil
         if enabled("Surface textures") then style, faces = textureStyle(part) end
         if style and faces then
-            faces = availableFaces(part, record, faces)
+            local available: {any}? = availableFaces(part, record, faces)
+            if not available then surfaceReserved += 1 end
+            faces = available
             if not faces then style = nil end
+        elseif enabled("Surface textures") then
+            surfaceNoStyle += 1
         end
         local faceKey: string? = if faces then tostring(faces[1]) .. ":" .. tostring(faces[2]) else nil
         local definition: any = if style then SURFACE_STYLES[style] else nil
@@ -39631,7 +39704,9 @@ function Module.init(context: any): any
                     texture.StudsPerTileU, texture.StudsPerTileV = definition.u, definition.v
                     -- Tint the overlay by the original colour, not a blend
                     -- towards white (the old blend washed dark floors out).
-                    texture.Transparency = 0.55
+                    -- v177: 0.55 was invisible on night maps; 0.42 still reads
+                    -- as detail rather than a repaint.
+                    texture.Transparency = 0.42
                     texture.Color3 = part.Color
                     texture.Parent = part
                 end)
@@ -39865,6 +39940,7 @@ function Module.init(context: any): any
         Tooltip = "Warm lighting, local floor reflections and optional atmosphere.",
         Function = function(on: boolean): ()
             if not on then card:SetStatus(nil); return end
+            cardEverEnabled = true
             cleanup()
             card:Clean(cleanup)
             color = makeEffect("ColorCorrectionEffect", "ARMShaderColor", function(effect: any): ()
@@ -39896,29 +39972,147 @@ function Module.init(context: any): any
         end,
     })
 
-    card:CreateToggle({Name = "Floor reflections", Default = true, Function = function(): ()
+    -- v177 diagnostics. The client is the only place that can say whether the map
+    -- had compatible surfaces, whether the mirror got a floor, or whether the
+    -- particles even exist. Each line is a fact the module already tracks.
+    local function effectState(effect: any): string
+        if not effect then return "missing" end
+        return if effect.Enabled == true then "on" else "off"
+    end
+    local function switchState(name: string): string
+        return if enabled(name) then "on" else "off"
+    end
+    local function countSurfaceRecords(wantTextures: boolean, wantReflection: boolean): number
+        local total: number = 0
+        for _, record: any in pairs(surfaceRecords) do
+            local hasTextures: boolean = record.textures ~= nil and #record.textures > 0
+            local hasReflection: boolean = record.reflectionApplied ~= nil
+            if (not wantTextures or hasTextures) and (not wantReflection or hasReflection) then
+                total += 1
+            end
+        end
+        return total
+    end
+    local function describeWeather(): string
+        local total, on, covered = 0, 0, 0
+        for _, cell: any in ipairs(weatherCells) do
+            if cell.applied == true then covered += 1 end
+            for _, emitter: ParticleEmitter in ipairs(cell.emitters) do
+                total += 1
+                if emitter.Enabled then on += 1 end
+            end
+        end
+        local kinds: {string} = {}
+        for _, name: string in ipairs({"Rain", "Snow", "Falling leaves"}) do
+            if enabled(name) then table.insert(kinds, name) end
+        end
+        local extra: number = 0
+        if enabled("Dust motes") then extra += 1 end
+        if enabled("Fog") then extra += 1 end
+        return string.format("folder=%s cells=%d emitters=%d on=%d covered=%d kinds=%s extras=%d",
+            tostring(weatherFolder ~= nil), #weatherCells, total, on, covered,
+            if #kinds > 0 then table.concat(kinds, "/") else "none", extra)
+    end
+    local function describe(): {string}
+        local stamp: string = "?"
+        local stampOk: boolean, value: any = pcall(function(): any
+            return host.state and host.state.boot and host.state.boot.stamp
+        end)
+        if stampOk and type(value) == "string" then stamp = value end
+        local lines: {string} = {}
+        table.insert(lines, "[Shaders] stamp=" .. stamp .. " · card=" .. (if card and card.Enabled then "on" else "off"))
+        table.insert(lines, "[Shaders] post: color=" .. effectState(color) .. " bloom=" .. effectState(bloom)
+            .. " rays=" .. effectState(rays) .. " · specular=" .. tostring(lighting.EnvironmentSpecularScale)
+            .. " shadows=" .. tostring(lighting.GlobalShadows))
+        table.insert(lines, "[Shaders] surfaces: " .. switchState("Surface textures")
+            .. " · scanned=" .. tostring(surfaceSeen)
+            .. " textured=" .. tostring(countSurfaceRecords(true, false))
+            .. " reservedByDecalOrMesh=" .. tostring(surfaceReserved)
+            .. " noMaterialStyle=" .. tostring(surfaceNoStyle)
+            .. " cap=" .. tostring(MAX_TEXTURES))
+        table.insert(lines, "[Shaders] reflectance: wet=" .. switchState("Wet surfaces")
+            .. " glass=" .. switchState("Glass reflections")
+            .. " parts=" .. tostring(countSurfaceRecords(false, true)) .. "/" .. tostring(MAX_REFLECTIONS))
+        local mirror: string = "off"
+        if floorReflection then
+            mirror = "running"
+            if type((floorReflection :: any).Describe) == "function" then
+                local ok: boolean, described: any = pcall(function(): any
+                    return (floorReflection :: any):Describe()
+                end)
+                if ok and type(described) == "table" then
+                    mirror = string.format("floor=%s gui=%s sceneParts=%s actors=%s candidates=%s missing=%s",
+                        tostring(described.floor), tostring(described.gui), tostring(described.sceneParts),
+                        tostring(described.actors), tostring(described.candidates), tostring(described.missing))
+                end
+            end
+        elseif enabled("Floor reflections") then
+            mirror = "not created"
+        end
+        table.insert(lines, "[Shaders] mirror: " .. mirror)
+        table.insert(lines, "[Shaders] weather: " .. describeWeather())
+        local terrain: any = nil
+        pcall(function(): () terrain = world:FindFirstChildOfClass("Terrain") end)
+        table.insert(lines, "[Shaders] water: " .. switchState("Water reflections")
+            .. " · terrain=" .. tostring(terrain ~= nil)
+            .. (if terrain then " reflectance=" .. tostring((terrain :: any).WaterReflectance) else " (needs Terrain water)"))
+        local camera: any = world.CurrentCamera
+        local character: any = host.LocalPlayer and host.LocalPlayer.Character
+        table.insert(lines, "[Shaders] camera=" .. tostring(camera ~= nil) .. " character=" .. tostring(character ~= nil))
+        return lines
+    end
+
+    -- v177: a child toggle used to switch its own box while the card was OFF and
+    -- do nothing at all, which reads as "this effect is broken". Say it instead of
+    -- silently ignoring the click.
+    local function optionAction(name: string, apply: () -> ()): () -> ()
+        return function(): ()
+            if card and not card.Enabled then
+                -- Saved values are replayed while the UI is built, long before
+                -- the card was ever enabled: that is not the user clicking.
+                if cardEverEnabled then
+                    card:Notify("Shaders is off: turn on the Shaders card to see " .. name)
+                end
+                return
+            end
+            local ok: boolean, reason: any = pcall(apply)
+            if not ok then
+                warn("[Shaders:" .. name .. "] " .. tostring(reason))
+                card:Notify(name .. " could not be applied on this client")
+            end
+        end
+    end
+
+    card:CreateToggle({Name = "Floor reflections", Default = true, Function = optionAction("Floor reflections", function(): ()
         refreshFloorReflection(); refreshSurfaces()
-    end,
+    end),
         Tooltip = "Client-only mirror approximation on a few visible flat floors; not screen-space reflections."})
-    card:CreateToggle({Name = "Surface textures", Default = true, Function = refreshSurfaces,
+    card:CreateToggle({Name = "Surface textures", Default = true, Function = optionAction("Surface textures", refreshSurfaces),
         Tooltip = "Colour detail on eligible static blocks and unions; existing decals keep their faces."})
-    card:CreateToggle({Name = "Glass reflections", Default = true, Function = refreshSurfaces,
+    card:CreateToggle({Name = "Glass reflections", Default = true, Function = optionAction("Glass reflections", refreshSurfaces),
         Tooltip = "Adds sky reflectance to eligible glass and transparent windows across the map."})
-    card:CreateToggle({Name = "Fog", Default = false, Function = function(): () refreshFog(); changeWeather() end,
+    card:CreateToggle({Name = "Fog", Default = false, Function = optionAction("Fog", function(): () refreshFog(); changeWeather() end),
         Tooltip = "Distance haze plus local moving mist particles; restores the game's atmosphere."})
-    card:CreateToggle({Name = "Rain", Default = false, Function = changeWeather,
+    card:CreateToggle({Name = "Rain", Default = false, Function = optionAction("Rain", changeWeather),
         Tooltip = "Local rain and splashes, with staggered shelter checks and visible outdoor cells."})
-    card:CreateToggle({Name = "Snow", Default = false, Function = changeWeather,
+    card:CreateToggle({Name = "Snow", Default = false, Function = optionAction("Snow", changeWeather),
         Tooltip = "Falling snow around the camera; can be combined with rain."})
-    card:CreateToggle({Name = "Falling leaves", Default = false, Function = changeWeather,
+    card:CreateToggle({Name = "Falling leaves", Default = false, Function = optionAction("Falling leaves", changeWeather),
         Tooltip = "Windblown autumn leaves near the camera."})
-    card:CreateToggle({Name = "Dust motes", Default = false, Function = changeWeather,
+    card:CreateToggle({Name = "Dust motes", Default = false, Function = optionAction("Dust motes", changeWeather),
         Tooltip = "Soft drifting particles, including indoors."})
-    card:CreateToggle({Name = "Wet surfaces", Default = false, Function = refreshSurfaces,
+    card:CreateToggle({Name = "Wet surfaces", Default = false, Function = optionAction("Wet surfaces", refreshSurfaces),
         Tooltip = "Adds sky sheen to eligible floors across the map; does not change physics."})
-    card:CreateToggle({Name = "Water reflections", Default = false, Function = refreshWater,
+    card:CreateToggle({Name = "Water reflections", Default = false, Function = optionAction("Water reflections", refreshWater),
         Tooltip = "Increases Terrain water reflectance while enabled."})
-    card:CreateNote("Client-only approximation. Reflections need flat floors; weather and quality depend on the client.")
+    card:CreateButton({Name = "Diagnose", Function = function(): ()
+        local lines: {string} = describe()
+        for _, line: string in ipairs(lines) do
+            print(line)
+            card:Notify(line)
+        end
+    end,
+        Tooltip = "Prints what each Shaders effect reached on this client: surfaces found, mirror floor, particle counts and Terrain."})
 
     Module.Initialized = true
     return card
@@ -55110,6 +55304,9 @@ function Module.init(host: any): any
             if workConnection then pcall(function(): () workConnection:Disconnect() end); workConnection = nil end
             if renderConnection then pcall(function(): () renderConnection:Disconnect() end); renderConnection = nil end
             clearCopies()
+            -- v177: a stopped session must not keep describing a floor it no
+            -- longer renders.
+            currentFloor, planePoint, planeNormal = nil, nil, nil
             for _, mirror: any in pairs(secondary) do destroyMirror(mirror) end
             secondary, candidates = {}, {}
             candidateCount = 0
@@ -55883,6 +56080,32 @@ function Module.init(host: any): any
                 local ok: boolean, shown: any = pcall(project, camera, mirror.plane, mirror.gui, mirror.viewport, mirror.camera, secondaryCanvas)
                 mirror.gui.Enabled = ok and shown == true
             end
+        end
+        -- v177: state the mirror actually reached, so the Shaders card can print
+        -- facts instead of the user guessing from a screenshot.
+        function session:Describe(): {[string]: any}
+            local copies: number = 0
+            for _: any in pairs(records) do copies += 1 end
+            local actorCount: number = 0
+            for _: any in pairs(actors) do actorCount += 1 end
+            local mirrors: number = 0
+            for _: any in pairs(secondary) do mirrors += 1 end
+            local floorName: string? = nil
+            if currentFloor then
+                local named: boolean, full: any = pcall(function(): any
+                    return (currentFloor :: BasePart):GetFullName()
+                end)
+                floorName = if named and type(full) == "string" then full else (currentFloor :: BasePart).Name
+            end
+            return {
+                floor = floorName,
+                gui = gui ~= nil and gui.Enabled == true,
+                sceneParts = copies,
+                actors = actorCount,
+                candidates = candidateCount,
+                secondary = mirrors,
+                stopped = stopped,
+            }
         end
         local connected: boolean, connectFailure: any = pcall(function(): ()
             workConnection = host.TaskManager:Connect(work, nil, "Shaders floor reflection")

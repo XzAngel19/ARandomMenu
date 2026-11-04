@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
             shader = next(card for card in cards if card['configKey'] == 'Universal.Shaders')
             visible = [row['label'] for row in shader['rows'] if row.get('visible')]
             assert visible == ['Floor reflections', 'Surface textures', 'Glass reflections', 'Fog', 'Rain', 'Snow',
-                               'Falling leaves', 'Dust motes', 'Wet surfaces', 'Water reflections'], (
+                               'Falling leaves', 'Dust motes', 'Wet surfaces', 'Water reflections', 'Diagnose'], (
                 f'{name} {mode}: Shaders panel lacks independent options: {visible}'
             )
             if not mobile and not fallback:
