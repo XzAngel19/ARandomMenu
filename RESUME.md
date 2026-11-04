@@ -5,10 +5,11 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** build
-> **`v177-20261103-visible-effects-diagnose`**. La rama de trabajo de la sesión
-> es `arena/979b8402-arandommenu`, un fork exacto de
-> `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
-> `arena/76bc3f2f-arandommenu` en `9395998`.
+> **`v178-20261103-reactive-fog-wide-weather`**. La rama fija de la sesión es
+> `arena/9492e6b6-arandommenu`. Se integró por fast-forward la base solicitada
+> `arena/979b8402-arandommenu` hasta `8e85f920` (v177), sin cambiar de rama;
+> el árbol base original es `arena/76bc3f2f-arandommenu` en `9395998`.
+
 > El usuario se comunica en español. Respóndele en español.
 
 ---
@@ -23,22 +24,63 @@
   `arena/9492e6b6-arandommenu`, pero se puede sobrescribir:
   `getgenv().WURST_BRANCH = "<rama>"` **antes** de cargar `Wurst.lua`. Para
   probar el trabajo de esta sesión hay que apuntar a
-  `arena/979b8402-arandommenu`; sin ese override el cliente sigue bajando el
-  bundle de la rama vieja.
+  `arena/9492e6b6-arandommenu`; sin ese override el loader usa su rama por
+  defecto del mismo nombre.
 - **Protocolo de publicación (obligatorio, sin excepciones):**
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v177: 84 fuentes en el
-     bundle, 117 suites, auditoría estática, boots `failures=0`, arranque
-     silencioso, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v178: 85 fuentes Lua,
+     118 suites, bundle 83/14 assets, auditoría OK, boots `failures=0`,
+     arranque silencioso y menú 50/49).
   5. Commit + push **normales** a la rama de la sesión
-     (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
+     (`arena/9492e6b6-arandommenu`). Sin force-push, sin reescribir
      historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v177 — Efectos visibles o explicados, y diagnóstico en el cliente (2026-11-03)
+## v178 — Fog reactivo, clima más amplio y presupuesto acotado (2026-11-03)
+
+La petición actual es continuar v177 para todas las plataformas posibles,
+hacer que la niebla se aparte al caminar el usuario y los demás, ampliar los
+efectos a todo el mapa y evitar lag/CPU. Se importaron íntegros los commits
+v176/v177 a la rama fija sin descartarlos. Detalle: `docs/FIXES-v178.md`.
+
+- Se retiraron `Floor reflections`, su librería y prueba, conforme a la
+  condición del usuario: unos pocos ViewportFrames no podían reflejar todo el
+  mapa de forma realista y económica. Se conserva Glass/Wet, que solo dan brillo
+  ambiental, y Terrain water, que no garantiza que haya agua visible.
+- Fog conserva `Atmosphere`/`FogEnd` global y añade 17 parches de partículas,
+  nueve cercanos y ocho más dispersos. Cada 0,25 s observa al local y hasta
+  16 ranuras remotas en rotación; aplica
+  `Acceleration` a los parches cercanos cuando se mueven, incluso a partículas
+  ya emitidas. Esto no separa cada partícula ni abre un hueco en Atmosphere;
+  no es una simulación de fluido y solo actúa dentro del área acotada de cámara.
+- Lluvia, nieve, hojas y mist tienen nueve celdas cercanas y ocho exteriores:
+  ~336 × 336 studs alrededor de cámara, **no todo mapa arbitrario**. El polvo
+  sigue local, streaming/raycast solo ven lo cargado y la calidad puede omitir
+  partículas. El techo se sondea una celda/0,15 s; una vuelta tarda ~2,55 s.
+  Tras pérdida de cámara se invalidan los estados para volver a habilitar clima.
+- Tasas automáticas configuradas con todo activo: 1.978/s escritorio y 927/s
+  móvil/táctil, más salpicaduras manuales (~13/s). Máx. 79/70 emisores, con
+  menos partículas/vida que v177 pero más emisores para el anillo: no es una
+  medición de CPU, GPU o FPS. Snow/hojas/polvo/Fog se funden. No se fuerza
+  `GlobalShadows` si el juego lo desactivó.
+- El barrido de superficies es global sobre piezas **cargadas y elegibles**,
+  a 30 Hz máximo/4 piezas por intervalo; 30 s entre pasadas completas salvo
+  eventos o recuperación, señales de streaming/decals, una cola de 2.048 y
+  caché de hasta 2.048 dueños de decals para señales diferidas; retry limitado.
+  Mantiene topes 600 texturas/1.200 reflectancias. `Diagnose`
+  marca `visits` acumuladas, `passes`, `queueDrops`, celdas, actores móviles,
+  `configuredRate` y perfil. No interpretar conteos como píxeles ni rendimiento.
+- Suites nuevas cubren movimiento local/remoto, rotación de jugadores, respawn,
+  compatibilidad limitada, cadencia simulada a 60/120 Hz, decals diferidos,
+  cola llena y limpieza.
+  No se ha visto ni medido v178 en Roblox/Delta. Pedir prueba con el menú cerrado,
+  afuera/adentro y otro jugador; no prometer compatibilidad, cero lag, ni
+  cobertura total de juegos/móviles o mapas de tamaño arbitrario.
+
+## v177 — Efectos visibles o explicados, y diagnóstico en el cliente (2026-11-03; histórico)
 
 El usuario envió una captura de **MM2** (granja de Halloween, de noche) donde
 `Floor reflections`, `Surface textures`, `Glass reflections`, `Falling leaves`,
@@ -60,7 +102,7 @@ Detalle y límites en `docs/FIXES-v177.md`.
   `session:Describe()` y limpia `currentFloor` al parar. El status de la
   tarjeta cuenta las diez familias con tope de cuatro + `+N`.
 
-## v176 — Densidad de clima real y keybinds en juego (2026-11-03)
+## v176 — Densidad de clima real y keybinds en juego (2026-11-03; histórico)
 
 El usuario reportó poca lluvia, poca nieve, fog «muy suave», y que Shaders no
 respondía bien a los keybinds, sobre todo en MM2. Detalle, presupuestos y límites
@@ -93,7 +135,7 @@ en `docs/FIXES-v176.md`; el procedimiento reutilizable está en
   medido FPS/GPU en Roblox/Delta; el coste de 39 emisores en móvil sigue sin
   medirse. La niebla de partículas no es volumétrica.
 
-## v175 — Recuperación client-side de Shaders (2026-11-03)
+## v175 — Recuperación client-side de Shaders (2026-11-03; histórico)
 
 El usuario reporta que v174 todavía no mostraba correctamente Floor reflections,
 Surface textures, Glass reflections, Fog, Rain, Snow y demás. No atribuir ese
@@ -1809,6 +1851,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-03 · v177. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-03 · v178. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

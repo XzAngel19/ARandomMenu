@@ -827,26 +827,24 @@ do
     -- Booted bundle + real Framework + real widgets: PostEffects have to be
     -- direct Lighting children, not descendants of an inert Folder.
     local shaders = ex.state.framework:GetModule("Shaders")
-    assert(shaders and shaders.Options["Floor reflections"] and shaders.Options["Surface textures"]
+    assert(shaders and not shaders.Options["Floor reflections"] and shaders.Options["Surface textures"]
       and shaders.Options["Glass reflections"] and shaders.Options.Fog
       and not shaders.Options.Look and not shaders.Options.Weather,
-      "Shaders must boot without a look or weather mode selector")
+      "Shaders must boot without the limited floor mirror, a look or a weather mode selector")
     shaders:Toggle(true)
     local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
     local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
     local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
-    local floorGui = PlayerGui:FindFirstChild("ARMShaderFloorReflection")
-    local floorFolder = workspaceService:FindFirstChild("ARMShaderFloorReflection")
-    assert(floorGui and floorFolder and floorGui.Adornee == floorFolder:FindFirstChild("ReflectionSurface")
-      and floorGui:FindFirstChild("Reflection"),
-      "default floor reflection must start its PlayerGui viewport")
+    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
+      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
+      "the limited floor mirror must not start")
     assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
       "ColorCorrectionEffect must be enabled directly under Lighting")
     assert(shaderColor.Contrast == 0.08 and shaderColor.Saturation == 0.05 and shaderColor.Brightness == 0,
       "the baseline is active without a look or forced brightness")
-    assert(Lighting.EnvironmentSpecularScale == 0.65 and Lighting.GlobalShadows == true
+    assert(Lighting.EnvironmentSpecularScale == 0.65 and Lighting.GlobalShadows == false
       and Lighting.EnvironmentDiffuseScale == 0.2 and Lighting.ExposureCompensation == 0,
-      "native specular and shadows are applied without washing out the existing scene")
+      "native specular is applied without forcing shadows or washing out the scene")
     assert(shaderBloom and shaderBloom.Parent == Lighting and shaderRays and shaderRays.Parent == Lighting,
       "bloom and sun rays must be direct children of Lighting")
     shaders:Toggle(false)

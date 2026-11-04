@@ -1,88 +1,55 @@
-# Skill — reparar clima y keybinds de Shaders
+# Skill — revisar Shaders, clima y keybinds
 
-Formato de *skill* (como los catálogos `everything-claude-code` /
-`antigravity-awesome-skills`): cuándo usarlo, entradas, flujo por fases y
-puertas de verificación. No describe una personalidad: describe el
-procedimiento que un agente debe seguir para que el trabajo quede completo y
-comprobable.
+Procedimiento técnico reutilizable; no instala plugins ni ejecuta código externo.
+Se aplica a `src/games/universal/Render/Shaders.lua` y, si hay un problema de
+teclas, al despacho de `src/Wurst.lua`. Ver primero `RESUME.md` y el último
+`docs/FIXES-vNNN.md`. `Floor reflections` y su antigua librería se retiraron en
+v178: no volver a añadir un espejo de parches como si cubriera todo el mapa.
 
-## Cuándo usar
+## 1. Recoger evidencia
 
-- El usuario reporta que `Rain`, `Snow`, `Fog`, reflejos o texturas «no se ven»
-  o «se ven muy débiles».
-- Un efecto del menú funciona con clic pero no con keybind (sobre todo en MM2).
-- Hay que tocar `src/games/universal/Render/Shaders.lua`,
-  `src/libraries/ShaderReflection.lua` o el despacho de atajos de `src/Wurst.lua`.
+- Pedir mapa, plataforma, calidad gráfica, tarjeta y opciones activas; comparar
+  con el menú cerrado, pues abierto aplica desenfoque. Leer `Diagnose`.
+- `visits`, `reservedVisits` y `noStyleVisits` son **visitas acumuladas**, no
+  piezas distintas. `configuredRate` es la suma configurada, no emisión real.
+  `covered` puede ser normal bajo techo; `terrain=true` no demuestra que haya
+  agua. Ni `PreloadAsync` ni mocks demuestran que el cliente dibuje píxeles.
+- Distinguir clima global de niebla de distancia, partículas cerca de cámara,
+  materiales individuales y brillo ambiental; no prometer SSR/RTX.
 
-## Entradas
+## 2. Diseñar bajo límites
 
-1. `RESUME.md` §1 (protocolo de publicación) y el informe `docs/FIXES-vNNN.md`
-   más reciente.
-2. Captura/log del usuario si existe (mapa, calidad gráfica, menú abierto o
-   cerrado). Sin captura, el diagnóstico es **hipótesis**, no causa.
-3. Documentación del motor que se va a tocar, leída en el momento:
-   - [ParticleEmitter](https://create.roblox.com/docs/effects/particle-emitters):
-     `Rate` tope 400/s escritorio y 100/s móvil, `Lifetime` tope 20 s, `Squash`
-     negativo con `VelocityParallel`, cuadrícula de emisores para lluvia densa.
-   - [Atmosphere](https://create.roblox.com/docs/environment/atmosphere):
-     `Density` 0–1, `Haze` 0–10, `Offset`, `Glare`; reemplaza `FogEnd`.
-   - [Lighting.FogEnd](https://create.roblox.com/docs/reference/engine/classes/Lighting#FogEnd).
-4. Referencia de efecto denso: [buildthomas/Rain](https://github.com/buildthomas/Rain)
-   (Apache-2.0, `NOTICE-Rain.txt`): `Rate` 600, `Lifetime` 0,8, `Speed` 60,
-   texturas `1822883048` (trazo) y `1822856633` (salpicadura/top-down).
+- Priorizar APIs de Roblox documentadas y fallbacks seguros. `Atmosphere`
+  reemplaza `FogEnd`; `ParticleEmitter.Acceleration` influye en partículas ya
+  emitidas, pero no hay fuerza por partícula ni un hueco en la niebla global.
+- Una cuadrícula acotada puede ampliar la cobertura visible pero no cubrir
+  mundos arbitrariamente grandes/zonas no recibidas por streaming. Un raycast
+  del cliente solo ve lo cargado. No construir un emisor por pieza/personaje.
+- Presupuestar `Rate`, `Lifetime`, tamaño, superposición, emisores, raycasts y
+  llamadas en CPU. Respetar el perfil móvil/táctil, techo y calidad; conservar
+  una alternativa si una propiedad opcional no está disponible. No bajar
+  densidad ni aumentar cobertura afirmando que se ve mejor sin prueba visual.
+- El barrido es incremental, usa señales para streaming/decals, limita cola y
+  registros y solo hace pasadas completas lentas. No poner `GetDescendants()` o
+  bucles por jugador/mapa en cada frame. No alterar colisiones ni materiales
+  físicos; respetar personajes, decals y los cambios posteriores del juego.
+- Mantener cada opción independiente; OFF/Destruct deben desconectar y destruir
+  recursos, cancelar tareas antiguas y restaurar condicionalmente los valores.
 
-## Flujo
+## 3. Verificar y publicar
 
-### Fase 1 — Medir el estado actual (no adivinar)
+- Extender `tools/test_shaders.py`, `tools/test_shader_fog_movement.py` y/o
+  `tools/test_shader_surface_efficiency.py` según el cambio. Cubrir local y
+  remotos, respawn, streaming, cámara ausente, techo y fallo de API; comparar
+  límites de trabajo a distintas tasas de frames, no etiquetarlos como FPS real.
+- Si cambian atajos, correr `tools/test_shortcut_game_input.py` y las suites de
+  keybinds MM2; no confundir el botón de Gun Aimbot con un toggle.
+- Actualizar `SOURCE_STAMP`, ejecutar `python3 tools/build_bundle.py --stamp …`,
+  `bash tools/validate.sh`, `git diff --check`, commit y push normales a la rama
+  de la sesión. Documentar qué se verificó por mocks y qué requiere Roblox/Delta.
 
-- Leer la tabla de perfiles (`WEATHER`) y contar emisores y partículas/s reales.
-- Calcular partículas vivas = `Rate × Lifetime` por emisor.
-- Buscar el camino de activación: clic y keybind deben llegar al mismo
-  `onToggle`. Si no, el fallo está en el despacho de atajos, no en Shaders.
-
-### Fase 2 — Corregir la causa, no el síntoma
-
-- Densidad: subir `Rate` por emisor y añadir capas; nunca pasar de los topes del
-  motor. Escalar por móvil en el mismo lugar donde se crea el emisor.
-- Visibilidad: textura adecuada (trazo vs. cuadrado), `Size`, `Squash`,
-  `LightEmission`/`LightInfluence` para mapas oscuros.
-- Oclusión: `RespectCanCollide` para que decoraciones no-colisionables no
-  bloqueen la lluvia; no apagar emisores al mover la cámara (produce el efecto
-  «llueve solo un instante y desaparece»).
-- Fog: `Atmosphere` del juego si existe (`Density`/`Haze`), si no
-  `FogStart`/`FogEnd`/`FogColor`; niebla de partículas propia y visible.
-- Keybind: quitar la puerta `gameProcessed` (el juego ya usó la tecla) y
-  conservar la puerta de `TextBox`/captura para no disparar al escribir.
-
-### Fase 3 — Presupuesto y limpieza
-
-- Un único tope total de partículas/s y de emisores por celda.
-- Todo lo creado se destruye al apagar; se restauran los valores del juego.
-- Ningún bucle nuevo sin nombre en el reporte de rendimiento.
-
-### Fase 4 — Pruebas
-
-- Extender `tools/test_shaders.py` con los valores nuevos y, sobre todo, con el
-  comportamiento: mover la cámara no apaga la lluvia, un techo no-colisionable
-  no la bloquea, el presupuesto no se excede, OFF restaura.
-- Test aparte para el despacho de atajos con `gameProcessed = true`.
-- `python3 tools/audit_performance.py` no debe quejarse del bucle de clima.
-
-### Fase 5 — Publicar
-
-- `SOURCE_STAMP` nuevo, `python3 tools/build_bundle.py --stamp`, `bash
-  tools/validate.sh` verde, commit y push normales a la rama de la sesión.
-- Informe `docs/FIXES-vNNN.md` con cambios, presupuestos y **límites**: las
-  pruebas son simuladas, no píxeles ni FPS.
-
-## Puertas de verificación (todas obligatorias)
-
-| Puerta | Cómo se comprueba |
-| --- | --- |
-| Densidad mínima | `test_shaders.py` exige `Rate` y partículas vivas por encima del umbral |
-| Sin parpadeo al moverse | test: tras saltos de cámara, todos los emisores siguen `Enabled` |
-| Oclusión coherente | test: techo colisionable oculta, decoración no-colisionable no |
-| Presupuesto | test: suma de `Rate` ≤ tope del código |
-| Restauración | test: OFF devuelve `FogEnd`/`Atmosphere`/`WaterReflectance` |
-| Keybind en juego | test real del bloque de `Wurst.lua` con `gameProcessed=true` |
-| Regresión | `bash tools/validate.sh` completo en verde |
+Documentación principal: [ParticleEmitter](https://create.roblox.com/docs/effects/particle-emitters),
+[Atmosphere](https://create.roblox.com/docs/environment/atmosphere),
+[streaming](https://create.roblox.com/docs/workspace/streaming/techniques) y
+[ViewportFrame](https://create.roblox.com/docs/ui/viewport-frames). Fuentes de
+assets, versiones y licencias: `docs/third-party/shaders/README.md`.

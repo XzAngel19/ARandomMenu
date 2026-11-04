@@ -13,57 +13,61 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu
 
 ## Shaders
 
-`Render > Shaders` usa efectos **locales al cliente**. `Floor reflections`
-intenta un reflejo intenso sobre el piso plano del personaje y pisos compatibles
-frente a la cámara. Para conservar detalle cerca del avatar, el plano principal
-abarca hasta 64 × 64 studs; si el piso es mayor, una segunda capa cubre hasta
-256 × 256 y queda espacio para un piso adicional. En pisos pequeños pueden
-mostrarse hasta dos pisos adicionales. Los viewports copian solo parte de la
-escena: no es un espejo global, RTX ni SSR. Terrain, pendientes fuertes, objetos
-omitidos, ropa o mallas irregulares pueden verse distintos o no reflejarse.
+`Render > Shaders` aplica efectos **solo en el cliente**. La iluminación, Fog,
+Rain, Snow, Falling leaves, Dust motes, Surface textures, Glass reflections, Wet
+surfaces y Water reflections siguen siendo independientes. No hay `Look` ni
+presets. Se retiró `Floor reflections`: sus viewports solo reflejaban unos pocos
+pisos y no podían cubrir de manera realista todo el mapa con un coste razonable.
+Glass/Wet proporcionan brillo ambiental, no reflejos dinámicos de personajes.
 
-No hay selector de `Look`. `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`,
-`Wet surfaces`, `Water reflections`, `Surface textures` y `Glass reflections`
-son opciones independientes. Desde v176 el clima tiene densidad real: lluvia en
-dos capas (trazo y gotas cercanas) y nieve con copos grandes, cada una repartida
-en nueve celdas que siguen a la cámara; se respetan los topes del motor (400
-partículas/s por emisor en escritorio, 100 en móvil) y hay un presupuesto total
-de 3.000 partículas/s. Fog sube `Atmosphere.Density`/`Haze` (0,58/4,5) o acerca
-`FogEnd` a 110 si el juego no tiene atmósfera, y añade una niebla local densa.
-Las celdas de lluvia y nieve prueban si hay techo con `RespectCanCollide`: solo
-la geometría sólida tapa el clima, y mover la cámara ya no lo apaga. Si esa
-comprobación falla se avisa y las partículas pueden atravesar el techo. El barrido
-recorre progresivamente el mapa, pero solo modifica piezas compatibles y tiene
-límites de recursos. Las texturas no sustituyen mallas y respetan los decals por
-cara. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes. Al
-apagar se retiran los efectos y se restauran los valores aún controlados.
-Desde v177 la tarjeta tiene un botón **`Diagnose`**: imprime y muestra lo que
-cada efecto alcanzó en ese cliente (superficies encontradas y reservadas por
-decals, suelo del espejo, emisores del clima, Terrain y cámara). Úsalo cuando un
-toggle parezca no hacer nada: dice si el mapa no tiene superficies compatibles,
-si no hay Terrain para `Water reflections` o si el clima existe pero está
-oculto. Con la tarjeta apagada, un toggle hijo ahora avisa en vez de cambiar la
-casilla sin efecto.
+Fog combina niebla global de Roblox con 17 parches de partículas, incluidos
+parches exteriores más dispersos. Al caminar tu personaje u otros jugadores,
+los parches cercanos responden desplazando sus
+partículas; el cálculo se limita y reparte entre jugadores. Es una aproximación,
+no una simulación de fluido: el `Atmosphere`/`FogEnd` global no se puede apartar
+alrededor de los cuerpos. Se restaura la niebla del juego al apagar, cuando el
+valor sigue siendo el aplicado por el menú.
 
-Las imágenes se descargan bajo demanda; si la precarga local falla se intentan
-recursos de Roblox como respaldo. Una precarga exitosa no garantiza que se
-visualicen. La apariencia depende del juego, el executor y la calidad gráfica;
-no puede garantizarse en todos los juegos. No se ha probado visualmente ni
-medido el rendimiento en Roblox/Delta: tres viewports, partículas y sombras
-pueden ser costosos. Si notas lag, apaga `Floor reflections` o los efectos que
-no uses. Fuentes, licencias y límites: `docs/third-party/shaders/README.md`.
+Rain, Snow, hojas y niebla usan celdas cercanas y un anillo exterior que abarca
+aproximadamente **336 × 336 studs alrededor de la cámara**. Las celdas del clima
+comprueban el techo gradualmente; en interiores puede haber lluvia fuera aunque
+el centro esté protegido. Si falla el raycast se avisa y las partículas pueden
+atravesar techos. El polvo queda más cerca de la cámara;
+**no se garantiza clima en cada punto de mapas más grandes ni en zonas que el
+cliente aún no ha cargado**.
 
-Los **keybinds** funcionan aunque el juego ya haya usado la tecla (MM2 liga
-varias): solo se bloquean al escribir en un `TextBox`, durante la captura de una
-tecla o mientras el menú espera una tecla nueva. Al disparar un atajo con el
-menú cerrado aparece un aviso (`Shaders on`/`Shaders off`) que confirma que el
-atajo corrió.
+El barrido de superficies visita progresivamente el mapa cargado, incluso lejos
+del jugador, sin eliminar lo ya tratado por distancia. Solo modifica piezas
+compatibles; respeta decals y personajes y tiene límites de **600 texturas** y
+**1.200 cambios de reflectancia**. Alcanzarlos deja otras piezas sin cambios y
+produce un aviso. `Water reflections` afecta al Terrain si existe; eso no implica
+que haya agua visible. La iluminación y niebla de distancia afectan a la escena
+visible, pero las mallas, materiales personalizados, calidad y streaming pueden
+limitar el resultado.
 
-Para comparar, prueba primero `Shaders` con `Floor reflections` encendido y
-apagado en tercera persona sobre un piso sólido. Cierra el menú para comparar:
-al abrirlo se aplica un desenfoque de la interfaz, independiente de Shaders.
-Prueba Fog y Rain por separado, y Rain cerca de una salida. Espera a que se
-recorra el mapa y revisa los avisos.
+En escritorio el presupuesto configurado con todo el clima activo es 1.978
+partículas/s; en móvil o dispositivos táctiles, 927/s, más salpicaduras manuales
+limitadas. Son máximos configurados, no partículas necesariamente visibles ni
+una medición de FPS. El barrido trabaja en lotes, escucha el streaming y espera
+30 s antes de repetir una pasada completa; ya no se fuerzan sombras si el juego
+las tenía apagadas. No se ha medido CPU/GPU ni probado visualmente en Roblox o
+Delta: los efectos aún pueden causar lag o no verse en algún dispositivo/juego.
+Las imágenes se cargan bajo demanda con respaldos de Roblox; incluso una
+precarga exitosa no garantiza que se dibujen. Fuentes y límites:
+`docs/third-party/shaders/README.md`.
+
+El botón **`Diagnose`** muestra el estado del clima, parches de niebla,
+jugadores en movimiento muestreados, tasas configuradas, visitas al mapa,
+límites y Terrain. Las visitas son acumuladas, no piezas únicas. Una celda
+`covered` bajo techo puede ser normal; tampoco confirma por sí sola que el
+clima se haya dibujado. Los **keybinds** siguen funcionando aunque el juego use
+la tecla, salvo al escribir o capturar una tecla; con el menú cerrado aparece
+un aviso al activar/desactivar Shaders.
+
+Para probar, cierra el menú (abierto aplica desenfoque), activa Fog por separado
+y camina cerca de otro jugador. Prueba Rain/Snow al aire libre y desde un
+interior mirando afuera. Si algo no se ve, comparte una captura y el resultado de
+`Diagnose`, con mapa, plataforma y calidad gráfica.
 
 ## Desarrollo
 

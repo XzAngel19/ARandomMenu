@@ -1,41 +1,24 @@
 # Shaders: investigación, recursos y licencias
 
-El módulo usa capacidades visuales del cliente Roblox. Incluye una adaptación de
-las ecuaciones MIT de proyección indicadas abajo, pero no descarga ni ejecuta
-repositorios externos completos. La disponibilidad y apariencia en Delta
-dependen del executor, la calidad gráfica y el juego; las pruebas de este
-repositorio no representan imágenes ni FPS reales.
+El módulo usa capacidades visuales del cliente Roblox; no descarga ni ejecuta
+repositorios externos completos. La apariencia en Delta depende del executor,
+la calidad gráfica y el juego; las pruebas no representan píxeles ni FPS reales.
 
-## Reflejos locales en pisos
+## Reflejos de piso retirados (investigación histórica)
 
-- [ViewportStencil, commit `6130e70df7e732666a96dd28c59aff11d75988b6`](https://github.com/sebasvcx/ViewportStencil/tree/6130e70df7e732666a96dd28c59aff11d75988b6),
-  copyright © 2026 Aziorux (Sebas_Devv), [MIT](LICENSE-ViewportStencil-MIT.txt).
-  `src/libraries/ShaderReflection.lua` adapta el cálculo de `Projection.lua`
-  para orientar la cámara de un `ViewportFrame` fuera del eje, con límite de
-  FOV y `CFrame` escalado. También sigue el montaje documentado del `SurfaceGui`
-  en PlayerGui con `Adornee` a una parte invisible. El seguimiento limitado de
-  actores/mapa, la reflexión geométrica y la limpieza son propios del menú.
-- La proyección de ViewportStencil se basa en
-  [EgoMoose/rbx-viewport-window, commit `d62f04651afa8f56459bdb42efa69d8cd65e04b0`](https://github.com/EgoMoose/rbx-viewport-window/tree/d62f04651afa8f56459bdb42efa69d8cd65e04b0),
-  copyright © 2025 EgoMoose, [MIT](LICENSE-EgoMoose-MIT.txt). Se incluyen ambos
-  avisos de licencia porque se adapta el código derivado.
-- [Storm99999/Reflections, commit `4b317526e8d00750c4c7c5e3db830ad95f1d1c47`](https://github.com/Storm99999/Reflections/tree/4b317526e8d00750c4c7c5e3db830ad95f1d1c47)
-  (MIT) se inspeccionó, pero su enfoque con suelo translúcido no se incorporó:
-  no se quiere alterar la transparencia ni la física del mapa.
-- [ViewportFrame de Roblox](https://create.roblox.com/docs/ui/viewport-frames)
-  solo dibuja la escena copiada y tiene restricciones de luces, sombras,
-  materiales y posprocesado. Las prendas clásicas requieren un Model/Humanoid
-  como en este [ejemplo de avatares](https://devforum.roblox.com/t/how-to-render-a-character-within-a-viewportframe/524239);
-  la copia limitada no garantiza fidelidad de ropa en capas o mallas asimétricas.
-  No es SSR ni render de la escena original: se dibuja el piso cercano y hasta
-  dos planos adicionales. Si el piso es grande, uno de esos planos se reserva
-  para una capa amplia de ese mismo piso; solo queda uno para otro piso. Las
-  curvas, mallas irregulares, Terrain y objetos omitidos pueden producir bordes o
-  faltar. Desde v175 la búsqueda bajo el personaje puede saltar obstáculos
-  invisibles con hasta cuatro raycasts; si no hay root usa la cámara con mayor
-  alcance, y el piso primario puede ser una plataforma móvil. Los espejos
-  adicionales siguen requiriendo un piso primario válido bajo el foco. El
-  resultado y la superposición de capas no se han comprobado en Delta.
+Hasta v177 se adaptaron ecuaciones MIT de
+[ViewportStencil `6130e70`](https://github.com/sebasvcx/ViewportStencil/tree/6130e70df7e732666a96dd28c59aff11d75988b6)
+(copyright © 2026 Aziorux, [licencia](LICENSE-ViewportStencil-MIT.txt)) y de su
+base [EgoMoose/rbx-viewport-window `d62f046`](https://github.com/EgoMoose/rbx-viewport-window/tree/d62f04651afa8f56459bdb42efa69d8cd65e04b0)
+(copyright © 2025 EgoMoose, [licencia](LICENSE-EgoMoose-MIT.txt)). El historial
+conserva esos avisos. [Storm99999/Reflections](https://github.com/Storm99999/Reflections/tree/4b317526e8d00750c4c7c5e3db830ad95f1d1c47)
+se inspeccionó, pero no se incorporó.
+
+En v178 se retiraron `Floor reflections`, `ShaderReflection.lua` y su prueba:
+los [ViewportFrames](https://create.roblox.com/docs/ui/viewport-frames) solo
+dibujaban copias parciales en unos pocos pisos, no SSR ni reflejos de todo el
+mapa; aumentar su número elevaría el coste de dibujar y copiar la escena. No se
+cambian la transparencia ni la física del suelo para fingir un espejo.
 
 ## Superficies: cinco imágenes de color CC0
 
@@ -64,7 +47,7 @@ campo `Texture.Texture` para URI locales del executor y se intenta
 anterior). Un [reporte de la comunidad](https://devforum.roblox.com/t/local-assets-do-not-work-when-used-with-surfaceappearances-and-materialvariants/4638719)
 indica fallos silenciosos de algunas URI locales con `ColorMapContent`; no prueba
 qué ocurre en todos los executors. El color original de la pieza sirve de tinte
-con transparencia 0,55, sin mezclar hacia blanco como en v172. Son texturas 2D;
+con transparencia 0,42, sin mezclar hacia blanco como en v172. Son texturas 2D;
 no se sustituyen `Material`, mallas, colisiones ni propiedades físicas.
 
 El barrido visita el mapa sin descartar piezas al alejarse, pero solo cubre
@@ -76,8 +59,8 @@ textura. `Glass reflections` y `Wet surfaces` usan `Reflectance` en ventanas y
 suelos compatibles: es brillo ambiental, no refleja personajes. Glass incluye
 paneles transparentes finos y vidrio móvil fuera de personajes/herramientas,
 sin modificar su física; Roblox puede ignorar la reflectancia en materiales o
-mallas. `Floor reflections` usa los viewports locales descritos arriba. La
-opción de agua actúa en `Terrain.WaterReflectance`.
+mallas. `Floor reflections` ya no existe. La opción de agua actúa en
+`Terrain.WaterReflectance`; que haya Terrain no significa que haya agua visible.
 
 Mientras se descarga cada imagen CC0 se intenta el ColorMap del material
 correspondiente publicado en la tabla oficial de
@@ -99,8 +82,9 @@ puede fallar por permisos/calidad: ambos caminos requieren prueba real.
 - [Roblox-Skyscraper-Lighting, `PhotorealLighting.luau`](https://github.com/HathuwstAlkan/Roblox-Skyscraper-Lighting/blob/b7f77d16341dc06ac5030d36f8c7112528206871/src/shared/PhotorealLighting.luau),
   copyright © 2026 HathuwstAlkan, [MIT](LICENSE-Photoreal-MIT.txt). En v170 se
   adaptaron valores de efectos nativos. En v171 se retiraron todos los presets:
-  la corrección, bloom, rayos, luz especular y sombras forman una base fija.
-  Desde v173 no se aumenta la exposición ni la luz difusa del juego para
+  la corrección, bloom, rayos y luz especular forman una base fija.
+  Desde v178 se respeta si el juego tenía sombras desactivadas; desde v173
+  no se aumenta la exposición ni la luz difusa del juego para
   reducir el blanqueamiento. No se modifica `Lighting.Technology` ni se
   eliminan los efectos del juego; los ColorCorrection existentes se combinan.
 - [ShaderCloud/rbxts-weather](https://github.com/Shadercloud/rbxts-weather/tree/2e17de2d8defa641d1e4d7d993692c7cdbb274c9),
@@ -178,46 +162,50 @@ módulo. Una escritura externa exactamente igual no puede distinguirse.
 - Roshade/ReShade son herramientas externas de escritorio, no ejecutables como
   un módulo Luau en Delta. No se ha instalado ni prometido RTX.
 
-## Límites de diseño, no mediciones
+## Límites de diseño, no mediciones (v178)
 
-La jerarquía del `Workspace` se recorre progresivamente: hasta 20 nodos y cuatro
-piezas por tick, con un raycast de prioridad al suelo por pasada y una pausa de
-2 s entre pasadas completas. El streaming se encola y los registros obsoletos se
-revisan en lotes. Como máximo se retienen 600 `Texture`, 1.200 cambios de
-reflectancia y 600 pisos candidatos para espejos; se avisa si se llega a un
-límite. Los mapas más grandes pueden tener piezas sin cambios y la primera
-pasada tarda según su tamaño. No se ejecuta `GetDescendants()` del mapa por frame.
+El barrido de `Workspace` avanza hasta 20 nodos y cuatro piezas por intervalo,
+con cadencia máxima de 30 Hz (~120 piezas/s), no por frame. Tras cada pasada
+completa espera 30 s salvo cambios de opciones o recuperación de cola; señales de
+streaming y decals alimentan una cola acotada de 2.048 elementos. Si se llena,
+`queueDrops` lo indica y una pasada posterior recupera piezas. Una tabla de hasta
+2.048 propietarios de decals permite recuperar caras con señales diferidas;
+si se llena queda la reconciliación posterior. Los registros ya tratados se
+reconcilian en lotes, y un fallo transitorio de textura tiene un
+reintento acotado. No se usa `GetDescendants()` del mapa en cada frame. El máximo
+es 600 `Texture` y 1.200 cambios de reflectancia, no cobertura universal; la
+primera pasada puede tardar mucho en mapas grandes.
 
-El plano principal cubre hasta 64 × 64 studs bajo el personaje. Para un piso
-mayor, uno de los dos planos adicionales cubre hasta 256 × 256 studs de ese piso;
-el otro puede mostrar otro piso compatible. En un piso pequeño pueden mostrarse
-dos pisos adicionales. Si no se consigue reservar la capa amplia, el plano
-principal vuelve a cubrir hasta 256 × 256, con menos detalle. Se copian hasta
-54 partes en el viewport principal y 32 en cada adicional (118 como máximo).
-La selección revisa hasta 32 candidatos por tick. El escaneo cercano de escena
-pide hasta 100 piezas cada 2 s; el presupuesto compartido es de tres creaciones
-de partes por tick. Las poses se actualizan hasta 30/15 Hz en PC y 20/10 Hz en
-móvil (principal/adicionales), solo cuando un viewport relevante está visible.
-El lado efectivo máximo del render principal es 1.024 px en PC o 768 en móvil;
-los adicionales son 512/384. El límite tiene en cuenta el escalado fuera de eje.
-Los viewports no comparten escena ni reflejan todos los objetos del mapa. Un
-piso grande sin otros espejos consume ahora dos viewports, no uno: puede costar
-más GPU aunque el máximo total no aumentó.
+Rain/Snow/hojas y niebla tienen nueve celdas cercanas de 40 × 40 y ocho exteriores
+de 112 × 112, distribuidas sobre ~336 × 336 studs alrededor de la cámara. Con
+todo activo se configuran **1.978 partículas/s en escritorio** (1.574 lluvia,
+262 nieve, 96 hojas, 20 polvo, 26 niebla) y **927/s en móvil/táctil** (688 lluvia,
+158 nieve, 52 hojas, 12 polvo, 17 niebla); hay además hasta dos salpicaduras por
+muestra abierta, ~13/s. Se limitan a 2.000 y 1.000/s respectivamente, y como
+máximo 320 o 100/s por emisor. Con todos los tipos activos se crean hasta 79
+emisores en escritorio o 70 en móvil, incluidos niebla, polvo y salpicaduras:
+hay más emisores que antes para mayor cobertura, aunque menos partículas y sin
+viewports de piso. `Rate × Lifetime` predice cantidad, no coste medido.
 
-Fog, Rain, Snow, hojas y polvo suman hasta 39 emisores y 2.519 partículas/s de
-escritorio (2.160 lluvia en dos capas, 306 nieve, 27 hojas, 12 polvo y 14
-niebla), más hasta dos salpicaduras por muestra abierta: unas 13/s como máximo.
-En móvil se crea directamente el perfil reducido (≈1.052 partículas/s) porque un
-emisor está limitado a 100/s. El tope de `Rate` por emisor es 320 en escritorio
-y 100 en móvil, y la suma total se recorta a `MAX_WEATHER_RATE = 3000` escalando
-todas las capas. Las posiciones se actualizan hasta 20 Hz y se reparte una prueba
-de techo cada 0,15 s entre nueve celdas; la lluvia exterior puede verse desde un
-interior cercano, no recortar perfectamente cada borde. Solo la geometría
-colisionable cuenta como techo (`RespectCanCollide`), mover la cámara no apaga los
-emisores y `Enabled` solo se reescribe cuando una celda cambia de estado. Si la
-comprobación de techo falla, se notifica y los emisores siguen visibles, incluso
-bajo techo. Las partículas vivas son `Rate × Lifetime`: ≈1.550 de lluvia y ≈1.900
-de nieve con todo activo. Sin emisores disponibles no queda tarea de clima; sin
-texturas, reflectancia ni espejo no hay barrido superficial. Son presupuestos de
-código, **no mediciones de FPS, GPU ni memoria** en Roblox/Delta. Las sombras, los
-assets, los sprites y tres `ViewportFrame` pueden resultar costosos en móvil.
+Los orígenes se recolocan si la cámara se mueve al menos 2,5 studs. Una prueba de
+techo cada 0,15 s se reparte entre 17 celdas: una vuelta completa puede tardar
+aprox. 2,55 s. Solo se prueban puntos, no cada gota ni cada borde. La cámara que
+se pierde vuelve a sondear las celdas al recuperarse. Con cielo desconocido se
+avisa y puede atravesar techos. La calidad/culling puede reducir la emisión. El
+[streaming de Roblox](https://create.roblox.com/docs/workspace/streaming/techniques)
+solo entrega al cliente un subconjunto del mundo y también limita sus raycasts;
+no puede prometerse clima en cada punto de un mapa ilimitado desde este cliente.
+
+Fog combina el estado global de Lighting con nueve emisores cercanos, de 2/s
+cada uno (1/s en móvil), y ocho exteriores de 1/s. Cada 0,25 s se considera el
+personaje local y hasta 16 ranuras remotas en rotación. `ParticleEmitter.Acceleration` puede mover también
+partículas ya emitidas, según la
+[API de Roblox](https://create.roblox.com/docs/effects/particle-emitters); se usa
+para un desvío colectivo por parche alrededor del jugador en movimiento. No hay
+un vector por partícula ni recorte de la niebla global de `Atmosphere`, así que
+no es niebla volumétrica ni una colisión física. Snow, hojas, polvo y niebla usan
+fundido al nacer y desaparecer cuando la API está disponible.
+
+Estos límites y las pruebas son **conteos de código, no FPS, CPU, GPU ni memoria
+medidos**. No hay validación visual en Roblox/Delta; el nuevo anillo, el coste de
+sus emisores y la reacción del fog pueden comportarse distinto en cada cliente.

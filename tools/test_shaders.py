@@ -35,7 +35,11 @@ function vectorMeta.__mul(a, b)
 end
 Vector3 = {new=function(x,y,z) return setmetatable({X=x,Y=y,Z=z},vectorMeta) end}
 Vector2 = {new=function(x,y) return {X=x,Y=y} end}
-NumberSequence = {new=function(v) return {Value=v} end}
+NumberSequence = {new=function(v)
+    if type(v)=="table" then return {Keypoints=v} end
+    return {Value=v}
+end}
+NumberSequenceKeypoint = {new=function(t,v) return {Time=t,Value=v} end}
 NumberRange = {new=function(a,b) return {Min=a,Max=b or a} end}
 ColorSequence = {new=function(v) return {Value=v} end}
 Content = {fromUri=function(uri) return {Uri=uri} end}
@@ -88,10 +92,17 @@ local function signal()
         Count=function() return #callbacks end,
     }
 end
-local treeReads=0
+local treeReads,rootReads=0,0
 local function container(name,class)
     local obj={Name=name, ClassName=class, children={}, ChildAdded=signal(), ChildRemoved=signal()}
-    function obj:GetChildren() treeReads+=1; return table.clone(self.children) end
+    function obj:GetChildren()
+        treeReads+=1
+        if self.ClassName=="Workspace" then rootReads+=1 end
+        return table.clone(self.children)
+    end
+    function obj:FindFirstChild(wanted)
+        for _, child in ipairs(self.children) do if child.Name==wanted and not child.destroyed then return child end end
+    end
     function obj:FindFirstChildOfClass(wanted)
         for _, child in ipairs(self.children) do if child:IsA(wanted) and not child.destroyed then return child end end
     end
@@ -294,30 +305,17 @@ BODY = r'''
 local Framework=assert(loadstring(FRAMEWORK_SOURCE))()
 local framework=Framework.init(host)
 local Shaders=assert(loadstring(SHADERS_SOURCE))()
-local reflectionStarts,reflectionStops,reflectionObservations=0,0,{}
-local reflectionReports,reflectionSessions={},{}
-local reflectionLibrary={fail=false}
-function reflectionLibrary:Start(report)
-    if self.fail then return nil,"simulated unavailable" end
-    reflectionStarts+=1
-    local active=true
-    local session={Observe=function(_,part) reflectionObservations[part]=true end, Stop=function()
-        if active then active=false;reflectionStops+=1 end
-    end}
-    table.insert(reflectionReports,report);table.insert(reflectionSessions,session)
-    return session
-end
-local libraries={shaderreflection=reflectionLibrary}
+local libraries={}
 local card=Shaders.init({framework=framework,host=host,libraries=libraries})
 assert(card==framework.Modules.Shaders)
 assert(not card.Options.Look and not card.Options.Weather and not card.Options.Advanced,
     "no old look or mode selector remains")
-local names={"Floor reflections","Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
+local names={"Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
 -- v177: one action entry ("Diagnose") follows the toggles; no presets return.
 assert(#card.OptionMetadata==#names+1)
 for i,name in ipairs(names) do assert(card.OptionMetadata[i].label==name and card.OptionMetadata[i].type=="toggle") end
 assert(card.OptionMetadata[#names+1].label=="Diagnose" and card.OptionMetadata[#names+1].type=="action")
-assert(card.Options["Floor reflections"].Value and card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
+assert(not card.Options["Floor reflections"] and card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
 for _,name in ipairs({"Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}) do
     assert(not card.Options[name].Value)
 end
@@ -332,11 +330,11 @@ print=function(text) table.insert(captured,tostring(text)) end
 card.Options["Diagnose"].Metadata.callback()
 print=realPrint
 local joined=table.concat(captured,"\n")
-for _,needle in ipairs({"stamp=","surfaces:","reflectance:","mirror:","weather:","water:","camera="}) do
+for _,needle in ipairs({"stamp=","surfaces:","reflectance:","weather:","water:","camera="}) do
     assert(joined:find(needle,1,true),"diagnose must report "..needle)
 end
-assert(joined:find("emitters=",1,true) and joined:find("scanned=",1,true))
-pass("diagnose reports surfaces, mirror, weather, water and camera facts")
+assert(joined:find("emitters=",1,true) and joined:find("visits=",1,true))
+pass("diagnose reports surfaces, weather, water and camera facts")
 
 local gameEffect=Instance.new("ColorCorrectionEffect"); gameEffect.Name="GameOwned"; gameEffect.Brightness=-0.2; gameEffect.Parent=lighting
 local cameraEffect=Instance.new("ColorCorrectionEffect"); cameraEffect.Parent=camera
@@ -373,22 +371,12 @@ assert(color.Brightness==0 and color.Contrast==0.08 and color.Saturation==0.05
     and color.TintColor==Color3.fromRGB(255,247,236))
 assert(bloom.Intensity==0.2 and bloom.Threshold==0.95 and rays.Intensity==0.1)
 assert(lighting.EnvironmentDiffuseScale==0.2 and lighting.EnvironmentSpecularScale==0.65
-    and lighting.ShadowSoftness==0.35 and lighting.GlobalShadows and lighting.ExposureCompensation==0,
+    and lighting.ShadowSoftness==0.35 and not lighting.GlobalShadows and lighting.ExposureCompensation==0,
     "the baseline must not forcibly brighten the existing scene")
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
 assert(activeHandles("Shaders surfaces")==1 and #spawned==0,"surface art is lazy, not downloaded at boot")
-assert(reflectionStarts==1 and reflectionStops==0)
-card.Options["Floor reflections"].Metadata.callback(false)
-assert(reflectionStops==1 and card.Enabled and renderable(color) and activeHandles("Shaders surfaces")==1)
-reflectionLibrary.fail=true
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==1 and card.Enabled and renderable(color)
-    and notifications[#notifications]:find("Floor reflection unavailable",1,true))
-card.Options["Floor reflections"].Metadata.callback(false)
-reflectionLibrary.fail=false
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==2 and reflectionStops==1)
-pass("warm baseline, floor reflection lifecycle and independent failure isolation")
+assert(not byName(world,"ARMShaderFloorReflection"), "no limited floor mirror is created")
+pass("warm baseline preserves existing shadows and has no limited mirror")
 
 -- v177: a toggle pressed while the Shaders card is off used to swap its box and
 -- do nothing, which reads as a broken effect. It must say why instead.
@@ -408,19 +396,17 @@ for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) d
     card.Options[name].Value=true
 end
 card.Options["Glass reflections"].Metadata.callback(true)
-assert(features.Shaders.status=="Floor · Surfaces · Glass · Wet · +4",
+assert(features.Shaders.status=="Surfaces · Glass · Wet · Water · +3",
     "status must count every enabled kind and cap at four: "..tostring(features.Shaders.status))
 for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) do
     card.Options[name].Value=false
 end
 card.Options["Glass reflections"].Metadata.callback(true)
-assert(features.Shaders.status=="Floor · Surfaces · Glass",
+assert(features.Shaders.status=="Surfaces · Glass",
     "disabling kinds must shrink the status line: "..tostring(features.Shaders.status))
-pass("status names floor/surface/glass/wet/water and caps with a remainder")
+pass("status names surface/glass/wet/water and caps with a remainder")
 
 frames(25)
-assert(reflectionObservations[floor] and reflectionObservations[wood],
-    "the world traversal must feed eligible map surfaces to the mirror library")
 assert(glass.Reflectance==0.5 and window.Reflectance==0.5 and anonymousPane.Reflectance==0.5,
     "transparent thin panes need not be literally named Window")
 assert(movingWindow.Reflectance==0.5 and not movingWindow.Anchored and movingWindow.CanCollide
@@ -455,11 +441,12 @@ pass("actual colour textures and glass reflection affect eligible parts, not ava
 -- Respect a game decal only on its own face; a sign on one side of a wall
 -- must not prevent material detail on the opposite side.
 local gameFront=Instance.new("Decal");gameFront.Face=Enum.NormalId.Front;gameFront.Parent=wall
+world.DescendantAdded:Fire(gameFront)
 frames(80)
 local wallTextures=children(wall,"Texture")
 assert(#wallTextures==1 and wallTextures[1].Face==Enum.NormalId.Back and not gameFront.destroyed,
     "an occupied wall face must leave its free opposite side available")
-gameFront:Destroy();frames(80)
+world.DescendantRemoving:Fire(gameFront);gameFront:Destroy();frames(80)
 assert(#children(wall,"Texture")==2,"freed faces are reconsidered on later scans")
 pass("game-owned decals win per face without excluding unrelated surfaces")
 
@@ -484,12 +471,14 @@ assert(glass.Reflectance==0.66 and window.Reflectance==0.02 and anonymousPane.Re
 pass("independent glass/wet toggles restore only values still owned by the module")
 
 local addedDecal=Instance.new("Decal"); addedDecal.Parent=floor
+world.DescendantAdded:Fire(addedDecal)
 frames(60)
 assert(originalFloorTexture.destroyed and not textureOf(floor) and not addedDecal.destroyed,
     "new game decals take precedence on the next scan")
 local oldWood=textureOf(wood)
-wood.Parent=nil
+world.DescendantRemoving:Fire(wood);wood.Parent=nil
 local arriving=part("NewMapFloor",Enum.Material.Wood,Vector3.new(20,1,20))
+world.DescendantAdded:Fire(arriving)
 queryParts={arriving, glass}
 frames(90)
 assert(oldWood.destroyed and textureOf(arriving),"streamed-out surfaces clean up and new map parts are enhanced")
@@ -507,12 +496,10 @@ frames(5)
 assert(#spawned>0 and textureOf(delayed).ColorMapContent.Uri=="rbxassetid://9920484153")
 card.Options["Surface textures"].Metadata.callback(false)
 runAllSpawned(); frames(60)
-assert(not textureOf(delayed) and activeHandles("Shaders surfaces")==1,
-    "floor mirrors alone still need the incremental map walk")
-card.Options["Floor reflections"].Metadata.callback(false)
-assert(activeHandles("Shaders surfaces")==0)
+assert(not textureOf(delayed) and activeHandles("Shaders surfaces")==0,
+    "the scanner stops when surface, wet and glass options are all disabled")
 local noScan=treeReads; frames(100)
-assert(treeReads==noScan,"no hierarchy traversal when all surface and floor options are off")
+assert(treeReads==noScan,"no hierarchy traversal when all surface options are off")
 pass("delayed assets do not revive disabled surfaces and idle costs no scan")
 
 -- Isolate one real map part so we can distinguish the two async generations.
@@ -638,7 +625,7 @@ queryParts={wall}
 card.Options["Surface textures"].Metadata.callback(true)
 frames(5);runAllSpawned()
 Instance.failAt.Texture=(created.Texture or 0)+2
-frames(70)
+frames(10)
 assert(#children(wall,"Texture")==0,"failed second face rolls back the first face")
 Instance.failAt.Texture=nil
 frames(70)
@@ -716,8 +703,11 @@ assert(#children(lighting,"Atmosphere")==0 and lighting.FogStart==5 and lighting
 assert(lighting.FogColor==Color3.fromRGB(176,188,196),"legacy fog keeps a readable grey-blue tint")
 local fogFolder=byName(world,"ARMShaderWeather")
 local fogCell=byName(fogFolder,"FogCell");local mist=byName(fogCell,"Fog mist")
-assert(mist and mist.Rate==14 and mist.Size.Value==30 and mist.Transparency.Value==0.80
-    and activeHandles("Shaders weather")==1,"local mist must be visible, not a 0,86 ghost")
+local fogParts=0
+for _,p in ipairs(children(fogFolder,"Part")) do if p.Name=="FogCell" then fogParts+=1 end end
+assert(fogParts==17 and mist and mist.Rate==2 and mist.Size.Value==18
+    and mist.Transparency.Keypoints[2].Value==0.78 and mist.Lifetime.Max==5.5
+    and activeHandles("Shaders weather")==1,"near and distant faded mist patches use a bounded budget")
 local beforeFogRays=rayCount;frames(5)
 assert(mist.Enabled and rayCount==beforeFogRays,"fog particles work independently without roof scans")
 lighting.FogEnd=1400;flushDeferred()
@@ -765,132 +755,122 @@ card.Options["Water reflections"].Metadata.callback(false)
 assert(terrain.WaterReflectance==0.8,"later game water change wins")
 pass("optional water reflection restores conditionally")
 
--- Nine independent cells sample the sky. Outer cells can remain rainy when
--- the camera is under a small roof, as in the Rain plugin reference.
+-- A dense near grid and sparse outer ring extend the weather to ~336 studs,
+-- but remain camera-centred and bounded. Every cell has an independent roof.
 local function weatherCells(folder)
     local out={}
     for _,p in ipairs(children(folder,"Part")) do if p.Name=="WeatherCell" then table.insert(out,p) end end
     return out
 end
-local function emittersOf(part)
-    return children(part,"ParticleEmitter")
-end
+local function emittersOf(part) return children(part,"ParticleEmitter") end
 card.Options.Rain.Metadata.callback(true)
 local rain=byName(world,"ARMShaderWeather")
-assert(rain and #weatherCells(rain)==9 and #children(rain,"Part")==10 and activeHandles("Shaders weather")==1)
+assert(rain and #weatherCells(rain)==17 and #children(rain,"Part")==18 and activeHandles("Shaders weather")==1)
 local rainEmitters={}
-local rainRate=0
+local rainRate,nearCount,farCount=0,0,0
 for _,p in ipairs(weatherCells(rain)) do
     assert(p.Anchored and not p.CanCollide and not p.CanTouch and not p.CanQuery)
-    assert(p.Size.X==40 and p.Size.Z==40,"cells must cover a usable area, not a 26-stud pad")
     local streak=byName(p,"Rain");local close=byName(p,"Rain 2")
-    assert(streak and close,"rain needs a streak layer and a close layer")
-    -- v176: 18/s per cell was ~15 visible drops per cell; a downpour needs
-    -- two layers and hundreds of particles per second (engine cap: 400 per
-    -- emitter, 100 on mobile).
-    assert(streak.Rate==150 and close.Rate==90,"rain density must be raised")
-    assert(streak.Lifetime.Min==0.85 and streak.Size.Value==1.15)
-    assert(streak.Squash and streak.Squash.Value<0,"VelocityParallel rain must use negative squash")
-    assert(streak.Orientation==Enum.ParticleOrientation.VelocityParallel)
-    assert(streak.Acceleration and streak.Acceleration.Y<0,"rain must accelerate downwards")
-    assert(streak.Texture=="rbxassetid://1822883048","fallback must be a streak, not a square")
-    assert(streak.LightEmission and streak.LightEmission>0)
-    rainRate+=streak.Rate+close.Rate
-    table.insert(rainEmitters,streak);table.insert(rainEmitters,close)
-end
-assert(rainRate==2160,"nine cells of two rain layers")
-local perCellAlive=150*0.85+90*0.5
-assert(perCellAlive>150,"alive drops per cell must actually fill the column")
-local splash=byName(byName(rain,"RainSplashCell"),"Rain splashes")
-assert(splash.Texture=="rbxassetid://1822856633" and splash.Size.Value==2.2,
-    "splashes need a dedicated sprite and a readable size")
-splashGround=floor
-rayCount=0;frames(40)
-assert(rayCount<=15 and splash.Emitted>0,"outdoor rain samples can create limited local splashes")
-assert(lastRayParams.RespectCanCollide==true,
-    "only collidable geometry is a roof; non-collidable decoration must not hide the rain")
-for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
--- No wasteful rewrite: with a stable sky the loop must not touch Enabled.
-local writesBefore=cellEnabledWrites
-frames(40)
-assert(cellEnabledWrites==writesBefore,
-    "a settled cell must not rewrite Enabled every poll; that restarts emission")
--- A denied sky ray must not turn all precipitation off permanently.
-local beforeSkyFailure=#notifications
-roofFail=true;frames(40)
-for _,e in ipairs(rainEmitters) do assert(e.Enabled,"rain survives a failed shelter ray") end
-assert(#notifications==beforeSkyFailure+1 and notifications[#notifications]:find("shelter",1,true))
-frames(40);assert(#notifications==beforeSkyFailure+1,"shelter failure is not spammed")
-roofFail=false
-isCovered=true;frames(40)
-for _,e in ipairs(rainEmitters) do assert(not e.Enabled) end
-roof.Transparency=1;frames(40)
-for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
-roof.Transparency=0;isCovered=false;roofHeight=camera.CFrame.Position.Y+5;frames(40)
-for _,e in ipairs(rainEmitters) do assert(not e.Enabled,"low ceiling blocks rain") end
-roofHeight=nil;roofRadius=10;frames(40)
-for _,e in ipairs(emittersOf(weatherCells(rain)[1])) do
-    assert(not e.Enabled,"the centre cell is sheltered")
-end
-for index=2,#weatherCells(rain) do
-    for _,e in ipairs(emittersOf(weatherCells(rain)[index])) do
-        assert(e.Enabled,"outdoor cells stay visible beyond a roof")
+    assert(streak and streak.Lifetime.Min==0.85 and streak.Size.Value==1.15)
+    assert(streak.Squash and streak.Squash.Value<0 and streak.Orientation==Enum.ParticleOrientation.VelocityParallel)
+    assert(streak.Acceleration and streak.Acceleration.Y<0 and streak.Texture=="rbxassetid://1822883048")
+    if p.Size.X==40 then
+        nearCount+=1
+        assert(streak.Rate==110 and close and close.Rate==40,"near rain remains layered")
+        rainRate+=streak.Rate+close.Rate;table.insert(rainEmitters,close)
+    else
+        farCount+=1
+        assert(p.Size.X==112 and streak.Rate==28 and not close,"outer rain uses one economical layer")
+        rainRate+=streak.Rate
     end
+    table.insert(rainEmitters,streak)
 end
-roofRadius=nil;splashGround=nil;frames(40)
+assert(nearCount==9 and farCount==8 and rainRate==1574 and rainRate<2160,
+    "more coverage with a lower automatic rain rate than v177")
+local splash=byName(byName(rain,"RainSplashCell"),"Rain splashes")
+assert(splash.Texture=="rbxassetid://1822856633" and splash.Size.Value==2.2)
+splashGround=floor
+rayCount=0;frames(65)
+assert(rayCount<=23 and splash.Emitted>0,"outdoor splashes and roof queries are bounded")
+assert(lastRayParams.RespectCanCollide==true,"noncollidable decorations do not act as roofs")
+for _,e in ipairs(rainEmitters) do assert(e.Enabled,"each cell eventually samples the open sky") end
+local writesBefore=cellEnabledWrites
+frames(65)
+assert(cellEnabledWrites==writesBefore,"stable shelter must not rewrite Enabled")
+local beforeSkyFailure=#notifications
+roofFail=true;frames(65)
+for _,e in ipairs(rainEmitters) do assert(e.Enabled,"a denied sky ray is not an invented roof") end
+assert(#notifications==beforeSkyFailure+1 and notifications[#notifications]:find("shelter",1,true))
+frames(65);assert(#notifications==beforeSkyFailure+1,"shelter failure is not spammed")
+roofFail=false
+isCovered=true;frames(65)
+for _,e in ipairs(rainEmitters) do assert(not e.Enabled) end
+roof.Transparency=1;frames(65)
+for _,e in ipairs(rainEmitters) do assert(e.Enabled) end
+roof.Transparency=0;isCovered=false;roofHeight=camera.CFrame.Position.Y+5;frames(65)
+for _,e in ipairs(rainEmitters) do assert(not e.Enabled,"a low ceiling blocks rain") end
+roofHeight=nil;roofRadius=10;frames(65)
+for _,e in ipairs(emittersOf(weatherCells(rain)[1])) do assert(not e.Enabled,"centre cell is sheltered") end
+for index=2,#weatherCells(rain) do
+    for _,e in ipairs(emittersOf(weatherCells(rain)[index])) do assert(e.Enabled,"outdoor cells remain visible") end
+end
+roofRadius=nil;splashGround=nil;frames(65)
 local beforeJumps=rayCount
 for i=1,120 do camera.CFrame={Position=Vector3.new(if i%6<3 then 100 else 0,12,0)};frames(1,1/60) end
-assert(rayCount-beforeJumps<=15,"rapid camera jumps cannot bypass ray limit")
-for _,e in ipairs(rainEmitters) do
-    assert(e.Enabled,"v175 switched every emitter off on a camera move: rain came in bursts")
-end
+assert(rayCount-beforeJumps<=15,"camera jumps cannot bypass the ray limit")
+for _,e in ipairs(rainEmitters) do assert(e.Enabled,"camera movement does not switch off rain") end
+world.CurrentCamera=nil;frames(2)
+for _,e in ipairs(rainEmitters) do assert(not e.Enabled) end
+world.CurrentCamera=camera;frames(65)
+for _,e in ipairs(rainEmitters) do assert(e.Enabled,"open cells recover after camera replacement") end
 camera.CFrame={Position=Vector3.new(0,12,0)}
 card.Options.Snow.Metadata.callback(true)
 local combined=byName(world,"ARMShaderWeather")
-assert(rain.destroyed and #weatherCells(combined)==9)
+assert(rain.destroyed and #weatherCells(combined)==17)
 local snowRate=0
 for _,p in ipairs(weatherCells(combined)) do
-    assert(#emittersOf(p)==3 and byName(p,"Rain").Rate==150 and byName(p,"Snow"))
     local snow=byName(p,"Snow")
-    assert(snow.Rate==34 and snow.Size.Value==1.25 and snow.Lifetime.Min==6.2,
-        "snow needs volume, not 8 flakes/s")
-    assert(snow.LightEmission>=0.5,"flakes must stay visible in dark maps")
-    assert(snow.SpreadAngle.X>=20 and snow.Acceleration and snow.Acceleration.X>0,"snow needs drift")
+    assert(snow and snow.Size.Value==1.25 and snow.Lifetime.Min==5 and snow.LightEmission>=0.5)
+    assert(snow.Transparency.Keypoints[1].Value==1 and snow.Transparency.Keypoints[4].Value==1,
+        "snow fades rather than appearing and vanishing abruptly")
+    assert(snow.SpreadAngle.X>=20 and snow.Acceleration and snow.Acceleration.X>0)
+    if p.Size.X==40 then assert(snow.Rate==22 and #emittersOf(p)==3)
+    else assert(snow.Rate==8 and #emittersOf(p)==2) end
     snowRate+=snow.Rate
 end
-assert(snowRate==306,"nine cells of snow")
-runAllSpawned();frames(35)
+assert(snowRate==262)
+runAllSpawned();frames(65)
 assert(byName(weatherCells(combined)[1],"Snow").Texture=="custom://shaderSnowTexture")
 card.Options["Falling leaves"].Metadata.callback(true)
 card.Options["Dust motes"].Metadata.callback(true)
 local all=byName(world,"ARMShaderWeather")
-assert(#weatherCells(all)==9 and #children(all,"Part")==11 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
+assert(#weatherCells(all)==17 and #children(all,"Part")==19 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==2604,"2160 rain + 306 snow + 108 leaves + 30 dust particles/s, plus manual splashes")
-assert(totalRate<=3000,"the shared weather budget must hold whatever the toggles ask for")
-runAllSpawned();frames(35)
+assert(totalRate==1952,"near+far rain/snow/leaves and dust, excluding manual splashes")
+runAllSpawned();frames(65)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
-assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==30 and dust.Size.Value==0.55,
-    "v177: 12 motes of 0.35 studs were invisible on a dark map")
+assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==20 and dust.Size.Value==0.55
+    and dust.Transparency.Keypoints[1].Value==1 and dust.Transparency.Keypoints[4].Value==1)
 card.Options.Fog.Metadata.callback(true)
 local withFog=byName(world,"ARMShaderWeather")
 assert(byName(byName(withFog,"FogCell"),"Fog mist") and byName(weatherCells(withFog)[1],"Rain"))
-frames(35)
+totalRate=0
+for _,p in ipairs(children(withFog,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
+assert(totalRate==1978 and totalRate<=2000,"the shared desktop budget includes all mist emitters")
+frames(65)
 assert(byName(byName(withFog,"FogCell"),"Fog mist").Enabled)
 card.Options.Fog.Metadata.callback(false)
 all=byName(world,"ARMShaderWeather");dust=byName(byName(all,"DustCell"),"Dust motes")
-frames(35)
+frames(65)
 assert(not byName(all,"FogCell") and dust.Enabled and byName(weatherCells(all)[1],"Rain").Enabled,
-    "switching fog off must leave rain and dust active")
+    "switching fog off leaves rain and dust active")
 runAllSpawned()
-isCovered=true;frames(35)
-assert(dust.Enabled and not byName(weatherCells(all)[1],"Rain").Enabled,
-    "dust stays active indoors while rain respects the roof")
+isCovered=true;frames(65)
+assert(dust.Enabled and not byName(weatherCells(all)[1],"Rain").Enabled,"dust stays active indoors")
 isCovered=false
-world.CurrentCamera=nil;frames(2)
-assert(not dust.Enabled)
-world.CurrentCamera=camera;frames(35);assert(dust.Enabled)
+world.CurrentCamera=nil;frames(2);assert(not dust.Enabled)
+world.CurrentCamera=camera;frames(65);assert(dust.Enabled)
 card.Options.Rain.Metadata.callback(false)
 local snowLeaves=byName(world,"ARMShaderWeather")
 assert(not byName(weatherCells(snowLeaves)[1],"Rain") and byName(weatherCells(snowLeaves)[1],"Snow")
@@ -902,24 +882,43 @@ assert(#children(dustOnly,"Part")==1)
 local dustRays=rayCount;frames(50);assert(rayCount==dustRays,"dust alone needs no roof raycasts")
 card.Options["Dust motes"].Metadata.callback(false)
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
-runAllSpawned() -- all cancelled completions must stay dead
-pass("dense rain/snow, real fog, independent weather, outdoor cells, splashes and camera recovery")
-
--- Mobile must ask for less at the emitter, not after paying for the desktop
--- profile: one rain layer at 92/s, no close layer, same number of parts.
-host.state.isMobile=true
-card.Options.Rain.Metadata.callback(true)
-local mobileRain=byName(world,"ARMShaderWeather")
-frames(35)
-for _,p in ipairs(weatherCells(mobileRain)) do
-    local list=emittersOf(p)
-    assert(#list==1 and list[1].Rate==92,"mobile keeps one bounded rain layer")
-    assert(list[1].Rate<=100,"a mobile emitter cannot exceed 100 particles/s")
-end
-card.Options.Rain.Metadata.callback(false)
-host.state.isMobile=false
 runAllSpawned()
-pass("mobile density is scaled at creation, below the engine cap")
+pass("near/far weather, bounded budget, shelter, splashes and camera recovery")
+
+-- Mobile and touch+keyboard devices get the compact profile at creation.
+for _,case in ipairs({"mobile","touch"}) do
+    host.state.isMobile=case=="mobile"
+    host.UserInputService={TouchEnabled=case=="touch"}
+    card.Options.Rain.Metadata.callback(true)
+    local mobileRain=byName(world,"ARMShaderWeather")
+    frames(65)
+    for _,p in ipairs(weatherCells(mobileRain)) do
+        local list=emittersOf(p)
+        assert(#list==1 and list[1].Rate==(if p.Size.X==40 then 64 else 14),
+            "compact profile must scale near and far rain")
+        assert(list[1].Rate<=100)
+    end
+    card.Options.Rain.Metadata.callback(false)
+    runAllSpawned()
+end
+host.state.isMobile=true;host.UserInputService=nil
+for _,name in ipairs({"Rain","Snow","Falling leaves","Dust motes","Fog"}) do
+    card.Options[name].Metadata.callback(true)
+end
+local mobileAll=byName(world,"ARMShaderWeather")
+local mobileTotal=0
+for _,p in ipairs(children(mobileAll,"Part")) do
+    for _,e in ipairs(children(p,"ParticleEmitter")) do
+        assert(e.Rate<=100,"no compact emitter exceeds Roblox's mobile cap")
+        mobileTotal+=e.Rate
+    end
+end
+assert(mobileTotal==927 and mobileTotal<=1000,"all compact effects share one budget")
+for _,name in ipairs({"Fog","Rain","Snow","Falling leaves","Dust motes"}) do
+    card.Options[name].Metadata.callback(false)
+end
+host.state.isMobile=false;runAllSpawned()
+pass("mobile and touch-plus-keyboard use a conservative emitter profile")
 
 host.state.resolveAsset=function(name) return "custom://"..name end
 preloadMode="failure"
@@ -1014,39 +1013,14 @@ features.Shaders.toggle(false);runAllSpawned()
 assert(lighting.ExposureCompensation==4.5)
 pass("high original exposure is never reduced by the baseline")
 
--- Runtime projection/container failures stop the underlying library session.
--- Retry once, avoid an infinite crash loop, and let an explicit toggle retry.
-card.Options["Floor reflections"].Metadata.callback(true)
-features.Shaders.toggle(true)
-local initialStarts=reflectionStarts
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-flushDeferred()
-assert(reflectionStarts==initialStarts+1 and card.Enabled,"a stopped reflection should get one fresh session")
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-flushDeferred()
-assert(reflectionStarts==initialStarts+1,"persistent failures must not create an endless restart loop")
-card.Options["Floor reflections"].Metadata.callback(false)
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==initialStarts+2,"the user can retry after switching the option off and on")
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-card.Options["Floor reflections"].Metadata.callback(false)
-flushDeferred()
-assert(reflectionStarts==initialStarts+2,"switching off cancels an already queued automatic retry")
-features.Shaders.toggle(false);runAllSpawned()
-pass("a stopped floor session is retried once and remains manually recoverable")
-
 -- A single unsupported post effect used to cancel the entire Shaders card.
-card.Options["Floor reflections"].Metadata.callback(true)
+card.Options["Glass reflections"].Metadata.callback(true)
 Instance.fail.BloomEffect=true
-local startsBeforeFailure=reflectionStarts
 local ok=pcall(features.Shaders.toggle,true)
 assert(ok and card.Enabled and renderable(byName(lighting,"ARMShaderColor"))
     and renderable(byName(lighting,"ARMShaderRays")),"a missing Bloom must not stop other post effects")
-assert(not byName(lighting,"ARMShaderBloom") and reflectionStarts>startsBeforeFailure,
-    "floor reflection and other options must start even without Bloom")
+assert(not byName(lighting,"ARMShaderBloom") and activeHandles("Shaders surfaces")==1,
+    "surface options must start even without Bloom")
 card.Options.Rain.Metadata.callback(true);frames(35)
 assert(byName(world,"ARMShaderWeather"),"weather must remain independent of post effects")
 Instance.fail.BloomEffect=nil
@@ -1060,21 +1034,19 @@ pass("a missing post effect is isolated; re-enable and destroy cleanly")
 -- Saved toggle values may be delivered synchronously while the UI is built.
 local fallbackHost=table.clone(host);fallbackHost.state={}
 function fallbackHost.addToggleOption(_,name,default,callback)
-    callback(if name=="Fog" then true elseif name=="Surface textures" or name=="Floor reflections" then false else default)
+    callback(if name=="Fog" then true elseif name=="Surface textures" then false else default)
     return {callback=callback}
 end
 local savedAtmosphere=Instance.new("Atmosphere");savedAtmosphere.Density=0.23;savedAtmosphere.Parent=lighting
 local fallbackFramework=Framework.init(fallbackHost)
 local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost,libraries=libraries})
 assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
-    and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
-local startsBeforeRestore=reflectionStarts
+    and not saved.Options["Floor reflections"] and not saved.Options.Look)
 local restoreNotifications=#notifications
 features.Shaders.toggle(true)
 assert(#notifications==restoreNotifications,
     "v177: replaying saved toggle values must not toast about a disabled card")
-assert(savedAtmosphere.Density==0.58 and reflectionStarts==startsBeforeRestore,
-    "a saved OFF floor reflection must not start on module enable")
+assert(savedAtmosphere.Density==0.58, "saved fog restores without a floor mirror")
 Shaders.destroy();flushDeferred();assert(savedAtmosphere.Density==0.23)
 pass("synchronous saved-toggle restoration is safe and cannot restore removed looks")
 '''
@@ -1084,9 +1056,14 @@ def lua_quote(value: str) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n') + '"'
 
 
-script_text = (PRELUDE + "\nlocal FRAMEWORK_SOURCE = " + lua_quote(FRAMEWORK)
-               + "\nlocal SHADERS_SOURCE = " + lua_quote(SHADERS) + "\n" + BODY)
-with tempfile.TemporaryDirectory() as tmp:
-    script = Path(tmp) / "shaders.luau"
-    script.write_text(script_text, encoding="utf-8")
-    subprocess.run([os.environ.get("LUAU", "luau"), str(script)], check=True)
+def main() -> None:
+    script_text = (PRELUDE + "\nlocal FRAMEWORK_SOURCE = " + lua_quote(FRAMEWORK)
+                   + "\nlocal SHADERS_SOURCE = " + lua_quote(SHADERS) + "\n" + BODY)
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / "shaders.luau"
+        script.write_text(script_text, encoding="utf-8")
+        subprocess.run([os.environ.get("LUAU", "luau"), str(script)], check=True)
+
+
+if __name__ == "__main__":
+    main()
