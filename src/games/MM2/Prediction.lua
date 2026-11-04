@@ -257,6 +257,25 @@ local MAX_LEAD_CORRECTION: number = 0.06
 -- correction was already in place.
 local LEAD_SLEW_PER_SAMPLE: number = 0.02
 
+-- Transport prior. The horizon has always fallen back to the engine ping while
+-- the echo window is still empty (a fresh session, or a round with one or two
+-- confirmations), and that fallback under-leads: the exported calibration
+-- sessions (schema 4, v139.4-v163) measured a FireServer -> GunFired round trip
+-- of 196-204 ms on average against a Data Ping of about 150-165 ms, because the
+-- acceptance also contains the server's own processing before it answers.
+-- base.lua now publishes the running median/mean of its own confirmed shots and
+-- the imported history through the same channel, so the pre-echo window starts
+-- at the measured acceptance instead of the ping. The prior is only trusted
+-- while it stays plausible for the connection actually in use.
+local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8
+local ACCEPTANCE_PRIOR_MIN_RATIO: number = 0.75
+local ACCEPTANCE_PRIOR_MAX_RATIO: number = 2.5
+
+-- How far the closest blade pass may be from the predicted root before it
+-- stops describing a lead error and starts describing another problem (a
+-- wall, a different body, a teleport). 6 studs is ~0.35 s of running.
+local KNIFE_FEEDBACK_MAX_MISS_STUDS: number = 6
+
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
     -- (fallback: smoothed ping) already includes the device/network timing.
@@ -1046,6 +1065,12 @@ function Module.init(runtime: any): any
         if lower == "silent" or lower == "cframe" or lower == "silent aim" then
             return "CFrame"
         end
+        -- v179: the blade has its own evidence now (closest pass measured by
+        -- base.lua), so it gets its own bucket instead of writing into the
+        -- "default" key a gun without a mode also uses.
+        if lower == "knife" or lower == "blade" then
+            return "Knife"
+        end
         return "default"
     end
 
@@ -1153,6 +1178,38 @@ function Module.init(runtime: any): any
         return medianOf(absolute) or 0
     end
 
+    -- Measured acceptance published by the game adapter. Kept here so the
+    -- predictor stays independent of base.lua's runtime tables.
+    local acceptancePriorSeconds: number? = nil
+    local acceptancePriorSamples: number = 0
+
+    local function setAcceptancePrior(seconds: any, samples: any): ()
+        if not finiteNumber(seconds) or seconds <= 0 or seconds > MAX_HORIZON then
+            return
+        end
+        local count: number = finiteNumber(samples) and math.floor(samples) or 0
+        acceptancePriorSeconds = seconds
+        acceptancePriorSamples = math.max(0, count)
+    end
+
+    -- Live echo first, then the measured prior, then the smoothed ping. The
+    -- prior only replaces the ping fallback: when echoes exist they are a
+    -- fresher measurement of the same quantity and win outright.
+    local function transportHorizon(rtt: number, echo: number?): number
+        if echo then
+            return rtt * 0.6 + echo * 0.4
+        end
+        local prior: number? = acceptancePriorSeconds
+        if prior and acceptancePriorSamples >= ACCEPTANCE_PRIOR_MIN_SAMPLES then
+            local low: number = math.max(0.03, rtt * ACCEPTANCE_PRIOR_MIN_RATIO)
+            local high: number = math.min(MAX_HORIZON, rtt * ACCEPTANCE_PRIOR_MAX_RATIO)
+            if prior >= low and prior <= high then
+                return math.max(rtt, prior)
+            end
+        end
+        return rtt
+    end
+
     local function gunHorizon(mode: any): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -1166,9 +1223,7 @@ function Module.init(runtime: any): any
         -- short (echo mean 0.227 vs rtt 0.263), so a 60/40 blend avoids
         -- the jump between echo-present and echo-absent without losing
         -- the freshness signal. When echo is stale/nil, rtt stands alone.
-        local pipeline: number = echo
-            and (rtt * 0.6 + echo * 0.4)
-            or rtt
+        local pipeline: number = transportHorizon(rtt, echo)
         -- Full transport, NOT the one-way half -- and this is measured,
         -- not assumed: in the saved calibration sessions the confirmed
         -- hits cluster at about +14 ms against the confirmation instant
@@ -1200,15 +1255,13 @@ function Module.init(runtime: any): any
     local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
-        local pipeline: number = echo
-            and (rtt * 0.6 + echo * 0.4)
-            or rtt
+        local pipeline: number = transportHorizon(rtt, echo)
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).
-        -- The knife gets no measured feedback of its own (the captures only
-        -- score the gun), so it shares the "default" bucket instead of
-        -- borrowing the Bullet one.
+        -- v179: the knife now measures its own lead from the closest blade
+        -- pass (base.lua -> noteLeadError(seconds, "knife")), so this bucket
+        -- is fed by knife confirmations instead of staying empty.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
@@ -1784,7 +1837,12 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
-            leadCorrection = 0,
+            leadCorrection = leadCorrection("knife"),
+            leadCorrectionTarget = leadTarget("knife"),
+            leadSamples = leadSamples("knife"),
+            leadUncertainty = leadUncertainty("knife"),
+            aimMode = "knife",
+            acceptancePrior = acceptancePriorSeconds,
         }, nil
     end
 
@@ -1951,6 +2009,13 @@ function Module.init(runtime: any): any
             return estimateMotion(track, os.clock())
         end,
         noteLeadError = noteLeadError,
+        setAcceptancePrior = setAcceptancePrior,
+        getAcceptancePrior = function(): (number?, number)
+            return acceptancePriorSeconds, acceptancePriorSamples
+        end,
+        getTransport = function(): number
+            return transportHorizon(robustRtt(), echoMedian())
+        end,
         getLeadCorrection = leadCorrection,
         getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,

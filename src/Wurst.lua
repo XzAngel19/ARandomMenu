@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v178-20261103-map-wide-real-weather"
+local SOURCE_STAMP: string = "v179-20261103-names-and-precision"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1767,49 +1767,6 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "image/png",
-        },
-
-        -- Weather textures are fetched lazily, only after choosing an effect.
-        shaderRainTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/rain-trace.png",
-            fileName = "shader-rain-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        shaderSnowTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/snow-soft.png",
-            fileName = "shader-snow-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        shaderAutumnTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/autumn-maple.png",
-            fileName = "shader-autumn-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        -- CC0 albedo maps are fetched only when a matching nearby surface is found.
-        shaderConcreteTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-concrete.jpg",
-            fileName = "shader-concrete-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderWoodTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-wood-floor.jpg",
-            fileName = "shader-wood-floor-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderBrickTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-brick.jpg",
-            fileName = "shader-brick-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderGrassTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-grass.jpg",
-            fileName = "shader-grass-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderMarbleTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-marble.jpg",
-            fileName = "shader-marble-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
         },
 
     } :: {[string]: AssetDefinition},

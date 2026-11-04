@@ -77,7 +77,12 @@ local environment={readfile=function(path) assert(files[path],"not found"); retu
 local HttpService={JSONDecode=function() return source end}
 local OUTPUT_PATH,trajectoryLogPrefix="out","test"
 local warn=function() end
+-- v179: the history import publishes the measured acceptance to the
+-- predictor. Nothing is published here (no predictor in this mock), but the
+-- helper has to exist for loadSavedHistory to run.
+local state={}
 ''', section(BASE, '    local function applyStatsPayload(', '    local function restoreMotionBucket('),
+              section(BASE, '    local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8', '    local function nextShotId(): string'),
               section(BASE, '    local function loadSavedHistory()', '    local function vectorArray('), r'''
 loadSavedHistory()
 assert(files[runtime.historyBackup]=="original bytes" and files.out=="original bytes")

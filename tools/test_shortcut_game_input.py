@@ -94,21 +94,21 @@ BODY = r'''
 -- The binding keeps the label and the feedback so a keypress with the menu
 -- closed can answer with a toast instead of changing state silently.
 local pressed = 0
-bindActionShortcut(nil, "Universal.Shaders", "Shaders", function() pressed += 1 end, {
-    feedback = function() return "Shaders on" end,
+bindActionShortcut(nil, "Universal.Fullbright", "Fullbright", function() pressed += 1 end, {
+    feedback = function() return "Fullbright on" end,
 })
-local shaders = state.shortcutBindings["Universal.Shaders"]
-assert(shaders and shaders.label == "Shaders", "the binding must remember its label")
-assert(type(shaders.feedback) == "function", "the binding must keep the feedback callback")
-assert(shaders.key == Enum.KeyCode.Unknown, "registration must not invent a key")
+local fullbright = state.shortcutBindings["Universal.Fullbright"]
+assert(fullbright and fullbright.label == "Fullbright", "the binding must remember its label")
+assert(type(fullbright.feedback) == "function", "the binding must keep the feedback callback")
+assert(fullbright.key == Enum.KeyCode.Unknown, "registration must not invent a key")
 
 -- A saved key is restored, and an explicit assignment survives a second call.
-configData.values["Shortcut.UniversalShaders"] = "F"
-bindActionShortcut(nil, "Universal.Shaders", "Shaders", function() pressed += 1 end, {
-    feedback = function() return "Shaders on" end,
+configData.values["Shortcut.UniversalFullbright"] = "F"
+bindActionShortcut(nil, "Universal.Fullbright", "Fullbright", function() pressed += 1 end, {
+    feedback = function() return "Fullbright on" end,
 })
-assert(state.shortcutBindings["Universal.UniversalShaders"] == nil, "the option key is sanitized, not duplicated")
-assert(state.shortcutBindings["Universal.Shaders"].key == Enum.KeyCode.F,
+assert(state.shortcutBindings["Universal.UniversalFullbright"] == nil, "the option key is sanitized, not duplicated")
+assert(state.shortcutBindings["Universal.Fullbright"].key == Enum.KeyCode.F,
     "the persisted key must be restored on boot")
 pass("shortcut bindings keep label, feedback and the saved key")
 
@@ -120,10 +120,10 @@ end
 -- The v176 fix: the game already used the key (MM2, core controls) and the menu
 -- still runs its own shortcut.
 keyPress(Enum.KeyCode.F, false)
-assert(pressed == 1 and notifications[#notifications] == "Shaders on",
+assert(pressed == 1 and notifications[#notifications] == "Fullbright on",
     "a shortcut with the menu closed must fire and report the new state")
 keyPress(Enum.KeyCode.F, true)
-assert(pressed == 2 and notifications[#notifications] == "Shaders on",
+assert(pressed == 2 and notifications[#notifications] == "Fullbright on",
     "gameProcessed must not swallow the shortcut: that was the MM2 bug")
 assert(#notifications == 2, "one toast per activation, not per poll")
 pass("shortcuts fire whether or not the game consumed the key")

@@ -39,7 +39,7 @@ function Module.init(context: Runtime): any
     end
 
     local function speedModuleWalkSpeed(): number
-        local feature: any = framework:GetModule("Speed")
+        local feature: any = framework:GetModule("Speed Hack")
         if feature and feature.Enabled and feature.Options.Speed then
             return math.max(0, feature.Options.Speed.Value)
         end

@@ -260,7 +260,7 @@ pass("Anti Fling thresholds scale with WalkSpeed, no options to tune")
 -- The common Framework supplies a Speed module and numeric slider value.
 -- Its higher configured speed must not be mistaken for an external fling.
 context.framework.GetModule = function(_, name)
-    if name == "Speed" then return {Enabled=true, Options={Speed={Value=120}}} end
+    if name == "Speed Hack" then return {Enabled=true, Options={Speed={Value=120}}} end
 end
 rootProps.AssemblyLinearVelocity = Vector3.new(200, 0, 0)
 tick(0.016)

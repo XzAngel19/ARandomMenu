@@ -50,7 +50,7 @@ local framework={Categories={Exploits={CreateModule=function(_,d)
  end
  return speed
 end}}}
-function framework:GetModule(n) return n=='Speed' and speed or nil end
+function framework:GetModule(n) return n=='Speed Hack' and speed or nil end
 local standalone
 local TaskManager={Connect=function(_,fn) standalone=fn;return {Disconnect=function() standalone=nil end} end}
 local featureConnections={}

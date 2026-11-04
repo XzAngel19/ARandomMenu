@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** build
-> **`v178-20261103-map-wide-real-weather`**. La rama de trabajo de la sesión
+> **`v179-20261103-names-and-precision`**. La rama de trabajo de la sesión
 > es `arena/979b8402-arandommenu`, un fork exacto de
 > `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
 > `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -29,14 +29,56 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v178: 83 fuentes en el
-     bundle, 116 suites, auditoría estática, boots `failures=0`, arranque
-     silencioso, menú 50/49).
+  4. `bash tools/validate.sh` — debe terminar VERDE (v179: 82 fuentes en el
+     bundle, 114 suites, auditoría estática, boots `failures=0`, arranque
+     silencioso, menú 49/48).
   5. Commit + push **normales** a la rama de la sesión
      (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
      historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v179 — Nombres con espacio, Shaders fuera y precisión de Shoot/Knife (2026-11-03)
+
+El usuario pidió tres cosas en la misma tanda: **eliminar `Shaders`** del menú,
+**renombrar** `Jesus` → `Swim Walk`, `Jump` → `Jump Hack` y `Speed` →
+`Speed Hack` (todas con espacio, en Exploits) y **subir la precisión** de Shoot
+y Knife «sin reescribirlos». Adjuntó 11 exportaciones
+`MM2_Trajectory_Calibration*.json` (schema 4) para que el ajuste saliera de sus
+propios datos.
+
+- **Shaders eliminado por completo:** módulo, tarjeta del manifiesto, assets
+  (`src/guis/Wurst/Assets/Shaders/*.png|jpg`), entradas de descarga en
+  `src/Wurst.lua`, `tools/test_shaders.py`, `tools/test_shader_assets.py` y las
+  secciones de docs. El boot del arnés ahora **verifica que no exista**
+  (`GetModule("Shaders") == nil`, sin `ARMShader*` en `Lighting`, iluminación
+  del lugar intacta). El menú pasa de 50 a 49 tarjetas en audit y de 49 a 48 en
+  release.
+- **Renombres:** `Swim Walk` (antes `Jesus`, archivo `SwimWalk.lua`),
+  `Jump Hack` y `Speed Hack`. El `ConfigKey` **no cambia**
+  (`Universal.Jesus` / `Universal.Jump` / `Universal.Speed`) para no perder
+  perfiles ni keybinds guardados; `GetModule` y las teclas usan el nombre
+  visible, así que `AntiFling` y `Sprint` ahora piden `GetModule("Speed Hack")`.
+- **Precisión, con sus datos delante:** el `aggregate` de los JSON es acumulado
+  histórico y no sirve de denominador de acierto; lo que sí dice es que
+  `gunAcceptanceMs` (FireServer → `GunFired.hitPart`) está en **196-204 ms**
+  contra un Data Ping de 150-165 ms, y que `knifeSpeed` es 96 constante.
+  - **Prior de aceptación medido.** Mientras la ventana de ecos está vacía (sesión
+    nueva), el horizonte caía al ping y se quedaba 40-50 ms corto. `base.lua`
+    publica ahora la media de sus propias confirmaciones (y la del historial
+    importado) con `prediction.setAcceptancePrior`; el predictor la usa **solo**
+    cuando no hay eco y **solo** si es plausible para la conexión actual
+    (0,75×–2,5× el RTT, ≥8 muestras).
+  - **El cuchillo aprende de sí mismo.** Antes `leadCorrection("knife")` nunca se
+    alimentaba («the captures only score the gun»). Ahora `KnifeThrow` reporta el
+    punto que de verdad apuntó (root predicho + velocidad), `base.lua` guarda en
+    cada `KnifeTrack` la posición/velocidad del cuerpo en el **paso más cercano**
+    y convierte ese desvío en segundos proyectándolo sobre la velocidad del
+    objetivo (`knifeLeadErrorSeconds`), con los mismos límites que el cañón
+    (±0,15 s, ≥2 studs/s, fallo ≤6 studs). Los cuchillos escriben en su propio
+    bucket (`Knife`) y mueven el horizonte con slew limitado.
+  - No se cambió el modelo de movimiento ni la velocidad de la hoja: los datos
+    (`constantVelocityResidual` ≈ 0 en suelo) no justifican otra cosa.
 
 ## v178 — Cobertura de todo el mapa, clima visible y niebla con estela (2026-11-03)
 

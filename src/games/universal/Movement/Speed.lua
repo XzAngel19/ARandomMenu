@@ -1,6 +1,6 @@
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Speed", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "Speed Hack", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -119,7 +119,7 @@ function Module.init(context: Runtime): any
         else teleportElapsed = 0 end
     end
     speed = framework.Categories.Exploits:CreateModule({
-        Name="Speed",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
+        Name="Speed Hack",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
         Tooltip="On-foot movement; inactive while seated.",
         Function=function(enabled)
             restoreWalk(); teleportElapsed, lastMode = 0, nil

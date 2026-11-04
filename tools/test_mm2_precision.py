@@ -289,6 +289,73 @@ do
     local cappedText=prediction.status(nil)
     assert(cappedText:find("auto lead %(ping%)"),cappedText)
 
+    -- v179: while the echo window is empty the horizon used the engine ping,
+    -- which the exported calibration sessions measured 40-50 ms SHORT of the
+    -- real FireServer -> GunFired acceptance (196-204 ms against a 150-165 ms
+    -- Data Ping). The adapter now publishes that measurement, so the pre-echo
+    -- window starts from it. The prior is only accepted while it stays
+    -- plausible for the connection in use, and only with enough samples.
+    prediction.reset()
+    local _,priorOff=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(priorOff.leadSeconds,0.145,1e-6)
+    prediction.setAcceptancePrior(0.19,12)
+    local _,priorOn=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(priorOn.leadSeconds,0.215,1e-6)
+    assert(priorOn.leadSeconds>priorOff.leadSeconds,
+        "the measured acceptance must lead further than the bare ping")
+    -- An imported acceptance from another network (0.5 s at this ping) is not
+    -- this connection's transport; the ping stays in charge.
+    prediction.setAcceptancePrior(0.5,12)
+    local _,implausible=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(implausible.leadSeconds,0.145,1e-6)
+    -- Three samples are an anecdote, not a prior.
+    prediction.setAcceptancePrior(0.19,3)
+    local _,thin=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(thin.leadSeconds,0.145,1e-6)
+    -- A live echo always outranks the prior.
+    prediction.setAcceptancePrior(0.19,12)
+    for _=1,3 do prediction.noteEcho(0,0.14) end
+    local _,liveEcho=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(liveEcho.leadSeconds,0.12*0.6+0.14*0.4+0.025,1e-6)
+    pass("acceptance prior: measured transport before echoes, plausibility and sample gates, echo wins")
+
+    -- v179: the knife learns from its own confirmations. A blade that passes
+    -- BEHIND a running body measured a positive lead error (we under-led) and
+    -- that median has to reach the knife horizon, which until now could only
+    -- borrow an empty bucket.
+    prediction.reset()
+    humanoid.GetState=function() return "Running" end
+    humanoid.Health=100
+    for i=1,12 do
+        now=now+1/60
+        root.Position=Vector3.new(16*(now),0,0)
+        torso.Position=Vector3.new(16*(now),1,0)
+        root.AssemblyLinearVelocity=Vector3.new(16,0,0)
+        sampleTick(1/60)
+    end
+    local _,beforeFeedback=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    assert(beforeFeedback,"the knife needs a live track for this group")
+    local gunSamplesBefore=prediction.getLeadSamples("gun")
+    near(beforeFeedback.leadCorrection,0,1e-9)
+    for _=1,2 do prediction.noteLeadError(0.03,"knife") end
+    local _,twoSamples=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    near(twoSamples.leadCorrection,0,1e-9)
+    assert(prediction.getLeadSamples("knife")==2)
+    prediction.noteLeadError(0.03,"knife")
+    local _,learned=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    near(learned.leadCorrection,0.02,1e-9)
+    assert(learned.leadCorrectionTarget>0.02,
+        "the target is the measured median, the applied value is slew limited")
+    assert(learned.leadSeconds>beforeFeedback.leadSeconds,
+        "the knife horizon must include the learned correction")
+    assert(prediction.getLeadSamples("gun")==gunSamplesBefore,
+        "knife evidence must not leak into the gun buckets")
+    -- One wild pairing (a teleport, a body swap) is discarded, not learned.
+    prediction.reset()
+    prediction.noteLeadError(0.9,"knife")
+    assert(prediction.getLeadSamples("knife")==0)
+    pass("knife feedback: measured lead error reaches the blade horizon, isolated and bounded")
+
     -- v105 auto-reset: samples inside the gate (300 ms at a 120 ms ping)
     -- whose median still sits past 1.5x RTT are a poisoned window, not a
     -- route change -- the A5AACF6D session held 210 ms against a ~135 ms
@@ -812,6 +879,37 @@ do
 """)
     chunks.append(section(BASE, "    local function watchPendingHealth",
                           "    local function findKnifeAnalysisTarget"))
+    # v179: the knife's closest pass becomes a signed lead error in seconds.
+    # The math has to agree with the gun's convention (positive = the body was
+    # ahead of the aim) and has to refuse everything that is not a lead error.
+    chunks.append(r"""
+do
+    local noteCalls={}
+    """)
+    chunks.append(section(BASE, "    local KNIFE_FEEDBACK_MIN_SPEED: number = 2.0",
+                          "    local finishKnifeTrack: (projectile: Instance, reason: string) -> ()"))
+    chunks.append(r"""
+    local function track(aimRoot, approachRoot, velocity)
+        return {requestedRoot=aimRoot, approachRoot=approachRoot, aimVelocity=velocity}
+    end
+    -- A body running +X that was 0.48 studs past the predicted root at 16
+    -- studs/s is a 30 ms under-lead.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0.48,0,0), Vector3.new(16,0,0))), 0.03, 1e-9)
+    -- Passing behind the aim is the opposite sign.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(-0.48,0,0), Vector3.new(16,0,0))), -0.03, 1e-9)
+    -- Vertical separation is not a lead error.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0,2.5,0), Vector3.new(16,0,0))), 0, 1e-9)
+    -- A body moving slower than the gate has no direction to project on.
+    assert(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(1,0,0), Vector3.new(1,0,0)))==nil)
+    -- A pass farther than the miss limit is a wall/wrong body/teleport.
+    assert(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(7,0,0), Vector3.new(16,0,0)))==nil)
+    -- A blade that passed exactly through the predicted root is a perfect lead.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0,0,0), Vector3.new(16,0,0))), 0, 1e-9)
+    assert(knifeLeadErrorSeconds({})==nil, "a track without an aim cannot be scored")
+    pass("knife lead error: signed projection, vertical ignored, speed/miss bounds")
+end
+""")
+
     chunks.append(r"""
     local pending={}
     watchPendingHealth(pending,target)
@@ -854,6 +952,17 @@ def main() -> None:
     assert "verticalLead" in PREDICTION and "RTT_SAMPLES" in PREDICTION
     assert "local along: number = math.min(0, motion.longitudinalAccel)" in PREDICTION
     assert "noteBlockedShot" in BASE and "noteBlockedShot" in SHOOT
+    # v179: the blade reports the point it was aimed at (root + velocity), so
+    # the closest pass can be scored; before this the knife had no authored aim
+    # in the pipeline at all and its feedback bucket could never fill.
+    assert "aimRoot = aimInfo and aimInfo.rootPosition" in KNIFE, \
+        "the knife throw must report the predicted root"
+    assert "requestedRoot = typeof(info.aimRoot) == \"Vector3\"" in BASE, \
+        "the shared constructor must carry the knife aim root"
+    assert "knifeLeadErrorSeconds" in BASE and "noteLeadError" in BASE, \
+        "the knife must feed the shared lead loop"
+    assert BASE.count("\n        publishAcceptancePrior()") == 2, \
+        "the acceptance prior must be published on import and on every confirmation"
     finalize = section(BASE, "    finalizeGunCapture = function",
                        "    local function analyzeTargetTrajectory")
     assert "noteEcho" in finalize, "the confirmation path must measure the echo"

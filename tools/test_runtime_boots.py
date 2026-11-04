@@ -11,15 +11,16 @@ import audit_menu
 import build_bundle
 import gen_full_boot_harness as harness
 
-# Debug mode builds the calibration card in MM2, hence its count is 50.
+# Debug mode builds the calibration card in MM2; v179 removed Shaders, so
+# every game lost one universal card.
 CASES = [
-    ('Universal', 1, 37, None, None),
-    ('MM2', 142823291, 50, 'MM2', 'MM2.AutoFarm'),
-    ('BedFight', 71480482338212, 47, 'BedFight', 'BedFight.AutoSwing'),
-    ('TRS', 14315258385, 48, 'TRS', 'TRS.AutoHeader'),
-    ('VD', 93978595733734, 51, 'VD', 'VD.AutoGenerator'),
-    ('X2 Legacy', 92876937625630, 42, 'X2Duels', 'MVSD.AutoFarm'),
-    ('X2', 135856908115931, 42, 'X2Duels', 'MVSD.AutoFarm'),
+    ('Universal', 1, 36, None, None),
+    ('MM2', 142823291, 49, 'MM2', 'MM2.AutoFarm'),
+    ('BedFight', 71480482338212, 46, 'BedFight', 'BedFight.AutoSwing'),
+    ('TRS', 14315258385, 47, 'TRS', 'TRS.AutoHeader'),
+    ('VD', 93978595733734, 50, 'VD', 'VD.AutoGenerator'),
+    ('X2 Legacy', 92876937625630, 41, 'X2Duels', 'MVSD.AutoFarm'),
+    ('X2', 135856908115931, 41, 'X2Duels', 'MVSD.AutoFarm'),
 ]
 
 source = audit_menu.build(debug=True).read_text(encoding='utf-8')
@@ -98,12 +99,15 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
                 assert error not in run.stdout, f'{name} {mode}: {error} appeared during boot'
             cards = audit_menu.parse(run.stdout)
             assert len(cards) == count, f'{name} {mode}: expected {count} cards, got {len(cards)}'
-            shader = next(card for card in cards if card['configKey'] == 'Universal.Shaders')
-            visible = [row['label'] for row in shader['rows'] if row.get('visible')]
-            assert visible == ['Surface textures', 'Glass reflections', 'Fog', 'Rain', 'Snow',
-                               'Falling leaves', 'Dust motes', 'Wet surfaces', 'Water reflections', 'Diagnose'], (
-                f'{name} {mode}: Shaders panel lacks independent options: {visible}'
+            assert not [card for card in cards if card['configKey'] == 'Universal.Shaders'], (
+                f'{name} {mode}: the removed Shaders card must not boot'
             )
+            renamed = {card['name'] for card in cards}
+            for wanted in ('Speed Hack', 'Jump Hack', 'Swim Walk'):
+                if wanted in renamed:
+                    break
+            else:
+                raise SystemExit(f'{name} {mode}: renamed cards missing: {sorted(renamed)}')
             if not mobile and not fallback:
                 desktop_cards = cards
             elif fallback:

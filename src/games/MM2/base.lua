@@ -1911,6 +1911,12 @@ local function createTrajectoryCalibration(): any
         activatedAt: number,
         origin: Vector3?,
         requestedAim: Vector3?,
+        -- v179: the predicted ROOT (no torso offset) and the velocity the
+        -- predictor used, so the closest blade pass can be scored as a lead
+        -- error instead of a raw distance.
+        requestedRoot: Vector3?,
+        aimVelocity: Vector3?,
+        aimLeadSeconds: number?,
         pingMs: number,
         targetUserId: number?,
         targetName: string?,
@@ -1938,6 +1944,17 @@ local function createTrajectoryCalibration(): any
         pingMs: number,
         targetUserId: number?,
         targetName: string?,
+        requestedAim: Vector3?,
+        requestedRoot: Vector3?,
+        aimVelocity: Vector3?,
+        aimLeadSeconds: number?,
+        activatedAt: number?,
+        -- Captured at the closest pass: where the body really was and which
+        -- way it was moving. That pair is what turns a miss distance into a
+        -- signed lead error.
+        approachRoot: Vector3?,
+        approachVelocity: Vector3?,
+        approachAt: number?,
         targetTrajectory: {TrajectoryPoint},
         targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
@@ -2083,6 +2100,32 @@ local function createTrajectoryCalibration(): any
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
 
+    -- v179: the acceptance measured on this account is the transport number
+    -- the predictor needs while its echo window is still empty. Publishing it
+    -- costs one call per confirmation and lets the aim start from a measured
+    -- 196-204 ms round trip instead of the ~150-165 ms Data Ping the exports
+    -- recorded next to it (the acceptance also carries the server's own
+    -- processing before it answers).
+    local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8
+    local function publishAcceptancePrior(): ()
+        local stats: any = runtime.gunAcceptance
+        local prediction: any = state.mm2Prediction
+        if type(stats) ~= "table" or type(prediction) ~= "table" then
+            return
+        end
+        local setter: any = prediction.setAcceptancePrior
+        if type(setter) ~= "function" then
+            return
+        end
+        if not predictionMath.finite(stats.mean) or not predictionMath.finite(stats.count) then
+            return
+        end
+        if stats.count < ACCEPTANCE_PRIOR_MIN_SAMPLES then
+            return
+        end
+        pcall(setter, stats.mean / 1000, stats.count)
+    end
+
     local function nextShotId(): string
         runtime.shotSequence += 1
         return runtime.sessionId .. ":" .. tostring(runtime.shotSequence)
@@ -2190,6 +2233,9 @@ local function createTrajectoryCalibration(): any
         importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
         importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
         importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
+        -- The imported history is a measurement too; the live samples that
+        -- follow refine it.
+        publishAcceptancePrior()
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -3513,6 +3559,7 @@ local function createTrajectoryCalibration(): any
             estimatesAt = -math.huge
         end
         addSample(runtime.gunAcceptance, latencyMs)
+        publishAcceptancePrior()
         runtime.sessionGunConfirmed += 1
         if hitTarget then
             runtime.sessionGunHitTarget += 1
@@ -3560,6 +3607,49 @@ local function createTrajectoryCalibration(): any
         ensureTrajectorySampler()
     end
 
+    -- A body moving slower than this has no stable direction to project on,
+    -- and a closest pass farther from the predicted root than this is another
+    -- failure mode (wall, wrong body, teleport), not a lead error.
+    local KNIFE_FEEDBACK_MIN_SPEED: number = 2.0
+    local KNIFE_FEEDBACK_MAX_MISS_STUDS: number = 6.0
+    local KNIFE_FEEDBACK_SAMPLE_LIMIT: number = 0.15
+
+    -- The blade's own confirmation: where the body really was at the closest
+    -- pass, projected on the velocity the throw was aimed with. Positive means
+    -- the body was ahead of the aim (we under-led). This is the same quantity
+    -- and the same sign convention the gun feedback uses, so the shared
+    -- predictor can learn from knives with noteLeadError(seconds, "knife").
+    local function knifeLeadErrorSeconds(track: KnifeTrack): number?
+        local aimRoot: Vector3? = track.requestedRoot
+        local approach: Vector3? = track.approachRoot
+        if not aimRoot or not approach then
+            return nil
+        end
+        local reference: Vector3? = track.aimVelocity
+        if not reference then
+            reference = track.approachVelocity
+        end
+        if not reference then
+            return nil
+        end
+        local horizontal: Vector3 = Vector3.new(reference.X, 0, reference.Z)
+        local speed: number = horizontal.Magnitude
+        if speed < KNIFE_FEEDBACK_MIN_SPEED then
+            return nil
+        end
+        local offset: Vector3 = approach - aimRoot
+        local flat: Vector3 = Vector3.new(offset.X, 0, offset.Z)
+        if flat.Magnitude > KNIFE_FEEDBACK_MAX_MISS_STUDS then
+            return nil
+        end
+        local seconds: number = flat:Dot(horizontal) / (speed * speed)
+        if not predictionMath.finite(seconds)
+            or math.abs(seconds) > KNIFE_FEEDBACK_SAMPLE_LIMIT then
+            return nil
+        end
+        return seconds
+    end
+
     local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
     local function stopKnifeSamplerIfIdle(): ()
         if next(runtime.tracks) == nil then
@@ -3579,6 +3669,18 @@ local function createTrajectoryCalibration(): any
         end
         local measuredSpeed: number? = median(track.speeds)
         local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
+        -- v179: close the feedback loop for blades. Until now the captures only
+        -- scored the gun, so `leadCorrection("knife")` was permanently empty and
+        -- the knife lead could never adapt to the connection it runs on.
+        local leadErrorSeconds: number? = knifeLeadErrorSeconds(track)
+        if leadErrorSeconds and type(state.mm2Prediction) == "table"
+            and type(state.mm2Prediction.noteLeadError) == "function" then
+            pcall(
+                state.mm2Prediction.noteLeadError,
+                leadErrorSeconds,
+                "knife"
+            )
+        end
         if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
             local analysis: {[string]: any} = analyzeTargetTrajectory(
                 track.targetTrajectory,
@@ -3618,6 +3720,14 @@ local function createTrajectoryCalibration(): any
                 closestApproachStuds = track.closestApproach,
                 closestApproachAtMs = track.closestApproachAt,
                 bodyRadiusStuds = track.bodyRadius,
+                -- v179: the knife's own lead measurement, in the same units and
+                -- sign as the gun's, so a session can be scored without
+                -- reconstructing the geometry offline.
+                leadErrorSeconds = leadErrorSeconds,
+                predictedRoot = track.requestedRoot and vectorArray(track.requestedRoot) or nil,
+                approachRoot = track.approachRoot and vectorArray(track.approachRoot) or nil,
+                approachAtMs = track.approachAt,
+                aimLeadSeconds = track.aimLeadSeconds,
                 -- A blade that passes inside the torso's half-diagonal is a
                 -- touch the client can prove; anything else is a measured
                 -- miss distance the next session can be scored against.
@@ -3671,6 +3781,15 @@ local function createTrajectoryCalibration(): any
                                 or distance < track.closestApproach then
                                 track.closestApproach = distance
                                 track.closestApproachAt =
+                                    (now - track.startedAt) * 1000
+                                -- v179: the pair that scores the throw. Until
+                                -- now the knife only recorded HOW FAR the
+                                -- blade passed; without the body position and
+                                -- velocity there was no way to say WHICH WAY.
+                                track.approachRoot = body.Position
+                                track.approachVelocity =
+                                    body.AssemblyLinearVelocity
+                                track.approachAt =
                                     (now - track.startedAt) * 1000
                                 -- Half-diagonal of the torso the blade has to
                                 -- cross: a distance under it is a touch.
@@ -3785,6 +3904,14 @@ local function createTrajectoryCalibration(): any
                 pingMs = pending.pingMs,
                 targetUserId = pending.targetUserId,
                 targetName = pending.targetName,
+                requestedAim = pending.requestedAim,
+                requestedRoot = pending.requestedRoot,
+                aimVelocity = pending.aimVelocity,
+                aimLeadSeconds = pending.aimLeadSeconds,
+                activatedAt = pending.activatedAt,
+                approachRoot = nil,
+                approachVelocity = nil,
+                approachAt = nil,
                 targetTrajectory = pending.targetTrajectory,
                 targetHistory = pending.targetHistory or {},
                 lastTrajectorySampleAt = now,
@@ -4217,6 +4344,16 @@ local function createTrajectoryCalibration(): any
                     activatedAt = now,
                     origin = info.originPos,
                     requestedAim = info.aimPos,
+                    -- v179: only the knife author fills these in.
+                    requestedRoot = typeof(info.aimRoot) == "Vector3"
+                            and info.aimRoot
+                        or nil,
+                    aimVelocity = typeof(info.aimVelocity) == "Vector3"
+                            and info.aimVelocity
+                        or nil,
+                    aimLeadSeconds = predictionMath.finite(info.leadSeconds)
+                            and info.leadSeconds
+                        or nil,
                     pingMs = pingMs,
                     targetTrajectory = targetTrajectory,
                     targetHistory = targetHistory,

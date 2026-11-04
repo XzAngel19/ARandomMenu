@@ -24,6 +24,7 @@ function Module.init(runtime: any): any
     local getEstimatedLatency: any = core.getEstimatedLatency
     local isWeaponPathClear: any = core.isWeaponPathClear
     local prediction: any = state.mm2Prediction
+    local trajectoryCalibration: any = core.trajectoryCalibration
 
     local settings = {
         enabled = false,
@@ -283,19 +284,19 @@ function Module.init(runtime: any): any
         originPos: Vector3,
         knife: Tool?,
         cheap: boolean?
-    ): (Vector3?, number?)
+    ): (Vector3?, number?, any)
         local character: Model? = target.Character
         if not character then
-            return nil, nil
+            return nil, nil, nil
         end
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not root then
-            return nil, nil
+            return nil, nil, nil
         end
         -- Check the live body before doing the more expensive intercept/ground
         -- work; hidden candidates cannot become speculative shots.
         if not bodyVisible(originPos, root.Position, character) then
-            return nil, nil
+            return nil, nil, nil
         end
 
         local speed: number = 96
@@ -398,7 +399,7 @@ function Module.init(runtime: any): any
         -- The current body was already checked before prediction: a future
         -- point peeking around a corner cannot make a hidden body eligible.
         if cheap or checkLineOfSight(originPos, predicted, character) then
-            return predicted, flight
+            return predicted, flight, aimInfo
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
@@ -425,12 +426,12 @@ function Module.init(runtime: any): any
                 local candidatePoint: Vector3 = partPosition + leadOffset
                 if bodyVisible(originPos, partPosition, character)
                     and (cheap or checkLineOfSight(originPos, candidatePoint, character)) then
-                    return candidatePoint, flight
+                    return candidatePoint, flight, aimInfo
                 end
             end
         end
 
-        return nil, nil
+        return nil, nil, nil
     end
 
     -- Find best target for knife throw
@@ -682,7 +683,8 @@ function Module.init(runtime: any): any
         if not target or not isValidTarget(target) then
             return false
         end
-        local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+        local aimPos: Vector3?, aimFlight: number?, aimInfo: any =
+            resolveKnifeAim(target, originCF.Position, knife)
         if not aimPos then
             return false
         end
@@ -697,6 +699,50 @@ function Module.init(runtime: any): any
             if okFire then
                 fired = true
             end
+        end
+
+        -- v179: record the point the blade was actually aimed at. Before this
+        -- the knife's authored aim never reached the calibration pipeline, so
+        -- the closest-pass geometry existed but could not be scored and the
+        -- shared feedback loop only ever learned from guns.
+        if fired and type(trajectoryCalibration) == "table"
+            and type(trajectoryCalibration.noteAuthoredShot) == "function" then
+            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
+                kind = "knife",
+                tool = knife,
+                toolName = knife and knife.Name or "Knife",
+                originPos = originCF.Position,
+                aimPos = aimPos,
+                aimRoot = aimInfo and aimInfo.rootPosition or nil,
+                aimVelocity = aimInfo and aimInfo.velocity or nil,
+                leadSeconds = aimInfo and aimInfo.leadSeconds
+                    or aimFlight,
+                target = target,
+                silent = false,
+                settings = {
+                    mode = "Knife",
+                    wallCheck = settings.wallCheck,
+                    leadSeconds = aimInfo and aimInfo.leadSeconds or nil,
+                    flightSeconds = aimFlight,
+                    motionSource = aimInfo and aimInfo.motionSource or nil,
+                    model = aimInfo and aimInfo.model or nil,
+                    sampleAge = aimInfo and aimInfo.sampleAge or nil,
+                    samples = aimInfo and aimInfo.samples or nil,
+                    rtt = aimInfo and aimInfo.rtt or nil,
+                    echoDelay = aimInfo and aimInfo.echoDelay or nil,
+                    echoSamples = aimInfo and aimInfo.echoSamples or nil,
+                    turnRate = aimInfo and aimInfo.turnRate or nil,
+                    brakeSeconds = aimInfo and aimInfo.brakeSeconds or nil,
+                    leadCorrection = aimInfo and aimInfo.leadCorrection or nil,
+                    leadCorrectionTarget = aimInfo and aimInfo.leadCorrectionTarget or nil,
+                    leadSamples = aimInfo and aimInfo.leadSamples or nil,
+                    acceptancePrior = aimInfo and aimInfo.acceptancePrior or nil,
+                    predictedPoint = {aimPos.X, aimPos.Y, aimPos.Z},
+                    sampledVelocity = aimInfo and aimInfo.velocity
+                        and {aimInfo.velocity.X, aimInfo.velocity.Y, aimInfo.velocity.Z}
+                        or nil,
+                },
+            })
         end
 
         if not fired then

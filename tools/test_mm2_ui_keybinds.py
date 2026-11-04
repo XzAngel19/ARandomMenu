@@ -101,26 +101,35 @@ assert(f.enabled and ex.state.mm2GunAuraEnabled, 'paint failure must not block t
 ex.state.applyCardSkin=oldSkin;oldSkin(f,false);f.syncBindSquare();check(true)
 UserInputService.InputBegan:Fire(key,false);check(false)
 
--- The screenshot shows Shaders OFF but its assigned-key square green.
-local shader=assert(ex.state.framework:GetModule('Shaders'));local sf=shader.Feature
-local shaderBinding=assert(ex.state.shortcutBindings[sf.configKey])
-if sf.enabled then sf.activationTarget.MouseButton1Click:Fire() end
-shaderBinding.assign(Enum.KeyCode.F)
-assert(not shader.Enabled and not same(sf.bindSquare.BackgroundColor3,ex.Theme.enabled))
-local shaderKey={KeyCode=Enum.KeyCode.F,UserInputType=Enum.UserInputType.Keyboard}
-UserInputService.InputBegan:Fire(shaderKey,false)
-assert(shader.Enabled and sf.enabled and same(sf.row.BackgroundColor3,ex.Theme.enabled)
-    and same(sf.bindSquare.BackgroundColor3,ex.Theme.enabled),'Shaders key ON in MM2')
-UserInputService.InputBegan:Fire(shaderKey,false)
-assert(not shader.Enabled and not sf.enabled and not same(sf.row.BackgroundColor3,ex.Theme.enabled)
-    and not same(sf.bindSquare.BackgroundColor3,ex.Theme.enabled),'Shaders key OFF in MM2')
+-- A second, unrelated card must follow the same rule: an assigned key on a
+-- disabled module may never paint its square as enabled. Anti AFK replaces the
+-- removed Shaders card as the control here.
+local af
+for _,candidate in ipairs(ex.allFeatures) do
+    if candidate.name=='Anti AFK' then af=candidate;break end
+end
+assert(af,'Anti AFK feature must exist')
+local afBinding=assert(ex.state.shortcutBindings[af.configKey])
+if af.enabled then af.activationTarget.MouseButton1Click:Fire() end
+afBinding.assign(Enum.KeyCode.F)
+assert(not af.enabled and not same(af.bindSquare.BackgroundColor3,ex.Theme.enabled))
+local afKey={KeyCode=Enum.KeyCode.F,UserInputType=Enum.UserInputType.Keyboard}
+UserInputService.InputBegan:Fire(afKey,false)
+assert(af.enabled and same(af.row.BackgroundColor3,ex.Theme.enabled)
+    and same(af.bindSquare.BackgroundColor3,ex.Theme.enabled),'Anti AFK key ON')
+UserInputService.InputBegan:Fire(afKey,false)
+assert(not af.enabled and not same(af.row.BackgroundColor3,ex.Theme.enabled)
+    and not same(af.bindSquare.BackgroundColor3,ex.Theme.enabled),'Anti AFK key OFF')
 -- Duplicate bindings still use the warning colour, irrespective of ON/OFF.
-shaderBinding.assign(Enum.KeyCode.K)
-assert(same(sf.bindSquare.BackgroundColor3,ex.Theme.negative)
+afBinding.assign(Enum.KeyCode.K)
+assert(same(af.bindSquare.BackgroundColor3,ex.Theme.negative)
     and same(f.bindSquare.BackgroundColor3,ex.Theme.negative),'both conflicting keys repaint immediately')
-shaderBinding.assign(Enum.KeyCode.K)
-assert(not same(sf.bindSquare.BackgroundColor3,ex.Theme.negative)
+afBinding.assign(Enum.KeyCode.K)
+assert(not same(af.bindSquare.BackgroundColor3,ex.Theme.negative)
     and not same(f.bindSquare.BackgroundColor3,ex.Theme.negative),'clearing the conflict repaints both keys')
+-- Leave the control card bound to its own key so the rest of the probe keeps
+-- exercising Gun Aura alone.
+afBinding.assign(Enum.KeyCode.F)
 -- Gun Aimbot deliberately uses its key for a manual shot, not a module toggle.
 local gun=assert(ex.state.mm2SilentAimFeature)
 local gunBinding=assert(ex.state.shortcutBindings[gun.configKey]);assert(not gun.enabled)
@@ -131,7 +140,7 @@ gunBinding.onPress=function() gunCalls+=1;originalPress() end
 UserInputService.InputBegan:Fire({KeyCode=Enum.KeyCode.G,UserInputType=Enum.UserInputType.Keyboard},false)
 assert(gunCalls==1 and not gun.enabled and not same(gun.row.BackgroundColor3,ex.Theme.enabled),
     'manual Gun Aimbot key must not toggle its module')
-print('PASS MM2 keybinds: Gun Aura, Shaders, manual Gun key, click and slow writes')
+print('PASS MM2 keybinds: Gun Aura, Anti AFK, manual Gun key, click and slow writes')
 '''
 with tempfile.TemporaryDirectory(prefix='mm2-ui-keybinds-') as tmp:
     path = Path(tmp) / 'mm2.luau'
@@ -140,4 +149,4 @@ with tempfile.TemporaryDirectory(prefix='mm2-ui-keybinds-') as tmp:
     if result.returncode:
         raise SystemExit(result.stdout[-2500:] + '\n' + result.stderr)
     assert 'PASS MM2 keybinds:' in result.stdout
-    print('PASS MM2 keybinds: Gun Aura, Shaders, manual Gun key, click and slow writes')
+    print('PASS MM2 keybinds: Gun Aura, Anti AFK, manual Gun key, click and slow writes')
