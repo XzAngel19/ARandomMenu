@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v177-20261103-visible-effects-diagnose"
+local SOURCE_STAMP: string = "v178-20261103-map-wide-real-weather"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

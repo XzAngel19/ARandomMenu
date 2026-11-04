@@ -155,7 +155,6 @@ local Manifest: Manifest = {
         "src/libraries/Render.lua",
         "src/libraries/GameRoles.lua",
         "src/libraries/CameraAccess.lua",
-        "src/libraries/ShaderReflection.lua",
 
         "src/guis/Wurst/Code/Cards.lua",
 

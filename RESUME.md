@@ -5,7 +5,7 @@
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
 > **Estado al escribir esto:** build
-> **`v177-20261103-visible-effects-diagnose`**. La rama de trabajo de la sesión
+> **`v178-20261103-map-wide-real-weather`**. La rama de trabajo de la sesión
 > es `arena/979b8402-arandommenu`, un fork exacto de
 > `arena/9492e6b6-arandommenu` en `f3df0c4` (v175); el árbol base original es
 > `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -29,14 +29,39 @@
   1. Edita en `src/…`, nunca directamente en `src/libraries/bundle.lua`.
   2. Sube `SOURCE_STAMP` en `src/Wurst.lua` (`vNNN-AAAAMMDD-descripcion`).
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
-  4. `bash tools/validate.sh` — debe terminar VERDE (v177: 84 fuentes en el
-     bundle, 117 suites, auditoría estática, boots `failures=0`, arranque
+  4. `bash tools/validate.sh` — debe terminar VERDE (v178: 83 fuentes en el
+     bundle, 116 suites, auditoría estática, boots `failures=0`, arranque
      silencioso, menú 50/49).
   5. Commit + push **normales** a la rama de la sesión
      (`arena/979b8402-arandommenu` desde v176). Sin force-push, sin reescribir
      historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v178 — Cobertura de todo el mapa, clima visible y niebla con estela (2026-11-03)
+
+El usuario reportó, con el `Diagnose` de v177 delante, que los efectos se veían
+«como una pegatina», que solo cambiaban donde estaba él y que `Wet surfaces` no
+hacía nada; pidió aplicarlo a **todo el mapa**, niebla que se abra al caminar (y
+con todas las personas) y **sin lag**; autorizó quitar lo que no se pudiera hacer
+mejor. Detalle y límites en `docs/FIXES-v178.md`.
+
+- **Bug de clima:** los emisores nacían con `Enabled = false` y la celda con
+  `applied = false`, así que la primera muestra de cielo abierto no escribía
+  nada y lluvia/nieve/hojas se quedaban apagadas (`on=0` en la captura). Ahora
+  `applied = nil` (desconocido) y nacen visibles.
+- **Cobertura:** topes 1.600 texturas / 2.400 reflectancias (900/1.200 móvil),
+  estilos `metal` y `fabric`, `concrete` para cualquier piso opaco ≥10 studs,
+  muros de cualquier estilo, tiling proporcional con offsets.
+- **CPU:** barrido completo cada 30 s en vez de 2 s, ciclo de 2 s sobre piezas
+  conocidas (8/tick) y cola de reintento a 0,5 s.
+- **Espejo eliminado:** `Floor reflections`, `ShaderReflection.lua` y su suite
+  se borraron; el espejo solo cubría el piso bajo el jugador y era lo más caro.
+- **Wet visible:** reflectancia 0,45 + `EnvironmentSpecularScale ≥ 0,95` +
+  `ARMShaderWet` (grado de lluvia), todo restaurado al apagar.
+- **Niebla:** cámara 18/s, `Size 34`, y estela por personaje (`Rate 0`, emite 2
+  puffs cada 1,2 studs) hasta 8 personajes; es la aproximación posible a que la
+  niebla se abra al caminar.
 
 ## v177 — Efectos visibles o explicados, y diagnóstico en el cliente (2026-11-03)
 
@@ -1809,6 +1834,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-03 · v177. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-03 · v178. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

@@ -827,19 +827,18 @@ do
     -- Booted bundle + real Framework + real widgets: PostEffects have to be
     -- direct Lighting children, not descendants of an inert Folder.
     local shaders = ex.state.framework:GetModule("Shaders")
-    assert(shaders and shaders.Options["Floor reflections"] and shaders.Options["Surface textures"]
+    assert(shaders and shaders.Options["Surface textures"]
       and shaders.Options["Glass reflections"] and shaders.Options.Fog
+      and not shaders.Options["Floor reflections"]
       and not shaders.Options.Look and not shaders.Options.Weather,
-      "Shaders must boot without a look or weather mode selector")
+      "Shaders must boot without a look, a weather mode selector or the removed viewport mirror")
     shaders:Toggle(true)
     local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
     local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
     local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
-    local floorGui = PlayerGui:FindFirstChild("ARMShaderFloorReflection")
-    local floorFolder = workspaceService:FindFirstChild("ARMShaderFloorReflection")
-    assert(floorGui and floorFolder and floorGui.Adornee == floorFolder:FindFirstChild("ReflectionSurface")
-      and floorGui:FindFirstChild("Reflection"),
-      "default floor reflection must start its PlayerGui viewport")
+    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
+      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
+      "v178 removed the viewport mirror; no reflection container may be created")
     assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
       "ColorCorrectionEffect must be enabled directly under Lighting")
     assert(shaderColor.Contrast == 0.08 and shaderColor.Saturation == 0.05 and shaderColor.Brightness == 0,
@@ -853,9 +852,6 @@ do
     assert(not Lighting:FindFirstChild("ARMShaderColor")
       and not Lighting:FindFirstChild("ARMShaderBloom") and not Lighting:FindFirstChild("ARMShaderRays"),
       "disabling Shaders must remove its effects")
-    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
-      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
-      "disabling Shaders must remove its viewport and plane")
     assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
       "disabling Shaders must restore unchanged Lighting properties")
     print("[HARNESS] SHADERS REALISM + LIGHTING RESTORE")

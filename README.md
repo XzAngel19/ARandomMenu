@@ -13,45 +13,52 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu
 
 ## Shaders
 
-`Render > Shaders` usa efectos **locales al cliente**. `Floor reflections`
-intenta un reflejo intenso sobre el piso plano del personaje y pisos compatibles
-frente a la cámara. Para conservar detalle cerca del avatar, el plano principal
-abarca hasta 64 × 64 studs; si el piso es mayor, una segunda capa cubre hasta
-256 × 256 y queda espacio para un piso adicional. En pisos pequeños pueden
-mostrarse hasta dos pisos adicionales. Los viewports copian solo parte de la
-escena: no es un espejo global, RTX ni SSR. Terrain, pendientes fuertes, objetos
-omitidos, ropa o mallas irregulares pueden verse distintos o no reflejarse.
+`Render > Shaders` usa efectos **locales al cliente**, aplicados a **todo el
+mapa**, no solo alrededor del jugador. No hay selector de `Look`; las opciones
+son independientes: `Surface textures`, `Glass reflections`, `Fog`, `Rain`,
+`Snow`, `Falling leaves`, `Dust motes`, `Wet surfaces` y `Water reflections`.
 
-No hay selector de `Look`. `Fog`, `Rain`, `Snow`, `Falling leaves`, `Dust motes`,
-`Wet surfaces`, `Water reflections`, `Surface textures` y `Glass reflections`
-son opciones independientes. Desde v176 el clima tiene densidad real: lluvia en
-dos capas (trazo y gotas cercanas) y nieve con copos grandes, cada una repartida
-en nueve celdas que siguen a la cámara; se respetan los topes del motor (400
-partículas/s por emisor en escritorio, 100 en móvil) y hay un presupuesto total
-de 3.000 partículas/s. Fog sube `Atmosphere.Density`/`Haze` (0,58/4,5) o acerca
-`FogEnd` a 110 si el juego no tiene atmósfera, y añade una niebla local densa.
-Las celdas de lluvia y nieve prueban si hay techo con `RespectCanCollide`: solo
-la geometría sólida tapa el clima, y mover la cámara ya no lo apaga. Si esa
-comprobación falla se avisa y las partículas pueden atravesar el techo. El barrido
-recorre progresivamente el mapa, pero solo modifica piezas compatibles y tiene
-límites de recursos. Las texturas no sustituyen mallas y respetan los decals por
-cara. Glass/Wet usan reflectancia ambiental, no el reflejo de personajes. Al
-apagar se retiran los efectos y se restauran los valores aún controlados.
-Desde v177 la tarjeta tiene un botón **`Diagnose`**: imprime y muestra lo que
-cada efecto alcanzó en ese cliente (superficies encontradas y reservadas por
-decals, suelo del espejo, emisores del clima, Terrain y cámara). Úsalo cuando un
-toggle parezca no hacer nada: dice si el mapa no tiene superficies compatibles,
-si no hay Terrain para `Water reflections` o si el clima existe pero está
-oculto. Con la tarjeta apagada, un toggle hijo ahora avisa en vez de cambiar la
-casilla sin efecto.
+- **Barrido de todo el workspace.** El módulo recorre el mapa por partes con un
+  presupuesto por frame y revisa las piezas ya conocidas en un ciclo ligero de
+  2 s. Los topes de instancias son 1.600 texturas y 2.400 reflectancias en
+  escritorio (900 / 1.200 en móvil); si se alcanzan, se avisa. Desde v178 se
+  eliminó el espejo por `ViewportFrame` (`Floor reflections`): solo cubría el
+  piso bajo el jugador, copiaba una escena incompleta y era la parte más cara de
+  la tarjeta.
+- **Materiales.** `Surface textures` añade detalle por cara a pisos y muros
+  compatibles (hormigón, piedra, ladrillo, madera, mármol, arena, hielo, metal y
+  tela), con densidad de texel proporcional a la pieza y offsets variables para
+  que no se repita el patrón. Respeta los decals del juego por cara y no toca
+  mallas, `SurfaceAppearance`, objetos móviles ni avatares.
+- **Mojado.** `Wet surfaces` combina reflectancia 0,45 en el piso, un aumento de
+  `EnvironmentSpecularScale` y un ajuste de color de lluvia: es lo único de
+  "mojado" que se ve también en interiores oscuros, porque la reflectancia sola
+  depende del skybox.
+- **Clima.** Lluvia en dos capas (trazo y gotas cercanas), nieve con copos
+  grandes y hojas que giran; nueve celdas que siguen a la cámara, 3.000
+  partículas/s de presupuesto total y topes de emisor (320 en escritorio, 100 en
+  móvil). Las celdas prueban el techo con `RespectCanCollide` y solo se apagan
+  cuando hay geometría sólida encima.
+- **Niebla.** Sube `Atmosphere.Density`/`Haze` (0,58/4,5) o acerca `FogEnd` a 110
+  si el juego no tiene atmósfera, añade una capa de niebla local y una **estela**
+  en los pies de cada personaje que camina (jugador y demás personas), para que
+  la niebla parezca abrirse a su paso. No es niebla volumétrica: ni Roblox ni un
+  script de cliente permiten desplazar un volumen real de niebla ni colisionar
+  partículas, así que la estela es la aproximación honesta.
+
+La tarjeta tiene un botón **`Diagnose`**: imprime y muestra lo que cada efecto
+alcanzó en ese cliente (superficies escaneadas/texturizadas/reservadas por
+decals, reflectancias, emisores del clima, estelas, Terrain y cámara). Úsalo
+cuando un toggle parezca no hacer nada. Con la tarjeta apagada, un toggle hijo
+avisa en vez de cambiar la casilla sin efecto.
 
 Las imágenes se descargan bajo demanda; si la precarga local falla se intentan
 recursos de Roblox como respaldo. Una precarga exitosa no garantiza que se
 visualicen. La apariencia depende del juego, el executor y la calidad gráfica;
 no puede garantizarse en todos los juegos. No se ha probado visualmente ni
-medido el rendimiento en Roblox/Delta: tres viewports, partículas y sombras
-pueden ser costosos. Si notas lag, apaga `Floor reflections` o los efectos que
-no uses. Fuentes, licencias y límites: `docs/third-party/shaders/README.md`.
+medido el rendimiento en Roblox/Delta: texturas, partículas y sombras pueden ser
+costosas. Si notas lag, apaga los efectos que no uses o revisa el contador del
+menú. Fuentes, licencias y límites: `docs/third-party/shaders/README.md`.
 
 Los **keybinds** funcionan aunque el juego ya haya usado la tecla (MM2 liga
 varias): solo se bloquean al escribir en un `TextBox`, durante la captura de una
@@ -59,11 +66,11 @@ tecla o mientras el menú espera una tecla nueva. Al disparar un atajo con el
 menú cerrado aparece un aviso (`Shaders on`/`Shaders off`) que confirma que el
 atajo corrió.
 
-Para comparar, prueba primero `Shaders` con `Floor reflections` encendido y
-apagado en tercera persona sobre un piso sólido. Cierra el menú para comparar:
-al abrirlo se aplica un desenfoque de la interfaz, independiente de Shaders.
-Prueba Fog y Rain por separado, y Rain cerca de una salida. Espera a que se
-recorra el mapa y revisa los avisos.
+Para comparar, enciende `Shaders` y espera unos segundos: el barrido necesita
+recorrer el mapa. Pulsa `Diagnose` para ver qué encontró. Prueba `Fog` con
+alguien caminando cerca, y `Rain` cerca de un techo para comprobar que la lluvia
+se corta donde debe. Cierra el menú para comparar: al abrirlo se aplica un
+desenfoque de la interfaz, independiente de Shaders.
 
 ## Desarrollo
 

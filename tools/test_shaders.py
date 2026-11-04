@@ -200,7 +200,16 @@ function Instance.new(class)
                 if old then for i,child in ipairs(old.children) do if child==obj then table.remove(old.children,i);break end end end
                 store.Parent=value
                 if old and old.ChildRemoved then old.ChildRemoved:Fire(obj) end
-                if value then table.insert(value.children,obj); if value.ChildAdded then value.ChildAdded:Fire(obj) end end
+                if value then
+                    table.insert(value.children,obj)
+                    if value.ChildAdded then value.ChildAdded:Fire(obj) end
+                    -- The real engine reports any descendant parenting; the
+                    -- mock used to stay silent, so only the periodic full walk
+                    -- could ever notice a new part.
+                    if world and world.DescendantAdded then world.DescendantAdded:Fire(obj) end
+                elseif old and world and world.DescendantRemoving then
+                    world.DescendantRemoving:Fire(obj)
+                end
             else
                 local fail=Instance.failProperty[class]
                 if fail and fail[key] and (not fail.name or fail.name==obj.Name) then
@@ -294,30 +303,18 @@ BODY = r'''
 local Framework=assert(loadstring(FRAMEWORK_SOURCE))()
 local framework=Framework.init(host)
 local Shaders=assert(loadstring(SHADERS_SOURCE))()
-local reflectionStarts,reflectionStops,reflectionObservations=0,0,{}
-local reflectionReports,reflectionSessions={},{}
-local reflectionLibrary={fail=false}
-function reflectionLibrary:Start(report)
-    if self.fail then return nil,"simulated unavailable" end
-    reflectionStarts+=1
-    local active=true
-    local session={Observe=function(_,part) reflectionObservations[part]=true end, Stop=function()
-        if active then active=false;reflectionStops+=1 end
-    end}
-    table.insert(reflectionReports,report);table.insert(reflectionSessions,session)
-    return session
-end
-local libraries={shaderreflection=reflectionLibrary}
+local libraries={}
 local card=Shaders.init({framework=framework,host=host,libraries=libraries})
 assert(card==framework.Modules.Shaders)
 assert(not card.Options.Look and not card.Options.Weather and not card.Options.Advanced,
     "no old look or mode selector remains")
-local names={"Floor reflections","Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
+local names={"Surface textures","Glass reflections","Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}
 -- v177: one action entry ("Diagnose") follows the toggles; no presets return.
 assert(#card.OptionMetadata==#names+1)
 for i,name in ipairs(names) do assert(card.OptionMetadata[i].label==name and card.OptionMetadata[i].type=="toggle") end
 assert(card.OptionMetadata[#names+1].label=="Diagnose" and card.OptionMetadata[#names+1].type=="action")
-assert(card.Options["Floor reflections"].Value and card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
+assert(card.Options["Floor reflections"]==nil,"v178 removed the viewport mirror option")
+assert(card.Options["Surface textures"].Value and card.Options["Glass reflections"].Value)
 for _,name in ipairs({"Fog","Rain","Snow","Falling leaves","Dust motes","Wet surfaces","Water reflections"}) do
     assert(not card.Options[name].Value)
 end
@@ -377,18 +374,9 @@ assert(lighting.EnvironmentDiffuseScale==0.2 and lighting.EnvironmentSpecularSca
     "the baseline must not forcibly brighten the existing scene")
 assert(not byName(world,"ARMShaderWeather") and activeHandles("Shaders weather")==0)
 assert(activeHandles("Shaders surfaces")==1 and #spawned==0,"surface art is lazy, not downloaded at boot")
-assert(reflectionStarts==1 and reflectionStops==0)
-card.Options["Floor reflections"].Metadata.callback(false)
-assert(reflectionStops==1 and card.Enabled and renderable(color) and activeHandles("Shaders surfaces")==1)
-reflectionLibrary.fail=true
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==1 and card.Enabled and renderable(color)
-    and notifications[#notifications]:find("Floor reflection unavailable",1,true))
-card.Options["Floor reflections"].Metadata.callback(false)
-reflectionLibrary.fail=false
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==2 and reflectionStops==1)
-pass("warm baseline, floor reflection lifecycle and independent failure isolation")
+assert(not byName(world,"ARMShaderFloorReflection"),
+    "v178 must not create the viewport mirror container in the world")
+pass("warm baseline without the removed viewport mirror")
 
 -- v177: a toggle pressed while the Shaders card is off used to swap its box and
 -- do nothing, which reads as a broken effect. It must say why instead.
@@ -408,19 +396,17 @@ for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) d
     card.Options[name].Value=true
 end
 card.Options["Glass reflections"].Metadata.callback(true)
-assert(features.Shaders.status=="Floor · Surfaces · Glass · Wet · +4",
+assert(features.Shaders.status=="Surfaces · Glass · Wet · Water · +3",
     "status must count every enabled kind and cap at four: "..tostring(features.Shaders.status))
 for _,name in ipairs({"Wet surfaces","Water reflections","Fog","Rain","Snow"}) do
     card.Options[name].Value=false
 end
 card.Options["Glass reflections"].Metadata.callback(true)
-assert(features.Shaders.status=="Floor · Surfaces · Glass",
+assert(features.Shaders.status=="Surfaces · Glass",
     "disabling kinds must shrink the status line: "..tostring(features.Shaders.status))
-pass("status names floor/surface/glass/wet/water and caps with a remainder")
+pass("status names surface/glass/wet/water and caps with a remainder")
 
 frames(25)
-assert(reflectionObservations[floor] and reflectionObservations[wood],
-    "the world traversal must feed eligible map surfaces to the mirror library")
 assert(glass.Reflectance==0.5 and window.Reflectance==0.5 and anonymousPane.Reflectance==0.5,
     "transparent thin panes need not be literally named Window")
 assert(movingWindow.Reflectance==0.5 and not movingWindow.Anchored and movingWindow.CanCollide
@@ -471,7 +457,7 @@ assert(textureOf(floor)==originalFloorTexture and not originalFloorTexture.destr
 card.Options["Glass reflections"].Metadata.callback(true)
 card.Options["Wet surfaces"].Metadata.callback(true)
 frames(80)
-assert(glass.Reflectance==0.5 and floor.Reflectance==0.32)
+assert(glass.Reflectance==0.5 and floor.Reflectance==0.45,"v178 wet sheen covers the whole map")
 card.Options["Wet surfaces"].Metadata.callback(false)
 assert(floor.Reflectance==0 and glass.Reflectance==0.5 and textureOf(floor)==originalFloorTexture)
 window.Reflectance=0.02 -- the game writes after we enabled the glass option
@@ -482,6 +468,18 @@ card.Options["Glass reflections"].Metadata.callback(false)
 assert(glass.Reflectance==0.66 and window.Reflectance==0.02 and anonymousPane.Reflectance==0,
     "restore each latest game value when disabling glass")
 pass("independent glass/wet toggles restore only values still owned by the module")
+
+-- v178: wet has to change the whole map, not just the parts near the player:
+-- reflectance everywhere plus an owned specular boost and rain grade.
+card.Options["Wet surfaces"].Metadata.callback(true)
+frames(10)
+assert(lighting.EnvironmentSpecularScale>=0.95 and byName(lighting,"ARMShaderWet"),
+    "wet surfaces must affect the whole map: specular boost and a rain grade")
+card.Options["Wet surfaces"].Metadata.callback(false)
+frames(10)
+assert(lighting.EnvironmentSpecularScale==0.65 and not byName(lighting,"ARMShaderWet"),
+    "turning wet off must restore the baseline and remove its grade")
+pass("wet sheen is map-wide and restored cleanly")
 
 local addedDecal=Instance.new("Decal"); addedDecal.Parent=floor
 frames(60)
@@ -507,12 +505,10 @@ frames(5)
 assert(#spawned>0 and textureOf(delayed).ColorMapContent.Uri=="rbxassetid://9920484153")
 card.Options["Surface textures"].Metadata.callback(false)
 runAllSpawned(); frames(60)
-assert(not textureOf(delayed) and activeHandles("Shaders surfaces")==1,
-    "floor mirrors alone still need the incremental map walk")
-card.Options["Floor reflections"].Metadata.callback(false)
-assert(activeHandles("Shaders surfaces")==0)
+assert(not textureOf(delayed) and activeHandles("Shaders surfaces")==0,
+    "with glass and wet off too, no surface option keeps the map walk alive")
 local noScan=treeReads; frames(100)
-assert(treeReads==noScan,"no hierarchy traversal when all surface and floor options are off")
+assert(treeReads==noScan,"no hierarchy traversal when every surface option is off")
 pass("delayed assets do not revive disabled surfaces and idle costs no scan")
 
 -- Isolate one real map part so we can distinguish the two async generations.
@@ -682,15 +678,15 @@ pass("distant map surfaces, streaming, no camera eviction and incremental work")
 -- Explicit limits prevent huge worlds from creating an unbounded number of
 -- textures/reflectance records; exceeding a limit is reported to the user.
 local stress={}
-for i=1,610 do table.insert(stress,part("StressFloor"..i,Enum.Material.Concrete,Vector3.new(20,1,20))) end
-for i=1,1210 do
+for i=1,1610 do table.insert(stress,part("StressFloor"..i,Enum.Material.Concrete,Vector3.new(20,1,20))) end
+for i=1,2410 do
     local p=part("StressGlass"..i,Enum.Material.Glass,Vector3.new(10,10,1));p.Transparency=0.5
     table.insert(stress,p)
 end
 local noticesBefore=#notifications
 card.Options["Surface textures"].Metadata.callback(true)
 card.Options["Glass reflections"].Metadata.callback(true)
-frames(700,1/60);runAllSpawned();frames(700,1/60)
+frames(1400,1/60);runAllSpawned();frames(1400,1/60)
 local allTextures,allGlass=0,0
 for _,p in ipairs(world:GetChildren()) do
     if p:IsA("BasePart") then
@@ -700,7 +696,8 @@ for _,p in ipairs(world:GetChildren()) do
         if p.Reflectance==0.5 then allGlass+=1 end -- includes transparent plastic windows
     end
 end
-assert(allTextures==600 and allGlass==1200,"hard map budgets are enforced: "..allTextures.."/"..allGlass)
+assert(allTextures==1600 and allGlass>=2300 and allGlass<=2400,
+    "v178 map-wide caps are enforced: "..allTextures.."/"..allGlass)
 assert(#notifications==noticesBefore+1 and notifications[#notifications]:find("Surface limit",1,true))
 card.Options["Surface textures"].Metadata.callback(false)
 card.Options["Glass reflections"].Metadata.callback(false)
@@ -716,7 +713,7 @@ assert(#children(lighting,"Atmosphere")==0 and lighting.FogStart==5 and lighting
 assert(lighting.FogColor==Color3.fromRGB(176,188,196),"legacy fog keeps a readable grey-blue tint")
 local fogFolder=byName(world,"ARMShaderWeather")
 local fogCell=byName(fogFolder,"FogCell");local mist=byName(fogCell,"Fog mist")
-assert(mist and mist.Rate==14 and mist.Size.Value==30 and mist.Transparency.Value==0.80
+assert(mist and mist.Rate==18 and mist.Size.Value==34 and mist.Transparency.Value==0.82
     and activeHandles("Shaders weather")==1,"local mist must be visible, not a 0,86 ghost")
 local beforeFogRays=rayCount;frames(5)
 assert(mist.Enabled and rayCount==beforeFogRays,"fog particles work independently without roof scans")
@@ -754,6 +751,25 @@ assert(lighting.FogEnd==750,"disable preserves a newer write even if its signal 
 propertyEventsDeferred=false
 lighting.FogEnd=1400
 pass("fog selects FogEnd or a game Atmosphere, reasserts and restores their latest values")
+
+-- v178: fog must part around walking characters, local player included.
+card.Options.Fog.Metadata.callback(true)
+local walkRoot=part("HumanoidRootPart",Enum.Material.Plastic,Vector3.new(2,2,1),localCharacter)
+walkRoot.Position=Vector3.new(0,3,0)
+frames(40)
+local wakePart=byName(byName(world,"ARMShaderWeather"),"FogWake")
+assert(wakePart,"a character in fog must get its own wake emitter")
+local wakeEmitter=byName(wakePart,"Fog wake")
+assert(wakeEmitter and wakeEmitter.Rate==0,"the wake costs nothing while the character is still")
+walkRoot.Position=Vector3.new(4,3,0);frames(20)
+assert((wakeEmitter.Emitted or 0)>0,"walking must displace the fog")
+local emittedAfterWalk=wakeEmitter.Emitted
+frames(30)
+assert(wakeEmitter.Emitted==emittedAfterWalk,"a still character must not keep emitting")
+assert(wakePart.Position.X==4,"the wake follows the character, not the camera")
+card.Options.Fog.Metadata.callback(false)
+assert(not byName(world,"ARMShaderWeather"),"fog wakes are cleaned up with the weather folder")
+pass("fog leaves a wake behind every walking character and stops when they stop")
 
 card.Options["Water reflections"].Metadata.callback(true)
 assert(terrain.WaterReflectance==0.75,"v177: water sheen must be visible, not a 0.03 nudge")
@@ -867,8 +883,19 @@ local all=byName(world,"ARMShaderWeather")
 assert(#weatherCells(all)==9 and #children(all,"Part")==11 and #children(byName(all,"DustCell"),"ParticleEmitter")==1)
 local totalRate=0
 for _,p in ipairs(children(all,"Part")) do for _,e in ipairs(children(p,"ParticleEmitter")) do totalRate+=e.Rate end end
-assert(totalRate==2604,"2160 rain + 306 snow + 108 leaves + 30 dust particles/s, plus manual splashes")
+assert(totalRate==2658,"2160 rain + 306 snow + 162 leaves + 30 dust particles/s, plus manual splashes")
 assert(totalRate<=3000,"the shared weather budget must hold whatever the toggles ask for")
+-- v178: leaves must tumble, not sit still like a sticker.
+local leaf=byName(weatherCells(all)[1],"Falling leaves")
+assert(leaf and leaf.Rate==18 and leaf.Size.Value==1.9 and leaf.Lifetime.Min==9
+    and leaf.RotSpeed and leaf.RotSpeed.Min<=-240 and leaf.Rotation
+    and leaf.LightEmission>=0.4,"leaves need spin, size and light to read as leaves")
+-- v178: emitters are visible from creation instead of waiting for a sky sample.
+for _,p2 in ipairs(weatherCells(all)) do
+    for _,e in ipairs(emittersOf(p2)) do
+        if not p2.applied then assert(e.Enabled,"weather must start visible") end
+    end
+end
 runAllSpawned();frames(35)
 local dust=byName(byName(all,"DustCell"),"Dust motes")
 assert(dust.Enabled and dust.Texture=="custom://shaderSnowTexture" and dust.Rate==30 and dust.Size.Value==0.55,
@@ -1014,39 +1041,14 @@ features.Shaders.toggle(false);runAllSpawned()
 assert(lighting.ExposureCompensation==4.5)
 pass("high original exposure is never reduced by the baseline")
 
--- Runtime projection/container failures stop the underlying library session.
--- Retry once, avoid an infinite crash loop, and let an explicit toggle retry.
-card.Options["Floor reflections"].Metadata.callback(true)
-features.Shaders.toggle(true)
-local initialStarts=reflectionStarts
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-flushDeferred()
-assert(reflectionStarts==initialStarts+1 and card.Enabled,"a stopped reflection should get one fresh session")
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-flushDeferred()
-assert(reflectionStarts==initialStarts+1,"persistent failures must not create an endless restart loop")
-card.Options["Floor reflections"].Metadata.callback(false)
-card.Options["Floor reflections"].Metadata.callback(true)
-assert(reflectionStarts==initialStarts+2,"the user can retry after switching the option off and on")
-reflectionSessions[#reflectionSessions]:Stop()
-reflectionReports[#reflectionReports]("Floor reflection unavailable on this client",true)
-card.Options["Floor reflections"].Metadata.callback(false)
-flushDeferred()
-assert(reflectionStarts==initialStarts+2,"switching off cancels an already queued automatic retry")
-features.Shaders.toggle(false);runAllSpawned()
-pass("a stopped floor session is retried once and remains manually recoverable")
-
 -- A single unsupported post effect used to cancel the entire Shaders card.
-card.Options["Floor reflections"].Metadata.callback(true)
 Instance.fail.BloomEffect=true
-local startsBeforeFailure=reflectionStarts
 local ok=pcall(features.Shaders.toggle,true)
 assert(ok and card.Enabled and renderable(byName(lighting,"ARMShaderColor"))
     and renderable(byName(lighting,"ARMShaderRays")),"a missing Bloom must not stop other post effects")
-assert(not byName(lighting,"ARMShaderBloom") and reflectionStarts>startsBeforeFailure,
-    "floor reflection and other options must start even without Bloom")
+card.Options["Surface textures"].Metadata.callback(true)
+assert(not byName(lighting,"ARMShaderBloom") and activeHandles("Shaders surfaces")==1,
+    "surface detail must start even without Bloom")
 card.Options.Rain.Metadata.callback(true);frames(35)
 assert(byName(world,"ARMShaderWeather"),"weather must remain independent of post effects")
 Instance.fail.BloomEffect=nil
@@ -1060,21 +1062,19 @@ pass("a missing post effect is isolated; re-enable and destroy cleanly")
 -- Saved toggle values may be delivered synchronously while the UI is built.
 local fallbackHost=table.clone(host);fallbackHost.state={}
 function fallbackHost.addToggleOption(_,name,default,callback)
-    callback(if name=="Fog" then true elseif name=="Surface textures" or name=="Floor reflections" then false else default)
+    callback(if name=="Fog" then true elseif name=="Surface textures" then false else default)
     return {callback=callback}
 end
 local savedAtmosphere=Instance.new("Atmosphere");savedAtmosphere.Density=0.23;savedAtmosphere.Parent=lighting
 local fallbackFramework=Framework.init(fallbackHost)
 local saved=Shaders.init({framework=fallbackFramework,host=fallbackHost,libraries=libraries})
 assert(saved.Options.Fog.Value and not saved.Options["Surface textures"].Value
-    and not saved.Options["Floor reflections"].Value and not saved.Options.Look)
-local startsBeforeRestore=reflectionStarts
+    and saved.Options["Floor reflections"]==nil and not saved.Options.Look)
 local restoreNotifications=#notifications
 features.Shaders.toggle(true)
 assert(#notifications==restoreNotifications,
     "v177: replaying saved toggle values must not toast about a disabled card")
-assert(savedAtmosphere.Density==0.58 and reflectionStarts==startsBeforeRestore,
-    "a saved OFF floor reflection must not start on module enable")
+assert(savedAtmosphere.Density==0.58,"a saved ON fog must apply on module enable")
 Shaders.destroy();flushDeferred();assert(savedAtmosphere.Density==0.23)
 pass("synchronous saved-toggle restoration is safe and cannot restore removed looks")
 '''

@@ -6,36 +6,28 @@ repositorios externos completos. La disponibilidad y apariencia en Delta
 dependen del executor, la calidad gráfica y el juego; las pruebas de este
 repositorio no representan imágenes ni FPS reales.
 
-## Reflejos locales en pisos
+## Reflejos en pisos (retirados en v178)
+
+v178 eliminó el espejo por `ViewportFrame`. Solo cubría el piso bajo el jugador,
+copiaba una escena parcial (54 partes principales y 32 por espejo adicional) y
+era la parte más cara de la tarjeta; el usuario pidió cobertura de todo el mapa o
+quitarlo. Los siguientes recursos se investigaron durante las versiones 172-177
+y ya **no** forman parte del código:
 
 - [ViewportStencil, commit `6130e70df7e732666a96dd28c59aff11d75988b6`](https://github.com/sebasvcx/ViewportStencil/tree/6130e70df7e732666a96dd28c59aff11d75988b6),
   copyright © 2026 Aziorux (Sebas_Devv), [MIT](LICENSE-ViewportStencil-MIT.txt).
-  `src/libraries/ShaderReflection.lua` adapta el cálculo de `Projection.lua`
-  para orientar la cámara de un `ViewportFrame` fuera del eje, con límite de
-  FOV y `CFrame` escalado. También sigue el montaje documentado del `SurfaceGui`
-  en PlayerGui con `Adornee` a una parte invisible. El seguimiento limitado de
-  actores/mapa, la reflexión geométrica y la limpieza son propios del menú.
-- La proyección de ViewportStencil se basa en
+  De aquí salió la base de proyección fuera de eje que usaba
+  `src/libraries/ShaderReflection.lua` (archivo eliminado).
+- La proyección de ViewportStencil se basaba en
   [EgoMoose/rbx-viewport-window, commit `d62f04651afa8f56459bdb42efa69d8cd65e04b0`](https://github.com/EgoMoose/rbx-viewport-window/tree/d62f04651afa8f56459bdb42efa69d8cd65e04b0),
-  copyright © 2025 EgoMoose, [MIT](LICENSE-EgoMoose-MIT.txt). Se incluyen ambos
-  avisos de licencia porque se adapta el código derivado.
+  copyright © 2025 EgoMoose, [MIT](LICENSE-EgoMoose-MIT.txt).
 - [Storm99999/Reflections, commit `4b317526e8d00750c4c7c5e3db830ad95f1d1c47`](https://github.com/Storm99999/Reflections/tree/4b317526e8d00750c4c7c5e3db830ad95f1d1c47)
-  (MIT) se inspeccionó, pero su enfoque con suelo translúcido no se incorporó:
-  no se quiere alterar la transparencia ni la física del mapa.
-- [ViewportFrame de Roblox](https://create.roblox.com/docs/ui/viewport-frames)
-  solo dibuja la escena copiada y tiene restricciones de luces, sombras,
-  materiales y posprocesado. Las prendas clásicas requieren un Model/Humanoid
-  como en este [ejemplo de avatares](https://devforum.roblox.com/t/how-to-render-a-character-within-a-viewportframe/524239);
-  la copia limitada no garantiza fidelidad de ropa en capas o mallas asimétricas.
-  No es SSR ni render de la escena original: se dibuja el piso cercano y hasta
-  dos planos adicionales. Si el piso es grande, uno de esos planos se reserva
-  para una capa amplia de ese mismo piso; solo queda uno para otro piso. Las
-  curvas, mallas irregulares, Terrain y objetos omitidos pueden producir bordes o
-  faltar. Desde v175 la búsqueda bajo el personaje puede saltar obstáculos
-  invisibles con hasta cuatro raycasts; si no hay root usa la cámara con mayor
-  alcance, y el piso primario puede ser una plataforma móvil. Los espejos
-  adicionales siguen requiriendo un piso primario válido bajo el foco. El
-  resultado y la superposición de capas no se han comprobado en Delta.
+  (MIT) se inspeccionó y no se incorporó: altera transparencia y física del mapa.
+- [ViewportFrame de Roblox](https://create.roblox.com/docs/ui/viewport-frames):
+  solo dibuja la escena copiada y no es SSR ni la escena real.
+
+Los avisos MIT se conservan porque el código derivado existió en este
+repositorio hasta v177 y sigue en el historial.
 
 ## Superficies: cinco imágenes de color CC0
 
@@ -76,8 +68,9 @@ textura. `Glass reflections` y `Wet surfaces` usan `Reflectance` en ventanas y
 suelos compatibles: es brillo ambiental, no refleja personajes. Glass incluye
 paneles transparentes finos y vidrio móvil fuera de personajes/herramientas,
 sin modificar su física; Roblox puede ignorar la reflectancia en materiales o
-mallas. `Floor reflections` usa los viewports locales descritos arriba. La
-opción de agua actúa en `Terrain.WaterReflectance`.
+mallas. `Wet surfaces` además sube `EnvironmentSpecularScale` y aplica un ajuste
+de color de lluvia, que es lo único visible en interiores oscuros. La opción de
+agua actúa en `Terrain.WaterReflectance`.
 
 Mientras se descarga cada imagen CC0 se intenta el ColorMap del material
 correspondiente publicado en la tabla oficial de
@@ -188,25 +181,19 @@ reflectancia y 600 pisos candidatos para espejos; se avisa si se llega a un
 límite. Los mapas más grandes pueden tener piezas sin cambios y la primera
 pasada tarda según su tamaño. No se ejecuta `GetDescendants()` del mapa por frame.
 
-El plano principal cubre hasta 64 × 64 studs bajo el personaje. Para un piso
-mayor, uno de los dos planos adicionales cubre hasta 256 × 256 studs de ese piso;
-el otro puede mostrar otro piso compatible. En un piso pequeño pueden mostrarse
-dos pisos adicionales. Si no se consigue reservar la capa amplia, el plano
-principal vuelve a cubrir hasta 256 × 256, con menos detalle. Se copian hasta
-54 partes en el viewport principal y 32 en cada adicional (118 como máximo).
-La selección revisa hasta 32 candidatos por tick. El escaneo cercano de escena
-pide hasta 100 piezas cada 2 s; el presupuesto compartido es de tres creaciones
-de partes por tick. Las poses se actualizan hasta 30/15 Hz en PC y 20/10 Hz en
-móvil (principal/adicionales), solo cuando un viewport relevante está visible.
-El lado efectivo máximo del render principal es 1.024 px en PC o 768 en móvil;
-los adicionales son 512/384. El límite tiene en cuenta el escalado fuera de eje.
-Los viewports no comparten escena ni reflejan todos los objetos del mapa. Un
-piso grande sin otros espejos consume ahora dos viewports, no uno: puede costar
-más GPU aunque el máximo total no aumentó.
+En v178 no hay viewports: el coste de la tarjeta está en las instancias
+retenidas. El barrido recorre el mapa con 4 trabajos y 20 nodos por frame, y las
+piezas ya conocidas se revisan en un ciclo ligero de 2 s (8 por tick). El barrido
+completo de seguridad pasó de 2 s a 30 s, porque en un mapa de 124.235 partes
+medido en MM2 repetirlo cada 2 s era un impuesto permanente de CPU. Los topes
+son 1.600 texturas y 2.400 reflectancias en escritorio (900/1.200 en móvil), y al
+alcanzarlos se avisa una sola vez.
 
-Fog, Rain, Snow, hojas y polvo suman hasta 39 emisores y 2.519 partículas/s de
-escritorio (2.160 lluvia en dos capas, 306 nieve, 27 hojas, 12 polvo y 14
+Fog, Rain, Snow, hojas y polvo suman hasta 39 emisores y 2.658 partículas/s de
+escritorio (2.160 lluvia en dos capas, 306 nieve, 162 hojas, 30 polvo y 18
 niebla), más hasta dos salpicaduras por muestra abierta: unas 13/s como máximo.
+La niebla añade una estela de emisión manual (Rate 0) por personaje que camina,
+hasta 8, que solo emite cuando se mueve.
 En móvil se crea directamente el perfil reducido (≈1.052 partículas/s) porque un
 emisor está limitado a 100/s. El tope de `Rate` por emisor es 320 en escritorio
 y 100 en móvil, y la suma total se recorta a `MAX_WEATHER_RATE = 3000` escalando

@@ -11,8 +11,9 @@ comprobable.
 - El usuario reporta que `Rain`, `Snow`, `Fog`, reflejos o texturas «no se ven»
   o «se ven muy débiles».
 - Un efecto del menú funciona con clic pero no con keybind (sobre todo en MM2).
-- Hay que tocar `src/games/universal/Render/Shaders.lua`,
-  `src/libraries/ShaderReflection.lua` o el despacho de atajos de `src/Wurst.lua`.
+- Hay que tocar `src/games/universal/Render/Shaders.lua` o el despacho de atajos
+  de `src/Wurst.lua`. Desde v178 ya no existe `src/libraries/ShaderReflection.lua`
+  (el espejo por `ViewportFrame` se retiró): la cobertura es a todo el mapa.
 
 ## Entradas
 
