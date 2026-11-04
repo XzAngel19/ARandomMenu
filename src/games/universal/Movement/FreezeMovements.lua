@@ -663,6 +663,26 @@ function Module.init(context: Runtime): any
     )
     local motionRows: {any} = {}
     local lockRows: {any} = {}
+    -- addToggleOption returns the button inside the row, addNumberOption
+    -- returns the row itself. Resolving once here is what keeps a mode switch
+    -- from hiding the whole options container.
+    local function rowFor(handle: any): any
+        if not handle then
+            return nil
+        end
+        local name: string = typeof(handle) == "Instance" and handle.Name or ""
+        if string.sub(name, 1, 7) == "Option_" or string.sub(name, 1, 8) == "Section_" then
+            return handle
+        end
+        return handle.Parent or handle
+    end
+    local function registerRow(list: {any}, handle: any): ()
+        local row: any = rowFor(handle)
+        if row == nil or row == FreezeFeature.options then
+            return
+        end
+        table.insert(list, row)
+    end
     local function refreshOptionGroups(): ()
         local motion: boolean = freezeSettings.mode == MOTION_MODE
         for _, row: any in ipairs(motionRows) do
@@ -690,48 +710,46 @@ function Module.init(context: Runtime): any
     end)
     -- ---- Position Lock rows -------------------------------------------------
     local lockHeading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Position Lock settings")
-    if lockHeading then table.insert(lockRows, lockHeading) end
+    registerRow(lockRows, lockHeading)
     local lockRotation: any = addToggleOption(FreezeFeature, "Lock rotation", true, function(value: boolean): ()
         freezeSettings.lockRotation = value
         reapply()
     end, "Also stop the body from spinning or being spun by the game. OFF keeps the position and lets the character turn.")
-    if lockRotation then table.insert(lockRows, lockRotation.Parent) end
+    registerRow(lockRows, lockRotation)
     local keepGravity: any = addToggleOption(FreezeFeature, "Keep gravity", false, function(value: boolean): ()
         freezeSettings.keepGravity = value
         reapply()
     end, "Do not anchor the body: it can still fall and land, but pushes and knockback are erased every frame.")
-    if keepGravity then table.insert(lockRows, keepGravity.Parent) end
+    registerRow(lockRows, keepGravity)
     local returnRow: any = addNumberOption(FreezeFeature, "Return if pushed", 0, 0, 40, function(value: number): ()
         freezeSettings.returnDistance = value
     end, "Studs of drift allowed before the character is snapped back. 0 disables the return.")
-    if returnRow then table.insert(lockRows, returnRow.Parent or returnRow) end
+    registerRow(lockRows, returnRow)
     -- ---- Motion rows --------------------------------------------------------
     -- The section widget renders its own caption and divider, so the card only
     -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
-    if heading then
-        table.insert(motionRows, heading)
-    end
+    registerRow(motionRows, heading)
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
         freezeSettings.emotes = value
         if not value then clearStickyEmoteTracks() end
     end, "Keep emotes playing while moving, Roblox's own and the ones a game ships itself. Takes precedence over the locked clip.")
-    if emotes then table.insert(motionRows, emotes.Parent) end
+    registerRow(motionRows, emotes)
     local anyEmote: any = addToggleOption(FreezeFeature, "Any emote", true, function(value: boolean): ()
         freezeSettings.anyEmote = value
         if not value then clearStickyEmoteTracks() end
     end, "Hold a custom emote even when its name and asset say nothing: a looped clip started while standing still counts as one.")
-    if anyEmote then table.insert(motionRows, anyEmote.Parent) end
+    registerRow(motionRows, anyEmote)
     local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
         freezeSettings.animation = value
         clearMotionTrack()
     end, "Keep the current clip looping through jumps and other movement. Does not freeze a single frame.")
-    if animation then table.insert(motionRows, animation.Parent) end
+    registerRow(motionRows, animation)
     local anyAnimation: any = addToggleOption(FreezeFeature, "Any animation", true, function(value: boolean): ()
         freezeSettings.anyAnimation = value
         clearMotionTrack()
     end, "Freeze a game's own locomotion clip too, not only Roblox's walk/run/idle set.")
-    if anyAnimation then table.insert(motionRows, anyAnimation.Parent) end
+    registerRow(motionRows, anyAnimation)
     refreshOptionGroups()
     activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true

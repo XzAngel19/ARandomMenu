@@ -578,9 +578,14 @@ function Module.init(context: any): any
     -- text alignment changes with it (v139.1).
     local hudSide: string = hudOnLeft() and "left" or "right"
 
+    -- The overlay is opted into, not implied by the menu being open. Before
+    -- v181 "Show" only meant "keep it after closing", so the list appeared on
+    -- every open without any switch behind it.
+    -- Only the switch in Settings -> UI -> HackList -> Show. A stale
+    -- "ClickGUI.ShowHackList" key from old builds used to keep the overlay on
+    -- with nothing visibly enabled, so it no longer counts.
     local hudAlways: boolean = configData.states["HackList.Show"] == true
-        or configData.states["ClickGUI.ShowHackList"] == true
-    local hudVisible: boolean = hudAlways or state.visible == true
+    local hudVisible: boolean = hudAlways == true
 
     local function refreshHudList(): ()
         if not hudVisible then
@@ -763,12 +768,13 @@ function Module.init(context: any): any
     Furniture.SetHackListVisible = setHackListVisible
 
     local function applyHudVisibility(): ()
-        setHackListVisible(hudAlways or state.visible == true)
+        setHackListVisible(hudAlways == true)
     end
     if type(state.addMenuVisibilityListener) == "function" then
-        state.addMenuVisibilityListener(function(visible: boolean): ()
+        -- Opening or closing the menu never turns the overlay on by itself.
+        state.addMenuVisibilityListener(function(_visible: boolean): ()
             if not hudAlways then
-                setHackListVisible(visible == true)
+                setHackListVisible(false)
             end
         end)
     end

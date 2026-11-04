@@ -331,18 +331,30 @@ function Module.init(context: any): any
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
+        local showStored: boolean = configData.states["HackList.Show"] == true
         addToggleOption(
             panel,
             "Show",
-            false,
+            showStored,
             function(value: boolean): ()
                 state.hudListAlways = value
+                -- v181: one real switch behind the overlay. It is saved, so the
+                -- list no longer shows up on an open menu with nothing enabled.
+                configData.states["HackList.Show"] = value
+                queueConfigSave()
                 if state.hudList and type(state.hudList.SetAlways) == "function" then
                     state.hudList.SetAlways(value)
                 end
+                if state.hudList and type(state.hudList.SetVisible) == "function" then
+                    state.hudList.SetVisible(value)
+                end
             end,
-            "Keep the hack list on screen even while the menu is closed"
+            "Show the hack list. OFF keeps it off the screen, even with the menu open."
         )
+        state.hudListAlways = showStored
+        if state.hudList and type(state.hudList.SetAlways) == "function" then
+            state.hudList.SetAlways(showStored)
+        end
         local modes: {string} = {"Auto", "Count", "Hidden"}
         addCycleOption(
             panel,
@@ -2040,8 +2052,11 @@ function Module.init(context: any): any
     end
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
-        uiSettingsValues["Opacity"] = value
-        windows.SetOpacity(value)
+        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 0.85)
+        uiSettingsValues["Opacity"] = wanted
+        -- The whole window fades together (frame, header, rows), so the slider
+        -- behaves like one opacity instead of only thinning the panel frame.
+        windows.SetOpacity(wanted)
     end)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
@@ -2063,19 +2078,44 @@ function Module.init(context: any): any
     local themeShape: any = ThemeEngine and ThemeEngine.shape
     local initialScale: number = themeShape and tonumber(themeShape.scale) or 1
     uiSettingsValues["Menu scale"] = initialScale
+    -- Dragging this used to run a full relayout on every single step, so the
+    -- menu flickered and the windows piled on top of each other mid-drag.
+    -- v181: the UIScale follows the slider immediately, and the reflow (reclamp
+    -- every window into the new logical viewport) runs once the drag settles.
+    local scaleReflowToken: number = 0
     addNumberOption(uiPanel, "Menu scale", initialScale, 0.7, 1.3,
         function(value: number): ()
             local shape: any = ThemeEngine and ThemeEngine.shape
             if not shape then
                 return
             end
-            shape.scale = value
-            uiSettingsValues["Menu scale"] = value
-            configData.values["UI.MenuScale"] = value
+            local wanted: number = math.clamp(tonumber(value) or 1, 0.7, 1.3)
+            shape.scale = wanted
+            uiSettingsValues["Menu scale"] = wanted
+            configData.values["UI.MenuScale"] = wanted
             queueConfigSave()
-            if type(state.refreshLayout) == "function" then
-                state.refreshLayout(true)
+            if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                state.clickGui.ApplyScale()
             end
+            scaleReflowToken += 1
+            local token: number = scaleReflowToken
+            task.delay(0.15, function(): ()
+                if token ~= scaleReflowToken then
+                    return
+                end
+                if type(state.refreshLayout) == "function" then
+                    state.refreshLayout(true)
+                end
+                local windowsManager: any = state.windows
+                if windowsManager then
+                    if type(windowsManager.Reclamp) == "function" then
+                        pcall(windowsManager.Reclamp)
+                    end
+                    if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                        state.clickGui.ApplyScale()
+                    end
+                end
+            end)
         end)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()

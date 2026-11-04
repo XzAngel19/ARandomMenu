@@ -1,5 +1,5 @@
 return {
-    stamp = "v180-20261104-restored-prediction-and-learning",
+    stamp = "v181-20261104-gui-fixes-and-six-emotes",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -10677,15 +10677,13 @@ function Module.init(runtime: any): any
         looped: boolean?,
     }
 
-    -- Only the five emotes that MM2 actually sells. The default avatar emotes
-    -- (wave, cheer, laugh, point, dance1-3) are not shop entries: writing them
-    -- into ProfileData.Emotes.Owned only polluted the profile and the emote
-    -- window, so they are never granted. Confirmed against the TestingStuff
-    -- place capture: Database.Sync.Emotes marks exactly these ids with a
-    -- numeric Price (ninja 650, zen 800, dab 700, floss 750, zombie NotForSale
-    -- but still a shop item), while the avatar set carries Price "NotForSale"
-    -- and no AnimationID.
-    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie" }
+    -- The six emotes MM2 sells or hands out from crates. The default avatar
+    -- emotes (wave, cheer, laugh, point, dance1-3) are not shop entries and are
+    -- never granted. Confirmed against the TestingStuff place capture
+    -- (place, source.rbxlx -> Database.Sync.Emotes): ninja 650, zen 800 (Rare),
+    -- dab 700, floss 750 (Rare), zombie and headless NotForSale but still real
+    -- catalog entries with their own AnimationID.
+    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie", "headless" }
 
     -- Fallback catalog from the TestingStuff client snapshot; the live Sync
     -- module wins when it is available.
@@ -10695,10 +10693,11 @@ function Module.init(runtime: any): any
         { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
         { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
         { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
+        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
     }
 
-    -- The cycle lists the same five emotes, in the order a player expects.
-    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie" }
+    -- The cycle lists the same six emotes, in the order a player expects.
+    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" }
 
     local LABEL_TO_EMOTE_ID: {[string]: string} = {
         ["Ninja Rest"] = "ninja",
@@ -10706,6 +10705,7 @@ function Module.init(runtime: any): any
         ["Dab"] = "dab",
         ["Floss"] = "floss",
         ["Zombie"] = "zombie",
+        ["Headless"] = "headless",
     }
 
     local selectedEmoteLabel: string = "Floss"
@@ -10785,10 +10785,45 @@ function Module.init(runtime: any): any
         return list, byId
     end
 
+    -- The emote window the game itself builds: PlayerGui.<x>.Game.Emotes. The
+    -- client script publishes it as _G.EmoteFrame and on the module as
+    -- EmoteModule.EmoteGUI.
+    local function emoteGui(): any
+        local found: any = nil
+        pcall(function(): ()
+            local globals: any = _G :: any
+            if globals.EmoteFrame then
+                found = globals.EmoteFrame
+                return
+            end
+            local players: any = game:GetService("Players")
+            local player: any = players and players.LocalPlayer
+            local playerGui: any = player and player:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then
+                return
+            end
+            for _, child: any in ipairs(playerGui:GetChildren()) do
+                local gameFolder: any = child:FindFirstChild("Game")
+                local emotesFrame: any = gameFolder and gameFolder:FindFirstChild("Emotes")
+                if emotesFrame and emotesFrame:FindFirstChild("EmotePages") then
+                    found = emotesFrame
+                    return
+                end
+            end
+        end)
+        return found
+    end
+
     -- Rebuild the game's own emote window from ProfileData, exactly like the
-    -- client does after InventoryDataChanged. This is what makes the emotes
-    -- usable without reopening the game UI.
-    local function refreshEmoteWindow(owned: {string}): ()
+    -- client does after InventoryDataChanged: EmoteModule.GenerateEmotes(owned,
+    -- gui). GenerateEmotes paginates six per page and re-clones its own
+    -- Page/Container/Emote templates, so every granted id shows up with its
+    -- icon, name, hotkey and a click handler that fires Remotes.Misc.PlayEmote.
+    local function refreshEmoteWindow(owned: {string}): boolean
+        if #owned <= 0 then
+            return false
+        end
+        local rebuilt: boolean = false
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
             local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
@@ -10800,18 +10835,26 @@ function Module.init(runtime: any): any
             if not okEm or type(emoteModule) ~= "table" then
                 return
             end
-            local gui: any = emoteModule.EmoteGUI
-                or (type(getgenv) == "function" and (getgenv() :: any).EmoteFrame)
-                or nil
-            if gui and type(emoteModule.GenerateEmotes) == "function" then
-                pcall(emoteModule.GenerateEmotes, owned, gui)
+            local gui: any = emoteModule.EmoteGUI or emoteGui()
+            if gui == nil then
+                return
             end
+            if type(emoteModule.GenerateEmotes) ~= "function" then
+                return
+            end
+            emoteModule.EmoteGUI = gui
+            local ok: boolean = pcall(emoteModule.GenerateEmotes, owned, gui)
+            rebuilt = ok
         end)
+        return rebuilt
     end
 
-    -- Write the five shop ids into the client's ProfileData and wake the
-    -- inventory UI. Neither a local table nor a BindableEvent proves
-    -- server-side ownership: the server still decides what actually plays.
+    -- Write the six shop ids into the client's ProfileData and wake the
+    -- inventory UI. The ProfileData module returns the live profile table the
+    -- emote window reads, so appending to Emotes.Owned is what makes the
+    -- window show them; the InventoryDataChanged BindableEvent is then fired
+    -- exactly like the client does, which rebuilds the window from ProfileData.
+    -- Ownership stays local: the server still owns the real list.
     local function grantShopEmotes(showNotification: boolean?): number
         local list: {EmoteDef} = collectEmotes()
         local granted: number = 0
@@ -10954,7 +10997,7 @@ function Module.init(runtime: any): any
         return playedFallback
     end
 
-    -- One click: grant the five shop emotes and rebuild the game's window.
+    -- One click: grant the six shop emotes and rebuild the game's window.
     local function runGetAllEmotes(): ()
         local granted: number = grantShopEmotes(true)
         if GetAllEmotesFeature then
@@ -10963,7 +11006,7 @@ function Module.init(runtime: any): any
             )
         end
         if granted == 0 and type(notify) == "function" then
-            pcall(notify, "Get All Emotes: the shop emotes were already in the local profile.")
+            pcall(notify, "Get All Emotes: the six shop emotes were already in the local profile.")
         end
     end
 
@@ -10990,9 +11033,9 @@ function Module.init(runtime: any): any
 
     GetAllEmotesFeature = createUniversalFeature(
         "Get All Emotes",
-        "Button: writes the five MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
-            .. "Zombie) into the local emote profile and rebuilds the emote "
-            .. "window. Server ownership is not guaranteed.",
+        "Button: writes the six MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
+            .. "Zombie, Headless) into the live emote profile and rebuilds the "
+            .. "game's emote window. Server ownership is not guaranteed.",
         11,
         function(): ()
             runGetAllEmotes()
@@ -32042,6 +32085,26 @@ function Module.init(context: Runtime): any
     )
     local motionRows: {any} = {}
     local lockRows: {any} = {}
+    -- addToggleOption returns the button inside the row, addNumberOption
+    -- returns the row itself. Resolving once here is what keeps a mode switch
+    -- from hiding the whole options container.
+    local function rowFor(handle: any): any
+        if not handle then
+            return nil
+        end
+        local name: string = typeof(handle) == "Instance" and handle.Name or ""
+        if string.sub(name, 1, 7) == "Option_" or string.sub(name, 1, 8) == "Section_" then
+            return handle
+        end
+        return handle.Parent or handle
+    end
+    local function registerRow(list: {any}, handle: any): ()
+        local row: any = rowFor(handle)
+        if row == nil or row == FreezeFeature.options then
+            return
+        end
+        table.insert(list, row)
+    end
     local function refreshOptionGroups(): ()
         local motion: boolean = freezeSettings.mode == MOTION_MODE
         for _, row: any in ipairs(motionRows) do
@@ -32069,48 +32132,46 @@ function Module.init(context: Runtime): any
     end)
     -- ---- Position Lock rows -------------------------------------------------
     local lockHeading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Position Lock settings")
-    if lockHeading then table.insert(lockRows, lockHeading) end
+    registerRow(lockRows, lockHeading)
     local lockRotation: any = addToggleOption(FreezeFeature, "Lock rotation", true, function(value: boolean): ()
         freezeSettings.lockRotation = value
         reapply()
     end, "Also stop the body from spinning or being spun by the game. OFF keeps the position and lets the character turn.")
-    if lockRotation then table.insert(lockRows, lockRotation.Parent) end
+    registerRow(lockRows, lockRotation)
     local keepGravity: any = addToggleOption(FreezeFeature, "Keep gravity", false, function(value: boolean): ()
         freezeSettings.keepGravity = value
         reapply()
     end, "Do not anchor the body: it can still fall and land, but pushes and knockback are erased every frame.")
-    if keepGravity then table.insert(lockRows, keepGravity.Parent) end
+    registerRow(lockRows, keepGravity)
     local returnRow: any = addNumberOption(FreezeFeature, "Return if pushed", 0, 0, 40, function(value: number): ()
         freezeSettings.returnDistance = value
     end, "Studs of drift allowed before the character is snapped back. 0 disables the return.")
-    if returnRow then table.insert(lockRows, returnRow.Parent or returnRow) end
+    registerRow(lockRows, returnRow)
     -- ---- Motion rows --------------------------------------------------------
     -- The section widget renders its own caption and divider, so the card only
     -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
-    if heading then
-        table.insert(motionRows, heading)
-    end
+    registerRow(motionRows, heading)
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
         freezeSettings.emotes = value
         if not value then clearStickyEmoteTracks() end
     end, "Keep emotes playing while moving, Roblox's own and the ones a game ships itself. Takes precedence over the locked clip.")
-    if emotes then table.insert(motionRows, emotes.Parent) end
+    registerRow(motionRows, emotes)
     local anyEmote: any = addToggleOption(FreezeFeature, "Any emote", true, function(value: boolean): ()
         freezeSettings.anyEmote = value
         if not value then clearStickyEmoteTracks() end
     end, "Hold a custom emote even when its name and asset say nothing: a looped clip started while standing still counts as one.")
-    if anyEmote then table.insert(motionRows, anyEmote.Parent) end
+    registerRow(motionRows, anyEmote)
     local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
         freezeSettings.animation = value
         clearMotionTrack()
     end, "Keep the current clip looping through jumps and other movement. Does not freeze a single frame.")
-    if animation then table.insert(motionRows, animation.Parent) end
+    registerRow(motionRows, animation)
     local anyAnimation: any = addToggleOption(FreezeFeature, "Any animation", true, function(value: boolean): ()
         freezeSettings.anyAnimation = value
         clearMotionTrack()
     end, "Freeze a game's own locomotion clip too, not only Roblox's walk/run/idle set.")
-    if anyAnimation then table.insert(motionRows, anyAnimation.Parent) end
+    registerRow(motionRows, anyAnimation)
     refreshOptionGroups()
     activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true
@@ -41211,6 +41272,18 @@ function Module.init(context: any): any
     end)
     ClickGui.scale = scale
 
+    -- Rescale without rebuilding anything: the sliders need immediate feedback
+    -- while they are being dragged, and the heavy reflow is debounced by the
+    -- settings page.
+    ClickGui.ApplyScale = function(): ()
+        if ClickGui.scale then
+            ClickGui.scale.Scale = viewportScale()
+        end
+        if type(ClickGui.RefreshHeights) == "function" then
+            pcall(ClickGui.RefreshHeights)
+        end
+    end
+
     state.clickGui = ClickGui
     state.addMenuVisibilityListener(function(visible: boolean): ()
         ClickGui.SetVisible(visible)
@@ -43402,9 +43475,14 @@ function Module.init(context: any): any
     -- text alignment changes with it (v139.1).
     local hudSide: string = hudOnLeft() and "left" or "right"
 
+    -- The overlay is opted into, not implied by the menu being open. Before
+    -- v181 "Show" only meant "keep it after closing", so the list appeared on
+    -- every open without any switch behind it.
+    -- Only the switch in Settings -> UI -> HackList -> Show. A stale
+    -- "ClickGUI.ShowHackList" key from old builds used to keep the overlay on
+    -- with nothing visibly enabled, so it no longer counts.
     local hudAlways: boolean = configData.states["HackList.Show"] == true
-        or configData.states["ClickGUI.ShowHackList"] == true
-    local hudVisible: boolean = hudAlways or state.visible == true
+    local hudVisible: boolean = hudAlways == true
 
     local function refreshHudList(): ()
         if not hudVisible then
@@ -43587,12 +43665,13 @@ function Module.init(context: any): any
     Furniture.SetHackListVisible = setHackListVisible
 
     local function applyHudVisibility(): ()
-        setHackListVisible(hudAlways or state.visible == true)
+        setHackListVisible(hudAlways == true)
     end
     if type(state.addMenuVisibilityListener) == "function" then
-        state.addMenuVisibilityListener(function(visible: boolean): ()
+        -- Opening or closing the menu never turns the overlay on by itself.
+        state.addMenuVisibilityListener(function(_visible: boolean): ()
             if not hudAlways then
-                setHackListVisible(visible == true)
+                setHackListVisible(false)
             end
         end)
     end
@@ -45787,18 +45866,30 @@ function Module.init(context: any): any
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
+        local showStored: boolean = configData.states["HackList.Show"] == true
         addToggleOption(
             panel,
             "Show",
-            false,
+            showStored,
             function(value: boolean): ()
                 state.hudListAlways = value
+                -- v181: one real switch behind the overlay. It is saved, so the
+                -- list no longer shows up on an open menu with nothing enabled.
+                configData.states["HackList.Show"] = value
+                queueConfigSave()
                 if state.hudList and type(state.hudList.SetAlways) == "function" then
                     state.hudList.SetAlways(value)
                 end
+                if state.hudList and type(state.hudList.SetVisible) == "function" then
+                    state.hudList.SetVisible(value)
+                end
             end,
-            "Keep the hack list on screen even while the menu is closed"
+            "Show the hack list. OFF keeps it off the screen, even with the menu open."
         )
+        state.hudListAlways = showStored
+        if state.hudList and type(state.hudList.SetAlways) == "function" then
+            state.hudList.SetAlways(showStored)
+        end
         local modes: {string} = {"Auto", "Count", "Hidden"}
         addCycleOption(
             panel,
@@ -47496,8 +47587,11 @@ function Module.init(context: any): any
     end
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
-        uiSettingsValues["Opacity"] = value
-        windows.SetOpacity(value)
+        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 0.85)
+        uiSettingsValues["Opacity"] = wanted
+        -- The whole window fades together (frame, header, rows), so the slider
+        -- behaves like one opacity instead of only thinning the panel frame.
+        windows.SetOpacity(wanted)
     end)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
@@ -47519,19 +47613,44 @@ function Module.init(context: any): any
     local themeShape: any = ThemeEngine and ThemeEngine.shape
     local initialScale: number = themeShape and tonumber(themeShape.scale) or 1
     uiSettingsValues["Menu scale"] = initialScale
+    -- Dragging this used to run a full relayout on every single step, so the
+    -- menu flickered and the windows piled on top of each other mid-drag.
+    -- v181: the UIScale follows the slider immediately, and the reflow (reclamp
+    -- every window into the new logical viewport) runs once the drag settles.
+    local scaleReflowToken: number = 0
     addNumberOption(uiPanel, "Menu scale", initialScale, 0.7, 1.3,
         function(value: number): ()
             local shape: any = ThemeEngine and ThemeEngine.shape
             if not shape then
                 return
             end
-            shape.scale = value
-            uiSettingsValues["Menu scale"] = value
-            configData.values["UI.MenuScale"] = value
+            local wanted: number = math.clamp(tonumber(value) or 1, 0.7, 1.3)
+            shape.scale = wanted
+            uiSettingsValues["Menu scale"] = wanted
+            configData.values["UI.MenuScale"] = wanted
             queueConfigSave()
-            if type(state.refreshLayout) == "function" then
-                state.refreshLayout(true)
+            if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                state.clickGui.ApplyScale()
             end
+            scaleReflowToken += 1
+            local token: number = scaleReflowToken
+            task.delay(0.15, function(): ()
+                if token ~= scaleReflowToken then
+                    return
+                end
+                if type(state.refreshLayout) == "function" then
+                    state.refreshLayout(true)
+                end
+                local windowsManager: any = state.windows
+                if windowsManager then
+                    if type(windowsManager.Reclamp) == "function" then
+                        pcall(windowsManager.Reclamp)
+                    end
+                    if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                        state.clickGui.ApplyScale()
+                    end
+                end
+            end)
         end)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
@@ -48020,7 +48139,29 @@ function Module.init(context: any): WidgetLibrary
         option: GuiObject,
         visible: boolean
     ): ()
-        option.Visible = visible
+        -- Hiding the options container itself empties the whole card: every row
+        -- disappears and nothing can bring them back except a rebuild. Callers
+        -- that pass a control instead of its row hit exactly that, so the
+        -- container is never a valid target.
+        if option == nil or option == feature.options then
+            warn("[Random Testing Menu] setOptionVisible refused the options container")
+            return
+        end
+        -- addToggleOption/addCycleOption return the control inside the row while
+        -- addNumberOption/addRangeOption return the row itself. Both are valid
+        -- arguments, so the row is resolved here and only ever that row is
+        -- hidden.
+        local row: GuiObject = option
+        local parent: any = option.Parent
+        local container: any = feature.options
+        if container ~= nil
+            and parent ~= nil
+            and parent ~= container
+            and parent.Parent ~= nil
+            and parent.Parent == container then
+            row = parent
+        end
+        row.Visible = visible
         feature.updateExpandedSize()
     end
 
@@ -51110,6 +51251,13 @@ function Module.init(context: any): any
             ZIndex = BASE_Z,
         }) :: Frame
         bind(root, "BackgroundColor3", "background")
+        if manager.ApplyOpacity then
+            task.defer(function(): ()
+                if root.Parent then
+                    manager.ApplyOpacity(root)
+                end
+            end)
+        end
 
         local window: any = nil
         local paintChrome: {() -> ()} = {}
@@ -51742,12 +51890,52 @@ function Module.init(context: any): any
     end)
 
     manager.bodyTransparency = 0.5
-    function manager.SetOpacity(alpha: number): ()
-        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
-        for _, window: any in ipairs(manager.list) do
-            if window.headerHeight and window.headerHeight > 0 then
-                window.root.BackgroundTransparency = manager.bodyTransparency
+    -- One opacity for the whole menu. Fading only the window frame left every
+    -- row opaque, so the "Opacity" slider looked like it was tearing the menu
+    -- apart: the panel went see-through while the rows stayed solid on top.
+    local opacityBases: {[GuiObject]: number} = setmetatable({}, {__mode = "k"})
+    local function fadeSubtree(root: any, alpha: number): ()
+        if not root then
+            return
+        end
+        local ok: boolean, descendants: any = pcall(function(): any
+            return root:GetDescendants()
+        end)
+        if not ok or type(descendants) ~= "table" then
+            return
+        end
+        for _, object: any in ipairs(descendants) do
+            if object:IsA("GuiObject") then
+                local base: number? = opacityBases[object]
+                if base == nil then
+                    local current: number = tonumber(object.BackgroundTransparency) or 1
+                    if current < 0.99 then
+                        base = current
+                        opacityBases[object] = base
+                    end
+                end
+                if base ~= nil then
+                    local faded: number = 1 - alpha * (1 - (base :: number))
+                    object.BackgroundTransparency = math.clamp(faded, 0, 1)
+                end
             end
+        end
+    end
+
+    function manager.SetOpacity(alpha: number): ()
+        local wanted: number = math.clamp(alpha, 0.15, 1)
+        manager.opacity = wanted
+        manager.bodyTransparency = math.clamp(1 - wanted, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.root then
+                window.root.BackgroundTransparency = manager.bodyTransparency
+                fadeSubtree(window.root, wanted)
+            end
+        end
+    end
+    manager.ApplyOpacity = function(root: any): ()
+        if root and (manager.opacity or 1) < 0.999 then
+            fadeSubtree(root, manager.opacity)
         end
     end
 

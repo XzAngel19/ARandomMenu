@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Get All Emotes (v180): a button, five shop emotes, and Select Emote that plays.
+"""Get All Emotes (v181): a button, six shop emotes, and Select Emote that plays.
 
-The card must never act like a toggle, must touch only the shop ids
-(ninja/zen/dab/floss/zombie) and must play the emote the player picks. This mock
-does not prove server ownership, animation permission or replication.
+The card must never act like a toggle, must touch only the catalog ids the game
+sells or hands out (ninja/zen/dab/floss/zombie/headless), must rebuild the
+game's own emote window through Modules.EmoteModule, and must play the emote the
+player picks. This mock does not prove server ownership, animation permission or
+replication.
 """
 import os
 import subprocess
@@ -41,6 +43,7 @@ local sync = {
     dab = {Name = 'Dab', Command = 'dab', AnimationID = 2445521505},
     floss = {Name = 'Floss', Command = 'floss', AnimationID = 2452938820, Loop = true},
     zombie = {Name = 'Zombie', Command = 'zombie', AnimationID = 2513692312, Loop = true},
+    headless = {Name = 'Headless', Command = 'headless', AnimationID = 2513664073},
     wave = {Name = 'Wave', Command = 'wave'},
     cheer = {Name = 'Cheer', Command = 'cheer'},
     laugh = {Name = 'Laugh', Command = 'laugh'},
@@ -57,7 +60,12 @@ local changedEvent = signal()
 local changed = {Event = changedEvent}
 local played = {}
 local playEvent = {Fire = function(_, id) table.insert(played, id) end}
-local modules = container({ProfileData = profileMod})
+local emoteRebuilds = {}
+local emoteModule = {data = {
+    EmoteGUI = {Name = 'Emotes'},
+    GenerateEmotes = function(owned, gui) table.insert(emoteRebuilds, {owned = owned, gui = gui}) end,
+}}
+local modules = container({ProfileData = profileMod, EmoteModule = emoteModule})
 local inventory = container({InventoryDataChanged = changed})
 local remotes = {FindFirstChild = function(_, name)
     if name == 'Inventory' then return inventory end
@@ -125,42 +133,50 @@ assert(featureOptions.configKey == 'MM2.GetAllEmotes')
 assert(#profile.Emotes.Owned == 1, 'the card must not grant anything on boot')
 assert(LocalPlayer.CharacterAdded:Count() == 1, 'the respawn hook is armed')
 
--- One press: the five shop ids, once, and nothing from the avatar set.
+-- One press: the six catalog ids, once, and nothing from the avatar set.
 feature:Toggle(true)
 assert(#played == 0, 'the button must not play an emote')
 assert(#tracks == 0, 'restoring the saved cycle value must not play anything')
 local owned = profile.Emotes.Owned
-assert(#owned == 6, 'exactly five shop emotes are added: ' .. #owned)
-for _, id in ipairs({'ninja', 'zen', 'dab', 'floss', 'zombie'}) do
+assert(#owned == 7, 'exactly six shop emotes are added: ' .. #owned)
+for _, id in ipairs({'ninja', 'zen', 'dab', 'floss', 'zombie', 'headless'}) do
     local found = false
     for _, value in ipairs(owned) do if value == id then found = true end end
     assert(found, 'missing shop id ' .. id)
 end
+-- The live profile table is what the game's emote window reads, so the rebuild
+-- must be asked for with that exact list and that exact GUI.
+assert(#emoteRebuilds == 1, 'the game emote window is rebuilt once')
+assert(emoteRebuilds[1].owned == owned, 'the rebuild uses the live ProfileData list')
+assert(emoteRebuilds[1].gui == emoteModule.data.EmoteGUI, 'the rebuild targets the live emote GUI')
 -- 'sit' is already owned by the player in this mock, so it is not a leak.
 for _, id in ipairs({'wave', 'cheer', 'laugh', 'point', 'dance1', 'dance2', 'dance3'}) do
     for _, value in ipairs(owned) do assert(value ~= id, 'avatar emote leaked into the profile: ' .. id) end
 end
 assert(#inventoryEvents == 0, 'the inventory channel is the inner .Event, not the RemoteEvent')
-assert(string.find(feature.status, '5'), 'status must report the shop count: ' .. tostring(feature.status))
+assert(string.find(feature.status, '6'), 'status must report the shop count: ' .. tostring(feature.status))
 assert(string.find(notices[#notices], 'server still decides'), 'never claim server ownership')
 
 -- A second press adds nothing and says so.
 feature:Toggle(true)
-assert(#profile.Emotes.Owned == 6, 'the button must be idempotent')
+assert(#profile.Emotes.Owned == 7, 'the button must be idempotent')
 assert(#inventoryEvents == 0)
+assert(#emoteRebuilds == 2, 'pressing again still refreshes the window')
 
 -- Select emote plays immediately through the game's own BindableEvent.
 local cycle = feature.cycles['Select Emote']
-assert(cycle and #cycle.labels == 5 and cycle.labels[5] == 'Zombie')
+assert(cycle and #cycle.labels == 6 and cycle.labels[6] == 'Headless')
+cycle.callback('Headless')
+assert(#played == 1 and played[1] == 'headless', 'Select emote must play the picked emote')
 cycle.callback('Zombie')
-assert(#played == 1 and played[1] == 'zombie', 'Select emote must play the picked emote')
+assert(#played == 2 and played[2] == 'zombie', 'Select emote must play the picked emote')
 cycle.callback('Ninja Rest')
-assert(#played == 2 and played[2] == 'ninja')
+assert(#played == 3 and played[3] == 'ninja')
 assert(#tracks == 0, 'the game event wins over the animator fallback')
 
 -- Replay keeps working, and the fallback is used only when the game refuses.
 feature.actions['Play Emote']()
-assert(#played == 3 and played[3] == 'ninja')
+assert(#played == 4 and played[4] == 'ninja')
 remotes = {FindFirstChild = function(_, name)
     if name == 'Inventory' then return inventory end
 end}
@@ -178,14 +194,14 @@ profile.Emotes.Owned = {'sit'}
 LocalPlayer.CharacterAdded:Fire()
 assert(#delayed == 1)
 flush()
-assert(#profile.Emotes.Owned == 6, 'a respawn gets the emotes again')
+assert(#profile.Emotes.Owned == 7, 'a respawn gets the emotes again')
 
 -- Destroy releases everything.
 Module.destroy()
 assert(LocalPlayer.CharacterAdded:Count() == 0, 'destroy disconnects the respawn hook')
 assert(tracks[#tracks].stops == 1, 'destroy stops the fallback clip')
 assert(state.mm2GetAllEmotesFeature == nil)
-print('PASS MM2 Get All Emotes: button only, five shop ids, select emote plays, fallback clip, respawn, cleanup')
+print('PASS MM2 Get All Emotes: button only, six shop ids including Headless, window rebuild, select emote plays, fallback clip, respawn, cleanup')
 '''
 
 with tempfile.TemporaryDirectory(prefix="mm2-emotes-") as tmp:

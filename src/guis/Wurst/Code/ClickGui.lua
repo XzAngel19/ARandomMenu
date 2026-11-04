@@ -369,6 +369,18 @@ function Module.init(context: any): any
     end)
     ClickGui.scale = scale
 
+    -- Rescale without rebuilding anything: the sliders need immediate feedback
+    -- while they are being dragged, and the heavy reflow is debounced by the
+    -- settings page.
+    ClickGui.ApplyScale = function(): ()
+        if ClickGui.scale then
+            ClickGui.scale.Scale = viewportScale()
+        end
+        if type(ClickGui.RefreshHeights) == "function" then
+            pcall(ClickGui.RefreshHeights)
+        end
+    end
+
     state.clickGui = ClickGui
     state.addMenuVisibilityListener(function(visible: boolean): ()
         ClickGui.SetVisible(visible)

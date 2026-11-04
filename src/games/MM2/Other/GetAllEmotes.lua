@@ -23,15 +23,13 @@ function Module.init(runtime: any): any
         looped: boolean?,
     }
 
-    -- Only the five emotes that MM2 actually sells. The default avatar emotes
-    -- (wave, cheer, laugh, point, dance1-3) are not shop entries: writing them
-    -- into ProfileData.Emotes.Owned only polluted the profile and the emote
-    -- window, so they are never granted. Confirmed against the TestingStuff
-    -- place capture: Database.Sync.Emotes marks exactly these ids with a
-    -- numeric Price (ninja 650, zen 800, dab 700, floss 750, zombie NotForSale
-    -- but still a shop item), while the avatar set carries Price "NotForSale"
-    -- and no AnimationID.
-    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie" }
+    -- The six emotes MM2 sells or hands out from crates. The default avatar
+    -- emotes (wave, cheer, laugh, point, dance1-3) are not shop entries and are
+    -- never granted. Confirmed against the TestingStuff place capture
+    -- (place, source.rbxlx -> Database.Sync.Emotes): ninja 650, zen 800 (Rare),
+    -- dab 700, floss 750 (Rare), zombie and headless NotForSale but still real
+    -- catalog entries with their own AnimationID.
+    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie", "headless" }
 
     -- Fallback catalog from the TestingStuff client snapshot; the live Sync
     -- module wins when it is available.
@@ -41,10 +39,11 @@ function Module.init(runtime: any): any
         { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
         { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
         { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
+        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
     }
 
-    -- The cycle lists the same five emotes, in the order a player expects.
-    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie" }
+    -- The cycle lists the same six emotes, in the order a player expects.
+    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" }
 
     local LABEL_TO_EMOTE_ID: {[string]: string} = {
         ["Ninja Rest"] = "ninja",
@@ -52,6 +51,7 @@ function Module.init(runtime: any): any
         ["Dab"] = "dab",
         ["Floss"] = "floss",
         ["Zombie"] = "zombie",
+        ["Headless"] = "headless",
     }
 
     local selectedEmoteLabel: string = "Floss"
@@ -131,10 +131,45 @@ function Module.init(runtime: any): any
         return list, byId
     end
 
+    -- The emote window the game itself builds: PlayerGui.<x>.Game.Emotes. The
+    -- client script publishes it as _G.EmoteFrame and on the module as
+    -- EmoteModule.EmoteGUI.
+    local function emoteGui(): any
+        local found: any = nil
+        pcall(function(): ()
+            local globals: any = _G :: any
+            if globals.EmoteFrame then
+                found = globals.EmoteFrame
+                return
+            end
+            local players: any = game:GetService("Players")
+            local player: any = players and players.LocalPlayer
+            local playerGui: any = player and player:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then
+                return
+            end
+            for _, child: any in ipairs(playerGui:GetChildren()) do
+                local gameFolder: any = child:FindFirstChild("Game")
+                local emotesFrame: any = gameFolder and gameFolder:FindFirstChild("Emotes")
+                if emotesFrame and emotesFrame:FindFirstChild("EmotePages") then
+                    found = emotesFrame
+                    return
+                end
+            end
+        end)
+        return found
+    end
+
     -- Rebuild the game's own emote window from ProfileData, exactly like the
-    -- client does after InventoryDataChanged. This is what makes the emotes
-    -- usable without reopening the game UI.
-    local function refreshEmoteWindow(owned: {string}): ()
+    -- client does after InventoryDataChanged: EmoteModule.GenerateEmotes(owned,
+    -- gui). GenerateEmotes paginates six per page and re-clones its own
+    -- Page/Container/Emote templates, so every granted id shows up with its
+    -- icon, name, hotkey and a click handler that fires Remotes.Misc.PlayEmote.
+    local function refreshEmoteWindow(owned: {string}): boolean
+        if #owned <= 0 then
+            return false
+        end
+        local rebuilt: boolean = false
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
             local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
@@ -146,18 +181,26 @@ function Module.init(runtime: any): any
             if not okEm or type(emoteModule) ~= "table" then
                 return
             end
-            local gui: any = emoteModule.EmoteGUI
-                or (type(getgenv) == "function" and (getgenv() :: any).EmoteFrame)
-                or nil
-            if gui and type(emoteModule.GenerateEmotes) == "function" then
-                pcall(emoteModule.GenerateEmotes, owned, gui)
+            local gui: any = emoteModule.EmoteGUI or emoteGui()
+            if gui == nil then
+                return
             end
+            if type(emoteModule.GenerateEmotes) ~= "function" then
+                return
+            end
+            emoteModule.EmoteGUI = gui
+            local ok: boolean = pcall(emoteModule.GenerateEmotes, owned, gui)
+            rebuilt = ok
         end)
+        return rebuilt
     end
 
-    -- Write the five shop ids into the client's ProfileData and wake the
-    -- inventory UI. Neither a local table nor a BindableEvent proves
-    -- server-side ownership: the server still decides what actually plays.
+    -- Write the six shop ids into the client's ProfileData and wake the
+    -- inventory UI. The ProfileData module returns the live profile table the
+    -- emote window reads, so appending to Emotes.Owned is what makes the
+    -- window show them; the InventoryDataChanged BindableEvent is then fired
+    -- exactly like the client does, which rebuilds the window from ProfileData.
+    -- Ownership stays local: the server still owns the real list.
     local function grantShopEmotes(showNotification: boolean?): number
         local list: {EmoteDef} = collectEmotes()
         local granted: number = 0
@@ -300,7 +343,7 @@ function Module.init(runtime: any): any
         return playedFallback
     end
 
-    -- One click: grant the five shop emotes and rebuild the game's window.
+    -- One click: grant the six shop emotes and rebuild the game's window.
     local function runGetAllEmotes(): ()
         local granted: number = grantShopEmotes(true)
         if GetAllEmotesFeature then
@@ -309,7 +352,7 @@ function Module.init(runtime: any): any
             )
         end
         if granted == 0 and type(notify) == "function" then
-            pcall(notify, "Get All Emotes: the shop emotes were already in the local profile.")
+            pcall(notify, "Get All Emotes: the six shop emotes were already in the local profile.")
         end
     end
 
@@ -336,9 +379,9 @@ function Module.init(runtime: any): any
 
     GetAllEmotesFeature = createUniversalFeature(
         "Get All Emotes",
-        "Button: writes the five MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
-            .. "Zombie) into the local emote profile and rebuilds the emote "
-            .. "window. Server ownership is not guaranteed.",
+        "Button: writes the six MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
+            .. "Zombie, Headless) into the live emote profile and rebuilds the "
+            .. "game's emote window. Server ownership is not guaranteed.",
         11,
         function(): ()
             runGetAllEmotes()
