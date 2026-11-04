@@ -28,11 +28,15 @@ function Module.init(context: Runtime): any
         clickDetectors: boolean,
     }
     type PromptState = {distance: number, holdDuration: number}
+    -- Rows default OFF: the card is the master switch and turns every channel
+    -- on by itself. A row switched on with the card OFF is a deliberate opt-in
+    -- and works on its own, so nobody has to enable the whole card just for the
+    -- fast prompt.
     local interactionSettings: InteractionSettings = {
         distance = 32,
         instantPrompts = false,
-        proximityPrompts = true,
-        clickDetectors = true,
+        proximityPrompts = false,
+        clickDetectors = false,
     }
     local originalPrompts: {[ProximityPrompt]: PromptState} =
         setmetatable({}, {__mode = "k"}) :: any
@@ -42,17 +46,33 @@ function Module.init(context: Runtime): any
     local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
+    -- Every channel follows its own row, so a row switched on with the card OFF
+    -- works alone and a row switched off with the card ON really stops. The card
+    -- is still a master switch: turning it on switches the rows on (visibly, not
+    -- behind the scenes) and turning it off switches them off.
+    local function promptsChannel(): boolean
+        return interactionSettings.proximityPrompts or interactionSettings.instantPrompts
+    end
+
+    local function detectorsChannel(): boolean
+        return interactionSettings.clickDetectors
+    end
+
+    local function anyChannel(): boolean
+        return promptsChannel() or detectorsChannel()
+    end
+
     local function updatePrompt(prompt: ProximityPrompt, original: PromptState): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+        local distance: number = promptsChannel()
                 and interactionSettings.distance or original.distance
-        local hold: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
-                and interactionSettings.instantPrompts and 0 or original.holdDuration
+        local hold: number = promptsChannel() and interactionSettings.instantPrompts
+                and 0 or original.holdDuration
         if prompt.MaxActivationDistance ~= distance then prompt.MaxActivationDistance = distance end
         if prompt.HoldDuration ~= hold then prompt.HoldDuration = hold end
     end
 
     local function updateDetector(detector: ClickDetector, original: number): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.clickDetectors
+        local distance: number = detectorsChannel()
                 and interactionSettings.distance or original
         if detector.MaxActivationDistance ~= distance then detector.MaxActivationDistance = distance end
     end
@@ -67,7 +87,7 @@ function Module.init(context: Runtime): any
     end
 
     local function applyInteractionExtension(instance: Instance): ()
-        if not interactionExtenderEnabled then
+        if not anyChannel() then
             return
         end
         if instance:IsA("ProximityPrompt") then
@@ -86,46 +106,127 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Put every touched prompt/detector back to the values it had before we
+    -- saw it, then forget it. Called when no channel is live any more.
     local function restoreInteractionExtender(): ()
-        interactionExtenderEnabled = false
-        refreshInteractionExtender()
+        for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
+            if prompt.Parent then
+                if prompt.MaxActivationDistance ~= original.distance then
+                    prompt.MaxActivationDistance = original.distance
+                end
+                if prompt.HoldDuration ~= original.holdDuration then
+                    prompt.HoldDuration = original.holdDuration
+                end
+            end
+        end
+        for detector: ClickDetector, original: number in pairs(originalClickDetectors) do
+            if detector.Parent and detector.MaxActivationDistance ~= original then
+                detector.MaxActivationDistance = original
+            end
+        end
         originalPrompts = setmetatable({}, {__mode = "k"}) :: any
         originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
     end
 
-    local function toggleInteractionExtender(enabled: boolean): ()
-        disconnectFeatureConnection("InteractExtender")
-        disconnectFeatureConnection("InteractExtenderRefresh")
-        restoreInteractionExtender()
-        interactionRefreshClock = 0
-        if not enabled then
-            if InteractFeature then InteractFeature:SetStatus(nil) end
-            return
-        end
-        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
-        interactionExtenderEnabled = true
-        featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
-            applyInteractionExtension
-        )
-        local scanConnection = featureConnections.InteractExtender
-        featureConnections.InteractExtenderRefresh = TaskManager:Connect(
-            function(deltaTime: number): ()
-                interactionRefreshClock += deltaTime
-                if interactionRefreshClock >= 0.5 then
-                    interactionRefreshClock = 0
-                    refreshInteractionExtender()
-                end
-            end
-        , nil, "Interact Extender")
+    local scanning: boolean = false
+    local function startScan(): ()
+        if scanning then return end
+        scanning = true
+        local scanConnection: any = featureConnections.InteractExtender
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if featureConnections.InteractExtender ~= scanConnection then return end
+                if featureConnections.InteractExtender ~= scanConnection then
+                    -- Superseded: a newer generation owns the flag now.
+                    scanning = false
+                    return
+                end
                 applyInteractionExtension(instance)
                 if index % 240 == 0 then
                     task.wait()
                 end
             end
+            scanning = false
         end)
+    end
+
+    -- Keep exactly the hooks the live channels need. Cheap when nothing changed,
+    -- so a single row can call it on every click without a rescan.
+    local function syncInteractions(): ()
+        if not anyChannel() then
+            disconnectFeatureConnection("InteractExtender")
+            disconnectFeatureConnection("InteractExtenderRefresh")
+            -- A scan suspended by this teardown belongs to the old generation;
+            -- releasing the flag lets the next activation start its own.
+            scanning = false
+            restoreInteractionExtender()
+            interactionRefreshClock = 0
+            if InteractFeature then
+                InteractFeature:SetStatus(nil)
+            end
+            return
+        end
+        if not featureConnections.InteractExtender then
+            featureConnections.InteractExtender =
+                workspace.DescendantAdded:Connect(applyInteractionExtension)
+        end
+        if not featureConnections.InteractExtenderRefresh then
+            featureConnections.InteractExtenderRefresh = TaskManager:Connect(
+                function(deltaTime: number): ()
+                    interactionRefreshClock += deltaTime
+                    if interactionRefreshClock >= 0.5 then
+                        interactionRefreshClock = 0
+                        refreshInteractionExtender()
+                    end
+                end
+            , nil, "Interact Extender")
+            -- First activation (card or row): pick up what already exists.
+            startScan()
+        else
+            refreshInteractionExtender()
+        end
+        if InteractFeature and interactionExtenderEnabled then
+            InteractFeature:SetStatus(
+                tostring(math.round(interactionSettings.distance)) .. " studs"
+            )
+        end
+    end
+
+    -- Keep the checkbox, the saved value and the callback in step when the card
+    -- itself switches a row.
+    local function setRow(name: string, value: boolean): ()
+        local controls: any = nil
+        pcall(function(): ()
+            if state and type(state.toggleControls) == "table" then
+                controls = state.toggleControls
+            end
+        end)
+        local control: any = controls and controls[InteractFeature.configKey .. "." .. name]
+        if control and type(control.setChecked) == "function" then
+            pcall(control.setChecked, value)
+        end
+    end
+
+    local function toggleInteractionExtender(enabled: boolean): ()
+        interactionExtenderEnabled = enabled
+        if enabled then
+            interactionSettings.proximityPrompts = true
+            interactionSettings.clickDetectors = true
+            setRow("Proximityprompts", true)
+            setRow("Clickdetectors", true)
+            -- The card was switched on: rescan once so nothing that exists right
+            -- now is missed, even if the rows were already live.
+            syncInteractions()
+            startScan()
+            return
+        else
+            interactionSettings.instantPrompts = false
+            interactionSettings.proximityPrompts = false
+            interactionSettings.clickDetectors = false
+            setRow("Instantprompts", false)
+            setRow("Proximityprompts", false)
+            setRow("Clickdetectors", false)
+        end
+        syncInteractions()
     end
 
     InteractFeature = createUniversalFeature(
@@ -146,7 +247,7 @@ function Module.init(context: Runtime): any
             if InteractFeature.enabled then
                 InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -155,7 +256,7 @@ function Module.init(context: Runtime): any
         interactionSettings.instantPrompts,
         function(value: boolean): ()
             interactionSettings.instantPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -164,7 +265,7 @@ function Module.init(context: Runtime): any
         interactionSettings.proximityPrompts,
         function(value: boolean): ()
             interactionSettings.proximityPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -173,11 +274,12 @@ function Module.init(context: Runtime): any
         interactionSettings.clickDetectors,
         function(value: boolean): ()
             interactionSettings.clickDetectors = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
 
     activeCleanup = function(): ()
+        interactionExtenderEnabled = false
         disconnectFeatureConnection("InteractExtender")
         disconnectFeatureConnection("InteractExtenderRefresh")
         restoreInteractionExtender()

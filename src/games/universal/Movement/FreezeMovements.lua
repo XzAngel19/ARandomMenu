@@ -22,14 +22,28 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
     local addToggleOption: any = host.addToggleOption
-    local freezeSettings = {mode = "Anchor", emotes = true, animation = false}
-    -- An old saved emote mode must not silently become Anchor on upgrade.
+    local addNumberOption: any = host.addNumberOption
+    -- "Position Lock" is what the row used to call "Anchor": it pins the body
+    -- where it stands. The new name says what the user sees, and the extra rows
+    -- let the lock be tuned instead of being an all-or-nothing anchor.
+    local LOCK_MODE: string = "Position Lock"
+    local MOTION_MODE: string = "Motion"
+    local freezeSettings = {
+        mode = LOCK_MODE,
+        emotes = true,
+        animation = false,
+        anyEmote = true,
+        lockRotation = true,
+        returnDistance = 0,
+        keepGravity = false,
+    }
+    -- An old saved emote mode must not silently become Position Lock on upgrade.
     local config: any = host.configData
     if config and config.values and config.states then
         local key: string = "Movement.FreezeMovements.Freezemode"
         local legacy: any = config.values[key]
         if legacy == "Freeze Emotes" or legacy == "Glitch Animations" then
-            config.values[key] = "Motion"
+            config.values[key] = MOTION_MODE
             local prefix: string = "Movement.FreezeMovements."
             if config.states[prefix .. "FreezeEmotes"] == nil then
                 config.states[prefix .. "FreezeEmotes"] = legacy == "Freeze Emotes"
@@ -37,6 +51,9 @@ function Module.init(context: Runtime): any
             if config.states[prefix .. "FreezeAnimation"] == nil then
                 config.states[prefix .. "FreezeAnimation"] = legacy == "Glitch Animations"
             end
+        elseif legacy == "Anchor" or legacy == "Freeze Physics" then
+            -- Renamed mode, same behaviour.
+            config.values[key] = LOCK_MODE
         end
     end
     local FreezeFeature: any = nil
@@ -120,30 +137,85 @@ function Module.init(context: Runtime): any
         dance = true, dance1 = true, dance2 = true, dance3 = true,
         wave = true, point = true, cheer = true, laugh = true,
     }
+    -- Any emote, not only Roblox's own: games ship their own dance/taunt clips
+    -- with arbitrary names and asset IDs, so the identifier is a name keyword
+    -- (checked on the track and on up to six parents) instead of a fixed list.
+    local EMOTE_KEYWORDS = {
+        "emote", "dance", "dancing", "taunt", "celebrat", "cheer", "wave",
+        "laugh", "salute", "groove", "pose", "victory", "expression",
+        "emoji", "flex", "party", "clap", "bow", "ridicule", "point",
+    }
+    -- ...but a weapon swing is not an emote, and it often sits on the same
+    -- Action priority. These win over a keyword so "SwordWave" stays a swing.
+    local NON_EMOTE_KEYWORDS = {
+        "attack", "shoot", "slash", "stab", "swing", "punch", "kick", "reload",
+        "equip", "unequip", "tool", "hit", "block", "parry", "cast", "spell",
+        "sword", "gun", "knife", "punch", "throw", "fling",
+    }
+
+    local function hasKeyword(name: string, list: {string}): boolean
+        local lower: string = string.lower(name)
+        for _, keyword: string in ipairs(list) do
+            if string.find(lower, keyword, 1, true) then return true end
+        end
+        return false
+    end
+
+    local function looksLikeEmoteName(name: string): boolean
+        local lower: string = string.lower(name)
+        if emoteNames[lower] then return true end
+        if hasKeyword(lower, NON_EMOTE_KEYWORDS) then return false end
+        lower = lower:gsub("anim$", "")
+        if CLASSIC_EMOTES[lower] == true then return true end
+        return hasKeyword(lower, EMOTE_KEYWORDS)
+    end
 
     isEmoteTrack = function(track: any): boolean
         -- Action priority is also used by weapon attacks; it is NOT an
         -- emote identifier. Avoid substring matches such as SpinAttack.
-        local function knownName(name: string): boolean
-            local lower: string = string.lower(name)
-            if emoteNames[lower] then return true end
-            lower = lower:gsub("anim$", "")
-            return CLASSIC_EMOTES[lower] == true
-        end
-        if knownName(tostring(track.Name or "")) then return true end
+        if looksLikeEmoteName(tostring(track.Name or "")) then return true end
         local animation: any = track.Animation
         if typeof(animation) == "Instance" then
-            if knownName(animation.Name) then return true end
+            if looksLikeEmoteName(animation.Name) then return true end
             local node: any = animation.Parent
             for _depth: number = 1, 6 do
                 if not node then break end
-                if knownName(node.Name) then return true end
+                if looksLikeEmoteName(node.Name) then return true end
                 node = node.Parent
             end
             local id: string? = string.match(animation.AnimationId, "%d+")
             if id and emoteIds[id] then return true end
         end
         return false
+    end
+
+    -- Custom emotes whose name says nothing ("Animation", "Clip", "Pose 3"):
+    -- while the body is standing still, a looped Action/Idle clip that nobody
+    -- blacklisted is an emote the game started, so Motion holds it too. A
+    -- moving body is never scored this way, which keeps walk cycles and weapon
+    -- swings out even when their names are meaningless.
+    local function looksLikeStandingEmote(humanoid: any, root: any, track: any): boolean
+        if not freezeSettings.anyEmote then return false end
+        if not track or ownedEmotes[track] or isEmoteTrack(track) then return false end
+        local name: string = tostring(track.Name or "")
+        if hasKeyword(name, NON_EMOTE_KEYWORDS) then return false end
+        local animation: any = track.Animation
+        if typeof(animation) ~= "Instance" then return false end
+        if track.Looped ~= true then return false end
+        local priority: any = track.Priority
+        if priority ~= Enum.AnimationPriority.Action and priority ~= Enum.AnimationPriority.Idle then
+            return false
+        end
+        if root and root.AssemblyLinearVelocity and root.AssemblyLinearVelocity.Magnitude > 2 then
+            return false
+        end
+        local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+        if ok and (state == Enum.HumanoidStateType.Running
+            or state == Enum.HumanoidStateType.Jumping
+            or state == Enum.HumanoidStateType.Freefall) then
+            return false
+        end
+        return true
     end
 
     local function rememberEmote(track: any): ()
@@ -278,6 +350,9 @@ function Module.init(context: Runtime): any
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
                 if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
                     rememberEmote(track)
+                elseif not ownedEmotes[track] and not emoteLastSeen[track]
+                    and looksLikeStandingEmote(humanoid, root, track) then
+                    rememberEmote(track)
                 elseif not ownedEmotes[track] then
                     if #pendingEmoteTracks >= 8 then table.remove(pendingEmoteTracks, 1) end
                     table.insert(pendingEmoteTracks, {track = track, at = os.clock()})
@@ -405,11 +480,22 @@ function Module.init(context: Runtime): any
             local ok: boolean, tracks: any = pcall(function(): any return animator:GetPlayingAnimationTracks() end)
             if not ok or type(tracks) ~= "table" then return end
             local weight: number = -1
-            for _, track: any in ipairs(tracks) do
-                if track.IsPlaying and isLocomotion(track) then
-                    local current: number = tonumber(track.WeightCurrent) or 1
-                    if current > weight then motionSource, weight = track, current end
+            local function consider(track: any): ()
+                if not track or not track.IsPlaying or ownedEmotes[track] or isEmoteTrack(track) then
+                    return
                 end
+                local current: number = tonumber(track.WeightCurrent) or 1
+                if current > weight then motionSource, weight = track, current end
+            end
+            -- Roblox's own walk/run/idle clips first: they are the common case
+            -- and keep the previous behaviour when a game plays both.
+            for _, track: any in ipairs(tracks) do
+                if isLocomotion(track) then consider(track) end
+            end
+            -- Then anything else: a game can drive locomotion with its own clip
+            -- (custom rigs, animated vehicles, tool-held run cycles).
+            if not motionSource and freezeSettings.anyAnimation then
+                for _, track: any in ipairs(tracks) do consider(track) end
             end
         end
         if not motionSource then return end
@@ -445,8 +531,69 @@ function Module.init(context: Runtime): any
     local function restoreFreezeMovements(): ()
         for root: BasePart, original: any in pairs(originalFreezeState) do
             root.Anchored = original.anchored
+            if original.cframe ~= nil and root.CFrame ~= nil then
+                pcall(function(): () root.CFrame = original.cframe end)
+            end
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
+    end
+
+    -- Position Lock: keep the body where it stands. Hard by default (anchored),
+    -- or with gravity kept so the character can still fall and land; the rows
+    -- decide how much of the pose is frozen and how far a push may go before it
+    -- is undone.
+    local function lockPosition(root: any): ()
+        local original: any = originalFreezeState[root]
+        if not original then
+            local cframe: any = nil
+            local look: any = nil
+            pcall(function(): ()
+                if root.CFrame ~= nil then
+                    cframe = root.CFrame
+                    look = root.CFrame.LookVector
+                end
+            end)
+            original = {
+                anchored = root.Anchored,
+                position = root.Position,
+                cframe = cframe,
+                look = look,
+            }
+            originalFreezeState[root] = original
+        end
+        local lockedPosition: any = original.position
+        local gravity: boolean = freezeSettings.keepGravity == true
+        root.Anchored = not gravity
+        if root.AssemblyLinearVelocity ~= nil then
+            if gravity then
+                local vertical: number = tonumber(root.AssemblyLinearVelocity.Y) or 0
+                root.AssemblyLinearVelocity = Vector3.new(0, math.min(vertical, 0), 0)
+            else
+                root.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+        if freezeSettings.lockRotation and root.AssemblyAngularVelocity ~= nil then
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+        if original.look ~= nil and not gravity then
+            pcall(function(): ()
+                if CFrame ~= nil and root.CFrame ~= nil then
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + original.look)
+                end
+            end)
+        end
+        local limit: number = freezeSettings.returnDistance or 0
+        if gravity and limit > 0 and lockedPosition ~= nil and root.Position ~= nil then
+            local dx: number = (tonumber(root.Position.X) or 0) - (tonumber(lockedPosition.X) or 0)
+            local dz: number = (tonumber(root.Position.Z) or 0) - (tonumber(lockedPosition.Z) or 0)
+            if math.sqrt(dx * dx + dz * dz) > limit then
+                root.Position = Vector3.new(
+                    lockedPosition.X or 0,
+                    root.Position.Y,
+                    lockedPosition.Z or 0
+                )
+            end
+        end
     end
 
     local toggleFreezeMovements: (boolean) -> ()
@@ -502,49 +649,108 @@ function Module.init(context: Runtime): any
                 if freezeSettings.emotes then freezeEmotesTick(humanoid, root) end
                 if freezeSettings.animation then freezeAnimationTick(humanoid) end
             elseif root then
-                if not originalFreezeState[root] then originalFreezeState[root] = {anchored = root.Anchored} end
-                root.Anchored = true
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                lockPosition(root)
             end
         end, nil, "Freeze Movements")
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements", "Anchor physics or keep selected animations while moving", 4,
+        "Freeze Movements",
+        "Pin the body where it stands, or keep any animation playing while moving",
+        4,
         toggleFreezeMovements,
         {categoryName = "Utilities", configKey = "Movement.FreezeMovements"}
     )
     local motionRows: {any} = {}
-    local function refreshMotionOptions(): ()
+    local lockRows: {any} = {}
+    -- addToggleOption returns the button inside the row, addNumberOption
+    -- returns the row itself. Resolving once here is what keeps a mode switch
+    -- from hiding the whole options container.
+    local function rowFor(handle: any): any
+        if not handle then
+            return nil
+        end
+        local name: string = typeof(handle) == "Instance" and handle.Name or ""
+        if string.sub(name, 1, 7) == "Option_" or string.sub(name, 1, 8) == "Section_" then
+            return handle
+        end
+        return handle.Parent or handle
+    end
+    local function registerRow(list: {any}, handle: any): ()
+        local row: any = rowFor(handle)
+        if row == nil or row == FreezeFeature.options then
+            return
+        end
+        table.insert(list, row)
+    end
+    local function refreshOptionGroups(): ()
+        local motion: boolean = freezeSettings.mode == MOTION_MODE
         for _, row: any in ipairs(motionRows) do
             if host.setOptionVisible then
-                host.setOptionVisible(FreezeFeature, row, freezeSettings.mode == "Motion")
-            else row.Visible = freezeSettings.mode == "Motion" end
+                host.setOptionVisible(FreezeFeature, row, motion)
+            else row.Visible = motion end
+        end
+        for _, row: any in ipairs(lockRows) do
+            if host.setOptionVisible then
+                host.setOptionVisible(FreezeFeature, row, not motion)
+            else row.Visible = not motion end
         end
     end
-    addCycleOption(FreezeFeature, "Freeze mode", {"Anchor", "Motion"}, 1, function(value: string): ()
-        freezeSettings.mode = value
-        refreshMotionOptions()
+    local function reapply(): ()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
+    end
+    addCycleOption(FreezeFeature, "Freeze mode", {LOCK_MODE, MOTION_MODE}, 1, function(value: string): ()
+        -- Accept an old saved value without renaming anything on disk twice.
+        if value == "Anchor" or value == "Freeze Physics" then
+            value = LOCK_MODE
+        end
+        freezeSettings.mode = value
+        refreshOptionGroups()
+        reapply()
     end)
+    -- ---- Position Lock rows -------------------------------------------------
+    local lockHeading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Position Lock settings")
+    registerRow(lockRows, lockHeading)
+    local lockRotation: any = addToggleOption(FreezeFeature, "Lock rotation", true, function(value: boolean): ()
+        freezeSettings.lockRotation = value
+        reapply()
+    end, "Also stop the body from spinning or being spun by the game. OFF keeps the position and lets the character turn.")
+    registerRow(lockRows, lockRotation)
+    local keepGravity: any = addToggleOption(FreezeFeature, "Keep gravity", false, function(value: boolean): ()
+        freezeSettings.keepGravity = value
+        reapply()
+    end, "Do not anchor the body: it can still fall and land, but pushes and knockback are erased every frame.")
+    registerRow(lockRows, keepGravity)
+    local returnRow: any = addNumberOption(FreezeFeature, "Return if pushed", 0, 0, 40, function(value: number): ()
+        freezeSettings.returnDistance = value
+    end, "Studs of drift allowed before the character is snapped back. 0 disables the return.")
+    registerRow(lockRows, returnRow)
+    -- ---- Motion rows --------------------------------------------------------
     -- The section widget renders its own caption and divider, so the card only
     -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
-    if heading then
-        table.insert(motionRows, heading)
-    end
+    registerRow(motionRows, heading)
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
         freezeSettings.emotes = value
         if not value then clearStickyEmoteTracks() end
-    end, "Keep classic and UGC emotes playing while moving. Takes precedence over the locked locomotion clip.")
-    if emotes then table.insert(motionRows, emotes.Parent) end
+    end, "Keep emotes playing while moving, Roblox's own and the ones a game ships itself. Takes precedence over the locked clip.")
+    registerRow(motionRows, emotes)
+    local anyEmote: any = addToggleOption(FreezeFeature, "Any emote", true, function(value: boolean): ()
+        freezeSettings.anyEmote = value
+        if not value then clearStickyEmoteTracks() end
+    end, "Hold a custom emote even when its name and asset say nothing: a looped clip started while standing still counts as one.")
+    registerRow(motionRows, anyEmote)
     local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
         freezeSettings.animation = value
         clearMotionTrack()
-    end, "Keep the current locomotion clip looping through jumps and other movement. Does not freeze a single frame.")
-    if animation then table.insert(motionRows, animation.Parent) end
-    refreshMotionOptions()
+    end, "Keep the current clip looping through jumps and other movement. Does not freeze a single frame.")
+    registerRow(motionRows, animation)
+    local anyAnimation: any = addToggleOption(FreezeFeature, "Any animation", true, function(value: boolean): ()
+        freezeSettings.anyAnimation = value
+        clearMotionTrack()
+    end, "Freeze a game's own locomotion clip too, not only Roblox's walk/run/idle set.")
+    registerRow(motionRows, anyAnimation)
+    refreshOptionGroups()
     activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true
     return FreezeFeature

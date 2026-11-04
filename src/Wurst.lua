@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v178-20261103-reactive-fog-wide-weather"
+local SOURCE_STAMP: string = "v181-20261104-gui-fixes-and-six-emotes"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1767,49 +1767,6 @@ local AssetManager: any = {
             fallback = "",
             version = 1,
             assetType = "image/png",
-        },
-
-        -- Weather textures are fetched lazily, only after choosing an effect.
-        shaderRainTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/rain-trace.png",
-            fileName = "shader-rain-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        shaderSnowTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/snow-soft.png",
-            fileName = "shader-snow-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        shaderAutumnTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/autumn-maple.png",
-            fileName = "shader-autumn-v1.png", fallback = "", version = 1,
-            assetType = "image/png",
-        },
-        -- CC0 albedo maps are fetched only when a matching nearby surface is found.
-        shaderConcreteTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-concrete.jpg",
-            fileName = "shader-concrete-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderWoodTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-wood-floor.jpg",
-            fileName = "shader-wood-floor-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderBrickTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-brick.jpg",
-            fileName = "shader-brick-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderGrassTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-grass.jpg",
-            fileName = "shader-grass-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
-        },
-        shaderMarbleTexture = {
-            url = REPOSITORY_RAW_BASE .. "src/guis/Wurst/Assets/Shaders/surface-marble.jpg",
-            fileName = "shader-marble-v1.jpg", fallback = "", version = 1,
-            assetType = "image/jpeg",
         },
 
     } :: {[string]: AssetDefinition},
@@ -3865,6 +3822,173 @@ local function notify(message: any): ()
         end)
     end)
 end
+
+-- A small centred modal with two answers. The MM2 calibration prompt uses it so
+-- nothing is written to the executor workspace before the player says Yes.
+-- Deliberately tiny: one question, two buttons, no scrolling and no state.
+local function confirmDialog(options: any): Frame?
+    if type(options) ~= "table" then
+        return nil
+    end
+    local title: string = tostring(options.title or "Question")
+    local message: string = tostring(options.message or "")
+    local yesText: string = tostring(options.yes or "Yes")
+    local noText: string = tostring(options.no or "No")
+    local onYes: any = options.onYes
+    local onNo: any = options.onNo
+
+    local previous: Instance? = PopupLayer:FindFirstChild("ConfirmDialog")
+    while previous do
+        previous:Destroy()
+        previous = PopupLayer:FindFirstChild("ConfirmDialog")
+    end
+
+    local backdrop: TextButton = (create("TextButton", {
+        Parent = PopupLayer,
+        Name = "ConfirmDialog",
+        Text = "",
+        AutoButtonColor = false,
+        Active = true,
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 400,
+    }) :: any) :: TextButton
+
+    local panel: Frame = (create("Frame", {
+        Parent = backdrop,
+        Name = "Panel",
+        Active = true,
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.fromOffset(340, 176),
+        BackgroundColor3 = Theme.surface,
+        BorderSizePixel = 0,
+        ZIndex = 401,
+    }) :: any) :: Frame
+    create("UICorner", {
+        Parent = panel,
+        CornerRadius = cornerRadius(UI_RADIUS.panel),
+    })
+    create("UIStroke", {
+        Parent = panel,
+        Color = Theme.outline,
+        Thickness = 1,
+    })
+    create("UIListLayout", {
+        Parent = panel,
+        FillDirection = Enum.FillDirection.Vertical,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 6),
+    })
+    create("UIPadding", {
+        Parent = panel,
+        PaddingTop = UDim.new(0, 14),
+        PaddingBottom = UDim.new(0, 14),
+        PaddingLeft = UDim.new(0, 16),
+        PaddingRight = UDim.new(0, 16),
+    })
+
+    local titleLabel: TextLabel = (create("TextLabel", {
+        Parent = panel,
+        Name = "Title",
+        LayoutOrder = 1,
+        BackgroundTransparency = 1,
+        FontFace = CONTROL_FONT,
+        Text = title,
+        TextColor3 = Theme.text,
+        TextSize = 15,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Size = UDim2.new(1, 0, 0, 20),
+        ZIndex = 402,
+    }) :: any) :: TextLabel
+
+    local messageLabel: TextLabel = (create("TextLabel", {
+        Parent = panel,
+        Name = "Message",
+        LayoutOrder = 2,
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        FontFace = CONTROL_FONT,
+        Text = message,
+        TextColor3 = Theme.textMuted,
+        TextSize = 13,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Top,
+        Size = UDim2.new(1, 0, 0, 60),
+        ZIndex = 402,
+    }) :: any) :: TextLabel
+
+    local actions: Frame = (create("Frame", {
+        Parent = panel,
+        Name = "Actions",
+        LayoutOrder = 3,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 30),
+        ZIndex = 402,
+    }) :: any) :: Frame
+    create("UIListLayout", {
+        Parent = actions,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        VerticalAlignment = Enum.VerticalAlignment.Center,
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 8),
+    })
+
+    local answered: boolean = false
+    local function close(answer: boolean?): ()
+        if answered then
+            return
+        end
+        answered = true
+        if backdrop.Parent then
+            backdrop:Destroy()
+        end
+        local callback: any = answer == true and onYes or onNo
+        if type(callback) == "function" then
+            local ok: boolean, failure: any = pcall(callback)
+            if not ok then
+                warn("[" .. PRODUCT.name .. "] confirm dialog: " .. tostring(failure))
+            end
+        end
+    end
+
+    local function answerButton(text: string, order: number, primary: boolean): TextButton
+        local button: TextButton = (create("TextButton", {
+            Parent = actions,
+            Name = text,
+            LayoutOrder = order,
+            AutoButtonColor = false,
+            BackgroundColor3 = primary and Theme.accent or Theme.button,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(primary and 92 or 78, 28),
+            Text = text,
+            FontFace = CONTROL_FONT,
+            TextColor3 = primary and Theme.accentText or Theme.text,
+            TextSize = 13,
+            ZIndex = 403,
+        }) :: any) :: TextButton
+        create("UICorner", {
+            Parent = button,
+            CornerRadius = cornerRadius(UI_RADIUS.control),
+        })
+        button.MouseButton1Click:Connect(function(): ()
+            close(primary)
+        end)
+        return button
+    end
+
+    -- No sits on the left, the answer that writes files on the right.
+    answerButton(noText, 1, false)
+    answerButton(yesText, 2, true)
+    return panel
+end
+
+state.confirmDialog = confirmDialog
 
 local CardBin: Frame = (create("Frame", {
     Parent = ScreenGui,

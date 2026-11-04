@@ -104,13 +104,22 @@ function Module.init(context: Runtime): any
     local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
     local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
-    local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
+    -- v180: finite force, like YARHM and SkidFling use. `math.huge` makes the
+    -- solver fight itself on some servers (the pin "wins" every contact and the
+    -- victim never receives the impulse), which is exactly the low success
+    -- rate this card was reporting.
+    local PIN_FORCE: Vector3 = Vector3.new(9e9, 9e9, 9e9)
 
-    -- Preserve the previous defaults for the three removed controls.
-    local FLING_POWER: number = 4
+    -- v180: more power by default. 4 was the old constant with the slider
+    -- removed; 6 doubles the pose velocity against YARHM's baseline and keeps
+    -- the pin above it, and a Power slider lets the player push further when a
+    -- server eats the first pass.
+    local FLING_POWER: number = 6
+    local FLING_POWER_MIN: number = 1
+    local FLING_POWER_MAX: number = 12
     local FLING_DURATION: number = 3
     local FLING_PREDICTION: number = 0.15
-    local flingRetries: number = 1
+    local flingRetries: number = 2
     -- Temporary boost used by the second pass only (never persisted).
     local flingBoost: number = 1
 
@@ -993,8 +1002,21 @@ function Module.init(context: Runtime): any
     end)
     addNumberOption(
         FlingFeature,
+        "Power",
+        FLING_POWER,
+        FLING_POWER_MIN,
+        FLING_POWER_MAX,
+        function(value: number): ()
+            FLING_POWER = math.clamp(tonumber(value) or FLING_POWER, FLING_POWER_MIN, FLING_POWER_MAX)
+        end,
+        "Pose velocity and pin force multiplier (3 = YARHM baseline). Raise it when a "
+            .. "victim is not launched; lower it if the local body is thrown instead.",
+        1
+    )
+    addNumberOption(
+        FlingFeature,
         "Retries",
-        1,
+        2,
         0,
         3,
         function(value: number): ()

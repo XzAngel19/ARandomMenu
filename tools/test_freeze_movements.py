@@ -48,7 +48,9 @@ local humanoid={EmoteTriggered=signal(),Parent=character,WalkSpeed=16,JumpPower=
     GetAppliedDescription=function() return {GetEmotes=function() return {Salute={12345}} end,Destroy=function() end} end}
 local tick,mode,toggle,feature
 local checkboxes={}
+local numbers={}
 local motionHeading=nil
+local lockHeading=nil
 local connections={}
 local stored={values={["Movement.FreezeMovements.Freezemode"]="Freeze Emotes"},states={}}
 local localPlayer={CharacterAdded=signal(),CharacterRemoving=signal()}
@@ -62,9 +64,14 @@ local host={
     createUniversalFeature=function(_,_,_,fn)
         toggle=fn; feature={enabled=false,SetStatus=function(self,s) self.status=s end};return feature
     end,
-    addCycleOption=function(_,_,values,_,fn) assert(#values==2 and values[1]=='Anchor' and values[2]=='Motion');mode=fn;fn(stored.values['Movement.FreezeMovements.Freezemode'] or 'Anchor') end,
+    addCycleOption=function(_,_,values,_,fn) assert(#values==2 and values[1]=='Position Lock' and values[2]=='Motion','the mode row must offer the renamed lock and Motion');mode=fn;fn(stored.values['Movement.FreezeMovements.Freezemode'] or 'Position Lock') end,
     addToggleOption=function(_,name,default,fn) checkboxes[name]=fn;fn(default);return {Parent={Visible=true}} end,
-    addSectionOption=function(_,name) assert(name=='Motion settings');motionHeading={Visible=true};return motionHeading end,
+    addNumberOption=function(_,name,default,_,_,fn) numbers[name]=fn;fn(default);return {Parent={Visible=true}} end,
+    addSectionOption=function(_,name)
+        if name=='Motion settings' then motionHeading={Visible=true};return motionHeading end
+        assert(name=='Position Lock settings',name)
+        lockHeading={Visible=true};return lockHeading
+    end,
     addInformationOption=function() end,
 }
 local function track(name,id,priority)
@@ -88,7 +95,7 @@ TESTS = r'''
 Module.init({host=host})
 assert(stored.values['Movement.FreezeMovements.Freezemode']=='Motion','legacy emote mode must not anchor the player on upgrade')
 assert(stored.states['Movement.FreezeMovements.FreezeEmotes']==true)
-mode('Anchor')
+mode('Position Lock')
 feature.enabled=true;toggle(true);tick()
 assert(root.Anchored and humanoid.WalkSpeed==16 and humanoid.JumpHeight==7.2)
 assert(not motionHeading.Visible)
@@ -182,7 +189,7 @@ assert(not root.Anchored and humanoid.WalkSpeed==16 and humanoid.JumpHeight==7.2
 checkboxes['Freeze Animation'](false)
 assert(held.destroyed and not held.IsPlaying and stab.stops==0 and jump.stops==0)
 checkboxes['Freeze Animation'](true);tracks={walk};walk.IsPlaying=true;tick();held=loaded[#loaded]
-mode('Anchor');tick()
+mode('Position Lock');tick()
 assert(held.destroyed and root.Anchored and not motionHeading.Visible,'mode switch releases motion before anchoring')
 mode('Motion');tick()
 assert(not root.Anchored and motionHeading.Visible,'Motion must restore Anchor ownership')
@@ -193,7 +200,7 @@ local run=track('Run',666,'Movement');tracks={run};tick()
 assert(oldMotion.destroyed and loaded[#loaded].Animation==run.Animation,'new root must release and recapture motion')
 feature.enabled=false;toggle(false)
 assert(not root.Anchored and not oldRoot.Anchored)
-root.Anchored=true;mode('Anchor');feature.enabled=true;toggle(true);tick()
+root.Anchored=true;mode('Position Lock');feature.enabled=true;toggle(true);tick()
 feature.enabled=false;toggle(false)
 assert(root.Anchored,'pre-existing anchored state must be restored, not forced false')
 root.Anchored=false

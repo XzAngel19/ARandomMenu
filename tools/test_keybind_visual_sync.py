@@ -12,7 +12,7 @@ import audit_menu
 
 source = audit_menu.build(debug=True).read_text(encoding='utf-8')
 probe = r'''
-local speed=ex.state.framework:GetModule('Speed')
+local speed=ex.state.framework:GetModule('Speed Hack')
 local feature=speed.Feature
 assert(speed.Options.Mode.Value==EXPECTED_MODE, 'Velocity is the default, but a saved mode must win')
 assert(not speed.Enabled and not feature.enabled)
@@ -29,7 +29,7 @@ local function deep(parent,name)
         local found=deep(child,name);if found then return found end
     end
 end
-local tile=deep(nav.root,'Nav_Speed');assert(tile,'Speed navigator tile missing')
+local tile=deep(nav.root,'Nav_SpeedHack');assert(tile,'Speed Hack navigator tile missing')
 local floating=ex.state.floatingUi;assert(floating);floating.toggleFavorite(feature)
 local function favoriteStatus() return floating.favoriteRows[1]:FindFirstChild('Status') end
 local function same(a,b) return a.R==b.R and a.G==b.G and a.B==b.B end
@@ -39,14 +39,14 @@ assert(feature.enabled and speed.Enabled and ex.configData.states[feature.config
 assert(same(feature.row.BackgroundColor3,ex.Theme.enabled),'key ON must repaint the menu card')
 assert(same(tile.BackgroundColor3,ex.Theme.enabled),'key ON must repaint the open navigator tile')
 assert(favoriteStatus().BackgroundTransparency==0,'key ON must repaint the favorite')
-ex.state.hudList.refresh();assert(ex.state.hudList.frame:FindFirstChild('Speed'), 'hacklist must show Speed')
+ex.state.hudList.refresh();assert(ex.state.hudList.frame:FindFirstChild('Speed Hack'), 'hacklist must show Speed')
 UserInputService.InputEnded:Fire(key,false)
 UserInputService.InputBegan:Fire(key,false)
 assert(not feature.enabled and not speed.Enabled and ex.configData.states[feature.configKey]==false)
 assert(not same(feature.row.BackgroundColor3,ex.Theme.enabled),'key OFF must repaint the menu card')
 assert(not same(tile.BackgroundColor3,ex.Theme.enabled),'key OFF must repaint the open navigator tile')
 assert(favoriteStatus().BackgroundTransparency==0.58,'key OFF must repaint the favorite')
-ex.state.hudList.refresh();assert(not ex.state.hudList.frame:FindFirstChild('Speed'), 'hacklist must hide Speed')
+ex.state.hudList.refresh();assert(not ex.state.hudList.frame:FindFirstChild('Speed Hack'), 'hacklist must hide Speed')
 feature.activationTarget.MouseButton1Click:Fire()
 assert(feature.enabled and same(feature.row.BackgroundColor3,ex.Theme.enabled)
     and same(tile.BackgroundColor3,ex.Theme.enabled),'mouse card activation matches keybind')

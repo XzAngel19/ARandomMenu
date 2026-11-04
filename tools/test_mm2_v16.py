@@ -77,7 +77,12 @@ local environment={readfile=function(path) assert(files[path],"not found"); retu
 local HttpService={JSONDecode=function() return source end}
 local OUTPUT_PATH,trajectoryLogPrefix="out","test"
 local warn=function() end
+-- v180: the restored prediction no longer takes an acceptance prior, so the
+-- import path has nothing to publish. The learned lead buckets are the part
+-- that carries over, and this mock has no predictor to receive them.
+local state={}
 ''', section(BASE, '    local function applyStatsPayload(', '    local function restoreMotionBucket('),
+              section(BASE, '    local function applyLearnedSeeds(): boolean', '    local function loadSavedHistory(): ()'),
               section(BASE, '    local function loadSavedHistory()', '    local function vectorArray('), r'''
 loadSavedHistory()
 assert(files[runtime.historyBackup]=="original bytes" and files.out=="original bytes")

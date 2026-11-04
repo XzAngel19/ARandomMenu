@@ -1,73 +1,53 @@
 # Wurst
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
-La versión de esta sesión está en la rama `arena/9492e6b6-arandommenu`; `main`
+La versión de esta sesión está en la rama `arena/979b8402-arandommenu`; `main`
 es independiente.
 
 ## Loader
 
 ```lua
-getgenv().WURST_BRANCH = "arena/9492e6b6-arandommenu"
-loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/9492e6b6-arandommenu/src/Wurst.lua"))()
+getgenv().WURST_BRANCH = "arena/979b8402-arandommenu"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/979b8402-arandommenu/src/Wurst.lua"))()
 ```
 
-## Shaders
+## Cambios de v179
 
-`Render > Shaders` aplica efectos **solo en el cliente**. La iluminación, Fog,
-Rain, Snow, Falling leaves, Dust motes, Surface textures, Glass reflections, Wet
-surfaces y Water reflections siguen siendo independientes. No hay `Look` ni
-presets. Se retiró `Floor reflections`: sus viewports solo reflejaban unos pocos
-pisos y no podían cubrir de manera realista todo el mapa con un coste razonable.
-Glass/Wet proporcionan brillo ambiental, no reflejos dinámicos de personajes.
+`Shaders` se eliminó por completo: no hay tarjeta, no hay assets y el arranque
+no toca `Lighting`. Con él se fueron `Surface textures`, `Wet surfaces`, `Fog`,
+`Rain`, `Snow`, `Falling leaves`, `Dust motes`, `Water reflections` y el botón
+`Diagnose`.
 
-Fog combina niebla global de Roblox con 17 parches de partículas, incluidos
-parches exteriores más dispersos. Al caminar tu personaje u otros jugadores,
-los parches cercanos responden desplazando sus
-partículas; el cálculo se limita y reparte entre jugadores. Es una aproximación,
-no una simulación de fluido: el `Atmosphere`/`FogEnd` global no se puede apartar
-alrededor de los cuerpos. Se restaura la niebla del juego al apagar, cuando el
-valor sigue siendo el aplicado por el menú.
+Tres tarjetas de **Exploits** cambian de nombre (misma función, mismo
+`ConfigKey`, así que tus perfiles y keybinds se conservan):
 
-Rain, Snow, hojas y niebla usan celdas cercanas y un anillo exterior que abarca
-aproximadamente **336 × 336 studs alrededor de la cámara**. Las celdas del clima
-comprueban el techo gradualmente; en interiores puede haber lluvia fuera aunque
-el centro esté protegido. Si falla el raycast se avisa y las partículas pueden
-atravesar techos. El polvo queda más cerca de la cámara;
-**no se garantiza clima en cada punto de mapas más grandes ni en zonas que el
-cliente aún no ha cargado**.
+| Antes | Ahora |
+| --- | --- |
+| `Jesus` | `Swim Walk` |
+| `Jump` | `Jump Hack` |
+| `Speed` | `Speed Hack` |
 
-El barrido de superficies visita progresivamente el mapa cargado, incluso lejos
-del jugador, sin eliminar lo ya tratado por distancia. Solo modifica piezas
-compatibles; respeta decals y personajes y tiene límites de **600 texturas** y
-**1.200 cambios de reflectancia**. Alcanzarlos deja otras piezas sin cambios y
-produce un aviso. `Water reflections` afecta al Terrain si existe; eso no implica
-que haya agua visible. La iluminación y niebla de distancia afectan a la escena
-visible, pero las mallas, materiales personalizados, calidad y streaming pueden
-limitar el resultado.
+## Precisión de Shoot y Knife
 
-En escritorio el presupuesto configurado con todo el clima activo es 1.978
-partículas/s; en móvil o dispositivos táctiles, 927/s, más salpicaduras manuales
-limitadas. Son máximos configurados, no partículas necesariamente visibles ni
-una medición de FPS. El barrido trabaja en lotes, escucha el streaming y espera
-30 s antes de repetir una pasada completa; ya no se fuerzan sombras si el juego
-las tenía apagadas. No se ha medido CPU/GPU ni probado visualmente en Roblox o
-Delta: los efectos aún pueden causar lag o no verse en algún dispositivo/juego.
-Las imágenes se cargan bajo demanda con respaldos de Roblox; incluso una
-precarga exitosa no garantiza que se dibujen. Fuentes y límites:
-`docs/third-party/shaders/README.md`.
+Medido con las exportaciones `MM2_Trajectory_Calibration` del propio usuario
+(schema 4, 11 sesiones): el viaje real `FireServer` → confirmación del servidor
+está en **196-204 ms**, mientras que el `Data Ping` marca 150-165 ms. La
+diferencia es el procesado del servidor, y usar el ping como horizonte dejaba
+cada tiro corto. v179 lo corrige en dos frentes:
 
-El botón **`Diagnose`** muestra el estado del clima, parches de niebla,
-jugadores en movimiento muestreados, tasas configuradas, visitas al mapa,
-límites y Terrain. Las visitas son acumuladas, no piezas únicas. Una celda
-`covered` bajo techo puede ser normal; tampoco confirma por sí sola que el
-clima se haya dibujado. Los **keybinds** siguen funcionando aunque el juego use
-la tecla, salvo al escribir o capturar una tecla; con el menú cerrado aparece
-un aviso al activar/desactivar Shaders.
+- **Antes de tener ecos propios**, la mira arranca del promedio de aceptación ya
+  confirmado en la cuenta (historial importado + sesión actual). Si esa cifra no
+  encaja con la conexión en uso (fuera de 0,75×–2,5× el RTT) o tiene menos de 8
+  muestras, se ignora y manda el ping.
+- **El cuchillo aprende de sus propios tiros.** Cada hoja lanzada se sigue hasta
+  su paso más cercano al cuerpo; el desvío se proyecta sobre la velocidad del
+  objetivo y se convierte en segundos, con el mismo signo y los mismos límites
+  que el cañón. El horizonte del cuchillo se corrige solo, poco a poco, con ese
+  dato.
 
-Para probar, cierra el menú (abierto aplica desenfoque), activa Fog por separado
-y camina cerca de otro jugador. Prueba Rain/Snow al aire libre y desde un
-interior mirando afuera. Si algo no se ve, comparte una captura y el resultado de
-`Diagnose`, con mapa, plataforma y calidad gráfica.
+No se cambió el modelo de movimiento ni se reescribió el aim: los datos no lo
+justifican y la telemetría existente se conserva (los eventos de cuchillo
+incluyen ahora `leadErrorSeconds`, `predictedRoot` y `approachRoot`).
 
 ## Desarrollo
 

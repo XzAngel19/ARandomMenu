@@ -6,7 +6,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "Jump",
+    Name = "Jump Hack",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -143,7 +143,7 @@ function Module.init(context: Runtime): any
             and jump.Options["Infinite jump mode"].Value == "Fall")
     end
     jump = framework.Categories.Exploits:CreateModule({
-        Name = "Jump",
+        Name = "Jump Hack",
         Category = "Exploits",
         ConfigKey = "Universal.Jump",
         Order = 6,

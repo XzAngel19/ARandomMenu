@@ -289,6 +289,81 @@ do
     local cappedText=prediction.status(nil)
     assert(cappedText:find("auto lead %(ping%)"),cappedText)
 
+    -- v180: the user asked for the pre-v179 gun/knife prediction back, so the
+    -- horizon is the ping until a live echo exists again -- no acceptance prior
+    -- and no transport helper are wired in any more.
+    assert(type(prediction.setAcceptancePrior)=="nil" and type(prediction.getTransport)=="nil",
+        "the acceptance prior must not be part of the restored predictor")
+    prediction.reset()
+    local _,plainHorizon=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(plainHorizon.leadSeconds,0.145,1e-6)
+    for _=1,3 do prediction.noteEcho(0,0.14) end
+    local _,echoHorizon=prediction.gunAim(target,Vector3.new(0,0,-30))
+    near(echoHorizon.leadSeconds,0.12*0.6+0.14*0.4+0.025,1e-6)
+    pass("restored horizon: ping before echoes, 60/40 echo blend after, no hidden prior")
+
+    -- v179: the knife learns from its own confirmations. A blade that passes
+    -- BEHIND a running body measured a positive lead error (we under-led) and
+    -- that median has to reach the knife horizon, which until now could only
+    -- borrow an empty bucket.
+    prediction.reset()
+    humanoid.GetState=function() return "Running" end
+    humanoid.Health=100
+    for i=1,12 do
+        now=now+1/60
+        root.Position=Vector3.new(16*(now),0,0)
+        torso.Position=Vector3.new(16*(now),1,0)
+        root.AssemblyLinearVelocity=Vector3.new(16,0,0)
+        sampleTick(1/60)
+    end
+    local _,beforeFeedback=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    assert(beforeFeedback,"the knife needs a live track for this group")
+    local gunSamplesBefore=prediction.getLeadSamples("gun")
+    near(beforeFeedback.leadCorrection,0,1e-9)
+    -- The restored knife throw reports the raw intercept: it does not add the
+    -- learned correction to the blade any more, which is exactly the pre-v179
+    -- behaviour the user asked for. The evidence is still recorded so the
+    -- calibration file keeps the blade's measured error.
+    for _=1,3 do prediction.noteLeadError(0.03,"knife") end
+    assert(prediction.getLeadSamples("knife")==3)
+    local _,afterFeedback=prediction.knifeAim(target,Vector3.new(0,0,-30),96)
+    -- Restored reporting: the blade's own bucket still slew-limits the horizon
+    -- (+0.02 s per confirmation), but the pre-v179 knifeAim did not publish the
+    -- correction it applied, so the field stays 0. Pinned here so nobody reads
+    -- that zero as "the knife ignores its evidence".
+    near(afterFeedback.leadCorrection,0,1e-9)
+    near(afterFeedback.leadSeconds-beforeFeedback.leadSeconds,0.02,1e-6)
+    assert(prediction.getLeadSamples("gun")==gunSamplesBefore,
+        "knife evidence must not leak into the gun buckets")
+    -- One wild pairing (a teleport, a body swap) is discarded, not learned.
+    prediction.reset()
+    prediction.noteLeadError(0.9,"knife")
+    assert(prediction.getLeadSamples("knife")==0)
+    pass("knife feedback: evidence recorded in its own bucket, blade keeps the restored intercept")
+
+    -- v180: a handful of matches is only enough if what was learned survives
+    -- the session. The bucket is exported per aim mode and reseeded at boot.
+    prediction.reset()
+    for _=1,3 do prediction.noteLeadError(0.03,"bullet") end
+    local exported=prediction.exportLeadState()
+    assert(exported.Bullet and exported.Bullet.samples==3,"the bullet bucket must be exported")
+    near(exported.Bullet.median,0.03,1e-9)
+    near(exported.Bullet.applied,0.02,1e-9) -- one slew step from three samples
+    prediction.reset()
+    assert(prediction.getLeadSamples("bullet")==0)
+    prediction.seedLeadError("bullet",0.04,60)
+    near(prediction.getLeadCorrection("bullet"),0.04,1e-9)
+    -- The bucket is a bounded window (LEAD_FEEDBACK_MAX_SAMPLES), so a long
+    -- history arrives as that many copies of its median.
+    assert(prediction.getLeadSamples("bullet")==8,"the seed must respect the window size")
+    local reseeded=prediction.exportLeadState()
+    near(reseeded.Bullet.applied,0.04,1e-9)
+    -- Two samples are an anecdote, not a measurement.
+    prediction.reset()
+    prediction.seedLeadError("bullet",0.04,2)
+    assert(prediction.getLeadSamples("bullet")==0,"a thin seed must be refused")
+    pass("learned correction: exported per mode, reseeded after a restart, thin seeds refused")
+
     -- v105 auto-reset: samples inside the gate (300 ms at a 120 ms ping)
     -- whose median still sits past 1.5x RTT are a poisoned window, not a
     -- route change -- the A5AACF6D session held 210 ms against a ~135 ms
@@ -546,6 +621,9 @@ assert(saveSnapshot("tracer-feedback"))
 local trace=payloads[#payloads].session.events[1]
 assert(trace.origin[1]==0 and trace.endpoint[1]==10 and trace.observedTargetPosition[1]==9)
 assert(trace.targetPositionScope:find("client%-observed"))
+-- v180: the saved file also carries the learned model.
+assert(type(payloads[#payloads].predictor)=="table" and payloads[#payloads].predictor.readyFor,
+    "the payload must carry the predictor block")
 assert(runtime.sessionGunAttempts==attempts and runtime.sessionGunConfirmed==confirmed)
 assert(#scheduled==1,"feedback uses existing batched autosave")
 pass("Tracer Data survives real calibration writer; finite JSON; scope; correlation; no shot-count inflation")
@@ -812,6 +890,37 @@ do
 """)
     chunks.append(section(BASE, "    local function watchPendingHealth",
                           "    local function findKnifeAnalysisTarget"))
+    # v179: the knife's closest pass becomes a signed lead error in seconds.
+    # The math has to agree with the gun's convention (positive = the body was
+    # ahead of the aim) and has to refuse everything that is not a lead error.
+    chunks.append(r"""
+do
+    local noteCalls={}
+    """)
+    chunks.append(section(BASE, "    local KNIFE_FEEDBACK_MIN_SPEED: number = 2.0",
+                          "    local finishKnifeTrack: (projectile: Instance, reason: string) -> ()"))
+    chunks.append(r"""
+    local function track(aimRoot, approachRoot, velocity)
+        return {requestedRoot=aimRoot, approachRoot=approachRoot, aimVelocity=velocity}
+    end
+    -- A body running +X that was 0.48 studs past the predicted root at 16
+    -- studs/s is a 30 ms under-lead.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0.48,0,0), Vector3.new(16,0,0))), 0.03, 1e-9)
+    -- Passing behind the aim is the opposite sign.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(-0.48,0,0), Vector3.new(16,0,0))), -0.03, 1e-9)
+    -- Vertical separation is not a lead error.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0,2.5,0), Vector3.new(16,0,0))), 0, 1e-9)
+    -- A body moving slower than the gate has no direction to project on.
+    assert(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(1,0,0), Vector3.new(1,0,0)))==nil)
+    -- A pass farther than the miss limit is a wall/wrong body/teleport.
+    assert(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(7,0,0), Vector3.new(16,0,0)))==nil)
+    -- A blade that passed exactly through the predicted root is a perfect lead.
+    near(knifeLeadErrorSeconds(track(Vector3.new(0,0,0), Vector3.new(0,0,0), Vector3.new(16,0,0))), 0, 1e-9)
+    assert(knifeLeadErrorSeconds({})==nil, "a track without an aim cannot be scored")
+    pass("knife lead error: signed projection, vertical ignored, speed/miss bounds")
+end
+""")
+
     chunks.append(r"""
     local pending={}
     watchPendingHealth(pending,target)
@@ -854,6 +963,19 @@ def main() -> None:
     assert "verticalLead" in PREDICTION and "RTT_SAMPLES" in PREDICTION
     assert "local along: number = math.min(0, motion.longitudinalAccel)" in PREDICTION
     assert "noteBlockedShot" in BASE and "noteBlockedShot" in SHOOT
+    # v180: gun and knife prediction are back to the pre-v179 policy the user
+    # asked for. What must survive is the measurement side, and the guarantee
+    # that a blade sample never retunes a gun: the knife keeps its own bucket
+    # and base.lua keeps feeding it (that data lands in the calibration file).
+    assert "aimRoot = aimInfo and aimInfo.rootPosition" not in KNIFE, \
+        "v180 restored the previous knife throw; it must not carry the v179 aim root"
+    assert "knifeLeadErrorSeconds" in BASE and "noteLeadError" in BASE, \
+        "the knife must keep feeding the shared lead loop"
+    assert 'if lower == "knife" or lower == "blade" then' in PREDICTION, \
+        "the knife needs its own lead bucket so it cannot retune a gun"
+    assert "requestedRoot" in BASE, "the shared constructor must carry the knife aim root"
+    assert "publishAcceptancePrior" not in BASE and "setAcceptancePrior" not in BASE, \
+        "the restored predictor takes no acceptance prior"
     finalize = section(BASE, "    finalizeGunCapture = function",
                        "    local function analyzeTargetTrajectory")
     assert "noteEcho" in finalize, "the confirmation path must measure the echo"

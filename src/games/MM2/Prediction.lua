@@ -1046,6 +1046,12 @@ function Module.init(runtime: any): any
         if lower == "silent" or lower == "cframe" or lower == "silent aim" then
             return "CFrame"
         end
+        -- Kept from v179: a blade sample must not be averaged into the bucket a
+        -- plain gun also uses, otherwise knife confirmations would silently
+        -- retune every gun without a mode.
+        if lower == "knife" or lower == "blade" then
+            return "Knife"
+        end
         return "default"
     end
 
@@ -1129,6 +1135,43 @@ function Module.init(runtime: any): any
             return 0
         end
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
+    -- v180: the learned part is what turns a few matches into a working
+    -- predictor, so it has to outlive the session. The calibration file keeps
+    -- one entry per aim mode (samples, median, applied correction) and the next
+    -- boot seeds it back through `seedLeadError` instead of restarting at zero.
+    local function exportLeadState(): {[string]: any}
+        local out: {[string]: any} = {}
+        for key: string, bucket: {number} in pairs(leadErrors) do
+            out[key] = {
+                samples = #bucket,
+                median = medianOf(bucket),
+                applied = leadApplied[key] or 0,
+            }
+        end
+        return out
+    end
+
+    -- Restore a bucket measured in an earlier session. The median is applied
+    -- directly (not slew-limited): those samples were already earned shot by
+    -- shot, so replaying them one step at a time would only slow the start.
+    local function seedLeadError(mode: any, seconds: any, samples: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        local count: number = finiteNumber(samples) and math.floor(samples) or 0
+        if count < LEAD_FEEDBACK_MIN_SAMPLES then
+            return
+        end
+        local key: string = modeKey(mode)
+        local clamped: number = math.clamp(seconds, -LEAD_FEEDBACK_SAMPLE_LIMIT, LEAD_FEEDBACK_SAMPLE_LIMIT)
+        local bucket: {number} = leadBucket(key)
+        table.clear(bucket)
+        for _index: number = 1, math.min(count, LEAD_FEEDBACK_MAX_SAMPLES) do
+            table.insert(bucket, clamped)
+        end
+        leadApplied[key] = math.clamp(clamped, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
     end
 
     local function leadSamples(mode: any): number
@@ -1951,6 +1994,8 @@ function Module.init(runtime: any): any
             return estimateMotion(track, os.clock())
         end,
         noteLeadError = noteLeadError,
+        exportLeadState = exportLeadState,
+        seedLeadError = seedLeadError,
         getLeadCorrection = leadCorrection,
         getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,

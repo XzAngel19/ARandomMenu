@@ -824,39 +824,16 @@ do
     items.Options["Gun ESP"].Metadata.callback(true)
     items.Options["Trap ESP"].Metadata.callback(true)
     items:Toggle(false)
-    -- Booted bundle + real Framework + real widgets: PostEffects have to be
-    -- direct Lighting children, not descendants of an inert Folder.
-    local shaders = ex.state.framework:GetModule("Shaders")
-    assert(shaders and not shaders.Options["Floor reflections"] and shaders.Options["Surface textures"]
-      and shaders.Options["Glass reflections"] and shaders.Options.Fog
-      and not shaders.Options.Look and not shaders.Options.Weather,
-      "Shaders must boot without the limited floor mirror, a look or a weather mode selector")
-    shaders:Toggle(true)
-    local shaderColor = Lighting:FindFirstChild("ARMShaderColor")
-    local shaderBloom = Lighting:FindFirstChild("ARMShaderBloom")
-    local shaderRays = Lighting:FindFirstChild("ARMShaderRays")
-    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
-      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
-      "the limited floor mirror must not start")
-    assert(shaderColor and shaderColor.Parent == Lighting and shaderColor.Enabled,
-      "ColorCorrectionEffect must be enabled directly under Lighting")
-    assert(shaderColor.Contrast == 0.08 and shaderColor.Saturation == 0.05 and shaderColor.Brightness == 0,
-      "the baseline is active without a look or forced brightness")
-    assert(Lighting.EnvironmentSpecularScale == 0.65 and Lighting.GlobalShadows == false
-      and Lighting.EnvironmentDiffuseScale == 0.2 and Lighting.ExposureCompensation == 0,
-      "native specular is applied without forcing shadows or washing out the scene")
-    assert(shaderBloom and shaderBloom.Parent == Lighting and shaderRays and shaderRays.Parent == Lighting,
-      "bloom and sun rays must be direct children of Lighting")
-    shaders:Toggle(false)
+    -- v179: the Shaders card was removed at the user request. The boot must not
+    -- register it, must not touch Lighting for it and must not leave artefacts.
+    assert(ex.state.framework:GetModule("Shaders") == nil, "Shaders must not load")
     assert(not Lighting:FindFirstChild("ARMShaderColor")
-      and not Lighting:FindFirstChild("ARMShaderBloom") and not Lighting:FindFirstChild("ARMShaderRays"),
-      "disabling Shaders must remove its effects")
-    assert(not PlayerGui:FindFirstChild("ARMShaderFloorReflection")
-      and not workspaceService:FindFirstChild("ARMShaderFloorReflection"),
-      "disabling Shaders must remove its viewport and plane")
+      and not Lighting:FindFirstChild("ARMShaderWet")
+      and not workspaceService:FindFirstChild("ARMShaderWeather"),
+      "no Shaders effect may exist after boot")
     assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
-      "disabling Shaders must restore unchanged Lighting properties")
-    print("[HARNESS] SHADERS REALISM + LIGHTING RESTORE")
+      "removing Shaders must leave the place lighting untouched")
+    print("[HARNESS] SHADERS REMOVED")
     local freeze = findFeature("Freeze Movements")
     assert(freeze, "Freeze Movements feature must exist after boot")
     for cycle = 1, 2 do
@@ -931,7 +908,12 @@ do
     assert(knifeThrow.options:FindFirstChild("Option_KnifeTracer"), "Knife Throw must expose Knife Tracer option")
     local getAllEmotes = findFeature("Get All Emotes")
     assert(getAllEmotes and getAllEmotes.categoryName == "Utilities", "Get All Emotes module must exist in Utilities")
-    assert(getAllEmotes.options:FindFirstChild("Option_GetAllEmotes"), "Get All Emotes must expose Get All Emotes action button")
+    -- v180: the card itself is the button, so the old in-card action row is
+    -- gone on purpose. What must hold is that it is an action card and that it
+    -- never behaves as a toggle state.
+    assert(getAllEmotes.isAction == true, "Get All Emotes must be an action card, not a toggle")
+    assert(not getAllEmotes.options:FindFirstChild("Option_GetAllEmotes"),
+      "the card is the button; no duplicate Get All Emotes row")
     assert(getAllEmotes.options:FindFirstChild("Option_SelectEmote"), "Get All Emotes must expose Select Emote option")
     assert(getAllEmotes.options:FindFirstChild("Option_PlayEmote"), "Get All Emotes must expose Play Emote action button")
     local okEmOn, errEmOn = pcall(getAllEmotes.onToggle, true)
@@ -1002,7 +984,7 @@ do
     assert(ex.state.moduleSearch.Resolve("Aim Assist").entry.displayName == "Aimbot", "old Aimbot search alias must work")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed", "Jump", "Interact Extender", "Fling", "Walk Fling"},
+      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Interact Extender", "Fling", "Walk Fling"},
       Utilities = {"Auto Shoot", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
@@ -1137,7 +1119,11 @@ do
     assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
     assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
     assert(fling.options:FindFirstChild("Option_Fling"))
-    for _, label in ipairs({"Power", "Duration", "Prediction"}) do
+    -- v180: the user asked for more force, so Fling gets a bounded Power
+    -- slider (1..12) and a Retries row. Duration and Prediction stay removed.
+    assert(fling.options:FindFirstChild("Option_Power"), "Fling must expose the v180 Power slider")
+    assert(fling.options:FindFirstChild("Option_Retries"), "Fling must expose the retry budget")
+    for _, label in ipairs({"Duration", "Prediction"}) do
       assert(not fling.options:FindFirstChild("Option_" .. label), "Fling slider must be removed: " .. label)
     end
     assert(fling.options:FindFirstChild("Option_Retries"), "unrelated retry option must remain")
@@ -1151,7 +1137,9 @@ do
     assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
     local walkFling = findFeature("Walk Fling")
     assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
-    assert(walkFling.hasOptions() == false, "Walk Fling is a plain toggle with no options")
+    -- v180: Walk Fling gained a bounded Power multiplier (1..3) because the
+    -- previous fixed force was too weak to send anyone flying.
+    assert(walkFling.options:FindFirstChild("Option_Power"), "Walk Fling must expose the v180 Power row")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
     -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.
@@ -1221,18 +1209,18 @@ do
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
     local ghost=ex.state.framework:GetModule("Ghost")
     assert(ghost.Options["Ghost Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
-    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
-    local speedInput=ex.state.framework:GetModule("Speed").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
+    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
+    local speedInput=ex.state.framework:GetModule("Speed Hack").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
     for _,value in ipairs({"1000","5000","1e12"}) do
         speedInput.Focused:Fire();speedInput.Text=value;speedInput.FocusLost:Fire()
-        assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==tonumber(value))
+        assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==tonumber(value))
     end
     ex.state.valueControls["Universal.Speed.Speed"].apply(5000)
-    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000)
+    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000)
     speedInput.Focused:Fire();speedInput.Text="1e999";speedInput.FocusLost:Fire()
-    assert(ex.state.framework:GetModule("Speed").Options.Speed.Value==5000,"reject infinity without corrupting the previous value")
+    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"reject infinity without corrupting the previous value")
     ex.state.valueControls["Universal.Speed.Speed"].apply(32)
-    local speed = ex.state.framework:GetModule("Speed")
+    local speed = ex.state.framework:GetModule("Speed Hack")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
     -- Vehicle options visibility tests simplified due to mock limitations
     
@@ -1240,7 +1228,7 @@ do
     assert(sprintBinding and sprintBinding.key == Enum.KeyCode.Unknown, "Sprint needs an unassigned configurable key slot")
     assert(sprintBinding.hold and speed.Options.Sprint.Metadata.type == "action", "Sprint must be a held action, not toggle")
     
-    local jump = ex.state.framework:GetModule("Jump")
+    local jump = ex.state.framework:GetModule("Jump Hack")
     -- Jump options visibility tests simplified due to mock limitations
     if jump.Options["Infinite jump"] then
         pcall(function()

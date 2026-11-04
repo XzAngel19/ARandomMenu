@@ -354,7 +354,29 @@ function Module.init(context: any): WidgetLibrary
         option: GuiObject,
         visible: boolean
     ): ()
-        option.Visible = visible
+        -- Hiding the options container itself empties the whole card: every row
+        -- disappears and nothing can bring them back except a rebuild. Callers
+        -- that pass a control instead of its row hit exactly that, so the
+        -- container is never a valid target.
+        if option == nil or option == feature.options then
+            warn("[Random Testing Menu] setOptionVisible refused the options container")
+            return
+        end
+        -- addToggleOption/addCycleOption return the control inside the row while
+        -- addNumberOption/addRangeOption return the row itself. Both are valid
+        -- arguments, so the row is resolved here and only ever that row is
+        -- hidden.
+        local row: GuiObject = option
+        local parent: any = option.Parent
+        local container: any = feature.options
+        if container ~= nil
+            and parent ~= nil
+            and parent ~= container
+            and parent.Parent ~= nil
+            and parent.Parent == container then
+            row = parent
+        end
+        row.Visible = visible
         feature.updateExpandedSize()
     end
 
@@ -490,6 +512,11 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            -- The live checkbox, so callers (and the boot tests) can read the
+            -- option without assuming what its default was.
+            getChecked = function(): boolean
+                return enabled :: boolean
+            end,
             setChecked = function(checked: boolean): ()
                 if not button.Parent then
                     return

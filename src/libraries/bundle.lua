@@ -1,5 +1,5 @@
 return {
-    stamp = "v178-20261103-reactive-fog-wide-weather",
+    stamp = "v181-20261104-gui-fixes-and-six-emotes",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -5071,7 +5071,7 @@ function Module.init(runtime: any): any
         return trail
     end
 
-    local speed: any = state.framework and state.framework:GetModule("Speed")
+    local speed: any = state.framework and state.framework:GetModule("Speed Hack")
     assert(speed, "Sprint option requires the Speed module")
     speed.ClearSprint = clearSprintTrail
     speed.SprintFrame = function(active: boolean, root: BasePart): ()
@@ -10677,37 +10677,30 @@ function Module.init(runtime: any): any
         looped: boolean?,
     }
 
-    -- Fallback catalog from the TestingStuff client snapshot; live Sync wins.
+    -- The six emotes MM2 sells or hands out from crates. The default avatar
+    -- emotes (wave, cheer, laugh, point, dance1-3) are not shop entries and are
+    -- never granted. Confirmed against the TestingStuff place capture
+    -- (place, source.rbxlx -> Database.Sync.Emotes): ninja 650, zen 800 (Rare),
+    -- dab 700, floss 750 (Rare), zombie and headless NotForSale but still real
+    -- catalog entries with their own AnimationID.
+    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie", "headless" }
+
+    -- Fallback catalog from the TestingStuff client snapshot; the live Sync
+    -- module wins when it is available.
     local BUILTIN_EMOTES: {EmoteDef} = {
         { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
-        { id = "sit", name = "Sit", command = "sit2", animationId = "rbxassetid://2431845940", looped = true },
         { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
         { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
         { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
         { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
         { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
-        { id = "wave", name = "Wave", command = "wave", animationId = "http://www.roblox.com/asset/?id=128777973" },
-        { id = "cheer", name = "Cheer", command = "cheer", animationId = "http://www.roblox.com/asset/?id=129423030" },
-        { id = "laugh", name = "Laugh", command = "laugh", animationId = "http://www.roblox.com/asset/?id=129423131" },
-        { id = "point", name = "Point", command = "point", animationId = "http://www.roblox.com/asset/?id=128853357" },
-        { id = "dance1", name = "Dance 1", command = "dance1", animationId = "http://www.roblox.com/asset/?id=182435998", looped = true },
-        { id = "dance2", name = "Dance 2", command = "dance2", animationId = "http://www.roblox.com/asset/?id=182436842", looped = true },
-        { id = "dance3", name = "Dance 3", command = "dance3", animationId = "http://www.roblox.com/asset/?id=182436935", looped = true },
     }
 
-    local SPECIAL_EMOTE_LABELS: {string} = {
-        "Ninja Rest",
-        "Sit",
-        "Zen",
-        "Dab",
-        "Floss",
-        "Zombie",
-        "Headless",
-    }
+    -- The cycle lists the same six emotes, in the order a player expects.
+    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" }
 
     local LABEL_TO_EMOTE_ID: {[string]: string} = {
         ["Ninja Rest"] = "ninja",
-        ["Sit"] = "sit",
         ["Zen"] = "zen",
         ["Dab"] = "dab",
         ["Floss"] = "floss",
@@ -10717,7 +10710,6 @@ function Module.init(runtime: any): any
 
     local selectedEmoteLabel: string = "Floss"
     local activeTrack: any = nil
-    local generation: number = 0
     local GetAllEmotesFeature: any = nil
 
     local function stopActiveTrack(): ()
@@ -10737,7 +10729,9 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function collectAllEmotes(): ({EmoteDef}, {[string]: EmoteDef})
+    -- The live Sync table, restricted to the shop ids. Anything the game adds
+    -- that is not in SHOP_EMOTE_IDS is ignored on purpose.
+    local function collectEmotes(): ({EmoteDef}, {[string]: EmoteDef})
         local list: {EmoteDef} = {}
         local byId: {[string]: EmoteDef} = {}
 
@@ -10752,32 +10746,38 @@ function Module.init(runtime: any): any
             local db: Instance? = rs and rs:FindFirstChild("Database")
             local syncFolder: Instance? = db and db:FindFirstChild("Sync")
             local emotesModule: Instance? = syncFolder and syncFolder:FindFirstChild("Emotes")
-            if emotesModule then
-                local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
-                if okReq and type(syncEmotes) == "table" then
-                    for emoteId: any, info: any in pairs(syncEmotes) do
-                        if type(emoteId) == "string" and emoteId ~= "Back" and type(info) == "table" then
-                            local asset = animationUri(info.AnimationID)
-                            if type(info.Command) == "string" or asset then
-                                local entry = byId[emoteId]
-                                if not entry then
-                                    entry = { id = emoteId, name = emoteId, command = emoteId, animationId = "" }
-                                    byId[emoteId] = entry
-                                    table.insert(list, entry)
-                                end
-                                if type(info.Name) == "string" and info.Name ~= "" then
-                                    entry.name = info.Name
-                                end
-                                if type(info.Command) == "string" and info.Command ~= "" then
-                                    entry.command = info.Command
-                                end
-                                if asset then
-                                    entry.animationId = asset
-                                end
-                                entry.looped = info.Loop == true
-                            end
-                        end
+            if not emotesModule then
+                return
+            end
+            local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
+            if not okReq or type(syncEmotes) ~= "table" then
+                return
+            end
+            for _, emoteId: string in ipairs(SHOP_EMOTE_IDS) do
+                local info: any = syncEmotes[emoteId]
+                if type(info) == "table" then
+                    local entry: EmoteDef = byId[emoteId]
+                        or {
+                            id = emoteId,
+                            name = emoteId,
+                            command = emoteId,
+                            animationId = "",
+                        }
+                    if not byId[emoteId] then
+                        byId[emoteId] = entry
+                        table.insert(list, entry)
                     end
+                    if type(info.Name) == "string" and info.Name ~= "" then
+                        entry.name = info.Name
+                    end
+                    if type(info.Command) == "string" and info.Command ~= "" then
+                        entry.command = info.Command
+                    end
+                    local asset: string? = animationUri(info.AnimationID)
+                    if asset then
+                        entry.animationId = asset
+                    end
+                    entry.looped = info.Loop == true
                 end
             end
         end)
@@ -10785,11 +10785,80 @@ function Module.init(runtime: any): any
         return list, byId
     end
 
-    -- Update the client's ProfileData and inventory event when available.
-    -- Neither a local table nor a BindableEvent proves server-side ownership.
-    local function unlockAllEmotes(showNotification: boolean?): number
-        local allEmotes: {EmoteDef}, _byId: {[string]: EmoteDef} = collectAllEmotes()
-        local localCount: number = 0
+    -- The emote window the game itself builds: PlayerGui.<x>.Game.Emotes. The
+    -- client script publishes it as _G.EmoteFrame and on the module as
+    -- EmoteModule.EmoteGUI.
+    local function emoteGui(): any
+        local found: any = nil
+        pcall(function(): ()
+            local globals: any = _G :: any
+            if globals.EmoteFrame then
+                found = globals.EmoteFrame
+                return
+            end
+            local players: any = game:GetService("Players")
+            local player: any = players and players.LocalPlayer
+            local playerGui: any = player and player:FindFirstChildOfClass("PlayerGui")
+            if not playerGui then
+                return
+            end
+            for _, child: any in ipairs(playerGui:GetChildren()) do
+                local gameFolder: any = child:FindFirstChild("Game")
+                local emotesFrame: any = gameFolder and gameFolder:FindFirstChild("Emotes")
+                if emotesFrame and emotesFrame:FindFirstChild("EmotePages") then
+                    found = emotesFrame
+                    return
+                end
+            end
+        end)
+        return found
+    end
+
+    -- Rebuild the game's own emote window from ProfileData, exactly like the
+    -- client does after InventoryDataChanged: EmoteModule.GenerateEmotes(owned,
+    -- gui). GenerateEmotes paginates six per page and re-clones its own
+    -- Page/Container/Emote templates, so every granted id shows up with its
+    -- icon, name, hotkey and a click handler that fires Remotes.Misc.PlayEmote.
+    local function refreshEmoteWindow(owned: {string}): boolean
+        if #owned <= 0 then
+            return false
+        end
+        local rebuilt: boolean = false
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
+            local emoteInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
+            if not emoteInst then
+                return
+            end
+            local okEm: boolean, emoteModule: any = pcall(require, emoteInst)
+            if not okEm or type(emoteModule) ~= "table" then
+                return
+            end
+            local gui: any = emoteModule.EmoteGUI or emoteGui()
+            if gui == nil then
+                return
+            end
+            if type(emoteModule.GenerateEmotes) ~= "function" then
+                return
+            end
+            emoteModule.EmoteGUI = gui
+            local ok: boolean = pcall(emoteModule.GenerateEmotes, owned, gui)
+            rebuilt = ok
+        end)
+        return rebuilt
+    end
+
+    -- Write the six shop ids into the client's ProfileData and wake the
+    -- inventory UI. The ProfileData module returns the live profile table the
+    -- emote window reads, so appending to Emotes.Owned is what makes the
+    -- window show them; the InventoryDataChanged BindableEvent is then fired
+    -- exactly like the client does, which rebuilds the window from ProfileData.
+    -- Ownership stays local: the server still owns the real list.
+    local function grantShopEmotes(showNotification: boolean?): number
+        local list: {EmoteDef} = collectEmotes()
+        local granted: number = 0
+        local ownedList: {string}? = nil
 
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
@@ -10797,10 +10866,11 @@ function Module.init(runtime: any): any
                 return
             end
 
-            -- 1. Update ReplicatedStorage.Modules.ProfileData.Emotes.Owned
+            -- 1. ReplicatedStorage.Modules.ProfileData.Emotes.Owned
+            local owned: {string}? = nil
             local modulesFolder: Instance? = rs:FindFirstChild("Modules")
-            local profileDataMod: Instance? = modulesFolder and modulesFolder:FindFirstChild("ProfileData")
-            local ownedTable: {string}? = nil
+            local profileDataMod: Instance? = modulesFolder
+                and modulesFolder:FindFirstChild("ProfileData")
             if profileDataMod then
                 local okProf: boolean, profileData: any = pcall(require, profileDataMod)
                 if okProf and type(profileData) == "table" then
@@ -10809,86 +10879,93 @@ function Module.init(runtime: any): any
                     elseif type(profileData.Emotes.Owned) ~= "table" then
                         profileData.Emotes.Owned = {}
                     end
-                    ownedTable = profileData.Emotes.Owned
+                    owned = profileData.Emotes.Owned
                 end
             end
 
-            local ownedSet: {[string]: boolean} = {}
-            if type(ownedTable) == "table" then
-                for _, existingId: any in ipairs(ownedTable) do
+            local known: {[string]: boolean} = {}
+            if owned then
+                for _, existingId: any in ipairs(owned) do
                     if type(existingId) == "string" then
-                        ownedSet[existingId] = true
+                        known[existingId] = true
                     end
                 end
+                for _, def: EmoteDef in ipairs(list) do
+                    if not known[def.id] then
+                        known[def.id] = true
+                        table.insert(owned, def.id)
+                        granted += 1
+                    end
+                end
+                ownedList = owned
             end
 
-            -- 2. Locate InventoryDataChanged BindableEvent for EmoteWindow & Inventory UI
+            -- 2. InventoryDataChanged. In MM2 this is a RemoteEvent whose
+            -- client-side channel is the inner BindableEvent (`.Event`); the
+            -- old code fired the RemoteEvent itself, which does not exist
+            -- client-side, so the emote window never rebuilt.
             local remotesFolder: Instance? = rs:FindFirstChild("Remotes")
             local invRemotes: Instance? = remotesFolder and remotesFolder:FindFirstChild("Inventory")
-            local invChanged: Instance? = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
-
-            for _, def: EmoteDef in ipairs(allEmotes) do
-                local updated: boolean = type(ownedTable) == "table"
-                if updated and not ownedSet[def.id] then
-                    ownedSet[def.id] = true
-                    table.insert(ownedTable :: {string}, def.id)
-                end
-                if invChanged and type((invChanged :: any).Fire) == "function" then
-                    pcall(function(): ()
-                        (invChanged :: any):Fire("Emotes", def.id, 1)
-                    end)
-                end
-                if updated then localCount += 1 end
-            end
-
-            -- 3. Also support EmoteModule.GenerateEmotes if used by the current UI layout
-            local emoteModInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
-            if emoteModInst and type(ownedTable) == "table" then
-                pcall(function(): ()
-                    local okEm: boolean, emoteModule: any = pcall(require, emoteModInst)
-                    if okEm and type(emoteModule) == "table" and type(emoteModule.GenerateEmotes) == "function" then
-                        local emoteGui: any = (_G and (_G :: any).EmoteFrame) or emoteModule.EmoteGUI
-                        if emoteGui then
-                            pcall(emoteModule.GenerateEmotes, ownedTable, emoteGui)
-                        end
+            local invChanged: any = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
+            if invChanged and owned then
+                for _, def: EmoteDef in ipairs(list) do
+                    if known[def.id] then
+                        pcall(function(): ()
+                            if invChanged.Event and type(invChanged.Event.Fire) == "function" then
+                                invChanged.Event:Fire("Emotes", def.id, 1)
+                            elseif type(invChanged.Fire) == "function" then
+                                invChanged:Fire("Emotes", def.id, 1)
+                            end
+                        end)
                     end
-                end)
+                end
             end
         end)
 
-        if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
-            GetAllEmotesFeature:SetStatus(string.format("%d local emotes", localCount))
+        if ownedList then
+            refreshEmoteWindow(ownedList)
+        end
+
+        if GetAllEmotesFeature then
+            GetAllEmotesFeature:SetStatus(string.format("%d shop emotes", #list))
         end
         if showNotification and type(notify) == "function" then
-            pcall(notify, string.format("Get All Emotes: %d local emote entries; server ownership is not verified.", localCount))
+            pcall(
+                notify,
+                string.format(
+                    "Get All Emotes: %d shop emotes written to the local profile "
+                        .. "(%d new). The server still decides what plays.",
+                    #list,
+                    granted
+                )
+            )
         end
-        return localCount
+        return granted
     end
 
-    -- Request the game's native emote, or use the character Animator as a
-    -- fallback. The game's permissions determine playback and replication.
+    -- The game's own PlayEmote BindableEvent (Remotes.Misc.PlayEmote) takes the
+    -- emote id; the Animator is only the fallback when the game refuses.
     local function requestEmotePlayback(emoteId: string): boolean
         stopActiveTrack()
-        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectAllEmotes()
+        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectEmotes()
         local def: EmoteDef? = byId[emoteId]
-        local firedBindable: boolean = false
+        local firedGameEvent: boolean = false
 
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
             local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
             local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
-            local playEmoteEvent: Instance? = misc and misc:FindFirstChild("PlayEmote")
-            if playEmoteEvent and type((playEmoteEvent :: any).Fire) == "function" then
-                (playEmoteEvent :: any):Fire(emoteId)
-                firedBindable = true
+            local playEmoteEvent: any = misc and misc:FindFirstChild("PlayEmote")
+            if playEmoteEvent and type(playEmoteEvent.Fire) == "function" then
+                playEmoteEvent:Fire(emoteId)
+                firedGameEvent = true
             end
         end)
 
-        if firedBindable then
+        if firedGameEvent then
             return true
         end
 
-        -- Direct Humanoid/Animator fallback; replication is game-dependent.
         if not def or def.animationId == "" then
             return false
         end
@@ -10920,64 +10997,85 @@ function Module.init(runtime: any): any
         return playedFallback
     end
 
-    local function toggleGetAllEmotes(enabled: boolean): ()
-        generation += 1
-        local currentGeneration: number = generation
-        disconnectFeatureConnection("MM2GetAllEmotesRespawn")
+    -- One click: grant the six shop emotes and rebuild the game's window.
+    local function runGetAllEmotes(): ()
+        local granted: number = grantShopEmotes(true)
+        if GetAllEmotesFeature then
+            GetAllEmotesFeature:SetStatus(
+                string.format("%d shop emotes", #collectEmotes())
+            )
+        end
+        if granted == 0 and type(notify) == "function" then
+            pcall(notify, "Get All Emotes: the six shop emotes were already in the local profile.")
+        end
+    end
 
-        if not enabled then
-            stopActiveTrack()
-            if GetAllEmotesFeature then
-                GetAllEmotesFeature:SetStatus(nil)
-            end
+    -- Re-apply after a respawn/reset: the game can rebuild the profile and the
+    -- emote window, and the grant is local-only, so a fresh character gets it
+    -- again without the player pressing the button.
+    local function hookRespawn(): ()
+        if featureConnections.MM2GetAllEmotesRespawn then
             return
         end
-
-        local count: number = unlockAllEmotes(true)
-        GetAllEmotesFeature:SetStatus(string.format("%d local emotes", count))
-
-        if LocalPlayer and LocalPlayer.CharacterAdded then
-            featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
+        if not (LocalPlayer and LocalPlayer.CharacterAdded) then
+            return
+        end
+        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(
+            function(): ()
                 task.delay(0.5, function(): ()
-                    if currentGeneration == generation and GetAllEmotesFeature and GetAllEmotesFeature.enabled then
-                        unlockAllEmotes(false)
+                    if Module.Initialized then
+                        pcall(grantShopEmotes, false)
                     end
                 end)
-            end)
-        end
+            end
+        )
     end
 
     GetAllEmotesFeature = createUniversalFeature(
         "Get All Emotes",
-        "Attempts to populate the local MM2 emote list and play selected animations. Server ownership and replication depend on the game.",
+        "Button: writes the six MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
+            .. "Zombie, Headless) into the live emote profile and rebuilds the "
+            .. "game's emote window. Server ownership is not guaranteed.",
         11,
-        toggleGetAllEmotes,
+        function(): ()
+            runGetAllEmotes()
+        end,
         {
             categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
+            action = true,
+            noOptions = false,
+            configKey = "MM2.GetAllEmotes",
         }
     )
     state.mm2GetAllEmotesFeature = GetAllEmotesFeature
 
-    addActionOption(
-        GetAllEmotesFeature,
-        "Get All Emotes",
-        function(): ()
-            unlockAllEmotes(true)
-        end,
-        "Update the local emote list; this does not prove server-side ownership."
-    )
-
+    -- The cycle widget calls the callback once at creation with the saved
+    -- value. That is a restore, not a choice: playing an emote there fired a
+    -- toast on every single boot.
+    local cycleRestored: boolean = false
     addCycleOption(
         GetAllEmotesFeature,
         "Select Emote",
-        SPECIAL_EMOTE_LABELS,
-        5,
+        EMOTE_LABELS,
+        4,
         function(value: string): ()
             selectedEmoteLabel = value
+            if not cycleRestored then
+                cycleRestored = true
+                return
+            end
+            local emoteId: string = LABEL_TO_EMOTE_ID[value] or "floss"
+            -- v180: choosing an emote plays it right away. Before this the cycle
+            -- only stored a label and the player had to press Play afterwards,
+            -- which read as "Select Emote does nothing".
+            grantShopEmotes(false)
+            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
+                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
+            end
         end,
-        "Select an MM2 emote to request through the game or the character Animator."
+        "Pick an emote and play it immediately through the game."
     )
 
     addActionOption(
@@ -10985,15 +11083,28 @@ function Module.init(runtime: any): any
         "Play Emote",
         function(): ()
             local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
-            unlockAllEmotes(false)
-            requestEmotePlayback(emoteId)
+            grantShopEmotes(false)
+            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
+                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
+            end
         end,
-        "Request the selected emote. Playback and visibility to others are not guaranteed."
+        "Replay the emote chosen in Select Emote."
     )
 
+    addInformationOption(
+        GetAllEmotesFeature,
+        "Button, not a toggle: one click grants the shop emotes. The button "
+            .. "stays idle until you press it again."
+    )
+
+    hookRespawn()
+
     activeCleanup = function(): ()
-        toggleGetAllEmotes(false)
-        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then state.mm2GetAllEmotesFeature = nil end
+        disconnectFeatureConnection("MM2GetAllEmotesRespawn")
+        stopActiveTrack()
+        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then
+            state.mm2GetAllEmotesFeature = nil
+        end
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -11496,6 +11607,8 @@ local Module = {
     Runtime = nil :: any,
 }
 
+local activeCleanup: () -> () = function(): () end
+
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -11505,20 +11618,16 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    -- Capture tools only exist with WURST_DEBUG on. The recorder in base.lua
-    -- keeps working either way; this is the card the player would otherwise
-    -- see between "Blurt Roles" and the real modules.
-    if state.debug ~= true then
-        Module.Events = featureConnections
-        Module.Initialized = true
-        return Module
-    end
-
+    -- v180: the capture card is back in release. What changed is consent: the
+    -- recorder only writes to the executor workspace after the player answers
+    -- the prompt with Yes. Answering No keeps everything in memory and writes
+    -- nothing.
     local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
             "Calibration",
-            "MM2 shot and knife trajectory calibration; isolated from universal modules.",
+            "MM2 shot and knife calibration. Nothing is written to your workspace "
+                .. "unless you answer Yes to the calibration prompt.",
             5,
             function(): () end,
             {
@@ -11530,24 +11639,180 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
-        notify(trajectoryCalibration:status())
-    end)
-    addActionOption(TrajectoryFeature, "Save calibration", function(): ()
-        if trajectoryCalibration:save("manual") then
-            notify("Trajectory calibration saved in the executor workspace.")
-        else
-            notify("Trajectory calibration could not be saved; check F9.")
+
+    -- Three samples make a correction live and the window holds eight; twenty
+    -- is a settled median, which is what a dozen or two matches should reach.
+    local LEAD_SAMPLES_FOR_CONFIDENCE: number = 20
+
+    local askedThisSession: boolean = false
+
+    local function consent(): boolean?
+        if type(trajectoryCalibration) ~= "table"
+            or type(trajectoryCalibration.getConsent) ~= "function" then
+            return nil
         end
-    end)
+        local ok: boolean, value: any = pcall(trajectoryCalibration.getConsent, trajectoryCalibration)
+        if not ok then
+            return nil
+        end
+        if value == true then
+            return true
+        end
+        if value == false then
+            return false
+        end
+        return nil
+    end
+
+    local function setConsent(value: boolean?): ()
+        if type(trajectoryCalibration) ~= "table"
+            or type(trajectoryCalibration.setConsent) ~= "function" then
+            return
+        end
+        pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+            TrajectoryFeature:SetStatus(
+                value == true and "giving calibration"
+                    or (value == false and "off" or nil)
+            )
+        end
+    end
+
+    -- The centred question. Yes starts saving; No guarantees nothing is saved
+    -- (and removes the file a previous Yes wrote).
+    local function askConsent(): ()
+        askedThisSession = true
+        local dialog: any = state.confirmDialog
+        if type(dialog) ~= "function" then
+            -- No host dialog (older bundle): stay silent rather than saving
+            -- anything without an answer.
+            setConsent(nil)
+            return
+        end
+        local ok: boolean, failure: any = pcall(dialog, {
+            title = "Give your calibration?",
+            message = "Would you like to give your calibration? MM2 will save your "
+                .. "shot and knife data to a JSON file in your executor workspace so "
+                .. "the aim can be tuned with real numbers. Choose No and nothing at "
+                .. "all is written.",
+            yes = "Yes",
+            no = "No",
+            onYes = function(): ()
+                setConsent(true)
+                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+                    TrajectoryFeature:SetStatus("giving calibration")
+                end
+                notify("Calibration ON: saving to your workspace/Telemetry folder.")
+            end,
+            onNo = function(): ()
+                setConsent(false)
+                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+                    TrajectoryFeature:SetStatus("off")
+                end
+                notify("Calibration OFF: nothing will be saved.")
+            end,
+        })
+        if not ok then
+            warn("[Wurst] calibration prompt failed: " .. tostring(failure))
+        end
+    end
+
+    -- The point of the calibration is a predictor that is right after a dozen
+    -- matches, so the card has to say how far that has come.
+    local function learningSummary(): string
+        local predictor: any = state and state.mm2Prediction
+        if type(predictor) ~= "table" then
+            return "learning: no data yet"
+        end
+        if type(predictor.exportLeadState) ~= "function" then
+            return "learning: readiness unavailable"
+        end
+        local ok: boolean, buckets: any = pcall(predictor.exportLeadState)
+        if not ok or type(buckets) ~= "table" then
+            return "learning: readiness unavailable"
+        end
+        local parts: {string} = {}
+        for mode: string, entry: any in pairs(buckets) do
+            if type(entry) == "table" then
+                local samples: number = tonumber(entry.samples) or 0
+                local applied: number = tonumber(entry.applied) or 0
+                table.insert(
+                    parts,
+                    string.format(
+                        "%s %d/%d %+d ms",
+                        mode,
+                        samples,
+                        LEAD_SAMPLES_FOR_CONFIDENCE,
+                        math.round(applied * 1000)
+                    )
+                )
+            end
+        end
+        if #parts == 0 then
+            return "learning: no confirmed shots yet"
+        end
+        table.sort(parts)
+        return "learning: " .. table.concat(parts, " · ")
+    end
+
+    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
+        local status: string = "unavailable"
+        if type(trajectoryCalibration) == "table"
+            and type(trajectoryCalibration.status) == "function" then
+            local ok: boolean, value: any = pcall(trajectoryCalibration.status, trajectoryCalibration)
+            status = ok and tostring(value) or "unavailable"
+        end
+        notify(status .. " · " .. learningSummary())
+    end, "Shows what the recorder has measured so far.")
+
+    addActionOption(TrajectoryFeature, "Give calibration", function(): ()
+        setConsent(true)
+        notify("Calibration ON: saving to your workspace/Telemetry folder.")
+    end, "Answer Yes again and start saving the current session.")
+
+    addActionOption(TrajectoryFeature, "Stop giving calibration", function(): ()
+        setConsent(false)
+        notify("Calibration OFF: nothing will be saved and the file was removed.")
+    end, "Answer No: stop saving and delete the file this menu wrote.")
+
+    addActionOption(TrajectoryFeature, "Ask again", function(): ()
+        setConsent(nil)
+        askConsent()
+    end, "Re-open the calibration question in the middle of the screen.")
+
     addActionOption(TrajectoryFeature, "Clear MM2 history", function(): ()
-        trajectoryCalibration:reset()
+        if type(trajectoryCalibration) == "table"
+            and type(trajectoryCalibration.reset) == "function" then
+            pcall(trajectoryCalibration.reset, trajectoryCalibration)
+        end
         notify("Trajectory calibration history cleared.")
-    end)
+    end, "Forget everything measured so far.")
+
     addInformationOption(
         TrajectoryFeature,
-        "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
+        "Records target windows around your shots and throws. MM2-only calibration; "
+            .. "nothing is written to your workspace unless you give your calibration."
     )
+
+    -- Ask once per session when the question has never been answered. A saved
+    -- answer (Yes or No) is respected: no prompt on every injection.
+    if consent() == nil and not askedThisSession then
+        task.delay(3, function(): ()
+            if Module.Initialized and consent() == nil then
+                askConsent()
+            end
+        end)
+    elseif consent() == true and type(TrajectoryFeature.SetStatus) == "function" then
+        TrajectoryFeature:SetStatus("giving calibration")
+    elseif consent() == false and type(TrajectoryFeature.SetStatus) == "function" then
+        TrajectoryFeature:SetStatus("off")
+    end
+
+    activeCleanup = function(): ()
+        if state.mm2CalibrationFeature == TrajectoryFeature then
+            state.mm2CalibrationFeature = nil
+        end
+    end
 
     Module.Events = featureConnections
     Module.Initialized = true
@@ -11559,6 +11824,8 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
 end
@@ -12615,6 +12882,12 @@ function Module.init(runtime: any): any
         if lower == "silent" or lower == "cframe" or lower == "silent aim" then
             return "CFrame"
         end
+        -- Kept from v179: a blade sample must not be averaged into the bucket a
+        -- plain gun also uses, otherwise knife confirmations would silently
+        -- retune every gun without a mode.
+        if lower == "knife" or lower == "blade" then
+            return "Knife"
+        end
         return "default"
     end
 
@@ -12698,6 +12971,43 @@ function Module.init(runtime: any): any
             return 0
         end
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
+    -- v180: the learned part is what turns a few matches into a working
+    -- predictor, so it has to outlive the session. The calibration file keeps
+    -- one entry per aim mode (samples, median, applied correction) and the next
+    -- boot seeds it back through `seedLeadError` instead of restarting at zero.
+    local function exportLeadState(): {[string]: any}
+        local out: {[string]: any} = {}
+        for key: string, bucket: {number} in pairs(leadErrors) do
+            out[key] = {
+                samples = #bucket,
+                median = medianOf(bucket),
+                applied = leadApplied[key] or 0,
+            }
+        end
+        return out
+    end
+
+    -- Restore a bucket measured in an earlier session. The median is applied
+    -- directly (not slew-limited): those samples were already earned shot by
+    -- shot, so replaying them one step at a time would only slow the start.
+    local function seedLeadError(mode: any, seconds: any, samples: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        local count: number = finiteNumber(samples) and math.floor(samples) or 0
+        if count < LEAD_FEEDBACK_MIN_SAMPLES then
+            return
+        end
+        local key: string = modeKey(mode)
+        local clamped: number = math.clamp(seconds, -LEAD_FEEDBACK_SAMPLE_LIMIT, LEAD_FEEDBACK_SAMPLE_LIMIT)
+        local bucket: {number} = leadBucket(key)
+        table.clear(bucket)
+        for _index: number = 1, math.min(count, LEAD_FEEDBACK_MAX_SAMPLES) do
+            table.insert(bucket, clamped)
+        end
+        leadApplied[key] = math.clamp(clamped, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
     end
 
     local function leadSamples(mode: any): number
@@ -13520,6 +13830,8 @@ function Module.init(runtime: any): any
             return estimateMotion(track, os.clock())
         end,
         noteLeadError = noteLeadError,
+        exportLeadState = exportLeadState,
+        seedLeadError = seedLeadError,
         getLeadCorrection = leadCorrection,
         getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,
@@ -16401,6 +16713,12 @@ local function createTrajectoryCalibration(): any
         activatedAt: number,
         origin: Vector3?,
         requestedAim: Vector3?,
+        -- v179: the predicted ROOT (no torso offset) and the velocity the
+        -- predictor used, so the closest blade pass can be scored as a lead
+        -- error instead of a raw distance.
+        requestedRoot: Vector3?,
+        aimVelocity: Vector3?,
+        aimLeadSeconds: number?,
         pingMs: number,
         targetUserId: number?,
         targetName: string?,
@@ -16428,6 +16746,17 @@ local function createTrajectoryCalibration(): any
         pingMs: number,
         targetUserId: number?,
         targetName: string?,
+        requestedAim: Vector3?,
+        requestedRoot: Vector3?,
+        aimVelocity: Vector3?,
+        aimLeadSeconds: number?,
+        activatedAt: number?,
+        -- Captured at the closest pass: where the body really was and which
+        -- way it was moving. That pair is what turns a miss distance into a
+        -- signed lead error.
+        approachRoot: Vector3?,
+        approachVelocity: Vector3?,
+        approachAt: number?,
         targetTrajectory: {TrajectoryPoint},
         targetHistory: {HistoryPoint},
         lastTrajectorySampleAt: number,
@@ -16514,6 +16843,10 @@ local function createTrajectoryCalibration(): any
         getEstimates: (self: Controller) -> Estimates,
         noteAuthoredShot: (self: Controller, info: any) -> (),
         noteTracerData: (self: Controller, info: any) -> (),
+        -- v180: nothing is written to the executor workspace until the player
+        -- answers the calibration prompt with Yes.
+        getConsent: (self: Controller) -> boolean?,
+        setConsent: (self: Controller, value: boolean?) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -16555,6 +16888,11 @@ local function createTrajectoryCalibration(): any
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
         lastBlockedAt = 0,
+        -- Learned lead buckets read from the previous session, applied as soon
+        -- as the predictor exists (load order between base.lua and Prediction
+        -- is not fixed).
+        leadSeeds = nil :: any,
+        leadSeedsApplied = false,
         evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
@@ -16572,6 +16910,11 @@ local function createTrajectoryCalibration(): any
     local saveSnapshot: (reason: string) -> boolean
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
+
+    -- v180: the measured acceptance stays a reported statistic
+    -- (`aggregate.gunAcceptanceMs`, `estimator.gunAcceptanceMs`) but it is no
+    -- longer pushed into the predictor. With the pre-v179 prediction restored,
+    -- the horizon is the ping until a live echo exists, exactly as before.
 
     local function nextShotId(): string
         runtime.shotSequence += 1
@@ -16638,6 +16981,29 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Push the buckets measured in earlier sessions into the predictor. Safe to
+    -- call before the predictor exists: it simply reports "not applied yet".
+    local function applyLearnedSeeds(): boolean
+        if runtime.leadSeedsApplied then
+            return true
+        end
+        local seeds: any = runtime.leadSeeds
+        if type(seeds) ~= "table" then
+            return false
+        end
+        local prediction: any = state.mm2Prediction
+        if not prediction or type(prediction.seedLeadError) ~= "function" then
+            return false
+        end
+        for mode: string, entry: any in pairs(seeds) do
+            if type(entry) == "table" and predictionMath.finite(entry.median) then
+                pcall(prediction.seedLeadError, mode, entry.median, entry.samples)
+            end
+        end
+        runtime.leadSeedsApplied = true
+        return true
+    end
+
     local function loadSavedHistory(): ()
         if type(environment.readfile) ~= "function" then
             runtime.persistenceBlocked = true
@@ -16680,6 +17046,18 @@ local function createTrajectoryCalibration(): any
         importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
         importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
         importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
+        -- What the predictor already learned (lead error per aim mode) has to
+        -- survive too: without this every session restarted at zero correction
+        -- and no number of matches could ever converge.
+        local learned: any = type(decoded.predictor) == "table" and decoded.predictor or {}
+        local learnedBuckets: any = type(learned.leadErrors) == "table" and learned.leadErrors or nil
+        if learnedBuckets then
+            runtime.leadSeeds = learnedBuckets
+            runtime.leadSeedsApplied = false
+            applyLearnedSeeds()
+        end
+        -- The imported history is a measurement too; the live samples that
+        -- follow refine it.
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -16975,6 +17353,13 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
+        -- Unconsented sessions never schedule a write. Read straight from the
+        -- saved config so the writer slices stay self-contained; without a
+        -- config table (unit harness) nothing is gated.
+        local states: any = type(configData) == "table" and configData.states or nil
+        if states and states["MM2.Calibration.Consent"] ~= true then
+            return
+        end
         if runtime.saveScheduled then
             return
         end
@@ -17393,6 +17778,13 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
+        -- v180 consent: without an explicit Yes the recorder keeps its data in
+        -- memory and never touches the workspace, so a player who answers No
+        -- leaves no calibration file behind.
+        local consentStates: any = type(configData) == "table" and configData.states or nil
+        if consentStates and consentStates["MM2.Calibration.Consent"] ~= true then
+            return false
+        end
         if runtime.persistenceBlocked
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
@@ -17438,6 +17830,28 @@ local function createTrajectoryCalibration(): any
                 knifeSpeedStudsPerSecond = mergedKnife,
                 knifeSpawnDelayMs = mergedDelay,
             },
+            -- The learned model, portable across sessions and machines. Same
+            -- shape the import path reads above.
+            predictor = (function(): {[string]: any}
+                local out: {[string]: any} = {}
+                local predictorState: any = state.mm2Prediction
+                if predictorState and type(predictorState.exportLeadState) == "function" then
+                    local ok: boolean, value: any = pcall(predictorState.exportLeadState)
+                    if ok and type(value) == "table" then
+                        out.leadErrors = value
+                    end
+                end
+                if predictorState and type(predictorState.getLeadSamples) == "function" then
+                    local ok: boolean, guns: any = pcall(predictorState.getLeadSamples, "gun")
+                    local okKnife: boolean, knives: any = pcall(predictorState.getLeadSamples, "knife")
+                    out.samples = {
+                        gun = ok and guns or nil,
+                        knife = okKnife and knives or nil,
+                    }
+                end
+                out.readyFor = "3+ samples per mode makes the correction live; 20+ is a settled median"
+                return out
+            end)(),
             estimator = {
                 gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
                 knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
@@ -18050,6 +18464,49 @@ local function createTrajectoryCalibration(): any
         ensureTrajectorySampler()
     end
 
+    -- A body moving slower than this has no stable direction to project on,
+    -- and a closest pass farther from the predicted root than this is another
+    -- failure mode (wall, wrong body, teleport), not a lead error.
+    local KNIFE_FEEDBACK_MIN_SPEED: number = 2.0
+    local KNIFE_FEEDBACK_MAX_MISS_STUDS: number = 6.0
+    local KNIFE_FEEDBACK_SAMPLE_LIMIT: number = 0.15
+
+    -- The blade's own confirmation: where the body really was at the closest
+    -- pass, projected on the velocity the throw was aimed with. Positive means
+    -- the body was ahead of the aim (we under-led). This is the same quantity
+    -- and the same sign convention the gun feedback uses, so the shared
+    -- predictor can learn from knives with noteLeadError(seconds, "knife").
+    local function knifeLeadErrorSeconds(track: KnifeTrack): number?
+        local aimRoot: Vector3? = track.requestedRoot
+        local approach: Vector3? = track.approachRoot
+        if not aimRoot or not approach then
+            return nil
+        end
+        local reference: Vector3? = track.aimVelocity
+        if not reference then
+            reference = track.approachVelocity
+        end
+        if not reference then
+            return nil
+        end
+        local horizontal: Vector3 = Vector3.new(reference.X, 0, reference.Z)
+        local speed: number = horizontal.Magnitude
+        if speed < KNIFE_FEEDBACK_MIN_SPEED then
+            return nil
+        end
+        local offset: Vector3 = approach - aimRoot
+        local flat: Vector3 = Vector3.new(offset.X, 0, offset.Z)
+        if flat.Magnitude > KNIFE_FEEDBACK_MAX_MISS_STUDS then
+            return nil
+        end
+        local seconds: number = flat:Dot(horizontal) / (speed * speed)
+        if not predictionMath.finite(seconds)
+            or math.abs(seconds) > KNIFE_FEEDBACK_SAMPLE_LIMIT then
+            return nil
+        end
+        return seconds
+    end
+
     local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
     local function stopKnifeSamplerIfIdle(): ()
         if next(runtime.tracks) == nil then
@@ -18069,6 +18526,18 @@ local function createTrajectoryCalibration(): any
         end
         local measuredSpeed: number? = median(track.speeds)
         local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
+        -- v179: close the feedback loop for blades. Until now the captures only
+        -- scored the gun, so `leadCorrection("knife")` was permanently empty and
+        -- the knife lead could never adapt to the connection it runs on.
+        local leadErrorSeconds: number? = knifeLeadErrorSeconds(track)
+        if leadErrorSeconds and type(state.mm2Prediction) == "table"
+            and type(state.mm2Prediction.noteLeadError) == "function" then
+            pcall(
+                state.mm2Prediction.noteLeadError,
+                leadErrorSeconds,
+                "knife"
+            )
+        end
         if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
             local analysis: {[string]: any} = analyzeTargetTrajectory(
                 track.targetTrajectory,
@@ -18108,6 +18577,14 @@ local function createTrajectoryCalibration(): any
                 closestApproachStuds = track.closestApproach,
                 closestApproachAtMs = track.closestApproachAt,
                 bodyRadiusStuds = track.bodyRadius,
+                -- v179: the knife's own lead measurement, in the same units and
+                -- sign as the gun's, so a session can be scored without
+                -- reconstructing the geometry offline.
+                leadErrorSeconds = leadErrorSeconds,
+                predictedRoot = track.requestedRoot and vectorArray(track.requestedRoot) or nil,
+                approachRoot = track.approachRoot and vectorArray(track.approachRoot) or nil,
+                approachAtMs = track.approachAt,
+                aimLeadSeconds = track.aimLeadSeconds,
                 -- A blade that passes inside the torso's half-diagonal is a
                 -- touch the client can prove; anything else is a measured
                 -- miss distance the next session can be scored against.
@@ -18161,6 +18638,15 @@ local function createTrajectoryCalibration(): any
                                 or distance < track.closestApproach then
                                 track.closestApproach = distance
                                 track.closestApproachAt =
+                                    (now - track.startedAt) * 1000
+                                -- v179: the pair that scores the throw. Until
+                                -- now the knife only recorded HOW FAR the
+                                -- blade passed; without the body position and
+                                -- velocity there was no way to say WHICH WAY.
+                                track.approachRoot = body.Position
+                                track.approachVelocity =
+                                    body.AssemblyLinearVelocity
+                                track.approachAt =
                                     (now - track.startedAt) * 1000
                                 -- Half-diagonal of the torso the blade has to
                                 -- cross: a distance under it is a touch.
@@ -18275,6 +18761,14 @@ local function createTrajectoryCalibration(): any
                 pingMs = pending.pingMs,
                 targetUserId = pending.targetUserId,
                 targetName = pending.targetName,
+                requestedAim = pending.requestedAim,
+                requestedRoot = pending.requestedRoot,
+                aimVelocity = pending.aimVelocity,
+                aimLeadSeconds = pending.aimLeadSeconds,
+                activatedAt = pending.activatedAt,
+                approachRoot = nil,
+                approachVelocity = nil,
+                approachAt = nil,
                 targetTrajectory = pending.targetTrajectory,
                 targetHistory = pending.targetHistory or {},
                 lastTrajectorySampleAt = now,
@@ -18484,6 +18978,16 @@ local function createTrajectoryCalibration(): any
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
         loadSavedHistory()
+        -- The predictor may load after this adapter: retry briefly instead of
+        -- dropping what the previous matches taught it.
+        if type(task) == "table" and type(task.spawn) == "function" then
+            task.spawn(function(): ()
+                for _attempt: number = 1, 20 do
+                    if applyLearnedSeeds() then return end
+                    task.wait(0.5)
+                end
+            end)
+        end
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -18527,6 +19031,53 @@ local function createTrajectoryCalibration(): any
         runtime.shotSequence = 0
         table.clear(runtime.pendingGuns)
         table.clear(runtime.pendingKnives)
+    end
+
+    local function consentValue(): boolean?
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states then
+            return nil
+        end
+        local value: any = states["MM2.Calibration.Consent"]
+        if value == true then return true end
+        if value == false then return false end
+        return nil
+    end
+
+    function controller:getConsent(): boolean?
+        return consentValue()
+    end
+
+    -- `true` starts saving on the next confirmed shot (and writes the current
+    -- session immediately), `false` stops every write and removes the file this
+    -- menu wrote, `nil` leaves the question unanswered.
+    function controller:setConsent(value: boolean?): ()
+        local nextValue: boolean? = nil
+        if value == true then
+            nextValue = true
+        elseif value == false then
+            nextValue = false
+        end
+        if type(configData) == "table" and configData.states then
+            configData.states["MM2.Calibration.Consent"] = nextValue
+        end
+        if type(state.queueConfigSave) == "function" then
+            pcall(state.queueConfigSave)
+        end
+        if nextValue == true then
+            runtime.dirty = true
+            saveSnapshot("consent")
+            return
+        end
+        runtime.saveScheduled = false
+        runtime.dirty = false
+        if runtime.persistenceBlocked then
+            return
+        end
+        -- A No must not leave the file the previous consent wrote behind.
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        end
     end
 
     function controller:save(reason: string?): boolean
@@ -18707,6 +19258,16 @@ local function createTrajectoryCalibration(): any
                     activatedAt = now,
                     origin = info.originPos,
                     requestedAim = info.aimPos,
+                    -- v179: only the knife author fills these in.
+                    requestedRoot = typeof(info.aimRoot) == "Vector3"
+                            and info.aimRoot
+                        or nil,
+                    aimVelocity = typeof(info.aimVelocity) == "Vector3"
+                            and info.aimVelocity
+                        or nil,
+                    aimLeadSeconds = predictionMath.finite(info.leadSeconds)
+                            and info.leadSeconds
+                        or nil,
                     pingMs = pingMs,
                     targetTrajectory = targetTrajectory,
                     targetHistory = targetHistory,
@@ -18740,12 +19301,17 @@ local function createTrajectoryCalibration(): any
         for _key: string in pairs(runtime.motionBuckets) do
             bucketCount += 1
         end
+        local consent: boolean? = consentValue()
+        local consentText: string = consent == true and "giving calibration"
+            or (consent == false and "not giving calibration")
+            or "calibration not answered"
         return string.format(
-            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s",
+            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s · %s",
             runtime.sessionGunConfirmed,
             runtime.sessionKnifeConfirmed,
             bucketCount,
-            knifeText
+            knifeText,
+            consentText
         )
     end
 
@@ -26173,13 +26739,22 @@ function Module.init(context: Runtime): any
     local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
     local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
-    local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
+    -- v180: finite force, like YARHM and SkidFling use. `math.huge` makes the
+    -- solver fight itself on some servers (the pin "wins" every contact and the
+    -- victim never receives the impulse), which is exactly the low success
+    -- rate this card was reporting.
+    local PIN_FORCE: Vector3 = Vector3.new(9e9, 9e9, 9e9)
 
-    -- Preserve the previous defaults for the three removed controls.
-    local FLING_POWER: number = 4
+    -- v180: more power by default. 4 was the old constant with the slider
+    -- removed; 6 doubles the pose velocity against YARHM's baseline and keeps
+    -- the pin above it, and a Power slider lets the player push further when a
+    -- server eats the first pass.
+    local FLING_POWER: number = 6
+    local FLING_POWER_MIN: number = 1
+    local FLING_POWER_MAX: number = 12
     local FLING_DURATION: number = 3
     local FLING_PREDICTION: number = 0.15
-    local flingRetries: number = 1
+    local flingRetries: number = 2
     -- Temporary boost used by the second pass only (never persisted).
     local flingBoost: number = 1
 
@@ -27062,8 +27637,21 @@ function Module.init(context: Runtime): any
     end)
     addNumberOption(
         FlingFeature,
+        "Power",
+        FLING_POWER,
+        FLING_POWER_MIN,
+        FLING_POWER_MAX,
+        function(value: number): ()
+            FLING_POWER = math.clamp(tonumber(value) or FLING_POWER, FLING_POWER_MIN, FLING_POWER_MAX)
+        end,
+        "Pose velocity and pin force multiplier (3 = YARHM baseline). Raise it when a "
+            .. "victim is not launched; lower it if the local body is thrown instead.",
+        1
+    )
+    addNumberOption(
+        FlingFeature,
         "Retries",
-        1,
+        2,
         0,
         3,
         function(value: number): ()
@@ -27978,117 +28566,6 @@ end
 return Module
 
 ]],
-        ["src/games/universal/Blatant/Jesus.lua"] = [[
-export type Runtime = {framework: any, entity: any, host: any, services: any}
-
-local Module = {Name = "Jesus", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
-local activeCleanup
-
-function Module.init(context: Runtime): any
-    local host, framework = context.host, context.framework
-    local player = host.LocalPlayer
-    
-    local settings = {
-        mode = "Velocity",
-        bounce = 0.5,
-    }
-    
-    local jesus
-
-    local function startJesus()
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.RespectCanCollide = false
-        params.IgnoreWater = false
-        local filteredCharacter = nil
-
-        jesus:Clean(host.RunService.PreSimulation:Connect(function()
-            local character = player.Character
-            if not character then return end
-            
-            local root = character:FindFirstChild("HumanoidRootPart")
-            local humanoid = character:FindFirstChild("Humanoid")
-            if not root or not humanoid or humanoid.Health <= 0 then return end
-
-            if filteredCharacter ~= character then
-                filteredCharacter = character
-                params.FilterDescendantsInstances = {character}
-            end
-            local rayResult = host.workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
-            
-            if rayResult and rayResult.Material == Enum.Material.Water then
-                local waterSurface = rayResult.Position.Y
-                
-                -- Keep character on water surface
-                if root.Position.Y < waterSurface + settings.bounce then
-                    if settings.mode == "Velocity" then
-                        root.AssemblyLinearVelocity = Vector3.new(
-                            root.AssemblyLinearVelocity.X,
-                            math.max(0, root.AssemblyLinearVelocity.Y),
-                            root.AssemblyLinearVelocity.Z
-                        )
-                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
-                    elseif settings.mode == "Impulse" then
-                        local targetY = waterSurface + settings.bounce
-                        local diff = targetY - root.Position.Y
-                        if diff > 0.1 then
-                            root:ApplyImpulse(Vector3.new(0, diff * 50, 0) * root.AssemblyMass)
-                        end
-                    else -- CFrame
-                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
-                    end
-                end
-            end
-        end))
-    end
-
-    jesus = framework.Categories.Exploits:CreateModule({
-        Name = "Jesus",
-        Category = "Exploits",
-        ConfigKey = "Universal.Jesus",
-        Order = 4,
-        Tooltip = "Walk on water by preventing you from sinking.",
-        Function = function(enabled)
-            if not enabled then
-                jesus:SetStatus(nil)
-                return
-            end
-            startJesus()
-            jesus:SetStatus(settings.mode)
-        end,
-    })
-
-    jesus:CreateDropdown({Name = "Mode", List = {"Velocity", "Impulse", "CFrame"}, Index = 1,
-        Function = function(value)
-            settings.mode = value
-            if jesus.Enabled then jesus:SetStatus(value) end
-        end,
-        Tooltip = "Movement method: Velocity (smooth), Impulse (forces), or CFrame (direct position)."
-    })
-    
-    jesus:CreateSlider({Name = "Bounce", Min = 0, Max = 2, Default = 0.5, Decimal = 1,
-        Function = function(value)
-            settings.bounce = value
-        end,
-        Tooltip = "How far above water surface to stay (in studs)."
-    })
-
-    activeCleanup = function()
-        if jesus.Enabled then jesus:Toggle(false) end
-    end
-    
-    Module.Initialized = true
-    return jesus
-end
-
-function Module.destroy()
-    if activeCleanup then activeCleanup(); activeCleanup = nil end
-    Module.Initialized = false
-end
-
-return Module
-
-]],
         ["src/games/universal/Blatant/Noclip.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -28542,6 +29019,117 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Blatant/SwimWalk.lua"] = [[
+export type Runtime = {framework: any, entity: any, host: any, services: any}
+
+local Module = {Name = "Swim Walk", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local activeCleanup
+
+function Module.init(context: Runtime): any
+    local host, framework = context.host, context.framework
+    local player = host.LocalPlayer
+    
+    local settings = {
+        mode = "Velocity",
+        bounce = 0.5,
+    }
+    
+    local jesus
+
+    local function startSwimWalk()
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.RespectCanCollide = false
+        params.IgnoreWater = false
+        local filteredCharacter = nil
+
+        jesus:Clean(host.RunService.PreSimulation:Connect(function()
+            local character = player.Character
+            if not character then return end
+            
+            local root = character:FindFirstChild("HumanoidRootPart")
+            local humanoid = character:FindFirstChild("Humanoid")
+            if not root or not humanoid or humanoid.Health <= 0 then return end
+
+            if filteredCharacter ~= character then
+                filteredCharacter = character
+                params.FilterDescendantsInstances = {character}
+            end
+            local rayResult = host.workspace:Raycast(root.Position, Vector3.new(0, -10, 0), params)
+            
+            if rayResult and rayResult.Material == Enum.Material.Water then
+                local waterSurface = rayResult.Position.Y
+                
+                -- Keep character on water surface
+                if root.Position.Y < waterSurface + settings.bounce then
+                    if settings.mode == "Velocity" then
+                        root.AssemblyLinearVelocity = Vector3.new(
+                            root.AssemblyLinearVelocity.X,
+                            math.max(0, root.AssemblyLinearVelocity.Y),
+                            root.AssemblyLinearVelocity.Z
+                        )
+                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
+                    elseif settings.mode == "Impulse" then
+                        local targetY = waterSurface + settings.bounce
+                        local diff = targetY - root.Position.Y
+                        if diff > 0.1 then
+                            root:ApplyImpulse(Vector3.new(0, diff * 50, 0) * root.AssemblyMass)
+                        end
+                    else -- CFrame
+                        root.CFrame = CFrame.new(root.Position.X, waterSurface + settings.bounce, root.Position.Z)
+                    end
+                end
+            end
+        end))
+    end
+
+    jesus = framework.Categories.Exploits:CreateModule({
+        Name = "Swim Walk",
+        Category = "Exploits",
+        ConfigKey = "Universal.Jesus",
+        Order = 4,
+        Tooltip = "Walk on water by preventing you from sinking.",
+        Function = function(enabled)
+            if not enabled then
+                jesus:SetStatus(nil)
+                return
+            end
+            startSwimWalk()
+            jesus:SetStatus(settings.mode)
+        end,
+    })
+
+    jesus:CreateDropdown({Name = "Mode", List = {"Velocity", "Impulse", "CFrame"}, Index = 1,
+        Function = function(value)
+            settings.mode = value
+            if jesus.Enabled then jesus:SetStatus(value) end
+        end,
+        Tooltip = "Movement method: Velocity (smooth), Impulse (forces), or CFrame (direct position)."
+    })
+    
+    jesus:CreateSlider({Name = "Bounce", Min = 0, Max = 2, Default = 0.5, Decimal = 1,
+        Function = function(value)
+            settings.bounce = value
+        end,
+        Tooltip = "How far above water surface to stay (in studs)."
+    })
+
+    activeCleanup = function()
+        if jesus.Enabled then jesus:Toggle(false) end
+    end
+    
+    Module.Initialized = true
+    return jesus
+end
+
+function Module.destroy()
+    if activeCleanup then activeCleanup(); activeCleanup = nil end
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/universal/Blatant/WalkFling.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -28564,6 +29152,8 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService or game:GetService("RunService")
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
+    local addNumberOption: any = host.addNumberOption
+    local addInformationOption: any = host.addInformationOption
     local configData: any = host.configData
     local services: any = (context :: any).services
     local activity: any = services and services.activity
@@ -28576,8 +29166,17 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- No slider: this is the Infinite Yield default and it is what works.
+    -- Infinite Yield's 10000 is the baseline. v180 multiplies it: the spike is
+    -- one frame long, and a victim standing on a slope or already moving often
+    -- eats the base value without leaving the ground. The multiplier is the
+    -- "Power" row; 1x reproduces the old behaviour exactly.
     local POWER: number = 10000
+    local POWER_MULT: number = 1.5
+    local POWER_MULT_MIN: number = 1
+    local POWER_MULT_MAX: number = 3
+    local function spikePower(): number
+        return POWER * POWER_MULT
+    end
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -28671,7 +29270,8 @@ function Module.init(context: Runtime): any
                                 (part :: BasePart).CanCollide = false
                             end
                         end
-                        local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
+                        local power: number = spikePower()
+                        local spike: Vector3 = savedVelocity * power + Vector3.new(0, power, 0)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
@@ -28716,8 +29316,34 @@ function Module.init(context: Runtime): any
         "Fling on contact while walking (Infinite Yield walkfling)",
         8,
         toggleWalkFling,
-        {categoryName = "Exploits", noOptions = true}
+        {categoryName = "Exploits"}
     )
+    addNumberOption(
+        walkFlingFeature,
+        "Power",
+        POWER_MULT,
+        POWER_MULT_MIN,
+        POWER_MULT_MAX,
+        function(value: number): ()
+            POWER_MULT = math.clamp(
+                tonumber(value) or POWER_MULT,
+                POWER_MULT_MIN,
+                POWER_MULT_MAX
+            )
+            if walkFlingFeature and walkFlingFeature.enabled then
+                walkFlingFeature:SetStatus(string.format("ON · %.1fx", POWER_MULT))
+            end
+        end,
+        "Multiplier over Infinite Yield's 10000. 1x is the original; raise it when "
+            .. "walking into someone does not launch them.",
+        0.5
+    )
+    if type(addInformationOption) == "function" then
+        addInformationOption(
+            walkFlingFeature,
+            "Collisions are restored and the body parked when the card is turned off."
+        )
+    end
     addFeatureTooltip(
         walkFlingFeature,
         "While ON, every physics frame the local character is noclipped and given a "
@@ -30030,7 +30656,7 @@ function Module.init(context: Runtime): any
     end
 
     local function speedModuleWalkSpeed(): number
-        local feature: any = framework:GetModule("Speed")
+        local feature: any = framework:GetModule("Speed Hack")
         if feature and feature.Enabled and feature.Options.Speed then
             return math.max(0, feature.Options.Speed.Value)
         end
@@ -30818,14 +31444,28 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
     local addToggleOption: any = host.addToggleOption
-    local freezeSettings = {mode = "Anchor", emotes = true, animation = false}
-    -- An old saved emote mode must not silently become Anchor on upgrade.
+    local addNumberOption: any = host.addNumberOption
+    -- "Position Lock" is what the row used to call "Anchor": it pins the body
+    -- where it stands. The new name says what the user sees, and the extra rows
+    -- let the lock be tuned instead of being an all-or-nothing anchor.
+    local LOCK_MODE: string = "Position Lock"
+    local MOTION_MODE: string = "Motion"
+    local freezeSettings = {
+        mode = LOCK_MODE,
+        emotes = true,
+        animation = false,
+        anyEmote = true,
+        lockRotation = true,
+        returnDistance = 0,
+        keepGravity = false,
+    }
+    -- An old saved emote mode must not silently become Position Lock on upgrade.
     local config: any = host.configData
     if config and config.values and config.states then
         local key: string = "Movement.FreezeMovements.Freezemode"
         local legacy: any = config.values[key]
         if legacy == "Freeze Emotes" or legacy == "Glitch Animations" then
-            config.values[key] = "Motion"
+            config.values[key] = MOTION_MODE
             local prefix: string = "Movement.FreezeMovements."
             if config.states[prefix .. "FreezeEmotes"] == nil then
                 config.states[prefix .. "FreezeEmotes"] = legacy == "Freeze Emotes"
@@ -30833,6 +31473,9 @@ function Module.init(context: Runtime): any
             if config.states[prefix .. "FreezeAnimation"] == nil then
                 config.states[prefix .. "FreezeAnimation"] = legacy == "Glitch Animations"
             end
+        elseif legacy == "Anchor" or legacy == "Freeze Physics" then
+            -- Renamed mode, same behaviour.
+            config.values[key] = LOCK_MODE
         end
     end
     local FreezeFeature: any = nil
@@ -30916,30 +31559,85 @@ function Module.init(context: Runtime): any
         dance = true, dance1 = true, dance2 = true, dance3 = true,
         wave = true, point = true, cheer = true, laugh = true,
     }
+    -- Any emote, not only Roblox's own: games ship their own dance/taunt clips
+    -- with arbitrary names and asset IDs, so the identifier is a name keyword
+    -- (checked on the track and on up to six parents) instead of a fixed list.
+    local EMOTE_KEYWORDS = {
+        "emote", "dance", "dancing", "taunt", "celebrat", "cheer", "wave",
+        "laugh", "salute", "groove", "pose", "victory", "expression",
+        "emoji", "flex", "party", "clap", "bow", "ridicule", "point",
+    }
+    -- ...but a weapon swing is not an emote, and it often sits on the same
+    -- Action priority. These win over a keyword so "SwordWave" stays a swing.
+    local NON_EMOTE_KEYWORDS = {
+        "attack", "shoot", "slash", "stab", "swing", "punch", "kick", "reload",
+        "equip", "unequip", "tool", "hit", "block", "parry", "cast", "spell",
+        "sword", "gun", "knife", "punch", "throw", "fling",
+    }
+
+    local function hasKeyword(name: string, list: {string}): boolean
+        local lower: string = string.lower(name)
+        for _, keyword: string in ipairs(list) do
+            if string.find(lower, keyword, 1, true) then return true end
+        end
+        return false
+    end
+
+    local function looksLikeEmoteName(name: string): boolean
+        local lower: string = string.lower(name)
+        if emoteNames[lower] then return true end
+        if hasKeyword(lower, NON_EMOTE_KEYWORDS) then return false end
+        lower = lower:gsub("anim$", "")
+        if CLASSIC_EMOTES[lower] == true then return true end
+        return hasKeyword(lower, EMOTE_KEYWORDS)
+    end
 
     isEmoteTrack = function(track: any): boolean
         -- Action priority is also used by weapon attacks; it is NOT an
         -- emote identifier. Avoid substring matches such as SpinAttack.
-        local function knownName(name: string): boolean
-            local lower: string = string.lower(name)
-            if emoteNames[lower] then return true end
-            lower = lower:gsub("anim$", "")
-            return CLASSIC_EMOTES[lower] == true
-        end
-        if knownName(tostring(track.Name or "")) then return true end
+        if looksLikeEmoteName(tostring(track.Name or "")) then return true end
         local animation: any = track.Animation
         if typeof(animation) == "Instance" then
-            if knownName(animation.Name) then return true end
+            if looksLikeEmoteName(animation.Name) then return true end
             local node: any = animation.Parent
             for _depth: number = 1, 6 do
                 if not node then break end
-                if knownName(node.Name) then return true end
+                if looksLikeEmoteName(node.Name) then return true end
                 node = node.Parent
             end
             local id: string? = string.match(animation.AnimationId, "%d+")
             if id and emoteIds[id] then return true end
         end
         return false
+    end
+
+    -- Custom emotes whose name says nothing ("Animation", "Clip", "Pose 3"):
+    -- while the body is standing still, a looped Action/Idle clip that nobody
+    -- blacklisted is an emote the game started, so Motion holds it too. A
+    -- moving body is never scored this way, which keeps walk cycles and weapon
+    -- swings out even when their names are meaningless.
+    local function looksLikeStandingEmote(humanoid: any, root: any, track: any): boolean
+        if not freezeSettings.anyEmote then return false end
+        if not track or ownedEmotes[track] or isEmoteTrack(track) then return false end
+        local name: string = tostring(track.Name or "")
+        if hasKeyword(name, NON_EMOTE_KEYWORDS) then return false end
+        local animation: any = track.Animation
+        if typeof(animation) ~= "Instance" then return false end
+        if track.Looped ~= true then return false end
+        local priority: any = track.Priority
+        if priority ~= Enum.AnimationPriority.Action and priority ~= Enum.AnimationPriority.Idle then
+            return false
+        end
+        if root and root.AssemblyLinearVelocity and root.AssemblyLinearVelocity.Magnitude > 2 then
+            return false
+        end
+        local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+        if ok and (state == Enum.HumanoidStateType.Running
+            or state == Enum.HumanoidStateType.Jumping
+            or state == Enum.HumanoidStateType.Freefall) then
+            return false
+        end
+        return true
     end
 
     local function rememberEmote(track: any): ()
@@ -31074,6 +31772,9 @@ function Module.init(context: Runtime): any
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
                 if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
                     rememberEmote(track)
+                elseif not ownedEmotes[track] and not emoteLastSeen[track]
+                    and looksLikeStandingEmote(humanoid, root, track) then
+                    rememberEmote(track)
                 elseif not ownedEmotes[track] then
                     if #pendingEmoteTracks >= 8 then table.remove(pendingEmoteTracks, 1) end
                     table.insert(pendingEmoteTracks, {track = track, at = os.clock()})
@@ -31201,11 +31902,22 @@ function Module.init(context: Runtime): any
             local ok: boolean, tracks: any = pcall(function(): any return animator:GetPlayingAnimationTracks() end)
             if not ok or type(tracks) ~= "table" then return end
             local weight: number = -1
-            for _, track: any in ipairs(tracks) do
-                if track.IsPlaying and isLocomotion(track) then
-                    local current: number = tonumber(track.WeightCurrent) or 1
-                    if current > weight then motionSource, weight = track, current end
+            local function consider(track: any): ()
+                if not track or not track.IsPlaying or ownedEmotes[track] or isEmoteTrack(track) then
+                    return
                 end
+                local current: number = tonumber(track.WeightCurrent) or 1
+                if current > weight then motionSource, weight = track, current end
+            end
+            -- Roblox's own walk/run/idle clips first: they are the common case
+            -- and keep the previous behaviour when a game plays both.
+            for _, track: any in ipairs(tracks) do
+                if isLocomotion(track) then consider(track) end
+            end
+            -- Then anything else: a game can drive locomotion with its own clip
+            -- (custom rigs, animated vehicles, tool-held run cycles).
+            if not motionSource and freezeSettings.anyAnimation then
+                for _, track: any in ipairs(tracks) do consider(track) end
             end
         end
         if not motionSource then return end
@@ -31241,8 +31953,69 @@ function Module.init(context: Runtime): any
     local function restoreFreezeMovements(): ()
         for root: BasePart, original: any in pairs(originalFreezeState) do
             root.Anchored = original.anchored
+            if original.cframe ~= nil and root.CFrame ~= nil then
+                pcall(function(): () root.CFrame = original.cframe end)
+            end
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
+    end
+
+    -- Position Lock: keep the body where it stands. Hard by default (anchored),
+    -- or with gravity kept so the character can still fall and land; the rows
+    -- decide how much of the pose is frozen and how far a push may go before it
+    -- is undone.
+    local function lockPosition(root: any): ()
+        local original: any = originalFreezeState[root]
+        if not original then
+            local cframe: any = nil
+            local look: any = nil
+            pcall(function(): ()
+                if root.CFrame ~= nil then
+                    cframe = root.CFrame
+                    look = root.CFrame.LookVector
+                end
+            end)
+            original = {
+                anchored = root.Anchored,
+                position = root.Position,
+                cframe = cframe,
+                look = look,
+            }
+            originalFreezeState[root] = original
+        end
+        local lockedPosition: any = original.position
+        local gravity: boolean = freezeSettings.keepGravity == true
+        root.Anchored = not gravity
+        if root.AssemblyLinearVelocity ~= nil then
+            if gravity then
+                local vertical: number = tonumber(root.AssemblyLinearVelocity.Y) or 0
+                root.AssemblyLinearVelocity = Vector3.new(0, math.min(vertical, 0), 0)
+            else
+                root.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+        if freezeSettings.lockRotation and root.AssemblyAngularVelocity ~= nil then
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+        if original.look ~= nil and not gravity then
+            pcall(function(): ()
+                if CFrame ~= nil and root.CFrame ~= nil then
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + original.look)
+                end
+            end)
+        end
+        local limit: number = freezeSettings.returnDistance or 0
+        if gravity and limit > 0 and lockedPosition ~= nil and root.Position ~= nil then
+            local dx: number = (tonumber(root.Position.X) or 0) - (tonumber(lockedPosition.X) or 0)
+            local dz: number = (tonumber(root.Position.Z) or 0) - (tonumber(lockedPosition.Z) or 0)
+            if math.sqrt(dx * dx + dz * dz) > limit then
+                root.Position = Vector3.new(
+                    lockedPosition.X or 0,
+                    root.Position.Y,
+                    lockedPosition.Z or 0
+                )
+            end
+        end
     end
 
     local toggleFreezeMovements: (boolean) -> ()
@@ -31298,49 +32071,108 @@ function Module.init(context: Runtime): any
                 if freezeSettings.emotes then freezeEmotesTick(humanoid, root) end
                 if freezeSettings.animation then freezeAnimationTick(humanoid) end
             elseif root then
-                if not originalFreezeState[root] then originalFreezeState[root] = {anchored = root.Anchored} end
-                root.Anchored = true
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                lockPosition(root)
             end
         end, nil, "Freeze Movements")
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements", "Anchor physics or keep selected animations while moving", 4,
+        "Freeze Movements",
+        "Pin the body where it stands, or keep any animation playing while moving",
+        4,
         toggleFreezeMovements,
         {categoryName = "Utilities", configKey = "Movement.FreezeMovements"}
     )
     local motionRows: {any} = {}
-    local function refreshMotionOptions(): ()
+    local lockRows: {any} = {}
+    -- addToggleOption returns the button inside the row, addNumberOption
+    -- returns the row itself. Resolving once here is what keeps a mode switch
+    -- from hiding the whole options container.
+    local function rowFor(handle: any): any
+        if not handle then
+            return nil
+        end
+        local name: string = typeof(handle) == "Instance" and handle.Name or ""
+        if string.sub(name, 1, 7) == "Option_" or string.sub(name, 1, 8) == "Section_" then
+            return handle
+        end
+        return handle.Parent or handle
+    end
+    local function registerRow(list: {any}, handle: any): ()
+        local row: any = rowFor(handle)
+        if row == nil or row == FreezeFeature.options then
+            return
+        end
+        table.insert(list, row)
+    end
+    local function refreshOptionGroups(): ()
+        local motion: boolean = freezeSettings.mode == MOTION_MODE
         for _, row: any in ipairs(motionRows) do
             if host.setOptionVisible then
-                host.setOptionVisible(FreezeFeature, row, freezeSettings.mode == "Motion")
-            else row.Visible = freezeSettings.mode == "Motion" end
+                host.setOptionVisible(FreezeFeature, row, motion)
+            else row.Visible = motion end
+        end
+        for _, row: any in ipairs(lockRows) do
+            if host.setOptionVisible then
+                host.setOptionVisible(FreezeFeature, row, not motion)
+            else row.Visible = not motion end
         end
     end
-    addCycleOption(FreezeFeature, "Freeze mode", {"Anchor", "Motion"}, 1, function(value: string): ()
-        freezeSettings.mode = value
-        refreshMotionOptions()
+    local function reapply(): ()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
+    end
+    addCycleOption(FreezeFeature, "Freeze mode", {LOCK_MODE, MOTION_MODE}, 1, function(value: string): ()
+        -- Accept an old saved value without renaming anything on disk twice.
+        if value == "Anchor" or value == "Freeze Physics" then
+            value = LOCK_MODE
+        end
+        freezeSettings.mode = value
+        refreshOptionGroups()
+        reapply()
     end)
+    -- ---- Position Lock rows -------------------------------------------------
+    local lockHeading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Position Lock settings")
+    registerRow(lockRows, lockHeading)
+    local lockRotation: any = addToggleOption(FreezeFeature, "Lock rotation", true, function(value: boolean): ()
+        freezeSettings.lockRotation = value
+        reapply()
+    end, "Also stop the body from spinning or being spun by the game. OFF keeps the position and lets the character turn.")
+    registerRow(lockRows, lockRotation)
+    local keepGravity: any = addToggleOption(FreezeFeature, "Keep gravity", false, function(value: boolean): ()
+        freezeSettings.keepGravity = value
+        reapply()
+    end, "Do not anchor the body: it can still fall and land, but pushes and knockback are erased every frame.")
+    registerRow(lockRows, keepGravity)
+    local returnRow: any = addNumberOption(FreezeFeature, "Return if pushed", 0, 0, 40, function(value: number): ()
+        freezeSettings.returnDistance = value
+    end, "Studs of drift allowed before the character is snapped back. 0 disables the return.")
+    registerRow(lockRows, returnRow)
+    -- ---- Motion rows --------------------------------------------------------
     -- The section widget renders its own caption and divider, so the card only
     -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
-    if heading then
-        table.insert(motionRows, heading)
-    end
+    registerRow(motionRows, heading)
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
         freezeSettings.emotes = value
         if not value then clearStickyEmoteTracks() end
-    end, "Keep classic and UGC emotes playing while moving. Takes precedence over the locked locomotion clip.")
-    if emotes then table.insert(motionRows, emotes.Parent) end
+    end, "Keep emotes playing while moving, Roblox's own and the ones a game ships itself. Takes precedence over the locked clip.")
+    registerRow(motionRows, emotes)
+    local anyEmote: any = addToggleOption(FreezeFeature, "Any emote", true, function(value: boolean): ()
+        freezeSettings.anyEmote = value
+        if not value then clearStickyEmoteTracks() end
+    end, "Hold a custom emote even when its name and asset say nothing: a looped clip started while standing still counts as one.")
+    registerRow(motionRows, anyEmote)
     local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
         freezeSettings.animation = value
         clearMotionTrack()
-    end, "Keep the current locomotion clip looping through jumps and other movement. Does not freeze a single frame.")
-    if animation then table.insert(motionRows, animation.Parent) end
-    refreshMotionOptions()
+    end, "Keep the current clip looping through jumps and other movement. Does not freeze a single frame.")
+    registerRow(motionRows, animation)
+    local anyAnimation: any = addToggleOption(FreezeFeature, "Any animation", true, function(value: boolean): ()
+        freezeSettings.anyAnimation = value
+        clearMotionTrack()
+    end, "Freeze a game's own locomotion clip too, not only Roblox's walk/run/idle set.")
+    registerRow(motionRows, anyAnimation)
+    refreshOptionGroups()
     activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true
     return FreezeFeature
@@ -31688,7 +32520,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "Jump",
+    Name = "Jump Hack",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -31825,7 +32657,7 @@ function Module.init(context: Runtime): any
             and jump.Options["Infinite jump mode"].Value == "Fall")
     end
     jump = framework.Categories.Exploits:CreateModule({
-        Name = "Jump",
+        Name = "Jump Hack",
         Category = "Exploits",
         ConfigKey = "Universal.Jump",
         Order = 6,
@@ -32121,7 +32953,7 @@ return Module
         ["src/games/universal/Movement/Speed.lua"] = [[
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Speed", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "Speed Hack", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -32240,7 +33072,7 @@ function Module.init(context: Runtime): any
         else teleportElapsed = 0 end
     end
     speed = framework.Categories.Exploits:CreateModule({
-        Name="Speed",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
+        Name="Speed Hack",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
         Tooltip="On-foot movement; inactive while seated.",
         Function=function(enabled)
             restoreWalk(); teleportElapsed, lastMode = 0, nil
@@ -35438,11 +36270,15 @@ function Module.init(context: Runtime): any
         clickDetectors: boolean,
     }
     type PromptState = {distance: number, holdDuration: number}
+    -- Rows default OFF: the card is the master switch and turns every channel
+    -- on by itself. A row switched on with the card OFF is a deliberate opt-in
+    -- and works on its own, so nobody has to enable the whole card just for the
+    -- fast prompt.
     local interactionSettings: InteractionSettings = {
         distance = 32,
         instantPrompts = false,
-        proximityPrompts = true,
-        clickDetectors = true,
+        proximityPrompts = false,
+        clickDetectors = false,
     }
     local originalPrompts: {[ProximityPrompt]: PromptState} =
         setmetatable({}, {__mode = "k"}) :: any
@@ -35452,17 +36288,33 @@ function Module.init(context: Runtime): any
     local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
+    -- Every channel follows its own row, so a row switched on with the card OFF
+    -- works alone and a row switched off with the card ON really stops. The card
+    -- is still a master switch: turning it on switches the rows on (visibly, not
+    -- behind the scenes) and turning it off switches them off.
+    local function promptsChannel(): boolean
+        return interactionSettings.proximityPrompts or interactionSettings.instantPrompts
+    end
+
+    local function detectorsChannel(): boolean
+        return interactionSettings.clickDetectors
+    end
+
+    local function anyChannel(): boolean
+        return promptsChannel() or detectorsChannel()
+    end
+
     local function updatePrompt(prompt: ProximityPrompt, original: PromptState): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+        local distance: number = promptsChannel()
                 and interactionSettings.distance or original.distance
-        local hold: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
-                and interactionSettings.instantPrompts and 0 or original.holdDuration
+        local hold: number = promptsChannel() and interactionSettings.instantPrompts
+                and 0 or original.holdDuration
         if prompt.MaxActivationDistance ~= distance then prompt.MaxActivationDistance = distance end
         if prompt.HoldDuration ~= hold then prompt.HoldDuration = hold end
     end
 
     local function updateDetector(detector: ClickDetector, original: number): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.clickDetectors
+        local distance: number = detectorsChannel()
                 and interactionSettings.distance or original
         if detector.MaxActivationDistance ~= distance then detector.MaxActivationDistance = distance end
     end
@@ -35477,7 +36329,7 @@ function Module.init(context: Runtime): any
     end
 
     local function applyInteractionExtension(instance: Instance): ()
-        if not interactionExtenderEnabled then
+        if not anyChannel() then
             return
         end
         if instance:IsA("ProximityPrompt") then
@@ -35496,46 +36348,127 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Put every touched prompt/detector back to the values it had before we
+    -- saw it, then forget it. Called when no channel is live any more.
     local function restoreInteractionExtender(): ()
-        interactionExtenderEnabled = false
-        refreshInteractionExtender()
+        for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
+            if prompt.Parent then
+                if prompt.MaxActivationDistance ~= original.distance then
+                    prompt.MaxActivationDistance = original.distance
+                end
+                if prompt.HoldDuration ~= original.holdDuration then
+                    prompt.HoldDuration = original.holdDuration
+                end
+            end
+        end
+        for detector: ClickDetector, original: number in pairs(originalClickDetectors) do
+            if detector.Parent and detector.MaxActivationDistance ~= original then
+                detector.MaxActivationDistance = original
+            end
+        end
         originalPrompts = setmetatable({}, {__mode = "k"}) :: any
         originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
     end
 
-    local function toggleInteractionExtender(enabled: boolean): ()
-        disconnectFeatureConnection("InteractExtender")
-        disconnectFeatureConnection("InteractExtenderRefresh")
-        restoreInteractionExtender()
-        interactionRefreshClock = 0
-        if not enabled then
-            if InteractFeature then InteractFeature:SetStatus(nil) end
-            return
-        end
-        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
-        interactionExtenderEnabled = true
-        featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
-            applyInteractionExtension
-        )
-        local scanConnection = featureConnections.InteractExtender
-        featureConnections.InteractExtenderRefresh = TaskManager:Connect(
-            function(deltaTime: number): ()
-                interactionRefreshClock += deltaTime
-                if interactionRefreshClock >= 0.5 then
-                    interactionRefreshClock = 0
-                    refreshInteractionExtender()
-                end
-            end
-        , nil, "Interact Extender")
+    local scanning: boolean = false
+    local function startScan(): ()
+        if scanning then return end
+        scanning = true
+        local scanConnection: any = featureConnections.InteractExtender
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if featureConnections.InteractExtender ~= scanConnection then return end
+                if featureConnections.InteractExtender ~= scanConnection then
+                    -- Superseded: a newer generation owns the flag now.
+                    scanning = false
+                    return
+                end
                 applyInteractionExtension(instance)
                 if index % 240 == 0 then
                     task.wait()
                 end
             end
+            scanning = false
         end)
+    end
+
+    -- Keep exactly the hooks the live channels need. Cheap when nothing changed,
+    -- so a single row can call it on every click without a rescan.
+    local function syncInteractions(): ()
+        if not anyChannel() then
+            disconnectFeatureConnection("InteractExtender")
+            disconnectFeatureConnection("InteractExtenderRefresh")
+            -- A scan suspended by this teardown belongs to the old generation;
+            -- releasing the flag lets the next activation start its own.
+            scanning = false
+            restoreInteractionExtender()
+            interactionRefreshClock = 0
+            if InteractFeature then
+                InteractFeature:SetStatus(nil)
+            end
+            return
+        end
+        if not featureConnections.InteractExtender then
+            featureConnections.InteractExtender =
+                workspace.DescendantAdded:Connect(applyInteractionExtension)
+        end
+        if not featureConnections.InteractExtenderRefresh then
+            featureConnections.InteractExtenderRefresh = TaskManager:Connect(
+                function(deltaTime: number): ()
+                    interactionRefreshClock += deltaTime
+                    if interactionRefreshClock >= 0.5 then
+                        interactionRefreshClock = 0
+                        refreshInteractionExtender()
+                    end
+                end
+            , nil, "Interact Extender")
+            -- First activation (card or row): pick up what already exists.
+            startScan()
+        else
+            refreshInteractionExtender()
+        end
+        if InteractFeature and interactionExtenderEnabled then
+            InteractFeature:SetStatus(
+                tostring(math.round(interactionSettings.distance)) .. " studs"
+            )
+        end
+    end
+
+    -- Keep the checkbox, the saved value and the callback in step when the card
+    -- itself switches a row.
+    local function setRow(name: string, value: boolean): ()
+        local controls: any = nil
+        pcall(function(): ()
+            if state and type(state.toggleControls) == "table" then
+                controls = state.toggleControls
+            end
+        end)
+        local control: any = controls and controls[InteractFeature.configKey .. "." .. name]
+        if control and type(control.setChecked) == "function" then
+            pcall(control.setChecked, value)
+        end
+    end
+
+    local function toggleInteractionExtender(enabled: boolean): ()
+        interactionExtenderEnabled = enabled
+        if enabled then
+            interactionSettings.proximityPrompts = true
+            interactionSettings.clickDetectors = true
+            setRow("Proximityprompts", true)
+            setRow("Clickdetectors", true)
+            -- The card was switched on: rescan once so nothing that exists right
+            -- now is missed, even if the rows were already live.
+            syncInteractions()
+            startScan()
+            return
+        else
+            interactionSettings.instantPrompts = false
+            interactionSettings.proximityPrompts = false
+            interactionSettings.clickDetectors = false
+            setRow("Instantprompts", false)
+            setRow("Proximityprompts", false)
+            setRow("Clickdetectors", false)
+        end
+        syncInteractions()
     end
 
     InteractFeature = createUniversalFeature(
@@ -35556,7 +36489,7 @@ function Module.init(context: Runtime): any
             if InteractFeature.enabled then
                 InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35565,7 +36498,7 @@ function Module.init(context: Runtime): any
         interactionSettings.instantPrompts,
         function(value: boolean): ()
             interactionSettings.instantPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35574,7 +36507,7 @@ function Module.init(context: Runtime): any
         interactionSettings.proximityPrompts,
         function(value: boolean): ()
             interactionSettings.proximityPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35583,11 +36516,12 @@ function Module.init(context: Runtime): any
         interactionSettings.clickDetectors,
         function(value: boolean): ()
             interactionSettings.clickDetectors = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
 
     activeCleanup = function(): ()
+        interactionExtenderEnabled = false
         disconnectFeatureConnection("InteractExtender")
         disconnectFeatureConnection("InteractExtenderRefresh")
         restoreInteractionExtender()
@@ -37286,6 +38220,10 @@ function Module.init(context: Runtime): any
         end
         for name: string, provider: any in pairs(current) do
             if not providerOptions[name] then
+                -- These rows deliberately bring the card with them (see
+                -- setProviderEnabled): a provider ON must mean drawn. Flag it so
+                -- readers and the boot tests know the exception is intended.
+                if render.Feature then render.Feature.optionEntersFeature = true end
                 providerOptions[name] = render:CreateToggle({
                     Name = name,
                     Default = false,
@@ -38646,1681 +39584,6 @@ function Module.destroy(): ()
     if Module.bridgeCleanup then Module.bridgeCleanup(); Module.bridgeCleanup = nil end
     activeCleanup = nil
     activeCard = nil
-    Module.Initialized = false
-end
-
-return Module
-
-]],
-        ["src/games/universal/Render/Shaders.lua"] = [[
--- Client-side lighting, surface detail and atmosphere.
--- Weather adapts ShaderCloud/rbxts-weather's camera cells/roof checks (ISC),
--- with outdoor sampling and splashes informed by buildthomas/Rain (Apache-2.0).
--- Surface colour maps are CC0 ambientCG assets; they are not PBR normal maps.
--- Research, pinned sources and licences: docs/third-party/shaders/README.md.
-local Module = {Name = "Shaders", PlaceId = 0, Initialized = false}
-local card
-
--- The near grid keeps layered weather visible; a sparse outer ring extends it
--- across more of the rendered scene without populating an unbounded world.
--- Native particles are still camera-centred, not weather simulated map-wide.
--- Rate and lifetime are both budgeted: transparent overdraw costs GPU too.
--- Mobile/touch clients ask for fewer particles at creation. Per-emitter caps
--- documented by Roblox are 400/s desktop and 100/s mobile.
--- The local CC0 sprites remain primary, with public Roblox-hosted fallbacks.
-local MAX_EMITTER_RATE: number = 320
-local MAX_WEATHER_RATE: number = 2000
-local MAX_MOBILE_WEATHER_RATE: number = 1000
-local MAX_CELL_EMITTERS: number = 4
-local FOG_ACTOR_LIMIT: number = 16 -- plus the local player
-local FOG_SAMPLE_INTERVAL: number = 0.25
-local FOG_WIND: Vector3 = Vector3.new(0.12, 0.02, 0.04)
-local WEATHER_GRID: {any} = {}
-do
-    for _, offset: Vector3 in ipairs({
-        Vector3.new(0, 0, 0),
-        Vector3.new(-36, 0, -36), Vector3.new(0, 0, -36), Vector3.new(36, 0, -36),
-        Vector3.new(-36, 0, 0), Vector3.new(36, 0, 0),
-        Vector3.new(-36, 0, 36), Vector3.new(0, 0, 36), Vector3.new(36, 0, 36),
-    }) do table.insert(WEATHER_GRID, {offset = offset, far = false}) end
-    for _, x: number in ipairs({-112, 0, 112}) do
-        for _, z: number in ipairs({-112, 0, 112}) do
-            if x ~= 0 or z ~= 0 then table.insert(WEATHER_GRID, {offset = Vector3.new(x, 0, z), far = true}) end
-        end
-    end
-end
-local WEATHER = {
-    Rain = {asset = "shaderRainTexture", fallback = "rbxassetid://1822883048",
-        layers = {
-            -- Streak layer: fast, thin, squashed along its own velocity.
-            {rate = 110, mobileRate = 64, farRate = 28, mobileFarRate = 14, size = 1.15, speedMin = 62, speedMax = 80,
-                lifetime = 0.85, transparency = 0.26, spread = 2, squash = -3.2,
-                color = {205, 219, 235}, lightEmission = 0.10, lightInfluence = 0.85,
-                acceleration = Vector3.new(2, -12, 0)},
-            -- Close layer: shorter-lived drops near the camera make the fall
-            -- read as dense without another cell or another part.
-            {rate = 40, mobileRate = 0, size = 0.65, speedMin = 48, speedMax = 66,
-                lifetime = 0.5, transparency = 0.18, spread = 4, squash = -2.4,
-                color = {214, 226, 240}, lightEmission = 0.14, lightInfluence = 0.8,
-                acceleration = Vector3.new(2, -10, 0)},
-        }},
-    Snow = {asset = "shaderSnowTexture", fallback = "rbxasset://textures/particles/smoke_main.dds",
-        layers = {
-            -- Slow, large, lit flakes. LightEmission keeps them visible in the
-            -- dark maps (MM2 has night rounds) instead of grey-on-grey.
-            {rate = 22, mobileRate = 14, farRate = 8, mobileFarRate = 4, size = 1.25, speedMin = 4.5, speedMax = 7,
-                lifetime = 5, transparency = 0.12, spread = 28, spin = 45,
-                color = {252, 253, 255}, lightEmission = 0.55, lightInfluence = 0.35,
-                acceleration = Vector3.new(3, 0, 1.5)},
-        }},
-    -- Leaves stay larger and lit enough to be legible, but shorter lifetime and
-    -- lower rates avoid retaining as many overlapping sprites as v177.
-    ["Falling leaves"] = {asset = "shaderAutumnTexture", fallback = "rbxassetid://80805595237760",
-        layers = {
-            {rate = 8, mobileRate = 4, farRate = 3, mobileFarRate = 2, size = 1.6, speedMin = 3, speedMax = 5.5, lifetime = 6,
-                transparency = 0.05, spread = 30, spin = 90,
-                color = {255, 196, 120}, lightEmission = 0.4, lightInfluence = 0.55,
-                acceleration = Vector3.new(3, 0, 2)},
-        }},
-}
-local WEATHER_ORDER = {"Rain", "Snow", "Falling leaves"}
--- Roblox documents these ColorMap IDs for its base materials. They let a
--- compatible client try a fallback while local artwork is loading or absent;
--- actual rendering of either source is still client-dependent.
-local SURFACE_STYLES = {
-    concrete = {asset = "shaderConcreteTexture", fallback = "rbxassetid://9920484153", u = 12, v = 6},
-    wood = {asset = "shaderWoodTexture", fallback = "rbxassetid://9920626778", u = 12, v = 12},
-    brick = {asset = "shaderBrickTexture", fallback = "rbxassetid://9920482813", u = 12, v = 6},
-    grass = {asset = "shaderGrassTexture", fallback = "rbxassetid://9920551868", u = 12, v = 12},
-    marble = {asset = "shaderMarbleTexture", fallback = "rbxassetid://9439430596", u = 12, v = 12},
-    -- v177: MM2-style maps are mostly stone, not Wood or Marble. These reuse the
-    -- concrete/marble albedos with their own tiling (no new download): the point
-    -- is coverage of the materials the maps actually use.
-    stone = {asset = "shaderConcreteTexture", fallback = "rbxassetid://9920484153", u = 8, v = 4},
-    sand = {asset = "shaderConcreteTexture", fallback = "rbxassetid://9920484153", u = 16, v = 8},
-    ice = {asset = "shaderMarbleTexture", fallback = "rbxassetid://9439430596", u = 8, v = 8},
-}
--- Built once with pcall: a client that lacks a newer Enum.Material must simply
--- not map it, not throw while scanning the map.
-local MATERIAL_STYLES: {[any]: string} = {}
-do
-    local groups: {[string]: {string}} = {
-        concrete = {"Concrete", "Asphalt", "Pavement"},
-        stone = {"Cobblestone", "Slate", "Rock", "Basalt", "Sandstone", "Limestone", "Granite", "Pebble"},
-        sand = {"Sand", "Ground", "Mud"},
-        ice = {"Ice", "Glacier"},
-        wood = {"Wood", "WoodPlanks"},
-        brick = {"Brick"},
-        grass = {"Grass", "LeafyGrass"},
-        marble = {"Marble"},
-    }
-    for style: string, names: {string} in pairs(groups) do
-        for _, name: string in ipairs(names) do
-            local ok: boolean, value: any = pcall(function(): any
-                return (Enum.Material :: any)[name]
-            end)
-            if ok and value ~= nil then MATERIAL_STYLES[value] = style end
-        end
-    end
-end
-
-function Module.init(context: any): any
-    local host: any = context.host
-    local lighting: Lighting = host.Lighting
-    local world: Workspace = host.workspace
-    local color: ColorCorrectionEffect? = nil
-    local bloom: BloomEffect? = nil
-    local rays: SunRaysEffect? = nil
-    local lightOriginal: {[string]: any} = {}
-    local lightApplied: {[string]: any} = {}
-    local waterOriginal: any = nil
-    local waterApplied: any = nil
-    local waterTerrain: any = nil
-    local cardEverEnabled: boolean = false
-
-    local fogTarget: any = nil
-    local fogOriginal: {[string]: any} = {}
-    local fogApplied: {[string]: any} = {}
-    local fogConnections: {any} = {}
-    local fogPropertyConnections: {any} = {}
-    local fogGeneration: number = 0
-    local fogMutating: boolean = false
-    local fogQueued: boolean = false
-
-    local weatherFolder: Folder? = nil
-    local weatherConnection: any = nil
-    local weatherCells: {any} = {}
-    local mistCells: {any} = {}
-    local weatherGeneration: number = 0
-    local weatherCompact: boolean = false
-    local weatherRate: number = 0
-    local fogMovingActors: number = 0
-
-    local surfaceConnection: any = nil
-    local surfaceAddedConnection: any = nil
-    local surfaceRemovingConnection: any = nil
-    local wakeSurfaceScan: ((string?) -> ())? = nil
-    local retrySurface: ((any) -> ())? = nil
-    local surfaceGeneration: number = 0
-    local surfaceAssets: {[string]: any} = {}
-    local surfaceTexturesOn: boolean = false
-    local surfaceRecords: {[Instance]: any} = {}
-    local surfaceFaceOwners: {[Instance]: any} = {}
-    local surfaceFaceCount: number = 0
-    local textureCount: number = 0
-    local reflectionCount: number = 0
-    local textureWarning: boolean = false
-    -- v177 diagnostics: "it does nothing" needs numbers, not guesses.
-    local surfaceSeen: number = 0
-    local surfaceReserved: number = 0
-    local surfaceNoStyle: number = 0
-    local surfacePasses: number = 0
-    local surfaceQueueDrops: number = 0
-    -- The world is visited incrementally, not restricted to the player's
-    -- neighbourhood. Caps bound retained instances on unusually large maps.
-    local MAX_TEXTURES: number = 600
-    local MAX_REFLECTIONS: number = 1200
-    local MAX_SURFACE_JOBS: number = 4
-    local MAX_TREE_NODES: number = 20
-    local MAX_PENDING: number = 2048
-    local MAX_FACE_OWNERS: number = 2048
-
-    local function enabled(name: string): boolean
-        return card ~= nil and card.Enabled and card.Options[name] ~= nil
-            and card.Options[name].Value == true
-    end
-
-    local function compactWeather(): boolean
-        -- Touch devices with an attached keyboard may not be labelled isMobile
-        -- by the UI; give them the safer particle budget as well. A touch PC
-        -- may get the conservative profile, not a desktop-sized allocation.
-        local touch: boolean = false
-        pcall(function(): () touch = host.UserInputService ~= nil and host.UserInputService.TouchEnabled == true end)
-        return touch or (host.state ~= nil and host.state.isMobile == true)
-    end
-
-    -- Executor registration can return a URI even when Roblox cannot load the
-    -- image. Keep the built-in/Roblox fallback unless the image fetch reports
-    -- success. This runs only in the existing asynchronous asset jobs; even a
-    -- successful preload does not prove that a particular device drew pixels.
-    local function imageAvailable(asset: string): boolean
-        local ok: boolean, provider: any = pcall(function(): any
-            return host.ContentProvider or game:GetService("ContentProvider")
-        end)
-        if not ok or not provider then return false end
-        local probe: any = nil
-        local seenSuccess, seenFailure = false, false
-        local loaded: boolean = pcall(function(): ()
-            probe = Instance.new("ImageLabel")
-            probe.Image = asset
-            provider:PreloadAsync({probe}, function(_id: any, status: any): ()
-                if status == Enum.AssetFetchStatus.Success then
-                    seenSuccess = true
-                else
-                    seenFailure = true
-                end
-            end)
-        end)
-        if probe then pcall(function(): () probe:Destroy() end) end
-        return loaded and seenSuccess and not seenFailure
-    end
-
-    -- Include non-weather effects as well, with a compact status line.
-    local STATUS_LABELS: {{option: string, label: string}} = {
-        {option = "Surface textures", label = "Surfaces"},
-        {option = "Glass reflections", label = "Glass"},
-        {option = "Wet surfaces", label = "Wet"},
-        {option = "Water reflections", label = "Water"},
-        {option = "Fog", label = "Fog"},
-        {option = "Rain", label = "Rain"},
-        {option = "Snow", label = "Snow"},
-        {option = "Falling leaves", label = "Leaves"},
-        {option = "Dust motes", label = "Dust"},
-    }
-    local function updateStatus(): ()
-        if not card or not card.Enabled then return end
-        local parts: {string} = {}
-        local shown: number = 0
-        for _, entry: {option: string, label: string} in ipairs(STATUS_LABELS) do
-            if enabled(entry.option) then
-                shown += 1
-                if shown <= 4 then table.insert(parts, entry.label) end
-            end
-        end
-        if shown > #parts then table.insert(parts, "+" .. tostring(shown - #parts)) end
-        card:SetStatus(if #parts == 0 then nil else table.concat(parts, " · "))
-    end
-
-    local function restoreProperties(object: any, original: {[string]: any}, applied: {[string]: any}): ()
-        for property: string, value: any in pairs(applied) do
-            pcall(function(): ()
-                -- A later change from the game wins over our old snapshot.
-                if object[property] == value then object[property] = original[property] end
-            end)
-        end
-    end
-
-    local function applyLighting(): ()
-        local function setMinimum(property: string, minimum: number): ()
-            pcall(function(): ()
-                local old: number = (lighting :: any)[property]
-                local value: number = math.max(old, minimum)
-                lightOriginal[property] = old
-                ;(lighting :: any)[property] = value
-                lightApplied[property] = (lighting :: any)[property]
-            end)
-        end
-        -- These engine properties affect material/sky lighting even when a
-        -- place's own post effects compete with our colour correction.
-        -- Do not raise diffuse light or exposure: both can wash out an
-        -- already-bright floor even with the reflection itself switched off.
-        setMinimum("EnvironmentSpecularScale", 0.65)
-        setMinimum("ShadowSoftness", 0.35)
-        -- Do not force GlobalShadows on: maps deliberately disable them and
-        -- forcing dynamic shadows can be expensive, especially on phones.
-    end
-
-    local function releaseWater(): ()
-        local terrain: any = waterTerrain
-        local original: any = waterOriginal
-        local applied: any = waterApplied
-        waterTerrain, waterOriginal, waterApplied = nil, nil, nil
-        if terrain and applied ~= nil then
-            pcall(function(): ()
-                if terrain.WaterReflectance == applied then terrain.WaterReflectance = original end
-            end)
-        end
-    end
-
-    local waterWarned: boolean = false
-    local function refreshWater(): ()
-        releaseWater()
-        if not enabled("Water reflections") then return end
-        local applied: boolean = false
-        pcall(function(): ()
-            local terrain: any = world:FindFirstChildOfClass("Terrain")
-            if not terrain then return end
-            local old: number = terrain.WaterReflectance
-            if terrain.WaterReflectance == nil then return end
-            terrain.WaterReflectance = math.max(old, 0.75)
-            waterTerrain, waterOriginal, waterApplied = terrain, old, terrain.WaterReflectance
-            applied = true
-        end)
-        -- A place without Terrain cannot show water at all. Saying so once is
-        -- better than a checked box that never does anything (MM2 has no water).
-        if not applied and not waterWarned then
-            waterWarned = true
-            card:Notify("Water reflections needs Terrain water; this place has none")
-        end
-        updateStatus()
-    end
-
-    local function releaseFog(): ()
-        fogGeneration += 1
-        for _, connection: any in ipairs(fogPropertyConnections) do
-            pcall(function(): () connection:Disconnect() end)
-        end
-        fogPropertyConnections = {}
-        local target: any = fogTarget
-        local original, applied = fogOriginal, fogApplied
-        fogTarget, fogOriginal, fogApplied = nil, {}, {}
-        if target then restoreProperties(target, original, applied) end
-    end
-
-    local function fogValue(target: any, property: string, original: any): any
-        if target == lighting then
-            -- v176: the previous values (start 20, end 180) were readable but
-            -- soft; the engine's FogEnd is what a place without an Atmosphere
-            -- actually draws, so pull the wall in and keep a light grey-blue
-            -- tint instead of the place's original colour.
-            if property == "FogStart" then return math.min(original, 8) end
-            if property == "FogEnd" then return math.min(original, 110) end
-            return Color3.fromRGB(176, 188, 196)
-        end
-        -- Atmosphere supersedes FogEnd. Density 0-1 and Haze 0-10 are the
-        -- documented ranges (create.roblox.com/docs/environment/atmosphere);
-        -- 0,45/1,25 sat below a visible haze.
-        if property == "Density" then return math.max(original, 0.58) end
-        return math.max(original, 4.5) -- Haze
-    end
-
-    local function refreshFog(): ()
-        if fogMutating then return end
-        fogMutating = true
-        if not enabled("Fog") then
-            releaseFog()
-            fogMutating = false
-            updateStatus()
-            return
-        end
-        local atmosphere: Atmosphere? = nil
-        for _, child: Instance in ipairs(lighting:GetChildren()) do
-            if child:IsA("Atmosphere") then atmosphere = child :: Atmosphere; break end
-        end
-        -- Atmosphere supersedes FogEnd. Never insert a duplicate or delete a
-        -- game-owned object: switch to the actual engine path in use instead.
-        local target: any = atmosphere or lighting
-        if fogTarget == target then
-            fogMutating = false
-            updateStatus()
-            return
-        end
-        releaseFog()
-        fogTarget = target
-        local generation: number = fogGeneration
-        local properties: {string} = if atmosphere then {"Density", "Haze"} else {"FogStart", "FogEnd", "FogColor"}
-        for _, property: string in ipairs(properties) do
-            local applied: boolean = pcall(function(): ()
-                local old: any = target[property]
-                fogOriginal[property] = old
-                target[property] = fogValue(target, property, old)
-                fogApplied[property] = target[property]
-            end)
-            if applied then
-                local pending: boolean = false
-                local observed: boolean, connection: any = pcall(function(): any
-                    return target:GetPropertyChangedSignal(property):Connect(function(): ()
-                        if fogMutating or generation ~= fogGeneration or fogTarget ~= target or not enabled("Fog") then return end
-                        local read: boolean, current: any = pcall(function(): any return target[property] end)
-                        if not read or current == fogApplied[property] then return end
-                        -- Preserve the latest game value, including changes
-                        -- made shortly before disabling or replacing the fog.
-                        fogOriginal[property] = current
-                        if pending then return end
-                        pending = true
-                        task.defer(function(): ()
-                            pending = false
-                            if generation ~= fogGeneration or fogTarget ~= target or not enabled("Fog") then return end
-                            pcall(function(): ()
-                                local value: any = target[property]
-                                if value ~= fogApplied[property] then fogOriginal[property] = value end
-                                fogMutating = true
-                                local ok: boolean = pcall(function(): ()
-                                    target[property] = fogValue(target, property, fogOriginal[property])
-                                    fogApplied[property] = target[property]
-                                end)
-                                fogMutating = false
-                                if not ok then return end
-                            end)
-                            fogMutating = false
-                        end)
-                    end)
-                end)
-                if observed and connection then table.insert(fogPropertyConnections, connection) end
-            end
-        end
-        fogMutating = false
-        updateStatus()
-    end
-
-    local function watchAtmosphere(object: Instance): ()
-        if not object:IsA("Atmosphere") or fogMutating or fogQueued or not enabled("Fog") then return end
-        fogQueued = true
-        task.defer(function(): ()
-            fogQueued = false
-            if card and card.Enabled then refreshFog() end
-        end)
-    end
-
-    local function stopWeather(): ()
-        weatherGeneration += 1
-        if weatherConnection then
-            pcall(function(): () weatherConnection:Disconnect() end)
-            weatherConnection = nil
-        end
-        if weatherFolder then
-            pcall(function(): () weatherFolder:Destroy() end)
-            weatherFolder = nil
-        end
-        weatherCells, mistCells = {}, {}
-        weatherRate, fogMovingActors, weatherCompact = 0, 0, false
-    end
-
-    local function fadedTransparency(value: number, fadeIn: number, fadeOut: number): any
-        local ok, sequence = pcall(function(): any
-            return NumberSequence.new({
-                NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(fadeIn, value),
-                NumberSequenceKeypoint.new(fadeOut, value), NumberSequenceKeypoint.new(1, 1),
-            })
-        end)
-        return if ok then sequence else NumberSequence.new(value)
-    end
-
-    local function changeWeather(): ()
-        stopWeather()
-        if not card or not card.Enabled then return end
-        local kinds: {string} = {}
-        for _, name: string in ipairs(WEATHER_ORDER) do
-            if enabled(name) then table.insert(kinds, name) end
-        end
-        local dustEnabled: boolean = enabled("Dust motes")
-        local mistEnabled: boolean = enabled("Fog")
-        if #kinds == 0 and not dustEnabled and not mistEnabled then updateStatus(); return end
-        local generation: number = weatherGeneration
-        local mobile: boolean = compactWeather()
-        weatherCompact = mobile
-        local ok: boolean, failure: any = pcall(function(): ()
-            local folder: Folder = Instance.new("Folder")
-            weatherFolder = folder
-            folder.Name = "ARMShaderWeather"
-            folder.Parent = world
-            local textures: {[string]: {any}} = {}
-            local transparencyByLayer: {[string]: any} = {}
-            local failedStyles: {[string]: boolean} = {}
-            local styleCounts: {[string]: number} = {}
-            local particleCount: number = 0
-            local function remember(asset: string, emitter: ParticleEmitter): ()
-                if not textures[asset] then textures[asset] = {} end
-                table.insert(textures[asset], emitter)
-                particleCount += 1
-            end
-            local function particleFailure(name: string, failure: any): ()
-                if failedStyles[name] then return end
-                failedStyles[name] = true
-                warn("[Shaders:" .. name .. "] " .. tostring(failure))
-                card:Notify(name .. " particles unavailable; other effects remain active")
-            end
-            local function cellPart(name: string, size: Vector3): Part
-                local part: Part = Instance.new("Part")
-                local created: boolean, failure: any = pcall(function(): ()
-                    part.Name, part.Anchored = name, true
-                    part.CanCollide, part.CanQuery, part.CanTouch = false, false, false
-                    part.CastShadow, part.Transparency, part.Size = false, 1, size
-                    part.Parent = folder
-                end)
-                if not created then part:Destroy(); error(failure, 0) end
-                return part
-            end
-            local function extraEmitter(name: string, label: string, size: Vector3, asset: string, configure: (any) -> ()): (Part?, ParticleEmitter?)
-                local part: any, emitter: any = nil, nil
-                local created: boolean, failure: any = pcall(function(): ()
-                    part = cellPart(name, size)
-                    emitter = Instance.new("ParticleEmitter")
-                    configure(emitter)
-                    emitter.Parent = part
-                end)
-                if not created then
-                    if emitter then pcall(function(): () emitter:Destroy() end) end
-                    if part then pcall(function(): () part:Destroy() end) end
-                    particleFailure(label, failure)
-                    return nil, nil
-                end
-                remember(asset, emitter)
-                return part, emitter
-            end
-            if #kinds > 0 then
-                -- Nine 40-stud near cells plus eight sparse 112-stud outer
-                -- cells cover roughly 336 studs across the visible scene. The
-                -- ring is still bounded and follows the camera; this is not an
-                -- unlimited global weather simulation. Each cell checks roofs.
-                for _, spec: any in ipairs(WEATHER_GRID) do
-                    local offset: Vector3 = spec.offset
-                    local width: number = if spec.far then 112 else 40
-                    local part: Part = cellPart("WeatherCell", Vector3.new(width, 0.2, width))
-                    local emitters: {ParticleEmitter} = {}
-                    for _, name: string in ipairs(kinds) do
-                        local style: any = WEATHER[name]
-                        for index, layer: any in ipairs(style.layers) do
-                            if #emitters < MAX_CELL_EMITTERS then
-                                local rate: number
-                                if spec.far then
-                                    rate = if mobile then layer.mobileFarRate or 0 else layer.farRate or 0
-                                else
-                                    rate = if mobile then layer.mobileRate or 0 else layer.rate
-                                end
-                                -- A mobile client is capped at 100 particles/s per
-                                -- emitter; asking for more only wastes a write.
-                                rate = math.min(rate, MAX_EMITTER_RATE)
-                                if mobile then rate = math.min(rate, 100) end
-                                if rate > 0 then
-                                    local emitter: any = nil
-                                    local created: boolean, failure: any = pcall(function(): ()
-                                        emitter = Instance.new("ParticleEmitter")
-                                        emitter.Name = if index == 1 then name else name .. " " .. index
-                                        emitter.Enabled, emitter.Texture = false, style.fallback
-                                        -- Newer particle properties are optional: a
-                                        -- client lacking them should still draw the
-                                        -- basic emitter.
-                                        pcall(function(): ()
-                                            emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume
-                                        end)
-                                        emitter.EmissionDirection = Enum.NormalId.Bottom
-                                        pcall(function(): ()
-                                            emitter.Orientation = if name == "Rain" then Enum.ParticleOrientation.VelocityParallel
-                                                else Enum.ParticleOrientation.FacingCamera
-                                        end)
-                                        emitter.Rate, emitter.Size = rate, NumberSequence.new(layer.size)
-                                        emitter.Speed = NumberRange.new(layer.speedMin, layer.speedMax)
-                                        emitter.Lifetime = NumberRange.new(layer.lifetime)
-                                        local key: string = name .. ":" .. tostring(index)
-                                        if not transparencyByLayer[key] then
-                                            transparencyByLayer[key] = if name == "Rain" then NumberSequence.new(layer.transparency)
-                                                else fadedTransparency(layer.transparency, 0.1, 0.85)
-                                        end
-                                        emitter.Transparency = transparencyByLayer[key]
-                                        emitter.SpreadAngle = Vector2.new(layer.spread, layer.spread)
-                                        emitter.LightInfluence = layer.lightInfluence or 0.8
-                                        emitter.LightEmission = layer.lightEmission or 0.05
-                                        pcall(function(): () emitter.Acceleration = layer.acceleration end)
-                                        if name == "Rain" then
-                                            -- Roblox documents negative Squash for
-                                            -- VelocityParallel: it stretches the
-                                            -- sprite along its travel direction.
-                                            pcall(function(): () emitter.Squash = NumberSequence.new(layer.squash or -3) end)
-                                        else
-                                            local spin: number = layer.spin or 0
-                                            if spin > 0 then
-                                                emitter.Rotation = NumberRange.new(0, 360)
-                                                emitter.RotSpeed = NumberRange.new(-spin, spin)
-                                            end
-                                        end
-                                        local tint: {number} = layer.color
-                                        emitter.Color = ColorSequence.new(Color3.fromRGB(tint[1], tint[2], tint[3]))
-                                        emitter.Parent = part
-                                    end)
-                                    if created then
-                                        table.insert(emitters, emitter)
-                                        styleCounts[name] = (styleCounts[name] or 0) + 1
-                                        remember(style.asset, emitter)
-                                    else
-                                        if emitter then pcall(function(): () emitter:Destroy() end) end
-                                        particleFailure(name, failure)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    if #emitters > 0 then
-                        table.insert(weatherCells, {part = part, emitters = emitters, offset = offset, far = spec.far})
-                    else
-                        part:Destroy()
-                    end
-                end
-            end
-            local dustPart: Part? = nil
-            local dust: ParticleEmitter? = nil
-            if dustEnabled then
-                -- v177: 12 motes of 0,35 studs at 0,35 transparency could not be
-                -- seen. Bigger, brighter, longer-lived and in a wider box so the
-                -- motes drift past the camera instead of sitting in one spot.
-                dustPart, dust = extraEmitter("DustCell", "Dust motes", Vector3.new(26, 8, 26), "shaderSnowTexture", function(emitter: any): ()
-                    emitter.Name, emitter.Enabled = "Dust motes", false
-                    emitter.Texture = "rbxasset://textures/particles/smoke_main.dds"
-                    pcall(function(): () emitter.Shape, emitter.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
-                    emitter.EmissionDirection = Enum.NormalId.Top
-                    pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.FacingCamera end)
-                    emitter.Rate, emitter.Size, emitter.Speed = if mobile then 12 else 20, NumberSequence.new(0.55), NumberRange.new(0.15, 0.5)
-                    emitter.Lifetime, emitter.Transparency = NumberRange.new(5), fadedTransparency(0.26, 0.15, 0.8)
-                    emitter.Color, emitter.LightEmission, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(255, 238, 200)), 0.5, 0.35
-                    pcall(function(): () emitter.Acceleration = Vector3.new(0.15, 0.05, 0.1) end)
-                end)
-            end
-            if mistEnabled then
-                -- Near patches plus a sparse outer ring let native Acceleration
-                -- move already-live particles near local and remote characters.
-                -- They supplement global Lighting fog; they are not a physical
-                -- fluid and cannot carve a hole in Roblox's distance haze.
-                for _, spec: any in ipairs(WEATHER_GRID) do
-                    local offset: Vector3 = spec.offset
-                    local width: number = if spec.far then 112 else 40
-                    local part: Part?, emitter: ParticleEmitter? = extraEmitter(
-                        "FogCell", "Fog mist", Vector3.new(width, 12, width), "shaderSnowTexture", function(mist: any): ()
-                            mist.Name, mist.Enabled = "Fog mist", false
-                            mist.Texture = "rbxasset://textures/particles/smoke_main.dds"
-                            pcall(function(): () mist.Shape, mist.ShapeStyle = Enum.ParticleEmitterShape.Box, Enum.ParticleEmitterShapeStyle.Volume end)
-                            mist.EmissionDirection = Enum.NormalId.Top
-                            pcall(function(): () mist.Orientation = Enum.ParticleOrientation.FacingCamera end)
-                            mist.Rate, mist.Size, mist.Speed = if mobile or spec.far then 1 else 2, NumberSequence.new(18), NumberRange.new(0.1, 0.4)
-                            mist.Lifetime = NumberRange.new(4.5, 5.5)
-                            -- Fade in/out rather than popping when a cell moves.
-                            mist.Transparency = fadedTransparency(0.78, 0.2, 0.75)
-                            mist.Color, mist.LightEmission, mist.LightInfluence = ColorSequence.new(Color3.fromRGB(208, 218, 226)), 0.12, 0.9
-                            mist.Rotation, mist.RotSpeed = NumberRange.new(0, 360), NumberRange.new(-4, 4)
-                            pcall(function(): () mist.Acceleration = FOG_WIND end)
-                        end)
-                    if part and emitter then
-                        table.insert(mistCells, {part = part, emitter = emitter, offset = offset, far = spec.far, force = FOG_WIND})
-                    end
-                end
-            end
-            local splashPart: Part? = nil
-            local splash: ParticleEmitter? = nil
-            if (styleCounts.Rain or 0) > 0 then
-                splashPart, splash = extraEmitter("RainSplashCell", "Rain splashes", Vector3.new(0.2, 0.2, 0.2), "shaderSnowTexture", function(emitter: any): ()
-                    emitter.Name, emitter.Enabled, emitter.Rate = "Rain splashes", false, 0
-                    emitter.Texture = "rbxassetid://1822856633"
-                    emitter.EmissionDirection = Enum.NormalId.Top
-                    pcall(function(): () emitter.Orientation = Enum.ParticleOrientation.VelocityPerpendicular end)
-                    -- v176: bigger and longer-lived than the old 1,2/0,25 pair,
-                    -- so a ground hit is actually readable as a splash ring.
-                    emitter.Size, emitter.Speed = NumberSequence.new(2.2), NumberRange.new(0.1, 0.2)
-                    emitter.Lifetime, emitter.Transparency = NumberRange.new(0.28, 0.36), NumberSequence.new(0.45)
-                    emitter.Color, emitter.LightInfluence = ColorSequence.new(Color3.fromRGB(220, 229, 235)), 0.7
-                    emitter.LightEmission = 0.15
-                end)
-            end
-            -- One shared budget includes every automatic emitter, including
-            -- mist. Splashes are explicit bounded Emit calls and not Rate.
-            local function clampWeatherBudget(): boolean
-                local emitters: {any} = {}
-                for _, cellData: any in ipairs(weatherCells) do
-                    for _, emitter: ParticleEmitter in ipairs(cellData.emitters) do table.insert(emitters, emitter) end
-                end
-                if dust then table.insert(emitters, dust) end
-                for _, cell: any in ipairs(mistCells) do table.insert(emitters, cell.emitter) end
-                local total: number = 0
-                for _, emitter: any in ipairs(emitters) do total += emitter.Rate end
-                local budget: number = if mobile then MAX_MOBILE_WEATHER_RATE else MAX_WEATHER_RATE
-                if total <= budget or total <= 0 then weatherRate = total; return false end
-                local scale: number = budget / total
-                weatherRate = 0
-                for _, emitter: any in ipairs(emitters) do
-                    pcall(function(): () emitter.Rate = math.max(0, math.floor(emitter.Rate * scale)) end)
-                    weatherRate += emitter.Rate
-                end
-                return true
-            end
-            if clampWeatherBudget() then
-                card:Notify("Weather density capped to the local particle budget")
-            end
-            if particleCount == 0 then stopWeather(); return end
-            local paramsOk: boolean, params: any = pcall(function(): any
-                local value: RaycastParams = RaycastParams.new()
-                value.FilterType, value.IgnoreWater = Enum.RaycastFilterType.Exclude, true
-                -- Only collidable geometry is a roof. Maps are full of invisible
-                -- or non-collidable decoration above the camera, and treating it
-                -- as a ceiling was hiding the rain for entire rounds.
-                pcall(function(): () value.RespectCanCollide = true end)
-                return value
-            end)
-            if not paramsOk then params = nil end
-            local previousCharacter: Model? = nil
-            local moveElapsed, roofElapsed, roofIndex = 0, 0.15, 0
-            local fogElapsed: number = FOG_SAMPLE_INTERVAL
-            local lastFocus: Vector3? = nil
-            local actorCursor, actorEpoch = 0, 0
-            local actorSamples: {[any]: any} = {}
-            local shelterWarned: boolean = false
-
-            local function updateMistForActors(focus: Vector3): ()
-                -- Sampling is capped and round-robin, not one connection or
-                -- emitter per player. Velocity also detects remote characters;
-                -- positional deltas cover clients that move roots via CFrame.
-                actorEpoch += 1
-                local movers: {any} = {}
-                local function sample(player: any): ()
-                    if not player then return end
-                    pcall(function(): ()
-                        local character: any = player.Character
-                        if not character then actorSamples[player] = nil; return end
-                        local root: any = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
-                        if not root or not root:IsA("BasePart") then actorSamples[player] = nil; return end
-                        local position: Vector3 = root.Position
-                        local old: any = actorSamples[player]
-                        actorSamples[player] = {position = position, character = character, epoch = actorEpoch}
-                        local vx, vz = 0, 0
-                        pcall(function(): ()
-                            local velocity: Vector3 = root.AssemblyLinearVelocity
-                            vx, vz = velocity.X, velocity.Z
-                        end)
-                        local speed: number = math.sqrt(vx * vx + vz * vz)
-                        if speed < 1.25 and old and old.character == character then
-                            vx, vz = position.X - old.position.X, position.Z - old.position.Z
-                            speed = math.sqrt(vx * vx + vz * vz)
-                            -- About one stud/s at the normal sampling interval.
-                            if speed < 0.25 then return end
-                        elseif speed < 1.25 then
-                            return
-                        end
-                        local dx, dz = position.X - focus.X, position.Z - focus.Z
-                        if dx * dx + dz * dz > 240 * 240 or math.abs(position.Y - focus.Y) > 40 then return end
-                        table.insert(movers, {position = position, x = vx / speed, z = vz / speed})
-                    end)
-                end
-                sample(host.LocalPlayer)
-                local ok, players = pcall(function(): any
-                    return if host.Players then host.Players:GetPlayers() else {}
-                end)
-                if ok and type(players) == "table" and #players > 0 then
-                    local count: number = math.min(#players, FOG_ACTOR_LIMIT)
-                    for i = 1, count do
-                        local player: any = players[(actorCursor + i - 1) % #players + 1]
-                        if player ~= host.LocalPlayer then sample(player) end
-                    end
-                    actorCursor = (actorCursor + count) % #players
-                end
-                if actorEpoch % 16 == 0 then
-                    for player: any, data: any in pairs(actorSamples) do
-                        if actorEpoch - data.epoch > 16 then actorSamples[player] = nil end
-                    end
-                end
-                fogMovingActors = #movers
-                for _, cell: any in ipairs(mistCells) do
-                    local pos: Vector3 = cell.part.Position
-                    local closest: any = nil
-                    local radius: number = if cell.far then 80 else 38
-                    local best: number = radius * radius
-                    local bestX, bestZ = 0, 0
-                    for _, mover: any in ipairs(movers) do
-                        local dx, dz = pos.X - mover.position.X, pos.Z - mover.position.Z
-                        local distance: number = dx * dx + dz * dz
-                        if distance < best and math.abs(pos.Y - mover.position.Y) <= 24 then
-                            closest, best, bestX, bestZ = mover, distance, dx, dz
-                        end
-                    end
-                    local force: Vector3 = FOG_WIND
-                    if closest then
-                        local distance: number = math.sqrt(best)
-                        local ux, uz = closest.x, closest.z
-                        if distance >= 1 then ux, uz = bestX / distance, bestZ / distance end
-                        local strength: number = 2.4 * (1 - math.min(distance / radius, 1))
-                        force = FOG_WIND + Vector3.new(ux * strength, 0.04, uz * strength)
-                    end
-                    local previous: Vector3 = cell.force
-                    local dx, dy, dz = force.X - previous.X, force.Y - previous.Y, force.Z - previous.Z
-                    if dx * dx + dy * dy + dz * dz > 0.04 then
-                        local changed: boolean = pcall(function(): () cell.emitter.Acceleration = force end)
-                        if changed then cell.force = force end
-                    end
-                end
-            end
-
-            local function updateWeather(deltaTime: number): ()
-                moveElapsed += math.clamp(deltaTime, 0, 0.25)
-                if moveElapsed < 0.05 then return end
-                local elapsed: number = moveElapsed
-                moveElapsed = 0
-                local camera: Camera? = world.CurrentCamera
-                if not camera then
-                    lastFocus, fogMovingActors = nil, 0
-                    for _, cell: any in ipairs(weatherCells) do
-                        -- Force a fresh shelter decision after camera recovery.
-                        cell.applied = nil
-                        for _, emitter: ParticleEmitter in ipairs(cell.emitters) do
-                            if emitter.Enabled then emitter.Enabled = false end
-                        end
-                    end
-                    if dust and dust.Enabled then dust.Enabled = false end
-                    for _, cell: any in ipairs(mistCells) do
-                        if cell.emitter.Enabled then cell.emitter.Enabled = false end
-                    end
-                    return
-                end
-                local focus: Vector3 = camera.CFrame.Position
-                -- v175 switched every emitter off on each camera move and
-                -- re-enabled one cell per 0,15 s poll, so walking showed rain in
-                -- bursts or not at all while moving. Keep the last known
-                -- visibility: the staggered sky test corrects one cell per
-                -- 0,15 s ray (bounded), and the cells follow the camera below.
-                local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
-                if params and #weatherCells > 0 and (character ~= previousCharacter or roofIndex == 0) then
-                    previousCharacter = character
-                    local excluded: {Instance} = {folder}
-                    if character then table.insert(excluded, character) end
-                    params.FilterDescendantsInstances = excluded
-                end
-                local moved: boolean = true
-                if lastFocus then
-                    local dx, dy, dz = focus.X - lastFocus.X, focus.Y - lastFocus.Y, focus.Z - lastFocus.Z
-                    moved = dx * dx + dy * dy + dz * dz >= 6.25
-                end
-                if moved then
-                    for _, cell: any in ipairs(weatherCells) do
-                        cell.part.Position = focus + cell.offset + Vector3.new(0, 20, 0)
-                    end
-                    if dustPart then dustPart.Position = focus end
-                    for _, cell: any in ipairs(mistCells) do
-                        cell.part.Position = focus + cell.offset + Vector3.new(0, -2, 0)
-                    end
-                    lastFocus = focus
-                end
-                if dust and not dust.Enabled then dust.Enabled = true end
-                for _, cell: any in ipairs(mistCells) do
-                    if not cell.emitter.Enabled then cell.emitter.Enabled = true end
-                end
-                if #mistCells > 0 then
-                    fogElapsed += elapsed
-                    if fogElapsed >= FOG_SAMPLE_INTERVAL then
-                        fogElapsed = 0
-                        updateMistForActors(focus)
-                    end
-                end
-                if #weatherCells == 0 then return end
-                if not params then
-                    for _, cell: any in ipairs(weatherCells) do
-                        cell.applied = false
-                        for _, emitter: ParticleEmitter in ipairs(cell.emitters) do
-                            if not emitter.Enabled then emitter.Enabled = true end
-                        end
-                    end
-                    if not shelterWarned then
-                        shelterWarned = true
-                        card:Notify("Weather shelter checks unavailable; particles may pass through roofs")
-                    end
-                    return
-                end
-                roofElapsed += elapsed
-                if roofElapsed < 0.15 then return end
-                roofElapsed = 0
-                roofIndex = roofIndex % #weatherCells + 1
-                local cell: any = weatherCells[roofIndex]
-                local castOk: boolean, hit: any = pcall(function(): any
-                    return world:Raycast(focus + cell.offset, Vector3.new(0, 150, 0), params)
-                end)
-                -- A denied ray is unknown, not evidence of a roof. Keep the
-                -- weather visible, report the trade-off once and avoid splash
-                -- casts until shelter checks are available again.
-                local covered: boolean = castOk and hit ~= nil
-                if not castOk and not shelterWarned then
-                    shelterWarned = true
-                    card:Notify("Weather shelter checks unavailable; particles may pass through roofs")
-                end
-                if castOk and hit and hit.Instance and hit.Instance:IsA("BasePart") and hit.Instance.Transparency >= 0.95 then
-                    covered = false
-                end
-                -- Write Enabled only when a cell changes state: the old code
-                -- rewrote every emitter of the sampled cell on each poll, and a
-                -- write to Enabled restarts the emitter's particle budget.
-                if cell.applied ~= covered then
-                    cell.applied = covered
-                    for _, emitter: ParticleEmitter in ipairs(cell.emitters) do emitter.Enabled = not covered end
-                end
-                -- One short ground sample per open cell produces inexpensive
-                -- local splashes; it does not run for snow or while sheltered.
-                if castOk and not covered and splashPart and splash then
-                    local groundOk: boolean, ground: any = pcall(function(): any
-                        return world:Raycast(focus + cell.offset + Vector3.new(0, 20, 0), Vector3.new(0, -100, 0), params)
-                    end)
-                    if groundOk and ground and ground.Position and ground.Normal then
-                        splashPart.Position = ground.Position + ground.Normal * 0.05
-                        pcall(function(): () (splash :: ParticleEmitter):Emit(2) end)
-                    end
-                end
-            end
-            weatherConnection = host.TaskManager:Connect(function(deltaTime: number): ()
-                local updated: boolean, reason: any = pcall(updateWeather, deltaTime)
-                if not updated then
-                    warn("[Shaders:Weather] " .. tostring(reason))
-                    stopWeather()
-                    if card and card.Enabled then card:Notify("Weather stopped on this client; other effects remain active") end
-                end
-            end, nil, "Shaders weather")
-            local imageWarned: boolean = false
-            for assetKey: string, emitters: {any} in pairs(textures) do
-                task.spawn(function(): ()
-                    local state: any = host.state
-                    if not state or type(state.resolveAsset) ~= "function" then return end
-                    local resolved: boolean, asset: any = pcall(state.resolveAsset, assetKey)
-                    if generation ~= weatherGeneration or not card or not card.Enabled then return end
-                    local usable: boolean = resolved and type(asset) == "string" and asset ~= "" and imageAvailable(asset)
-                    if generation ~= weatherGeneration or not card or not card.Enabled then return end
-                    if not usable then
-                        if not imageWarned then
-                            imageWarned = true
-                            card:Notify("Custom weather image unavailable; using particle fallback")
-                        end
-                        return
-                    end
-                    for _, emitter: ParticleEmitter in ipairs(emitters) do
-                        pcall(function(): () emitter.Texture = asset end)
-                    end
-                end)
-            end
-        end)
-        if not ok then
-            stopWeather()
-            warn("[Shaders] Weather unavailable: " .. tostring(failure))
-            card:Notify("Weather unavailable; lighting is still active")
-        end
-        updateStatus()
-    end
-
-    local function removeTextures(record: any): ()
-        if not record.textures then return end
-        for _, texture: any in ipairs(record.textures) do
-            pcall(function(): () texture:Destroy() end)
-            textureCount -= 1
-        end
-        record.textures, record.style, record.faces, record.asset = nil, nil, nil, nil
-    end
-
-    local function removeReflection(part: any, record: any): ()
-        if record.reflectionApplied == nil then return end
-        pcall(function(): ()
-            if part.Reflectance == record.reflectionApplied then part.Reflectance = record.reflectionOriginal end
-        end)
-        record.reflectionOriginal, record.reflectionApplied, record.reflectionTarget = nil, nil, nil
-        reflectionCount -= 1
-    end
-
-    local function removeSurface(part: any, record: any): ()
-        removeTextures(record)
-        removeReflection(part, record)
-        surfaceRecords[part] = nil
-    end
-
-    local function stopSurfaces(): ()
-        surfaceGeneration += 1
-        if surfaceConnection then
-            pcall(function(): () surfaceConnection:Disconnect() end)
-            surfaceConnection = nil
-        end
-        if surfaceAddedConnection then
-            pcall(function(): () surfaceAddedConnection:Disconnect() end)
-            surfaceAddedConnection = nil
-        end
-        if surfaceRemovingConnection then
-            pcall(function(): () surfaceRemovingConnection:Disconnect() end)
-            surfaceRemovingConnection = nil
-        end
-        wakeSurfaceScan, retrySurface = nil, nil
-        for part: any, record: any in pairs(surfaceRecords) do removeSurface(part, record) end
-        surfaceRecords, surfaceAssets, surfaceFaceOwners = {}, {}, {}
-        textureCount, reflectionCount, surfaceFaceCount, textureWarning, surfaceTexturesOn = 0, 0, 0, false, false
-    end
-
-    local function safePart(part: any): boolean
-        if not part:IsA("BasePart") or part.Transparency >= 0.95 then return false end
-        local parent: any = part.Parent
-        while parent and parent ~= world do
-            if parent == world.CurrentCamera or parent == weatherFolder
-                or (host.LocalPlayer and parent == host.LocalPlayer.Character)
-                or parent:IsA("Tool") or parent:IsA("Accessory") then return false end
-            if parent:IsA("Model") and (parent:FindFirstChildOfClass("Humanoid")
-                or parent:FindFirstChildOfClass("AnimationController")) then return false end
-            parent = parent.Parent
-        end
-        return parent == world
-    end
-
-    local function floorShape(part: any): boolean
-        local s: Vector3 = part.Size
-        return s.X >= 8 and s.Z >= 8 and s.Y <= math.min(s.X, s.Z) * 0.5
-            and part.CFrame.UpVector.Y >= 0.87
-    end
-
-    local function textureStyle(part: any): (string?, {any}?)
-        -- Roblox's face Texture supports anchored block Parts and CSG unions.
-        -- Keep meshes, variants and moving objects untouched; a colour image
-        -- is not a normal/roughness PBR map.
-        local block: boolean = part.ClassName == "Part" and part.Shape == Enum.PartType.Block
-        if (not block and part.ClassName ~= "UnionOperation") or not part.Anchored
-            or part.Transparency > 0.05 or part.MaterialVariant ~= "" then return nil, nil end
-        local material: any = part.Material
-        local style: string? = MATERIAL_STYLES[material]
-        if not style and (material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic)
-            and floorShape(part) and part.Size.X >= 12 and part.Size.Z >= 12 and part.Size.Y <= 3 then
-            -- Many simple maps use plain plastic for their floors.
-            style = "concrete"
-        end
-        if not style then return nil, nil end
-        if floorShape(part) then return style, {Enum.NormalId.Top} end
-        local size: Vector3 = part.Size
-        if (style == "brick" or style == "concrete") and size.Y >= 8
-            and math.max(size.X, size.Z) >= 8 and math.min(size.X, size.Z) <= 4
-            and part.CFrame.UpVector.Y >= 0.87 then
-            return style, if size.Z <= size.X then {Enum.NormalId.Front, Enum.NormalId.Back}
-                else {Enum.NormalId.Left, Enum.NormalId.Right}
-        end
-        return nil, nil
-    end
-
-    local function rememberFaceOwner(object: any, part: any): ()
-        if surfaceFaceOwners[object] then
-            surfaceFaceOwners[object] = part
-        elseif surfaceFaceCount < MAX_FACE_OWNERS then
-            surfaceFaceOwners[object] = part
-            surfaceFaceCount += 1
-        end
-    end
-
-    local function availableFaces(part: any, record: any, requested: {any}): {any}?
-        local blocked: {[any]: boolean} = {}
-        for _, child: any in ipairs(part:GetChildren()) do
-            local ours: boolean = false
-            if record and record.textures then
-                for _, texture: any in ipairs(record.textures) do
-                    if texture == child then ours = true; break end
-                end
-            end
-            if not ours then
-                -- Full mesh appearances cannot safely be overlaid as if they
-                -- were ordinary flat faces. Existing decals only own their
-                -- own face, not every side of the part.
-                if child:IsA("SurfaceAppearance") or child:IsA("SpecialMesh") then
-                    rememberFaceOwner(child, part)
-                    return nil
-                end
-                if child:IsA("Decal") then
-                    rememberFaceOwner(child, part)
-                    local ok: boolean, face: any = pcall(function(): any return child.Face end)
-                    if not ok or face == nil then return nil end
-                    blocked[face] = true
-                end
-            end
-        end
-        local available: {any} = {}
-        for _, face: any in ipairs(requested) do
-            if not blocked[face] then table.insert(available, face) end
-        end
-        return if #available > 0 then available else nil
-    end
-
-    local function textureAsset(key: string, fallback: string): string
-        local value: string? = surfaceAssets[key]
-        if not value then
-            -- Start with an official Roblox material image, so the first scan
-            -- need not wait for executor-specific files or a slow download.
-            surfaceAssets[key] = fallback
-            local generation: number = surfaceGeneration
-            task.spawn(function(): ()
-                local state: any = host.state
-                local ok, asset = false, nil
-                if state and type(state.resolveAsset) == "function" then ok, asset = pcall(state.resolveAsset, key) end
-                if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
-                local usable: boolean = ok and type(asset) == "string" and asset ~= "" and imageAvailable(asset)
-                if generation ~= surfaceGeneration or not enabled("Surface textures") then return end
-                if usable then
-                    surfaceAssets[key] = asset
-                    -- Revisit already decorated parts after an async asset
-                    -- resolves, without waiting for a complete world pass.
-                    if wakeSurfaceScan then wakeSurfaceScan(key) end
-                elseif not textureWarning then
-                    textureWarning = true
-                    card:Notify("Custom textures unavailable; trying Roblox material images")
-                end
-            end)
-        end
-        return surfaceAssets[key]
-    end
-
-    local function wantedReflection(part: any): number?
-        local material: any = part.Material
-        local plastic: boolean = material == Enum.Material.Plastic or material == Enum.Material.SmoothPlastic
-        local name: string = string.lower(part.Name)
-        local size: Vector3 = part.Size
-        local window: boolean = name == "pane" or string.find(name, "window", 1, true) ~= nil
-            or string.find(name, "glass", 1, true) ~= nil
-            or (math.min(size.X, size.Y, size.Z) <= 2 and math.max(size.X, size.Y, size.Z) >= 4)
-        -- Thin transparent plastic panes frequently have only the default
-        -- name "Part". This is sky/environment reflectance, not a mirror.
-        -- v177: 0,16/0,36 reflectance was washed out by the place's own lighting,
-        -- especially at night. These are still sky/environment reflectance, not a
-        -- mirror: the visible amount still depends on the map and the quality.
-        if enabled("Glass reflections") and (material == Enum.Material.Glass
-            or (plastic and window and part.Transparency >= 0.1)) then return 0.5 end
-        if enabled("Wet surfaces") and part.Anchored and part.Transparency <= 0.05 and floorShape(part)
-            and material ~= Enum.Material.Glass then return 0.32 end
-        return nil
-    end
-
-    local function processSurface(part: any): ()
-        surfaceSeen += 1
-        local record: any = surfaceRecords[part]
-        if not safePart(part) then
-            if record then removeSurface(part, record) end
-            return
-        end
-        local reflection: number? = wantedReflection(part)
-        if record and record.reflectionApplied ~= nil and record.reflectionTarget ~= reflection then
-            removeReflection(part, record)
-        end
-        if reflection and record and record.reflectionApplied ~= nil and part.Reflectance ~= record.reflectionApplied then
-            -- Some games rewrite windows after map/round changes. Preserve
-            -- that latest value for OFF, then restore the requested minimum.
-            local current: number = part.Reflectance
-            local updated: boolean = pcall(function(): ()
-                part.Reflectance = math.max(current, reflection :: number)
-            end)
-            if updated then
-                record.reflectionOriginal, record.reflectionApplied = current, part.Reflectance
-            end
-        end
-        if reflection and (not record or record.reflectionApplied == nil) and reflectionCount < MAX_REFLECTIONS
-            and part.Reflectance < reflection then
-            record = record or {}
-            local old: number = part.Reflectance
-            local ok: boolean = pcall(function(): () part.Reflectance = reflection end)
-            if ok then
-                record.reflectionOriginal, record.reflectionApplied = old, part.Reflectance
-                record.reflectionTarget = reflection
-                reflectionCount += 1
-                surfaceRecords[part] = record
-            end
-        end
-        local style, faces = nil, nil
-        if enabled("Surface textures") then style, faces = textureStyle(part) end
-        if style and faces then
-            local available: {any}? = availableFaces(part, record, faces)
-            if not available then surfaceReserved += 1 end
-            faces = available
-            if not faces then style = nil end
-        elseif enabled("Surface textures") then
-            surfaceNoStyle += 1
-        end
-        local faceKey: string? = if faces then tostring(faces[1]) .. ":" .. tostring(faces[2]) else nil
-        local definition: any = if style then SURFACE_STYLES[style] else nil
-        local asset: string? = if definition then textureAsset(definition.asset, definition.fallback) else nil
-        if record and record.textures and (record.style ~= style or record.faces ~= faceKey or record.asset ~= asset) then
-            removeTextures(record)
-        end
-        if style and faces and asset and (not record or not record.textures) and textureCount + #faces <= MAX_TEXTURES then
-            record = record or {}
-            record.textures, record.style, record.faces, record.asset = {}, style, faceKey, asset
-            surfaceRecords[part] = record
-            local complete: boolean = true
-            for _, face: any in ipairs(faces) do
-                local texture: any = nil
-                local ok: boolean = pcall(function(): ()
-                    texture = Instance.new("Texture")
-                    texture.Name, texture.Face = "ARMShaderTexture", face
-                    -- Local executor/built-in URIs can be silently ignored by
-                    -- the newer PBR ColorMapContent path. The legacy Texture
-                    -- setter is a reported workaround for local images;
-                    -- official rbxassetid images use the modern API first.
-                    local localImage: boolean = not string.match(asset, "^rbxassetid://")
-                        and not string.match(asset, "^https?://")
-                    local assigned: boolean
-                    if localImage then
-                        assigned = pcall(function(): () texture.Texture = asset end)
-                        if not assigned then
-                            assigned = pcall(function(): () texture.ColorMapContent = Content.fromUri(definition.fallback) end)
-                            if not assigned then texture.Texture = definition.fallback end
-                            if not textureWarning then
-                                textureWarning = true
-                                card:Notify("Local textures unsupported; trying Roblox material images")
-                            end
-                        end
-                    else
-                        assigned = pcall(function(): () texture.ColorMapContent = Content.fromUri(asset) end)
-                        if not assigned then texture.Texture = asset end
-                    end
-                    texture.StudsPerTileU, texture.StudsPerTileV = definition.u, definition.v
-                    -- Tint the overlay by the original colour, not a blend
-                    -- towards white (the old blend washed dark floors out).
-                    -- v177: 0.55 was invisible on night maps; 0.42 still reads
-                    -- as detail rather than a repaint.
-                    texture.Transparency = 0.42
-                    texture.Color3 = part.Color
-                    texture.Parent = part
-                end)
-                if ok then
-                    table.insert(record.textures, texture)
-                    textureCount += 1
-                else
-                    complete = false
-                    if texture then pcall(function(): () texture:Destroy() end) end
-                    break
-                end
-            end
-            if not complete then
-                removeTextures(record)
-                -- Retry one transient creation failure without restarting the
-                -- whole hierarchy walk; persistent failures stay bounded.
-                if part.Parent and retrySurface then retrySurface(part) end
-                if part.Parent and not textureWarning then
-                    textureWarning = true
-                    card:Notify("A surface texture could not be applied on this client")
-                end
-            end
-        elseif record and record.textures then
-            for _, texture: any in ipairs(record.textures) do
-                if texture.Color3 ~= part.Color then texture.Color3 = part.Color end
-            end
-        end
-        if record and not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
-    end
-
-    local function refreshSurfaces(): ()
-        local texturesOn: boolean = enabled("Surface textures")
-        local anyOn: boolean = texturesOn or enabled("Glass reflections") or enabled("Wet surfaces")
-        if not anyOn then stopSurfaces(); updateStatus(); return end
-        if texturesOn ~= surfaceTexturesOn then
-            -- An old download must never revive a disabled texture option.
-            surfaceGeneration += 1
-            surfaceAssets, textureWarning, surfaceTexturesOn = {}, false, texturesOn
-            if not texturesOn then surfaceFaceOwners, surfaceFaceCount = {}, 0 end
-        end
-        for part: any, record: any in pairs(surfaceRecords) do
-            if not texturesOn then removeTextures(record) end
-            local valid: boolean, wanted: any = pcall(function(): any
-                return if safePart(part) then wantedReflection(part) else nil
-            end)
-            if record.reflectionApplied ~= nil and (not valid or record.reflectionTarget ~= wanted) then
-                removeReflection(part, record)
-            end
-            if not record.textures and record.reflectionApplied == nil then surfaceRecords[part] = nil end
-        end
-        if surfaceConnection then
-            if wakeSurfaceScan then wakeSurfaceScan(nil) end
-            updateStatus()
-            return
-        end
-
-        -- Walk the hierarchy in bounded slices; no GetDescendants snapshot and
-        -- no radius eviction. Streaming additions are queued separately and
-        -- a later pass reconciles changed/removed parts even without signals.
-        local stack: {any} = {}
-        local pending: {[number]: any} = {}
-        local pendingSet: {[any]: boolean} = {}
-        local pendingHead, pendingTail = 1, 0
-        local stale: {any} = {}
-        local staleIndex: number = 1
-        local rescanRequested: boolean = true
-        local recoveryPending: boolean = false
-        local passWait, workElapsed, recordElapsed = 0, 0, 0
-        local recordBatch: {any} = {}
-        local recordIndex: number = 1
-        local retryQueue: {any} = {}
-        local retryAttempts: {[any]: boolean} = {}
-        local retrySlots, retryElapsed = 0, 0
-        local priorityPending: boolean = false
-        local warned: boolean = false
-        local capWarned: boolean = false
-        local groundParams: any = nil
-        pcall(function(): ()
-            groundParams = RaycastParams.new()
-            groundParams.FilterType, groundParams.IgnoreWater = Enum.RaycastFilterType.Exclude, true
-            pcall(function(): () groundParams.RespectCanCollide = true end)
-        end)
-        local function enqueue(part: any): ()
-            if not part or pendingSet[part] then return end
-            if pendingTail - pendingHead + 1 >= MAX_PENDING then
-                -- A huge streamed-in model can overflow the bounded queue.
-                -- Finish the current traversal, then recover by another pass.
-                surfaceQueueDrops += 1
-                recoveryPending = true
-                return
-            end
-            pendingTail += 1
-            pending[pendingTail], pendingSet[part] = part, true
-        end
-        retrySurface = function(part: any): ()
-            if retryAttempts[part] or retrySlots >= 64 then return end
-            retryAttempts[part], retrySlots = true, retrySlots + 1
-            table.insert(retryQueue, part)
-        end
-        local function beginPass(): ()
-            surfacePasses += 1
-            stack = {{items = {world}, index = 1}}
-            stale, staleIndex = {}, 1
-            for part: any in pairs(surfaceRecords) do table.insert(stale, part) end
-            priorityPending, rescanRequested, passWait = true, false, 0
-        end
-        wakeSurfaceScan = function(assetKey: string?): ()
-            if not assetKey then rescanRequested = true; return end
-            -- Asset resolution only affects already-decorated records using
-            -- that sprite. Do not restart a full 100k-node map walk per asset.
-            for part: any, record: any in pairs(surfaceRecords) do
-                local style: any = record.style and SURFACE_STYLES[record.style]
-                if style and style.asset == assetKey then enqueue(part) end
-            end
-        end
-
-        local function structural(node: any): boolean
-            return node == world or node:IsA("BasePart") or node:IsA("Model") or node:IsA("Folder")
-        end
-        local function ignoredTree(node: any): boolean
-            if node == world then return false end
-            if not node.Parent or node == world.CurrentCamera or node == weatherFolder
-                or (host.LocalPlayer and node == host.LocalPlayer.Character)
-                or node:IsA("Tool") or node:IsA("Accessory") then return true end
-            if node:IsA("Model") and (node:FindFirstChildOfClass("Humanoid")
-                or node:FindFirstChildOfClass("AnimationController")) then return true end
-            return not structural(node)
-        end
-        local function nextTreeNode(): (any, boolean)
-            while #stack > 0 do
-                local top: any = stack[#stack]
-                local node: any = top.items[top.index]
-                top.index += 1
-                if not node then
-                    table.remove(stack)
-                else
-                    local ok: boolean, ignored: any = pcall(ignoredTree, node)
-                    if ok and not ignored then
-                        local childrenOk: boolean, children: any = pcall(function(): any return node:GetChildren() end)
-                        if childrenOk and type(children) == "table" and #children > 0 then
-                            table.insert(stack, {items = children, index = 1})
-                        end
-                        return node, true
-                    end
-                    -- Even skipped children consume the traversal budget.
-                    return nil, true
-                end
-            end
-            return nil, false
-        end
-        local function processSafely(part: any): ()
-            local ok: boolean, failure: any = pcall(processSurface, part)
-            if not ok and not warned then
-                warned = true
-                warn("[Shaders] A surface could not be enhanced: " .. tostring(failure))
-            end
-            if not capWarned and (textureCount >= MAX_TEXTURES or reflectionCount >= MAX_REFLECTIONS) then
-                capWarned = true
-                card:Notify("Surface limit reached; some parts may be unchanged")
-            end
-        end
-        local function updateSurfaces(deltaTime: number): ()
-            -- A fixed cadence avoids doing twice the work at 120 FPS. Four
-            -- surface jobs per slice is at most ~120/s, independent of FPS.
-            workElapsed += math.clamp(deltaTime, 0, 0.25)
-            if workElapsed < 1 / 30 then return end
-            local elapsed: number = workElapsed
-            workElapsed = 0
-            if rescanRequested then beginPass() end
-            if #retryQueue > 0 then
-                retryElapsed += elapsed
-                if retryElapsed >= 2 then
-                    retryElapsed = 0
-                    for _ = 1, 8 do
-                        local part: any = table.remove(retryQueue, 1)
-                        if not part then break end
-                        enqueue(part)
-                    end
-                end
-            else
-                retryElapsed = 0
-            end
-            recordElapsed += elapsed
-            if recordElapsed >= 0.5 then
-                recordElapsed = 0
-                if recordIndex > #recordBatch then
-                    recordBatch, recordIndex = {}, 1
-                    for part: any in pairs(surfaceRecords) do table.insert(recordBatch, part) end
-                end
-                -- Small rotating reconciliation detects changed materials,
-                -- physics, colours and game rewrites without per-part signals.
-                for _ = 1, 8 do
-                    local part: any = recordBatch[recordIndex]
-                    if not part then break end
-                    recordIndex += 1
-                    if surfaceRecords[part] then enqueue(part) end
-                end
-            end
-            if priorityPending then
-                priorityPending = false
-                local camera: Camera? = world.CurrentCamera
-                if camera and groundParams then
-                    local ok: boolean, hit: any = pcall(function(): any
-                        local excluded: {Instance} = {}
-                        local character: Model? = host.LocalPlayer and host.LocalPlayer.Character
-                        if character then table.insert(excluded, character) end
-                        if weatherFolder then table.insert(excluded, weatherFolder) end
-                        groundParams.FilterDescendantsInstances = excluded
-                        return world:Raycast(camera.CFrame.Position, Vector3.new(0, -80, 0), groundParams)
-                    end)
-                    if ok and hit and hit.Instance then enqueue(hit.Instance) end
-                end
-            end
-            -- Reconcile stale records in small batches even if a whole model
-            -- was streamed out and no longer appears in the hierarchy walk.
-            for _ = 1, 8 do
-                local part: any = stale[staleIndex]
-                if not part then break end
-                staleIndex += 1
-                local record: any = surfaceRecords[part]
-                if record then
-                    local ok: boolean, safe: any = pcall(safePart, part)
-                    if not ok or not safe then removeSurface(part, record) end
-                end
-            end
-            local jobs, nodes = 0, 0
-            while jobs < MAX_SURFACE_JOBS and nodes < MAX_TREE_NODES do
-                local part: any = nil
-                if pendingHead <= pendingTail then
-                    part = pending[pendingHead]
-                    pending[pendingHead] = nil
-                    pendingHead += 1
-                    pendingSet[part] = nil
-                    if pendingHead > pendingTail then pending, pendingHead, pendingTail = {}, 1, 0 end
-                else
-                    local node: any, visited: boolean = nextTreeNode()
-                    if not visited then break end
-                    nodes += 1
-                    if node and node:IsA("BasePart") then part = node end
-                end
-                if part then processSafely(part); jobs += 1 end
-            end
-            if #stack == 0 and pendingHead > pendingTail and staleIndex > #stale then
-                passWait += elapsed
-                if recoveryPending then
-                    recoveryPending, rescanRequested = false, true
-                elseif passWait >= 30 then
-                    -- Streaming and decal signals handle immediate additions;
-                    -- a much slower full pass catches silent property changes.
-                    rescanRequested = true
-                end
-            end
-        end
-        local function queueFaceOwner(object: any, removing: boolean): ()
-            -- In deferred signal mode Parent may already be nil or point to a
-            -- different part by the time DescendantRemoving runs. Remember a
-            -- bounded set of owners so the previously blocked face is retried.
-            if not surfaceTexturesOn or object.Name == "ARMShaderTexture" then return end
-            if object:IsA("Decal") or object:IsA("SurfaceAppearance") or object:IsA("SpecialMesh") then
-                local old: any = surfaceFaceOwners[object]
-                local parent: any = object.Parent
-                if old then enqueue(old) end
-                if parent and parent ~= old and parent:IsA("BasePart") then enqueue(parent) end
-                if removing then
-                    if old then surfaceFaceOwners[object], surfaceFaceCount = nil, surfaceFaceCount - 1 end
-                elseif parent and parent:IsA("BasePart") then
-                    rememberFaceOwner(object, parent)
-                end
-            end
-        end
-        if world.DescendantAdded then
-            surfaceAddedConnection = world.DescendantAdded:Connect(function(object: any): ()
-                if object:IsA("BasePart") then enqueue(object) else queueFaceOwner(object, false) end
-            end)
-        end
-        if world.DescendantRemoving then
-            surfaceRemovingConnection = world.DescendantRemoving:Connect(function(object: any): ()
-                local record: any = surfaceRecords[object]
-                if record then removeSurface(object, record) else queueFaceOwner(object, true) end
-            end)
-        end
-        surfaceConnection = host.TaskManager:Connect(updateSurfaces, nil, "Shaders surfaces")
-        updateStatus()
-    end
-    local function cleanup(): ()
-        stopWeather()
-        stopSurfaces()
-        releaseWater()
-        for _, connection: any in ipairs(fogConnections) do pcall(function(): () connection:Disconnect() end) end
-        fogConnections = {}
-        fogMutating = true
-        releaseFog()
-        fogMutating = false
-        restoreProperties(lighting, lightOriginal, lightApplied)
-        lightOriginal, lightApplied = {}, {}
-        if color then pcall(function(): () color:Destroy() end); color = nil end
-        if bloom then pcall(function(): () bloom:Destroy() end); bloom = nil end
-        if rays then pcall(function(): () rays:Destroy() end); rays = nil end
-    end
-
-    local function makeEffect(className: string, name: string, configure: (any) -> ()): any
-        local effect: any = nil
-        local ok: boolean, failure: any = pcall(function(): ()
-            effect = Instance.new(className)
-            effect.Name = name
-            configure(effect)
-            effect.Parent = lighting
-        end)
-        if ok then return effect end
-        if effect then pcall(function(): () effect:Destroy() end) end
-        warn("[Shaders:" .. className .. "] " .. tostring(failure))
-        card:Notify(className .. " unavailable; other effects remain active")
-        return nil
-    end
-
-    card = context.framework.Categories.Render:CreateModule({
-        Name = "Shaders", Category = "Render", ConfigKey = "Universal.Shaders",
-        Tooltip = "Client-side lighting, surface detail and optional atmosphere.",
-        Function = function(on: boolean): ()
-            if not on then card:SetStatus(nil); return end
-            cardEverEnabled = true
-            cleanup()
-            card:Clean(cleanup)
-            color = makeEffect("ColorCorrectionEffect", "ARMShaderColor", function(effect: any): ()
-                effect.Brightness, effect.Contrast, effect.Saturation = 0, 0.08, 0.05
-                effect.TintColor, effect.Enabled = Color3.fromRGB(255, 247, 236), true
-            end)
-            bloom = makeEffect("BloomEffect", "ARMShaderBloom", function(effect: any): ()
-                effect.Intensity, effect.Size, effect.Threshold, effect.Enabled = 0.2, 24, 0.95, true
-            end)
-            rays = makeEffect("SunRaysEffect", "ARMShaderRays", function(effect: any): ()
-                effect.Intensity, effect.Spread, effect.Enabled = 0.1, 0.6, true
-            end)
-            applyLighting()
-            if lighting.ChildAdded then table.insert(fogConnections, lighting.ChildAdded:Connect(watchAtmosphere)) end
-            if lighting.ChildRemoved then table.insert(fogConnections, lighting.ChildRemoved:Connect(watchAtmosphere)) end
-            -- Each optional subsystem owns its failure; an unsupported engine
-            -- feature must not take down the rest of the user's effects.
-            for _, entry: {any} in ipairs({
-                {"Fog", refreshFog}, {"Water", refreshWater},
-                {"Surfaces", refreshSurfaces}, {"Weather", changeWeather},
-            }) do
-                local name: string, start: () -> () = entry[1], entry[2]
-                local ok: boolean, reason: any = pcall(start)
-                if not ok then
-                    warn("[Shaders:" .. name .. "] " .. tostring(reason))
-                    card:Notify(name .. " unavailable; other effects remain active")
-                end
-            end
-        end,
-    })
-
-    -- v177 diagnostics. The client is the only place that can say whether the map
-    -- had compatible surfaces or whether the particles even exist. Each line is a fact the module already tracks.
-    local function effectState(effect: any): string
-        if not effect then return "missing" end
-        return if effect.Enabled == true then "on" else "off"
-    end
-    local function switchState(name: string): string
-        return if enabled(name) then "on" else "off"
-    end
-    local function countSurfaceRecords(wantTextures: boolean, wantReflection: boolean): number
-        local total: number = 0
-        for _, record: any in pairs(surfaceRecords) do
-            local hasTextures: boolean = record.textures ~= nil and #record.textures > 0
-            local hasReflection: boolean = record.reflectionApplied ~= nil
-            if (not wantTextures or hasTextures) and (not wantReflection or hasReflection) then
-                total += 1
-            end
-        end
-        return total
-    end
-    local function describeWeather(): string
-        local total, on, covered = 0, 0, 0
-        for _, cell: any in ipairs(weatherCells) do
-            if cell.applied == true then covered += 1 end
-            for _, emitter: ParticleEmitter in ipairs(cell.emitters) do
-                total += 1
-                if emitter.Enabled then on += 1 end
-            end
-        end
-        local kinds: {string} = {}
-        for _, name: string in ipairs({"Rain", "Snow", "Falling leaves"}) do
-            if enabled(name) then table.insert(kinds, name) end
-        end
-        return string.format("folder=%s cells=%d emitters=%d on=%d covered=%d kinds=%s fogCells=%d moving=%d configuredRate=%d profile=%s",
-            tostring(weatherFolder ~= nil), #weatherCells, total, on, covered,
-            if #kinds > 0 then table.concat(kinds, "/") else "none", #mistCells, fogMovingActors, weatherRate,
-            if weatherCompact then "compact" else "standard")
-    end
-    local function describe(): {string}
-        local stamp: string = "?"
-        local stampOk: boolean, value: any = pcall(function(): any
-            return host.state and host.state.boot and host.state.boot.stamp
-        end)
-        if stampOk and type(value) == "string" then stamp = value end
-        local lines: {string} = {}
-        table.insert(lines, "[Shaders] stamp=" .. stamp .. " · card=" .. (if card and card.Enabled then "on" else "off"))
-        table.insert(lines, "[Shaders] post: color=" .. effectState(color) .. " bloom=" .. effectState(bloom)
-            .. " rays=" .. effectState(rays) .. " · specular=" .. tostring(lighting.EnvironmentSpecularScale)
-            .. " shadows=" .. tostring(lighting.GlobalShadows))
-        -- Counts are cumulative visits, not unique parts; repeated passes or
-        -- reconciliation can visit the same part more than once.
-        table.insert(lines, "[Shaders] surfaces: " .. switchState("Surface textures")
-            .. " · visits=" .. tostring(surfaceSeen) .. " passes=" .. tostring(surfacePasses)
-            .. " textured=" .. tostring(countSurfaceRecords(true, false))
-            .. " reservedVisits=" .. tostring(surfaceReserved)
-            .. " noStyleVisits=" .. tostring(surfaceNoStyle)
-            .. " queueDrops=" .. tostring(surfaceQueueDrops)
-            .. " cap=" .. tostring(MAX_TEXTURES))
-        table.insert(lines, "[Shaders] reflectance: wet=" .. switchState("Wet surfaces")
-            .. " glass=" .. switchState("Glass reflections")
-            .. " parts=" .. tostring(countSurfaceRecords(false, true)) .. "/" .. tostring(MAX_REFLECTIONS))
-        table.insert(lines, "[Shaders] weather: " .. describeWeather())
-        local terrain: any = nil
-        pcall(function(): () terrain = world:FindFirstChildOfClass("Terrain") end)
-        table.insert(lines, "[Shaders] water: " .. switchState("Water reflections")
-            .. " · terrain=" .. tostring(terrain ~= nil)
-            .. (if terrain then " reflectance=" .. tostring((terrain :: any).WaterReflectance) else " (needs Terrain water)"))
-        local camera: any = world.CurrentCamera
-        local character: any = host.LocalPlayer and host.LocalPlayer.Character
-        table.insert(lines, "[Shaders] camera=" .. tostring(camera ~= nil) .. " character=" .. tostring(character ~= nil))
-        return lines
-    end
-
-    -- v177: a child toggle used to switch its own box while the card was OFF and
-    -- do nothing at all, which reads as "this effect is broken". Say it instead of
-    -- silently ignoring the click.
-    local function optionAction(name: string, apply: () -> ()): () -> ()
-        return function(): ()
-            if card and not card.Enabled then
-                -- Saved values are replayed while the UI is built, long before
-                -- the card was ever enabled: that is not the user clicking.
-                if cardEverEnabled then
-                    card:Notify("Shaders is off: turn on the Shaders card to see " .. name)
-                end
-                return
-            end
-            local ok: boolean, reason: any = pcall(apply)
-            if not ok then
-                warn("[Shaders:" .. name .. "] " .. tostring(reason))
-                card:Notify(name .. " could not be applied on this client")
-            end
-        end
-    end
-
-    card:CreateToggle({Name = "Surface textures", Default = true, Function = optionAction("Surface textures", refreshSurfaces),
-        Tooltip = "Colour detail on eligible static blocks and unions; existing decals keep their faces."})
-    card:CreateToggle({Name = "Glass reflections", Default = true, Function = optionAction("Glass reflections", refreshSurfaces),
-        Tooltip = "Adds sky reflectance to eligible glass and transparent windows across the map."})
-    card:CreateToggle({Name = "Fog", Default = false, Function = optionAction("Fog", function(): () refreshFog(); changeWeather() end),
-        Tooltip = "Global distance haze plus nearby mist that drifts away from moving characters; restores the game's atmosphere."})
-    card:CreateToggle({Name = "Rain", Default = false, Function = optionAction("Rain", changeWeather),
-        Tooltip = "Near and distant rain cells with splashes and staggered shelter checks; follows the camera."})
-    card:CreateToggle({Name = "Snow", Default = false, Function = optionAction("Snow", changeWeather),
-        Tooltip = "Falling snow around the camera; can be combined with rain."})
-    card:CreateToggle({Name = "Falling leaves", Default = false, Function = optionAction("Falling leaves", changeWeather),
-        Tooltip = "Windblown autumn leaves near the camera."})
-    card:CreateToggle({Name = "Dust motes", Default = false, Function = optionAction("Dust motes", changeWeather),
-        Tooltip = "Soft drifting particles, including indoors."})
-    card:CreateToggle({Name = "Wet surfaces", Default = false, Function = optionAction("Wet surfaces", refreshSurfaces),
-        Tooltip = "Adds sky sheen to eligible floors across the map; does not change physics."})
-    card:CreateToggle({Name = "Water reflections", Default = false, Function = optionAction("Water reflections", refreshWater),
-        Tooltip = "Increases Terrain water reflectance while enabled."})
-    card:CreateButton({Name = "Diagnose", Function = function(): ()
-        local lines: {string} = describe()
-        for _, line: string in ipairs(lines) do
-            print(line)
-            card:Notify(line)
-        end
-    end,
-        Tooltip = "Prints what each Shaders effect reached on this client: surface visits, particle counts and Terrain."})
-
-    Module.Initialized = true
-    return card
-end
-
-function Module.destroy(): ()
-    if card and card.Enabled then card:Toggle(false) end
-    card = nil
     Module.Initialized = false
 end
 
@@ -42008,6 +41271,18 @@ function Module.init(context: any): any
         ClickGui.RefreshHeights()
     end)
     ClickGui.scale = scale
+
+    -- Rescale without rebuilding anything: the sliders need immediate feedback
+    -- while they are being dragged, and the heavy reflow is debounced by the
+    -- settings page.
+    ClickGui.ApplyScale = function(): ()
+        if ClickGui.scale then
+            ClickGui.scale.Scale = viewportScale()
+        end
+        if type(ClickGui.RefreshHeights) == "function" then
+            pcall(ClickGui.RefreshHeights)
+        end
+    end
 
     state.clickGui = ClickGui
     state.addMenuVisibilityListener(function(visible: boolean): ()
@@ -44200,9 +43475,14 @@ function Module.init(context: any): any
     -- text alignment changes with it (v139.1).
     local hudSide: string = hudOnLeft() and "left" or "right"
 
+    -- The overlay is opted into, not implied by the menu being open. Before
+    -- v181 "Show" only meant "keep it after closing", so the list appeared on
+    -- every open without any switch behind it.
+    -- Only the switch in Settings -> UI -> HackList -> Show. A stale
+    -- "ClickGUI.ShowHackList" key from old builds used to keep the overlay on
+    -- with nothing visibly enabled, so it no longer counts.
     local hudAlways: boolean = configData.states["HackList.Show"] == true
-        or configData.states["ClickGUI.ShowHackList"] == true
-    local hudVisible: boolean = hudAlways or state.visible == true
+    local hudVisible: boolean = hudAlways == true
 
     local function refreshHudList(): ()
         if not hudVisible then
@@ -44385,12 +43665,13 @@ function Module.init(context: any): any
     Furniture.SetHackListVisible = setHackListVisible
 
     local function applyHudVisibility(): ()
-        setHackListVisible(hudAlways or state.visible == true)
+        setHackListVisible(hudAlways == true)
     end
     if type(state.addMenuVisibilityListener) == "function" then
-        state.addMenuVisibilityListener(function(visible: boolean): ()
+        -- Opening or closing the menu never turns the overlay on by itself.
+        state.addMenuVisibilityListener(function(_visible: boolean): ()
             if not hudAlways then
-                setHackListVisible(visible == true)
+                setHackListVisible(false)
             end
         end)
     end
@@ -46585,18 +45866,30 @@ function Module.init(context: any): any
             },
         })
         local panel: any = panelFor(hackListRecord, "HackList")
+        local showStored: boolean = configData.states["HackList.Show"] == true
         addToggleOption(
             panel,
             "Show",
-            false,
+            showStored,
             function(value: boolean): ()
                 state.hudListAlways = value
+                -- v181: one real switch behind the overlay. It is saved, so the
+                -- list no longer shows up on an open menu with nothing enabled.
+                configData.states["HackList.Show"] = value
+                queueConfigSave()
                 if state.hudList and type(state.hudList.SetAlways) == "function" then
                     state.hudList.SetAlways(value)
                 end
+                if state.hudList and type(state.hudList.SetVisible) == "function" then
+                    state.hudList.SetVisible(value)
+                end
             end,
-            "Keep the hack list on screen even while the menu is closed"
+            "Show the hack list. OFF keeps it off the screen, even with the menu open."
         )
+        state.hudListAlways = showStored
+        if state.hudList and type(state.hudList.SetAlways) == "function" then
+            state.hudList.SetAlways(showStored)
+        end
         local modes: {string} = {"Auto", "Count", "Hidden"}
         addCycleOption(
             panel,
@@ -48294,8 +47587,11 @@ function Module.init(context: any): any
     end
 
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 0.85, function(value: number): ()
-        uiSettingsValues["Opacity"] = value
-        windows.SetOpacity(value)
+        local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 0.85)
+        uiSettingsValues["Opacity"] = wanted
+        -- The whole window fades together (frame, header, rows), so the slider
+        -- behaves like one opacity instead of only thinning the panel frame.
+        windows.SetOpacity(wanted)
     end)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
@@ -48317,19 +47613,44 @@ function Module.init(context: any): any
     local themeShape: any = ThemeEngine and ThemeEngine.shape
     local initialScale: number = themeShape and tonumber(themeShape.scale) or 1
     uiSettingsValues["Menu scale"] = initialScale
+    -- Dragging this used to run a full relayout on every single step, so the
+    -- menu flickered and the windows piled on top of each other mid-drag.
+    -- v181: the UIScale follows the slider immediately, and the reflow (reclamp
+    -- every window into the new logical viewport) runs once the drag settles.
+    local scaleReflowToken: number = 0
     addNumberOption(uiPanel, "Menu scale", initialScale, 0.7, 1.3,
         function(value: number): ()
             local shape: any = ThemeEngine and ThemeEngine.shape
             if not shape then
                 return
             end
-            shape.scale = value
-            uiSettingsValues["Menu scale"] = value
-            configData.values["UI.MenuScale"] = value
+            local wanted: number = math.clamp(tonumber(value) or 1, 0.7, 1.3)
+            shape.scale = wanted
+            uiSettingsValues["Menu scale"] = wanted
+            configData.values["UI.MenuScale"] = wanted
             queueConfigSave()
-            if type(state.refreshLayout) == "function" then
-                state.refreshLayout(true)
+            if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                state.clickGui.ApplyScale()
             end
+            scaleReflowToken += 1
+            local token: number = scaleReflowToken
+            task.delay(0.15, function(): ()
+                if token ~= scaleReflowToken then
+                    return
+                end
+                if type(state.refreshLayout) == "function" then
+                    state.refreshLayout(true)
+                end
+                local windowsManager: any = state.windows
+                if windowsManager then
+                    if type(windowsManager.Reclamp) == "function" then
+                        pcall(windowsManager.Reclamp)
+                    end
+                    if state.clickGui and type(state.clickGui.ApplyScale) == "function" then
+                        state.clickGui.ApplyScale()
+                    end
+                end
+            end)
         end)
 
     addToggleOption(uiPanel, "Keep after teleport", true, function(value: boolean): ()
@@ -48818,7 +48139,29 @@ function Module.init(context: any): WidgetLibrary
         option: GuiObject,
         visible: boolean
     ): ()
-        option.Visible = visible
+        -- Hiding the options container itself empties the whole card: every row
+        -- disappears and nothing can bring them back except a rebuild. Callers
+        -- that pass a control instead of its row hit exactly that, so the
+        -- container is never a valid target.
+        if option == nil or option == feature.options then
+            warn("[Random Testing Menu] setOptionVisible refused the options container")
+            return
+        end
+        -- addToggleOption/addCycleOption return the control inside the row while
+        -- addNumberOption/addRangeOption return the row itself. Both are valid
+        -- arguments, so the row is resolved here and only ever that row is
+        -- hidden.
+        local row: GuiObject = option
+        local parent: any = option.Parent
+        local container: any = feature.options
+        if container ~= nil
+            and parent ~= nil
+            and parent ~= container
+            and parent.Parent ~= nil
+            and parent.Parent == container then
+            row = parent
+        end
+        row.Visible = visible
         feature.updateExpandedSize()
     end
 
@@ -48954,6 +48297,11 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            -- The live checkbox, so callers (and the boot tests) can read the
+            -- option without assuming what its default was.
+            getChecked = function(): boolean
+                return enabled :: boolean
+            end,
             setChecked = function(checked: boolean): ()
                 if not button.Parent then
                     return
@@ -51903,6 +51251,13 @@ function Module.init(context: any): any
             ZIndex = BASE_Z,
         }) :: Frame
         bind(root, "BackgroundColor3", "background")
+        if manager.ApplyOpacity then
+            task.defer(function(): ()
+                if root.Parent then
+                    manager.ApplyOpacity(root)
+                end
+            end)
+        end
 
         local window: any = nil
         local paintChrome: {() -> ()} = {}
@@ -52535,12 +51890,52 @@ function Module.init(context: any): any
     end)
 
     manager.bodyTransparency = 0.5
-    function manager.SetOpacity(alpha: number): ()
-        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
-        for _, window: any in ipairs(manager.list) do
-            if window.headerHeight and window.headerHeight > 0 then
-                window.root.BackgroundTransparency = manager.bodyTransparency
+    -- One opacity for the whole menu. Fading only the window frame left every
+    -- row opaque, so the "Opacity" slider looked like it was tearing the menu
+    -- apart: the panel went see-through while the rows stayed solid on top.
+    local opacityBases: {[GuiObject]: number} = setmetatable({}, {__mode = "k"})
+    local function fadeSubtree(root: any, alpha: number): ()
+        if not root then
+            return
+        end
+        local ok: boolean, descendants: any = pcall(function(): any
+            return root:GetDescendants()
+        end)
+        if not ok or type(descendants) ~= "table" then
+            return
+        end
+        for _, object: any in ipairs(descendants) do
+            if object:IsA("GuiObject") then
+                local base: number? = opacityBases[object]
+                if base == nil then
+                    local current: number = tonumber(object.BackgroundTransparency) or 1
+                    if current < 0.99 then
+                        base = current
+                        opacityBases[object] = base
+                    end
+                end
+                if base ~= nil then
+                    local faded: number = 1 - alpha * (1 - (base :: number))
+                    object.BackgroundTransparency = math.clamp(faded, 0, 1)
+                end
             end
+        end
+    end
+
+    function manager.SetOpacity(alpha: number): ()
+        local wanted: number = math.clamp(alpha, 0.15, 1)
+        manager.opacity = wanted
+        manager.bodyTransparency = math.clamp(1 - wanted, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.root then
+                window.root.BackgroundTransparency = manager.bodyTransparency
+                fadeSubtree(window.root, wanted)
+            end
+        end
+    end
+    manager.ApplyOpacity = function(root: any): ()
+        if root and (manager.opacity or 1) < 0.999 then
+            fadeSubtree(root, manager.opacity)
         end
     end
 
@@ -54584,7 +53979,7 @@ local Manifest: Manifest = {
         ["Improve FPS"] = "World",
         ["Interact Extender"] = "Exploits",
         ["Invisible"] = "Exploits",
-        ["Jump"] = "Exploits",
+        ["Jump Hack"] = "Exploits",
         ["KillAura"] = "Exploits",
         ["Killer Hit Aura"] = "Exploits",
         ["Killer Power Cooldowns"] = "Render",
@@ -54609,13 +54004,13 @@ local Manifest: Manifest = {
         ["Server Aura"] = "Exploits",
         ["Server Miner"] = "Other",
         ["Server Scaffold"] = "Movement",
-        ["Shaders"] = "Render",
-        ["Shoot Assist"] = "Exploits",
+                ["Shoot Assist"] = "Exploits",
         ["Silent Aim"] = "Exploits",
         ["Silent Steps / Anti-Sound"] = "Movement",
         ["SilentAIM"] = "Exploits",
-        ["Speed"] = "Exploits",
+        ["Speed Hack"] = "Exploits",
         ["Spider"] = "Exploits",
+        ["Swim Walk"] = "Exploits",
         ["Teleport"] = "Utilities",
         ["Time Changer"] = "Render",
         ["Trajectory Calibration"] = "Other",
@@ -54677,8 +54072,8 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
         {path = "src/games/universal/Other/InteractExtender.lua", name = "Interact Extender", category = "Exploits"},
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
-        {path = "src/games/universal/Blatant/Jesus.lua", name = "Jesus", category = "Exploits"},
-        {path = "src/games/universal/Movement/Jump.lua", name = "Jump", category = "Exploits"},
+        {path = "src/games/universal/Blatant/SwimWalk.lua", name = "Swim Walk", category = "Exploits"},
+        {path = "src/games/universal/Movement/Jump.lua", name = "Jump Hack", category = "Exploits"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Exploits"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
@@ -54686,9 +54081,8 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
-        {path = "src/games/universal/Render/Shaders.lua", name = "Shaders", category = "Render"},
         {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
-        {path = "src/games/universal/Movement/Speed.lua", name = "Speed", category = "Exploits"},
+        {path = "src/games/universal/Movement/Speed.lua", name = "Speed Hack", category = "Exploits"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
         {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},

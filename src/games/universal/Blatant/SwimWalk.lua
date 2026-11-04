@@ -1,6 +1,6 @@
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Jesus", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "Swim Walk", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -14,7 +14,7 @@ function Module.init(context: Runtime): any
     
     local jesus
 
-    local function startJesus()
+    local function startSwimWalk()
         local params = RaycastParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.RespectCanCollide = false
@@ -62,7 +62,7 @@ function Module.init(context: Runtime): any
     end
 
     jesus = framework.Categories.Exploits:CreateModule({
-        Name = "Jesus",
+        Name = "Swim Walk",
         Category = "Exploits",
         ConfigKey = "Universal.Jesus",
         Order = 4,
@@ -72,7 +72,7 @@ function Module.init(context: Runtime): any
                 jesus:SetStatus(nil)
                 return
             end
-            startJesus()
+            startSwimWalk()
             jesus:SetStatus(settings.mode)
         end,
     })

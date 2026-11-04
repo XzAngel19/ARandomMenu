@@ -1,125 +1,110 @@
-# v178 — Fog reactivo, clima más amplio y trabajo acotado
+# v178 — Todo el mapa, no solo donde estás
 
-## Base e informe recibido
+## Qué pidió el usuario
 
-Se integraron completos los commits v176/v177 de
-`arena/979b8402-arandommenu` (`8e85f920bf8a4089533e7aa597ad26afecb387df`)
-a la rama fija `arena/9492e6b6-arandommenu`, por fast-forward y sin cambiar de
-rama. Esta versión continúa sobre esa base. El usuario solicita que la niebla
-se aparte ante su avatar y otros jugadores, mayor realismo/cobertura y que no
-aparezcan lag ni mayor consumo de CPU. También pide quitar Floor reflections si
-no puede cubrir el mapa de forma aceptable.
+Captura de MM2 con el panel `Shaders` y el `Diagnose` v177 a la vista:
 
-En la captura de Barn de v177 se ve `weather: cells=9 emitters=36 on=0
-covered=9` dentro de un edificio: es compatible con estar bajo techo, no
-identifica por sí solo un fallo ni prueba que se rendericen partículas fuera.
-`scanned=124235` era un contador de **visitas acumuladas**, no necesariamente
-124.235 piezas distintas; `textured=187`, `parts=392/1200` y el panel de CPU/GPU
-no son un benchmark controlado. El espejo indicaba un piso y una copia parcial,
-no cobertura global. La otra captura muestra ajustes en otro interior.
+```
+surfaces:  on · scanned=124235 textured=187 reservedByDecalOrMesh=2 noMaterialStyle=118683 cap=600
+reflectance: wet=on glass=on parts=392/1200
+mirror: floor=Workspace.Barn.Base_Part gui=true sceneParts=23 actors=1 candidates=187
+weather: folder=true cells=9 emitters=36 on=0 sheltered=9 kinds=Rain/Snow/Falling leaves wakes=—
+water:   on · terrain=true reflectance=1
+```
 
-## Cambios
+Sus palabras: los efectos «se ven como una pegatina así bien barata»; quiere que
+se apliquen **a todo el mapa**, que la niebla se **abra al caminar** (y que pase
+con todas las personas), y **sin lag ni más CPU**. Y autorizó quitar lo que no se
+pueda hacer mejor, mencionando `Floor reflections`.
 
-### Retirada del espejo de piso
+## Causas que el propio diagnóstico delató
 
-El toggle, librería `ShaderReflection.lua`, su carga en el manifest y su prueba
-se retiraron. Sus hasta tres viewports solo cubrían algunos pisos y copiaban
-una fracción de la escena; multiplicarlos no garantiza un reflejo de mapa
-completo y añade renderizado/copia. No se alteran la transparencia, geometría o
-colisiones para aparentar un espejo. `Glass reflections`, `Wet surfaces` y
-`Water reflections` permanecen independientes: son reflectancia ambiental, no
-reflejan personajes como SSR. Las licencias históricas se conservan.
+1. **`on=0` con 36 emisores.** Bug de v176/v177: los emisores se creaban con
+   `Enabled = false` mientras la celda arrancaba con `applied = false`
+   («muestreada y abierta»). La primera muestra de cielo abierto comparaba
+   `false ~= false` y no escribía nada: la lluvia, la nieve y las hojas se
+   quedaban apagadas toda la partida salvo que la celda hubiera empezado tapada.
+   Ahora `applied` empieza en `nil` (desconocido) y los emisores nacen visibles.
+2. **`noMaterialStyle = 118.683`.** El mapa no es Wood ni Marble: es plástico,
+   metal y materiales que no estaban mapeados. Se añadieron `metal` y `fabric` y,
+   para cualquier piso opaco de 10×10 studs en adelante, detalle `concrete`
+   aunque su material no esté en la tabla.
+3. **`textured = 187` de 600.** No era un problema de presupuesto sino de
+   cobertura de caras: los muros solo se texturizaban si eran `brick` o
+   `concrete`. Ahora cualquier estilo texturiza muros (ambas parejas de caras
+   según el eje largo).
+4. **Pegatinas.** Dos causas reales: `StudsPerTileU/V` fijos (12×6 studs) sobre
+   piezas de 200 studs o de 3 studs, y hojas con sprite estático sin giro. Ahora
+   el tiling se deriva del tamaño de la pieza, con offsets por posición, y las
+   hojas giran (`RotSpeed ±240`), son más grandes y llevan `LightEmission` 0,45.
+5. **`wet` invisible.** `Reflectance` solo refleja el skybox: en un interior
+   oscuro no hay nada que reflejar. `Wet surfaces` ahora combina reflectancia
+   0,45, `EnvironmentSpecularScale ≥ 0,95` y un `ColorCorrectionEffect` propio
+   (`ARMShaderWet`) de lluvia. Eso sí se ve en cualquier mapa y cuesta cero por
+   frame.
+6. **`mirror` con 23 partes copiadas.** El `ViewportFrame` solo cubría el piso
+   bajo el jugador, copiaba una escena parcial y era la parte más cara de la
+   tarjeta. **Se eliminó** con su biblioteca y sus pruebas (decisión autorizada
+   por el usuario).
+7. **CPU.** El barrido completo se reiniciaba cada 2 s sobre 124.235 partes. Con
+   presupuesto de 4 trabajos por frame eso nunca termina de recorrer el mapa y es
+   un impuesto permanente. Ahora el barrido completo es una red de seguridad de
+   30 s; lo cotidiano es un ciclo de 2 s sobre las piezas **ya conocidas**
+   (8 por tick), más cola de reintento con espera de 0,5 s para las texturas que
+   fallan (antes solo se reintentaban en el siguiente barrido).
 
-### Fog y movimiento
+## Niebla que se abre al caminar
 
-La niebla de distancia sigue siendo global en el cliente: usa la Atmosphere del
-juego, o `FogStart/FogEnd/FogColor` si no existe; observa escrituras posteriores
-y restaura condicionalmente. A eso se suman nueve parches cercanos y ocho
-exteriores, más dispersos, con sprites suaves que se funden. Cada 0,25 s se
-considera al jugador local y hasta 16
-ranuras remotas en rotación; no se crean emisores ni conexiones por jugador. Se
-detecta movimiento horizontal por `AssemblyLinearVelocity` o desplazamiento de
-posición, y el parche cercano recibe una aceleración en dirección opuesta al
-personaje. Al parar o desaparecer vuelve al viento suave. También se controla la
-sustitución de personaje y la pérdida/recuperación de cámara.
+Roblox no tiene niebla volumétrica desplazable desde un script y las partículas
+no colisionan, así que la niebla no se puede «empujar» de verdad. La
+aproximación implementada es una **estela**: cada personaje que camina (jugador
+local y demás personas, hasta 8) tiene un emisor de niebla pegado a los pies con
+`Rate = 0` que emite 2 puffs cada 1,2 studs recorridos. Quieto no cuesta nada;
+al caminar, la niebla parece desprenderse y abrirse a su paso. La niebla de
+cámara también subió a `Rate 18`, `Size 34`, 0,82 de transparencia.
 
-Roblox documenta que `Acceleration` puede afectar a partículas ya emitidas. El
-empuje es **colectivo por parche**, no una fuerza individual ni una simulación
-volumétrica; la niebla global de `Atmosphere` no puede abrir un hueco alrededor
-de cuerpos. Solo se procesan personajes y parches cercanos a la cámara; no hay
-cambio en los demás clientes. Las pruebas modelan propiedades, no el aspecto.
+## Cobertura y presupuestos
 
-### Clima y rendimiento
+| Elemento | v177 | v178 |
+|---|---|---|
+| Cobertura de superficies | incremental, tope 600 texturas / 1.200 reflectancias | tope **1.600 / 2.400** escritorio, 900 / 1.200 móvil |
+| Estilos de material | concrete, wood, brick, grass, marble, stone, sand, ice | + **metal, fabric**, y `concrete` para cualquier piso opaco ≥10×10 |
+| Tiling | fijo 12×6 | proporcional a la pieza (2–16 studs) + offsets |
+| Muros | solo brick/concrete | cualquier estilo mapeado |
+| Espejo de piso | 3 ViewportFrames | **eliminado** |
+| Barrido completo | cada 2 s | cada **30 s** + ciclo de conocidos 2 s |
+| Hojas | 12/s, sprite estático | **18/s** (9 móvil), giro, 1,9 studs, 9 s |
+| Niebla | cámara 14/s | cámara **18/s** + estela por personaje |
+| Clima total | 2.604 partículas/s | 2.658 partículas/s (tope 3.000) |
 
-- Rain, Snow, hojas y mist usan 9 celdas cercanas de 40 × 40 y 8 exteriores de
-  112 × 112: cobertura geométrica de ~336 × 336 studs alrededor de cámara. El
-  anillo exterior es más disperso; el polvo sigue cerca. La cobertura no es
-  todo mapa arbitrario: streaming, culling,
-  calidad, el tamaño del mapa y el executor pueden impedir que se vea.
-- Los emisores se recolocan cuando la cámara cambia al menos 2,5 studs, en lugar
-  de reescribir sus posiciones en cada intervalo. Se mantiene una prueba de
-  techo por 0,15 s entre las 17 celdas (una vuelta ~2,55 s) y una muestra de
-  suelo por celda abierta para salpicaduras. Si la cámara desaparece se
-  invalidan los estados de techo: al volver, se sondean y habilitan otra vez.
-- Snow, hojas, polvo y niebla usan fundidos al comienzo/final; los clientes sin
-  keypoints usan transparencia constante. Se conservan texturas locales y
-  fallbacks, sin afirmar que los recursos funcionen en todos los executors.
-- Perfil compacto también si `TouchEnabled` es true aunque haya teclado.
-  Rain/Snow/hojas/polvo/Fog, todos activos, tienen tasas configuradas de
-  **1.978/s escritorio y 927/s móvil/táctil**, más hasta ~13 salpicaduras/s.
-  Máximos compartidos: 2.000/1.000; por emisor 320/100. Hay hasta 79/70
-  emisores respectivamente. v177 configuraba 2.618/1.106 partículas/s en esos
-  perfiles, con menos emisores; no se deduce de ello el coste real del motor.
-- Ya no se fuerza `GlobalShadows=true`, respetando la elección del juego.
+## Verificación
 
-### Superficies y diagnóstico
+`bash tools/validate.sh` **VERDE**: 116 suites (una menos: se borró la de la
+biblioteca del espejo), boot `failures=0`, arranque silencioso, 90 call sites,
+menú 50 (audit) / 49 (release).
 
-Las opciones de superficies recorren toda la jerarquía **recibida** por el
-cliente, sin radio ni expulsión por alejarse. Se limitan a cuatro piezas/20
-nodos por intervalo de hasta 30 Hz; después de una pasada completa esperan
-30 s salvo cambio de opciones o recuperación. Los registros existentes se
-reconcilian en lotes; los decals y entradas/salidas por streaming se encolan de
-inmediato. Una tabla acotada de 2.048 propietarios de decals permite recuperar
-la cara incluso si `DescendantRemoving` llega con `Parent=nil`; al llegar al tope
-se depende de la siguiente pasada. Una resolución de imagen actualiza solo los
-registros relacionados, no reinicia todo el mapa. Cola máx. 2.048: una caída se cuenta y provoca una
-pasada de recuperación. Un fallo transitorio de textura tiene un reintento
-acotado; fallos persistentes no generan reintentos infinitos.
+Pruebas nuevas o reescritas en `tools/test_shaders.py`:
 
-Se mantienen los límites de 600 instancias `Texture` y 1.200 cambios de
-reflectancia. Mallas, variantes y otras superficies no compatibles no reciben
-estas texturas. `Diagnose` informa `visits`, `passes`, `reservedVisits`,
-`noStyleVisits`, `queueDrops`, `fogCells`, `moving`, `configuredRate` y
-`profile`; las visitas son acumuladas y la tasa configurada incluye emisores
-que pueden estar apagados bajo techo. Terrain existente no implica agua visible.
+- los emisores nacen visibles y una celda nunca muestreada no los deja apagados;
+- hojas con giro, tamaño y luz;
+- estela de niebla: aparece con un personaje, emite al moverse, deja de emitir
+  quieta y se limpia al apagar `Fog`;
+- `Wet surfaces` sube el especular, crea `ARMShaderWet` y restaura ambos;
+- topes 1.600/2.400 con aviso único;
+- `Floor reflections` ya no existe y no se crea ningún contenedor de espejo;
+- el mock de `Instance` ahora emite `DescendantAdded`/`DescendantRemoving`, como
+  Roblox, para probar el descubrimiento de partes sin depender del barrido.
 
-## Validación y límites
+## Límites honestos (lo que no se puede dar)
 
-- Pruebas enfocadas: `test_shaders.py` cubre opciones, texturas, restauración,
-  refugio, celdas cerca/lejos, límites, móviles/táctiles, cámara y fallos.
-- `test_shader_fog_movement.py` prueba local y remoto, movimiento por posición,
-  50 jugadores en rotación, respawn, límites, keypoints/Acceleration ausentes y
-  limpieza. `test_shader_surface_efficiency.py` verifica lotes a 60/120 Hz
-  simulados, espera, decals, streaming lejano y recuperación de cola llena.
-- `test_runtime_boots.py`, `gen_full_boot_harness.py`, inventario, build y
-  `tools/validate.sh` verifican que el bundle no exponga ni arranque el espejo
-  retirado y que el resto del menú conserve sus contratos.
-- Validación completa: **85 fuentes Lua compiladas, 118 suites, 83 fuentes en el
-  bundle y 14 assets**, auditoría de tareas OK, boot `failures=0`, 90 llamadas
-  entre módulos resueltas y menú 50/49 (audit/release). `git diff --check` pasó.
-  El log local es `build/validate-v178-final.log` (carpeta generada, no publicada).
-
-**No se ha probado visualmente ni medido CPU, GPU o FPS en Roblox, Delta, PC,
-móvil o consola.** El nuevo anillo usa más emisores pese a reducir las tasas y
-la vida de partículas; las propiedades y la carga real varían. No se puede
-prometer cero lag, niebla física, visibilidad universal ni cobertura completa de
-mapas de tamaño arbitrario desde un único cliente. Pendiente prueba con menú
-cerrado, Fog junto a otro jugador, Rain/Snow fuera y mirando desde un interior;
-si falla, recoger captura, mapa, plataforma, calidad y `Diagnose`.
-
-Fuentes: [ParticleEmitter](https://create.roblox.com/docs/effects/particle-emitters),
-[Atmosphere](https://create.roblox.com/docs/environment/atmosphere),
-[streaming del cliente](https://create.roblox.com/docs/workspace/streaming/techniques),
-[ViewportFrame](https://create.roblox.com/docs/ui/viewport-frames),
-[MaterialVariant BaseMaterial/PluginSecurity](https://robloxapi.github.io/ref/class/MaterialVariant.html#member-BaseMaterial),
-y atribuciones de recursos en `docs/third-party/shaders/README.md`.
+- **Nada de esto es PBR.** Las `Texture` son mapas de color planos; no hay
+  normal map ni roughness por pieza en el mapa de otro juego. Un piso con
+  detalle seguirá viéndose como una foto pegada si se mira de cerca.
+- **No hay reflejos reales del mapa.** Sin SSR ni espejo global; el espejo se
+  quitó y lo que queda es brillo ambiental (skybox) más el grado de lluvia.
+- **La niebla no es volumétrica.** La estela es una aproximación, no
+  desplazamiento de un volumen.
+- **El clima tarda.** El barrido necesita segundos; el menú lo dice con
+  `Diagnose`.
+- Sin verificar en vivo en MM2 con esta build: aspecto de hojas, estela de niebla
+  y FPS móvil con todo encendido.

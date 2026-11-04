@@ -590,6 +590,13 @@ function Module.init(context: any): any
             ZIndex = BASE_Z,
         }) :: Frame
         bind(root, "BackgroundColor3", "background")
+        if manager.ApplyOpacity then
+            task.defer(function(): ()
+                if root.Parent then
+                    manager.ApplyOpacity(root)
+                end
+            end)
+        end
 
         local window: any = nil
         local paintChrome: {() -> ()} = {}
@@ -1222,12 +1229,52 @@ function Module.init(context: any): any
     end)
 
     manager.bodyTransparency = 0.5
-    function manager.SetOpacity(alpha: number): ()
-        manager.bodyTransparency = math.clamp(1 - alpha, 0, 1)
-        for _, window: any in ipairs(manager.list) do
-            if window.headerHeight and window.headerHeight > 0 then
-                window.root.BackgroundTransparency = manager.bodyTransparency
+    -- One opacity for the whole menu. Fading only the window frame left every
+    -- row opaque, so the "Opacity" slider looked like it was tearing the menu
+    -- apart: the panel went see-through while the rows stayed solid on top.
+    local opacityBases: {[GuiObject]: number} = setmetatable({}, {__mode = "k"})
+    local function fadeSubtree(root: any, alpha: number): ()
+        if not root then
+            return
+        end
+        local ok: boolean, descendants: any = pcall(function(): any
+            return root:GetDescendants()
+        end)
+        if not ok or type(descendants) ~= "table" then
+            return
+        end
+        for _, object: any in ipairs(descendants) do
+            if object:IsA("GuiObject") then
+                local base: number? = opacityBases[object]
+                if base == nil then
+                    local current: number = tonumber(object.BackgroundTransparency) or 1
+                    if current < 0.99 then
+                        base = current
+                        opacityBases[object] = base
+                    end
+                end
+                if base ~= nil then
+                    local faded: number = 1 - alpha * (1 - (base :: number))
+                    object.BackgroundTransparency = math.clamp(faded, 0, 1)
+                end
             end
+        end
+    end
+
+    function manager.SetOpacity(alpha: number): ()
+        local wanted: number = math.clamp(alpha, 0.15, 1)
+        manager.opacity = wanted
+        manager.bodyTransparency = math.clamp(1 - wanted, 0, 1)
+        for _, window: any in ipairs(manager.list) do
+            if window.root then
+                window.root.BackgroundTransparency = manager.bodyTransparency
+                fadeSubtree(window.root, wanted)
+            end
+        end
+    end
+    manager.ApplyOpacity = function(root: any): ()
+        if root and (manager.opacity or 1) < 0.999 then
+            fadeSubtree(root, manager.opacity)
         end
     end
 

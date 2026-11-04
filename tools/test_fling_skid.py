@@ -348,9 +348,12 @@ assert(options["Touch Fling"] == nil, "Touch Fling moved to its own card")
 assert(options["Select Target"] == nil, "the Select Target dropdown must be gone")
 assert(options["Target player"] ~= nil, "Target player is the only target input")
 assert(options["Fling"] ~= nil and options["Fling Murderer"] ~= nil, "actions stay")
-for _, name in ipairs({"Power", "Duration", "Prediction"}) do
+-- v180: the user asked for more force, so Power is back as a bounded slider
+-- (1..12, default 6). Duration and Prediction stay removed.
+for _, name in ipairs({"Duration", "Prediction"}) do
     assert(options[name] == nil, name .. " slider must not be created")
 end
+assert(options.Power ~= nil, "the Power slider is required in v180")
 assert(options.Retries, "the unrelated retry option must remain available")
 assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive for Auto Win")
 pass("Fling retains target, actions and Retries without the three removed controls")
@@ -388,7 +391,10 @@ assert(pin ~= nil, "the EpixVel BodyVelocity must exist")
 assert(pin.Name == "EpixVel", "the pin keeps the original name")
 assert(pin.Velocity ~= nil and pin.Velocity.Magnitude >= 8e8,
     "the pin must DRIVE at 9e8, not hold at zero, got " .. tostring(pin.Velocity and pin.Velocity.Magnitude))
-assert(pin.MaxForce ~= nil and pin.MaxForce.Magnitude == math.huge, "the pin uses infinite MaxForce")
+-- v180: the pin force is finite on purpose (9e9). An infinite MaxForce keeps
+-- pushing forever and is easy to flag as a runaway constraint.
+assert(pin.MaxForce ~= nil and pin.MaxForce.Magnitude >= 1e9
+    and pin.MaxForce.Magnitude < math.huge, "the pin must use a large finite MaxForce")
 assert(pin.destroyed == true, "the pin must be destroyed at the end")
 
 assert(world.FallenPartsDestroyHeight == -500, "FallenPartsDestroyHeight must be restored")
@@ -512,8 +518,8 @@ resetWrites()
 options["Target player"]("Victim")
 options["Fling"]()
 pump(650)
-assert(writes.maxVelocity >= 1.2e9,
-    "fixed Power 4 must retain the former default strength, got " .. tostring(writes.maxVelocity))
+assert(writes.maxVelocity >= 1.75e9,
+    "default Power 6 must double the old strength, got " .. tostring(writes.maxVelocity))
 local sawScaledPin = false
 for _, object in ipairs(created) do
     if object.ClassName == "BodyVelocity" and object.Name == "EpixVel"
@@ -522,7 +528,7 @@ for _, object in ipairs(created) do
     end
 end
 assert(sawScaledPin, "the EpixVel pin must keep the former default scale")
-pass("fixed default Power 4 retains pose and pin strength")
+pass("default Power 6 raises pose and pin strength")
 
 -- Retries: a victim that never moves gets a second pass ---------------------
 victimSpeed = 0

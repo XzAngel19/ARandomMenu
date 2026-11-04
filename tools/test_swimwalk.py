@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise the real Jesus water modes with a reusable raycast-parameter mock."""
+"""Exercise the real Swim Walk water modes with a reusable raycast-parameter mock."""
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "src/games/universal/Blatant/Jesus.lua").read_text()
+SOURCE = (ROOT / "src/games/universal/Blatant/SwimWalk.lua").read_text()
 
 script = r'''
 local vmt={}
@@ -88,7 +88,7 @@ assert(allocations==1, "raycast parameters are reused during the same session")
 card:Toggle(false);assert(not next(callbacks) and card.status==nil)
 card:Toggle(true);frame();assert(allocations==2)
 Module.destroy();assert(not card.Enabled and not next(callbacks), "unload disconnects")
-print("PASS Jesus: three water modes, filtering, respawn, reused params and cleanup")
+print("PASS Swim Walk: three water modes, filtering, respawn, reused params and cleanup")
 '''
 
 with tempfile.TemporaryDirectory(prefix="jesus-") as tmp:
