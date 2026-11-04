@@ -908,7 +908,12 @@ do
     assert(knifeThrow.options:FindFirstChild("Option_KnifeTracer"), "Knife Throw must expose Knife Tracer option")
     local getAllEmotes = findFeature("Get All Emotes")
     assert(getAllEmotes and getAllEmotes.categoryName == "Utilities", "Get All Emotes module must exist in Utilities")
-    assert(getAllEmotes.options:FindFirstChild("Option_GetAllEmotes"), "Get All Emotes must expose Get All Emotes action button")
+    -- v180: the card itself is the button, so the old in-card action row is
+    -- gone on purpose. What must hold is that it is an action card and that it
+    -- never behaves as a toggle state.
+    assert(getAllEmotes.isAction == true, "Get All Emotes must be an action card, not a toggle")
+    assert(not getAllEmotes.options:FindFirstChild("Option_GetAllEmotes"),
+      "the card is the button; no duplicate Get All Emotes row")
     assert(getAllEmotes.options:FindFirstChild("Option_SelectEmote"), "Get All Emotes must expose Select Emote option")
     assert(getAllEmotes.options:FindFirstChild("Option_PlayEmote"), "Get All Emotes must expose Play Emote action button")
     local okEmOn, errEmOn = pcall(getAllEmotes.onToggle, true)
@@ -1114,7 +1119,11 @@ do
     assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
     assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
     assert(fling.options:FindFirstChild("Option_Fling"))
-    for _, label in ipairs({"Power", "Duration", "Prediction"}) do
+    -- v180: the user asked for more force, so Fling gets a bounded Power
+    -- slider (1..12) and a Retries row. Duration and Prediction stay removed.
+    assert(fling.options:FindFirstChild("Option_Power"), "Fling must expose the v180 Power slider")
+    assert(fling.options:FindFirstChild("Option_Retries"), "Fling must expose the retry budget")
+    for _, label in ipairs({"Duration", "Prediction"}) do
       assert(not fling.options:FindFirstChild("Option_" .. label), "Fling slider must be removed: " .. label)
     end
     assert(fling.options:FindFirstChild("Option_Retries"), "unrelated retry option must remain")
@@ -1128,7 +1137,9 @@ do
     assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
     local walkFling = findFeature("Walk Fling")
     assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
-    assert(walkFling.hasOptions() == false, "Walk Fling is a plain toggle with no options")
+    -- v180: Walk Fling gained a bounded Power multiplier (1..3) because the
+    -- previous fixed force was too weak to send anyone flying.
+    assert(walkFling.options:FindFirstChild("Option_Power"), "Walk Fling must expose the v180 Power row")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
     -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.

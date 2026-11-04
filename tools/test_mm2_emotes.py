@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Actual emote module: client inventory, playback requests, respawn and cleanup.
+"""Get All Emotes (v180): a button, five shop emotes, and Select Emote that plays.
 
-This mock does not prove server ownership, animation permission or replication.
+The card must never act like a toggle, must touch only the shop ids
+(ninja/zen/dab/floss/zombie) and must play the emote the player picks. This mock
+does not prove server ownership, animation permission or replication.
 """
 import os
 import subprocess
@@ -9,102 +11,184 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / 'src/games/MM2/Other/GetAllEmotes.lua').read_text()
-script = r'''
+SOURCE = (ROOT / "src/games/MM2/Other/GetAllEmotes.lua").read_text()
+
+SCRIPT = r'''
 local function signal()
- local listeners={};local s={}
- function s:Connect(fn) local c={};listeners[c]=fn;function c:Disconnect() listeners[self]=nil end;return c end
- function s:Fire(...) for _,fn in pairs(table.clone(listeners)) do fn(...) end end
- function s:Count() local n=0;for _ in pairs(listeners) do n+=1 end;return n end
- return s
+    local listeners = {}
+    local s = {}
+    function s:Connect(fn)
+        local c = {}
+        listeners[c] = fn
+        function c:Disconnect() listeners[self] = nil end
+        return c
+    end
+    function s:Fire(...) for _, fn in pairs(listeners) do fn(...) end end
+    function s:Count() local n = 0; for _ in pairs(listeners) do n += 1 end; return n end
+    return s
 end
-local delayed={};local task={delay=function(_,fn) table.insert(delayed,fn) end}
-local function flush() while #delayed>0 do table.remove(delayed,1)() end end
-local function container(children) return {FindFirstChild=function(_,name) return children[name] end} end
-local profile={Emotes={Owned={'sit'}}}
-local profileMod={data=profile}
-local catalog={bonus={Name='Bonus',AnimationID=5},
- floss={Name='Live Floss',Command='livefloss',AnimationID=998877}}
-local emotesMod={data=catalog}
-local notices,inventoryEvents={},{}
-local changed={Fire=function(_,kind,id,count) table.insert(inventoryEvents,{kind,id,count}) end}
-local playEvent
-local modules=container({ProfileData=profileMod})
-local inventory=container({InventoryDataChanged=changed})
-local remotes={FindFirstChild=function(_,name)
- if name=='Inventory' then return inventory elseif name=='Misc' and playEvent then return container({PlayEmote=playEvent}) end
+local delayed = {}
+local task = {delay = function(_, fn) table.insert(delayed, fn) end}
+local function flush() while #delayed > 0 do table.remove(delayed, 1)() end end
+local function container(children)
+    return {FindFirstChild = function(_, name) return children[name] end}
+end
+local profile = {Emotes = {Owned = {'sit'}}}
+local profileMod = {data = profile}
+local sync = {
+    ninja = {Name = 'Ninja Rest', Command = 'ninja', AnimationID = 2431864798},
+    zen = {Name = 'Zen', Command = 'zen', AnimationID = 2431812646},
+    dab = {Name = 'Dab', Command = 'dab', AnimationID = 2445521505},
+    floss = {Name = 'Floss', Command = 'floss', AnimationID = 2452938820, Loop = true},
+    zombie = {Name = 'Zombie', Command = 'zombie', AnimationID = 2513692312, Loop = true},
+    wave = {Name = 'Wave', Command = 'wave'},
+    cheer = {Name = 'Cheer', Command = 'cheer'},
+    laugh = {Name = 'Laugh', Command = 'laugh'},
+    point = {Name = 'Point', Command = 'point'},
+    dance1 = {Name = 'Dance1', Command = 'dance1'},
+    dance2 = {Name = 'Dance2', Command = 'dance2'},
+    dance3 = {Name = 'Dance3', Command = 'dance3'},
+    sit = {Name = 'Sit', Command = 'sit'},
+}
+local syncMod = {data = sync}
+local notices = {}
+local inventoryEvents = {}
+local changedEvent = signal()
+local changed = {Event = changedEvent}
+local played = {}
+local playEvent = {Fire = function(_, id) table.insert(played, id) end}
+local modules = container({ProfileData = profileMod})
+local inventory = container({InventoryDataChanged = changed})
+local remotes = {FindFirstChild = function(_, name)
+    if name == 'Inventory' then return inventory end
+    if name == 'Misc' then return container({PlayEmote = playEvent}) end
 end}
-local db=container({Sync=container({Emotes=emotesMod})})
-local rs={FindFirstChild=function(_,name)
- if name=='Modules' then return modules elseif name=='Remotes' then return remotes elseif name=='Database' then return db end
+local db = container({Sync = container({Emotes = syncMod})})
+local rs = {FindFirstChild = function(_, name)
+    if name == 'Modules' then return modules end
+    if name == 'Remotes' then return remotes end
+    if name == 'Database' then return db end
 end}
-local game={GetService=function(_,name) assert(name=='ReplicatedStorage');return rs end}
-local require=function(mod) return mod.data end
-local animations={}
-local Instance={new=function(class)
- assert(class=='Animation');local a={destroyed=false}
- function a:Destroy() self.destroyed=true end
- table.insert(animations,a);return a
+local game = {GetService = function(_, name) assert(name == 'ReplicatedStorage'); return rs end}
+local require = function(mod) return mod.data end
+local animations = {}
+local Instance = {new = function(class)
+    assert(class == 'Animation')
+    local a = {destroyed = false}
+    function a:Destroy() self.destroyed = true end
+    table.insert(animations, a)
+    return a
 end}
-local tracks={}
-local animator={LoadAnimation=function(_,anim)
- local t={animation=anim,stops=0,plays=0};function t:Stop() self.stops+=1 end;function t:Play() self.plays+=1 end
- table.insert(tracks,t);return t
+local tracks = {}
+local animator = {LoadAnimation = function(_, anim)
+    local t = {animation = anim, stops = 0, plays = 0}
+    function t:Stop() self.stops += 1 end
+    function t:Play() self.plays += 1 end
+    table.insert(tracks, t)
+    return t
 end}
-local humanoid={Health=100,FindFirstChildOfClass=function(_,name) return name=='Animator' and animator end}
-local character={FindFirstChildOfClass=function(_,name) return name=='Humanoid' and humanoid end}
-local LocalPlayer={Character=character,CharacterAdded=signal()}
-local featureConnections={};local state={mm2Core={}}
+local humanoid = {Health = 100, FindFirstChildOfClass = function(_, name) return name == 'Animator' and animator end}
+local character = {FindFirstChildOfClass = function(_, name) return name == 'Humanoid' and humanoid end}
+local LocalPlayer = {Character = character, CharacterAdded = signal()}
+local featureConnections = {}
+local state = {mm2Core = {}}
 local function disconnectFeatureConnection(name)
- local c=featureConnections[name];if c then c:Disconnect();featureConnections[name]=nil end
+    local c = featureConnections[name]
+    if c then c:Disconnect(); featureConnections[name] = nil end
 end
 local feature
-local function createUniversalFeature(_,_,_,callback)
- feature={enabled=false,actions={},cycles={}}
- function feature:Toggle(v) callback(v);self.enabled=v end
- function feature:SetStatus(s) self.status=s end
- return feature
+local featureOptions = {}
+local function createUniversalFeature(name, description, order, callback, options)
+    featureOptions = options or {}
+    feature = {enabled = false, actions = {}, cycles = {}}
+    function feature:Toggle(v) callback(v); self.enabled = v end
+    function feature:SetStatus(s) self.status = s end
+    return feature
 end
-local function addActionOption(f,name,callback) f.actions[name]=callback end
-local function addCycleOption(f,name,_,_,callback) f.cycles[name]=callback end
-local function notify(s) table.insert(notices,s) end
-local MM2Scroll,mm2Features={},{}
-''' + '\nlocal Module=(function()\n' + SOURCE + '\nend)()\n' + r'''
-Module.init({})
-assert(not feature.enabled and LocalPlayer.CharacterAdded:Count()==0 and #profile.Emotes.Owned==1)
-feature:Toggle(true)
-assert(#profile.Emotes.Owned==15 and #inventoryEvents==15,'built-ins and catalog update the client inventory once')
-assert(feature.status and string.find(string.lower(feature.status),'local'), 'initial status must describe local entries')
-assert(string.find(string.lower(notices[#notices]),'local'), 'do not claim server ownership')
-feature.actions['Get All Emotes']();assert(#profile.Emotes.Owned==15,'client owned IDs must not duplicate')
-local before=#inventoryEvents
-LocalPlayer.CharacterAdded:Fire();assert(#delayed==1)
-feature:Toggle(false);feature:Toggle(true);local after=#inventoryEvents
-flush();assert(#inventoryEvents==after and after==before+15,'a previous activation may not run its respawn callback later')
--- No native event: a selected animation is loaded via the existing animator.
-feature.actions['Play Emote']();assert(#tracks==1 and tracks[1].plays==1 and animations[1].destroyed)
-assert(animations[1].AnimationId=='rbxassetid://998877' and animations[1].Name=='livefloss' and tracks[1].Looped==false,
- 'live numeric IDs, commands and non-looping metadata must override stale builtins')
-feature.actions['Play Emote']();assert(tracks[1].stops==1 and #tracks==2 and animations[2].destroyed)
-local played={}
-playEvent={Fire=function(_,id) table.insert(played,id) end}
-feature.actions['Play Emote']();assert(tracks[2].stops==1 and played[1]=='floss', 'switching path stops our prior fallback track')
-playEvent=nil;feature.actions['Play Emote']();assert(#tracks==3)
-feature:Toggle(false);assert(tracks[3].stops==1 and LocalPlayer.CharacterAdded:Count()==0, 'OFF stops owned track and respawn listener')
--- A successful BindableEvent fire alone does not prove local inventory changed.
-modules=container({});inventory=container({InventoryDataChanged=changed});feature.actions['Get All Emotes']()
-assert(string.find(notices[#notices],'0'), 'an event without ProfileData must not be counted as a local entry')
--- If neither a local profile nor an inventory event exists, the count cannot
--- be reported as fourteen successful unlocks.
-inventory=container({});feature.actions['Get All Emotes']()
-assert(string.find(notices[#notices],'0'), 'no local inventory must report zero, not a fabricated catalog count')
-db=container({}) -- fall back to the known client snapshot if Sync is unavailable
-feature.actions['Play Emote']();assert(#tracks==4 and animations[4].AnimationId=='rbxassetid://2452938820' and tracks[4].Looped==true,
- 'fallback Floss must use the MM2 snapshot animation and looping behavior')
-Module.destroy();assert(tracks[4].stops==1 and state.mm2GetAllEmotesFeature==nil)
-print('PASS MM2 emotes: local catalog, honest counts, native/fallback playback, delayed cancellation and cleanup')
+local function addActionOption(f, name, callback) f.actions[name] = callback end
+local function addCycleOption(f, name, labels, index, callback)
+    f.cycles[name] = {labels = labels, callback = callback}
+    -- The real widget restores the saved value by calling the callback once, at
+    -- creation. That call must never act on its own.
+    callback(labels[index])
+end
+local function addInformationOption() end
+local function notify(s) table.insert(notices, s) end
+local MM2Scroll, mm2Features = {}, {}
 '''
-with tempfile.TemporaryDirectory(prefix='mm2-emotes-') as tmp:
-    path = Path(tmp) / 'test.luau'
-    path.write_text(script)
-    subprocess.run([os.environ.get('LUAU', 'luau'), str(path)], check=True)
+
+TESTS = r'''
+Module.init({})
+assert(featureOptions.action == true, 'Get All Emotes must be a button, not a toggle')
+assert(featureOptions.noOptions == false)
+assert(featureOptions.configKey == 'MM2.GetAllEmotes')
+assert(#profile.Emotes.Owned == 1, 'the card must not grant anything on boot')
+assert(LocalPlayer.CharacterAdded:Count() == 1, 'the respawn hook is armed')
+
+-- One press: the five shop ids, once, and nothing from the avatar set.
+feature:Toggle(true)
+assert(#played == 0, 'the button must not play an emote')
+assert(#tracks == 0, 'restoring the saved cycle value must not play anything')
+local owned = profile.Emotes.Owned
+assert(#owned == 6, 'exactly five shop emotes are added: ' .. #owned)
+for _, id in ipairs({'ninja', 'zen', 'dab', 'floss', 'zombie'}) do
+    local found = false
+    for _, value in ipairs(owned) do if value == id then found = true end end
+    assert(found, 'missing shop id ' .. id)
+end
+-- 'sit' is already owned by the player in this mock, so it is not a leak.
+for _, id in ipairs({'wave', 'cheer', 'laugh', 'point', 'dance1', 'dance2', 'dance3'}) do
+    for _, value in ipairs(owned) do assert(value ~= id, 'avatar emote leaked into the profile: ' .. id) end
+end
+assert(#inventoryEvents == 0, 'the inventory channel is the inner .Event, not the RemoteEvent')
+assert(string.find(feature.status, '5'), 'status must report the shop count: ' .. tostring(feature.status))
+assert(string.find(notices[#notices], 'server still decides'), 'never claim server ownership')
+
+-- A second press adds nothing and says so.
+feature:Toggle(true)
+assert(#profile.Emotes.Owned == 6, 'the button must be idempotent')
+assert(#inventoryEvents == 0)
+
+-- Select emote plays immediately through the game's own BindableEvent.
+local cycle = feature.cycles['Select Emote']
+assert(cycle and #cycle.labels == 5 and cycle.labels[5] == 'Zombie')
+cycle.callback('Zombie')
+assert(#played == 1 and played[1] == 'zombie', 'Select emote must play the picked emote')
+cycle.callback('Ninja Rest')
+assert(#played == 2 and played[2] == 'ninja')
+assert(#tracks == 0, 'the game event wins over the animator fallback')
+
+-- Replay keeps working, and the fallback is used only when the game refuses.
+feature.actions['Play Emote']()
+assert(#played == 3 and played[3] == 'ninja')
+remotes = {FindFirstChild = function(_, name)
+    if name == 'Inventory' then return inventory end
+end}
+feature.actions['Play Emote']()
+assert(#tracks == 1 and tracks[1].plays == 1, 'the fallback must play the clip')
+assert(tracks[1].animation.AnimationId == 'rbxassetid://2431864798', 'the fallback uses the live Sync asset')
+assert(tracks[1].Looped == nil or tracks[1].Looped == false, 'ninja rest is not a looping clip')
+feature.cycles['Select Emote'].callback('Floss')
+assert(tracks[1].stops == 1 and #tracks == 2 and tracks[2].Looped == true,
+    'switching emotes stops the previous clip and honours Looped')
+assert(animations[#animations].destroyed, 'the temporary Animation is destroyed')
+
+-- Respawn re-grants without duplicating and without a status claim.
+profile.Emotes.Owned = {'sit'}
+LocalPlayer.CharacterAdded:Fire()
+assert(#delayed == 1)
+flush()
+assert(#profile.Emotes.Owned == 6, 'a respawn gets the emotes again')
+
+-- Destroy releases everything.
+Module.destroy()
+assert(LocalPlayer.CharacterAdded:Count() == 0, 'destroy disconnects the respawn hook')
+assert(tracks[#tracks].stops == 1, 'destroy stops the fallback clip')
+assert(state.mm2GetAllEmotesFeature == nil)
+print('PASS MM2 Get All Emotes: button only, five shop ids, select emote plays, fallback clip, respawn, cleanup')
+'''
+
+with tempfile.TemporaryDirectory(prefix="mm2-emotes-") as tmp:
+    path = Path(tmp) / "test.luau"
+    path.write_text(SCRIPT + "\nlocal Module=(function()\n" + SOURCE + "\nend)()\n" + TESTS)
+    subprocess.run([os.environ.get("LUAU", "luau"), str(path)], check=True)

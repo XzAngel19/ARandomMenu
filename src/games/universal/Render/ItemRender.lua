@@ -539,6 +539,10 @@ function Module.init(context: Runtime): any
         end
         for name: string, provider: any in pairs(current) do
             if not providerOptions[name] then
+                -- These rows deliberately bring the card with them (see
+                -- setProviderEnabled): a provider ON must mean drawn. Flag it so
+                -- readers and the boot tests know the exception is intended.
+                if render.Feature then render.Feature.optionEntersFeature = true end
                 providerOptions[name] = render:CreateToggle({
                     Name = name,
                     Default = false,

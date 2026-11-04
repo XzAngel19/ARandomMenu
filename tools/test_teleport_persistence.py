@@ -252,7 +252,11 @@ CLOSES[1]();pending.fn(table.unpack(pending.args))
 assert(FILES[profile]==saved, 'retired callbacks must not overwrite the new config')
 local telemetry='Wurst/Telemetry/MM2_Trajectory_Calibration.json'
 FILES[telemetry]='prior'
-CLOSES[4]();assert(FILES[telemetry]=='{}', 'active MM2 close must still save')
+-- v180: the calibration only writes after the player answered Yes.
+b.configData.states['MM2.Calibration.Consent']=false
+CLOSES[4]();assert(FILES[telemetry]=='prior', 'answering No must never write the calibration file')
+b.configData.states['MM2.Calibration.Consent']=true
+CLOSES[4]();assert(FILES[telemetry]=='{}', 'active MM2 close must still save after consent')
 FILES[telemetry]='newer-runtime'
 CLOSES[2]()
 assert(FILES[telemetry]=='newer-runtime', 'retired MM2 close overwrote newer calibration')

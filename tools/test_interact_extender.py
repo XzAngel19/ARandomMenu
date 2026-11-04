@@ -65,8 +65,12 @@ assert(first.MaxActivationDistance==32 and first.HoldDuration==1.5 and click.Max
 settings["Interaction distance"](80);settings["Instant prompts"](true)
 assert(first.MaxActivationDistance==80 and first.HoldDuration==0 and click.MaxActivationDistance==80)
 settings["Proximity prompts"](false);settings["Click detectors"](false)
-assert(first.MaxActivationDistance==10 and first.HoldDuration==1.5 and click.MaxActivationDistance==12,
+assert(first.MaxActivationDistance==80 and first.HoldDuration==0 and click.MaxActivationDistance==12,
+    "Fast Prompt alone keeps the prompt channel alive while click detectors restore")
+settings["Instant prompts"](false)
+assert(first.MaxActivationDistance==10 and first.HoldDuration==1.5,
     "individual toggles restore their original properties")
+settings["Instant prompts"](true)
 settings["Proximity prompts"](true);settings["Click detectors"](true)
 local added=prompt(5,2);workspace.DescendantAdded:Fire(added)
 assert(added.MaxActivationDistance==80 and added.HoldDuration==0, "new prompts are applied")
@@ -76,6 +80,19 @@ feature.enabled=false;feature.toggle(false)
 assert(first.MaxActivationDistance==10 and first.HoldDuration==1.5 and click.MaxActivationDistance==12
     and added.MaxActivationDistance==5 and added.HoldDuration==2 and not tick
     and workspace.DescendantAdded:Count()==0, "OFF restores and disconnects")
+
+-- v180: a single row must work with the card OFF, and turning the card off
+-- switches its rows off with it so nothing keeps running behind the user.
+feature.enabled=false;feature.toggle(false)
+assert(first.MaxActivationDistance==10 and first.HoldDuration==1.5 and not tick)
+settings["Instant prompts"](true)
+assert(first.MaxActivationDistance==80 and first.HoldDuration==0 and tick,
+    "Fast Prompt must work with the card switched off")
+settings["Instant prompts"](false)
+assert(first.MaxActivationDistance==10 and first.HoldDuration==1.5 and not tick,
+    "turning that row off again must release the hooks")
+feature.enabled=true;feature.toggle(true)
+settings["Proximity prompts"](true);settings["Click detectors"](true)
 
 -- Each scan yields at 240 entries. OFF/ON must not let the previous
 -- generation resume and mutate entry 241 of the next session.

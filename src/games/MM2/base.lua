@@ -2041,6 +2041,10 @@ local function createTrajectoryCalibration(): any
         getEstimates: (self: Controller) -> Estimates,
         noteAuthoredShot: (self: Controller, info: any) -> (),
         noteTracerData: (self: Controller, info: any) -> (),
+        -- v180: nothing is written to the executor workspace until the player
+        -- answers the calibration prompt with Yes.
+        getConsent: (self: Controller) -> boolean?,
+        setConsent: (self: Controller, value: boolean?) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -2082,6 +2086,11 @@ local function createTrajectoryCalibration(): any
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
         lastBlockedAt = 0,
+        -- Learned lead buckets read from the previous session, applied as soon
+        -- as the predictor exists (load order between base.lua and Prediction
+        -- is not fixed).
+        leadSeeds = nil :: any,
+        leadSeedsApplied = false,
         evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
@@ -2100,31 +2109,10 @@ local function createTrajectoryCalibration(): any
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
 
-    -- v179: the acceptance measured on this account is the transport number
-    -- the predictor needs while its echo window is still empty. Publishing it
-    -- costs one call per confirmation and lets the aim start from a measured
-    -- 196-204 ms round trip instead of the ~150-165 ms Data Ping the exports
-    -- recorded next to it (the acceptance also carries the server's own
-    -- processing before it answers).
-    local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8
-    local function publishAcceptancePrior(): ()
-        local stats: any = runtime.gunAcceptance
-        local prediction: any = state.mm2Prediction
-        if type(stats) ~= "table" or type(prediction) ~= "table" then
-            return
-        end
-        local setter: any = prediction.setAcceptancePrior
-        if type(setter) ~= "function" then
-            return
-        end
-        if not predictionMath.finite(stats.mean) or not predictionMath.finite(stats.count) then
-            return
-        end
-        if stats.count < ACCEPTANCE_PRIOR_MIN_SAMPLES then
-            return
-        end
-        pcall(setter, stats.mean / 1000, stats.count)
-    end
+    -- v180: the measured acceptance stays a reported statistic
+    -- (`aggregate.gunAcceptanceMs`, `estimator.gunAcceptanceMs`) but it is no
+    -- longer pushed into the predictor. With the pre-v179 prediction restored,
+    -- the horizon is the ping until a live echo exists, exactly as before.
 
     local function nextShotId(): string
         runtime.shotSequence += 1
@@ -2191,6 +2179,29 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Push the buckets measured in earlier sessions into the predictor. Safe to
+    -- call before the predictor exists: it simply reports "not applied yet".
+    local function applyLearnedSeeds(): boolean
+        if runtime.leadSeedsApplied then
+            return true
+        end
+        local seeds: any = runtime.leadSeeds
+        if type(seeds) ~= "table" then
+            return false
+        end
+        local prediction: any = state.mm2Prediction
+        if not prediction or type(prediction.seedLeadError) ~= "function" then
+            return false
+        end
+        for mode: string, entry: any in pairs(seeds) do
+            if type(entry) == "table" and predictionMath.finite(entry.median) then
+                pcall(prediction.seedLeadError, mode, entry.median, entry.samples)
+            end
+        end
+        runtime.leadSeedsApplied = true
+        return true
+    end
+
     local function loadSavedHistory(): ()
         if type(environment.readfile) ~= "function" then
             runtime.persistenceBlocked = true
@@ -2233,9 +2244,18 @@ local function createTrajectoryCalibration(): any
         importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
         importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
         importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
+        -- What the predictor already learned (lead error per aim mode) has to
+        -- survive too: without this every session restarted at zero correction
+        -- and no number of matches could ever converge.
+        local learned: any = type(decoded.predictor) == "table" and decoded.predictor or {}
+        local learnedBuckets: any = type(learned.leadErrors) == "table" and learned.leadErrors or nil
+        if learnedBuckets then
+            runtime.leadSeeds = learnedBuckets
+            runtime.leadSeedsApplied = false
+            applyLearnedSeeds()
+        end
         -- The imported history is a measurement too; the live samples that
         -- follow refine it.
-        publishAcceptancePrior()
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -2531,6 +2551,13 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
+        -- Unconsented sessions never schedule a write. Read straight from the
+        -- saved config so the writer slices stay self-contained; without a
+        -- config table (unit harness) nothing is gated.
+        local states: any = type(configData) == "table" and configData.states or nil
+        if states and states["MM2.Calibration.Consent"] ~= true then
+            return
+        end
         if runtime.saveScheduled then
             return
         end
@@ -2949,6 +2976,13 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
+        -- v180 consent: without an explicit Yes the recorder keeps its data in
+        -- memory and never touches the workspace, so a player who answers No
+        -- leaves no calibration file behind.
+        local consentStates: any = type(configData) == "table" and configData.states or nil
+        if consentStates and consentStates["MM2.Calibration.Consent"] ~= true then
+            return false
+        end
         if runtime.persistenceBlocked
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
@@ -2994,6 +3028,28 @@ local function createTrajectoryCalibration(): any
                 knifeSpeedStudsPerSecond = mergedKnife,
                 knifeSpawnDelayMs = mergedDelay,
             },
+            -- The learned model, portable across sessions and machines. Same
+            -- shape the import path reads above.
+            predictor = (function(): {[string]: any}
+                local out: {[string]: any} = {}
+                local predictorState: any = state.mm2Prediction
+                if predictorState and type(predictorState.exportLeadState) == "function" then
+                    local ok: boolean, value: any = pcall(predictorState.exportLeadState)
+                    if ok and type(value) == "table" then
+                        out.leadErrors = value
+                    end
+                end
+                if predictorState and type(predictorState.getLeadSamples) == "function" then
+                    local ok: boolean, guns: any = pcall(predictorState.getLeadSamples, "gun")
+                    local okKnife: boolean, knives: any = pcall(predictorState.getLeadSamples, "knife")
+                    out.samples = {
+                        gun = ok and guns or nil,
+                        knife = okKnife and knives or nil,
+                    }
+                end
+                out.readyFor = "3+ samples per mode makes the correction live; 20+ is a settled median"
+                return out
+            end)(),
             estimator = {
                 gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
                 knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
@@ -3559,7 +3615,6 @@ local function createTrajectoryCalibration(): any
             estimatesAt = -math.huge
         end
         addSample(runtime.gunAcceptance, latencyMs)
-        publishAcceptancePrior()
         runtime.sessionGunConfirmed += 1
         if hitTarget then
             runtime.sessionGunHitTarget += 1
@@ -4121,6 +4176,16 @@ local function createTrajectoryCalibration(): any
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
         loadSavedHistory()
+        -- The predictor may load after this adapter: retry briefly instead of
+        -- dropping what the previous matches taught it.
+        if type(task) == "table" and type(task.spawn) == "function" then
+            task.spawn(function(): ()
+                for _attempt: number = 1, 20 do
+                    if applyLearnedSeeds() then return end
+                    task.wait(0.5)
+                end
+            end)
+        end
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -4164,6 +4229,53 @@ local function createTrajectoryCalibration(): any
         runtime.shotSequence = 0
         table.clear(runtime.pendingGuns)
         table.clear(runtime.pendingKnives)
+    end
+
+    local function consentValue(): boolean?
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states then
+            return nil
+        end
+        local value: any = states["MM2.Calibration.Consent"]
+        if value == true then return true end
+        if value == false then return false end
+        return nil
+    end
+
+    function controller:getConsent(): boolean?
+        return consentValue()
+    end
+
+    -- `true` starts saving on the next confirmed shot (and writes the current
+    -- session immediately), `false` stops every write and removes the file this
+    -- menu wrote, `nil` leaves the question unanswered.
+    function controller:setConsent(value: boolean?): ()
+        local nextValue: boolean? = nil
+        if value == true then
+            nextValue = true
+        elseif value == false then
+            nextValue = false
+        end
+        if type(configData) == "table" and configData.states then
+            configData.states["MM2.Calibration.Consent"] = nextValue
+        end
+        if type(state.queueConfigSave) == "function" then
+            pcall(state.queueConfigSave)
+        end
+        if nextValue == true then
+            runtime.dirty = true
+            saveSnapshot("consent")
+            return
+        end
+        runtime.saveScheduled = false
+        runtime.dirty = false
+        if runtime.persistenceBlocked then
+            return
+        end
+        -- A No must not leave the file the previous consent wrote behind.
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        end
     end
 
     function controller:save(reason: string?): boolean
@@ -4387,12 +4499,17 @@ local function createTrajectoryCalibration(): any
         for _key: string in pairs(runtime.motionBuckets) do
             bucketCount += 1
         end
+        local consent: boolean? = consentValue()
+        local consentText: string = consent == true and "giving calibration"
+            or (consent == false and "not giving calibration")
+            or "calibration not answered"
         return string.format(
-            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s",
+            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s · %s",
             runtime.sessionGunConfirmed,
             runtime.sessionKnifeConfirmed,
             bucketCount,
-            knifeText
+            knifeText,
+            consentText
         )
     end
 

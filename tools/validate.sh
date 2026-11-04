@@ -76,20 +76,20 @@ cards="$(grep -E '^[0-9]+ cards total' build/menu_audit.md | cut -d' ' -f1)"
 [ -n "$cards" ] || { cat build/menu_audit.md; exit 1; }
 echo "PASS menu audit: $cards cards, every row dumped from the booted bundle"
 
-# A release boot must not build the developer capture card. This runs the
-# bundle with WURST_DEBUG=false and checks the card is absent, not hidden.
+# A release boot must build exactly the same cards as a debug boot. Since v180
+# the Calibration card ships for everybody (consent, not debug, decides whether
+# anything is written), so both boots agree and the card has to be present.
 python3 tools/audit_menu.py --release >build/menu_release.md 2>&1 || { cat build/menu_release.md; exit 1; }
 release_cards="$(grep -E '^[0-9]+ cards total' build/menu_release.md | cut -d' ' -f1)"
 [ -n "$release_cards" ] || { cat build/menu_release.md; exit 1; }
-# The only difference between the two boots is the debug capture card.
-if [ "$release_cards" -ne "$((cards - 1))" ]; then
+if [ "$release_cards" -ne "$cards" ]; then
     cat build/menu_release.md
-    echo "release boot has $release_cards cards, expected $((cards - 1))" >&2
+    echo "release boot has $release_cards cards, debug boot has $cards" >&2
     exit 1
 fi
-if grep -q 'Calibration' build/menu_release.md; then
+if ! grep -q 'Calibration' build/menu_release.md; then
     cat build/menu_release.md
-    echo "release boot built the debug Calibration card" >&2
+    echo "release boot is missing the consent-gated Calibration card" >&2
     exit 1
 fi
-echo "PASS release menu: $release_cards cards, no Calibration card"
+echo "PASS release menu: $release_cards cards, Calibration ships behind consent"

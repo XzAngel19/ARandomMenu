@@ -1,5 +1,5 @@
 return {
-    stamp = "v179-20261103-names-and-precision",
+    stamp = "v180-20261104-restored-prediction-and-learning",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -3674,7 +3674,6 @@ function Module.init(runtime: any): any
     local getEstimatedLatency: any = core.getEstimatedLatency
     local isWeaponPathClear: any = core.isWeaponPathClear
     local prediction: any = state.mm2Prediction
-    local trajectoryCalibration: any = core.trajectoryCalibration
 
     local settings = {
         enabled = false,
@@ -3934,19 +3933,19 @@ function Module.init(runtime: any): any
         originPos: Vector3,
         knife: Tool?,
         cheap: boolean?
-    ): (Vector3?, number?, any)
+    ): (Vector3?, number?)
         local character: Model? = target.Character
         if not character then
-            return nil, nil, nil
+            return nil, nil
         end
         local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not root then
-            return nil, nil, nil
+            return nil, nil
         end
         -- Check the live body before doing the more expensive intercept/ground
         -- work; hidden candidates cannot become speculative shots.
         if not bodyVisible(originPos, root.Position, character) then
-            return nil, nil, nil
+            return nil, nil
         end
 
         local speed: number = 96
@@ -4049,7 +4048,7 @@ function Module.init(runtime: any): any
         -- The current body was already checked before prediction: a future
         -- point peeking around a corner cannot make a hidden body eligible.
         if cheap or checkLineOfSight(originPos, predicted, character) then
-            return predicted, flight, aimInfo
+            return predicted, flight
         end
 
         -- Fallback visibility scan across torso/head/limbs if WallCheck blocks primary point
@@ -4076,12 +4075,12 @@ function Module.init(runtime: any): any
                 local candidatePoint: Vector3 = partPosition + leadOffset
                 if bodyVisible(originPos, partPosition, character)
                     and (cheap or checkLineOfSight(originPos, candidatePoint, character)) then
-                    return candidatePoint, flight, aimInfo
+                    return candidatePoint, flight
                 end
             end
         end
 
-        return nil, nil, nil
+        return nil, nil
     end
 
     -- Find best target for knife throw
@@ -4333,8 +4332,7 @@ function Module.init(runtime: any): any
         if not target or not isValidTarget(target) then
             return false
         end
-        local aimPos: Vector3?, aimFlight: number?, aimInfo: any =
-            resolveKnifeAim(target, originCF.Position, knife)
+        local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
         if not aimPos then
             return false
         end
@@ -4349,50 +4347,6 @@ function Module.init(runtime: any): any
             if okFire then
                 fired = true
             end
-        end
-
-        -- v179: record the point the blade was actually aimed at. Before this
-        -- the knife's authored aim never reached the calibration pipeline, so
-        -- the closest-pass geometry existed but could not be scored and the
-        -- shared feedback loop only ever learned from guns.
-        if fired and type(trajectoryCalibration) == "table"
-            and type(trajectoryCalibration.noteAuthoredShot) == "function" then
-            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-                kind = "knife",
-                tool = knife,
-                toolName = knife and knife.Name or "Knife",
-                originPos = originCF.Position,
-                aimPos = aimPos,
-                aimRoot = aimInfo and aimInfo.rootPosition or nil,
-                aimVelocity = aimInfo and aimInfo.velocity or nil,
-                leadSeconds = aimInfo and aimInfo.leadSeconds
-                    or aimFlight,
-                target = target,
-                silent = false,
-                settings = {
-                    mode = "Knife",
-                    wallCheck = settings.wallCheck,
-                    leadSeconds = aimInfo and aimInfo.leadSeconds or nil,
-                    flightSeconds = aimFlight,
-                    motionSource = aimInfo and aimInfo.motionSource or nil,
-                    model = aimInfo and aimInfo.model or nil,
-                    sampleAge = aimInfo and aimInfo.sampleAge or nil,
-                    samples = aimInfo and aimInfo.samples or nil,
-                    rtt = aimInfo and aimInfo.rtt or nil,
-                    echoDelay = aimInfo and aimInfo.echoDelay or nil,
-                    echoSamples = aimInfo and aimInfo.echoSamples or nil,
-                    turnRate = aimInfo and aimInfo.turnRate or nil,
-                    brakeSeconds = aimInfo and aimInfo.brakeSeconds or nil,
-                    leadCorrection = aimInfo and aimInfo.leadCorrection or nil,
-                    leadCorrectionTarget = aimInfo and aimInfo.leadCorrectionTarget or nil,
-                    leadSamples = aimInfo and aimInfo.leadSamples or nil,
-                    acceptancePrior = aimInfo and aimInfo.acceptancePrior or nil,
-                    predictedPoint = {aimPos.X, aimPos.Y, aimPos.Z},
-                    sampledVelocity = aimInfo and aimInfo.velocity
-                        and {aimInfo.velocity.X, aimInfo.velocity.Y, aimInfo.velocity.Z}
-                        or nil,
-                },
-            })
         end
 
         if not fired then
@@ -10723,47 +10677,39 @@ function Module.init(runtime: any): any
         looped: boolean?,
     }
 
-    -- Fallback catalog from the TestingStuff client snapshot; live Sync wins.
+    -- Only the five emotes that MM2 actually sells. The default avatar emotes
+    -- (wave, cheer, laugh, point, dance1-3) are not shop entries: writing them
+    -- into ProfileData.Emotes.Owned only polluted the profile and the emote
+    -- window, so they are never granted. Confirmed against the TestingStuff
+    -- place capture: Database.Sync.Emotes marks exactly these ids with a
+    -- numeric Price (ninja 650, zen 800, dab 700, floss 750, zombie NotForSale
+    -- but still a shop item), while the avatar set carries Price "NotForSale"
+    -- and no AnimationID.
+    local SHOP_EMOTE_IDS: {string} = { "ninja", "zen", "dab", "floss", "zombie" }
+
+    -- Fallback catalog from the TestingStuff client snapshot; the live Sync
+    -- module wins when it is available.
     local BUILTIN_EMOTES: {EmoteDef} = {
         { id = "ninja", name = "Ninja Rest", command = "ninja", animationId = "rbxassetid://2431864798", looped = true },
-        { id = "sit", name = "Sit", command = "sit2", animationId = "rbxassetid://2431845940", looped = true },
         { id = "zen", name = "Zen", command = "zen", animationId = "rbxassetid://2431812646", looped = true },
         { id = "dab", name = "Dab", command = "dab", animationId = "rbxassetid://2445521505" },
         { id = "floss", name = "Floss", command = "floss", animationId = "rbxassetid://2452938820", looped = true },
         { id = "zombie", name = "Zombie", command = "zombie", animationId = "rbxassetid://2513692312", looped = true },
-        { id = "headless", name = "Headless", command = "headless", animationId = "rbxassetid://2513664073" },
-        { id = "wave", name = "Wave", command = "wave", animationId = "http://www.roblox.com/asset/?id=128777973" },
-        { id = "cheer", name = "Cheer", command = "cheer", animationId = "http://www.roblox.com/asset/?id=129423030" },
-        { id = "laugh", name = "Laugh", command = "laugh", animationId = "http://www.roblox.com/asset/?id=129423131" },
-        { id = "point", name = "Point", command = "point", animationId = "http://www.roblox.com/asset/?id=128853357" },
-        { id = "dance1", name = "Dance 1", command = "dance1", animationId = "http://www.roblox.com/asset/?id=182435998", looped = true },
-        { id = "dance2", name = "Dance 2", command = "dance2", animationId = "http://www.roblox.com/asset/?id=182436842", looped = true },
-        { id = "dance3", name = "Dance 3", command = "dance3", animationId = "http://www.roblox.com/asset/?id=182436935", looped = true },
     }
 
-    local SPECIAL_EMOTE_LABELS: {string} = {
-        "Ninja Rest",
-        "Sit",
-        "Zen",
-        "Dab",
-        "Floss",
-        "Zombie",
-        "Headless",
-    }
+    -- The cycle lists the same five emotes, in the order a player expects.
+    local EMOTE_LABELS: {string} = { "Ninja Rest", "Zen", "Dab", "Floss", "Zombie" }
 
     local LABEL_TO_EMOTE_ID: {[string]: string} = {
         ["Ninja Rest"] = "ninja",
-        ["Sit"] = "sit",
         ["Zen"] = "zen",
         ["Dab"] = "dab",
         ["Floss"] = "floss",
         ["Zombie"] = "zombie",
-        ["Headless"] = "headless",
     }
 
     local selectedEmoteLabel: string = "Floss"
     local activeTrack: any = nil
-    local generation: number = 0
     local GetAllEmotesFeature: any = nil
 
     local function stopActiveTrack(): ()
@@ -10783,7 +10729,9 @@ function Module.init(runtime: any): any
         return nil
     end
 
-    local function collectAllEmotes(): ({EmoteDef}, {[string]: EmoteDef})
+    -- The live Sync table, restricted to the shop ids. Anything the game adds
+    -- that is not in SHOP_EMOTE_IDS is ignored on purpose.
+    local function collectEmotes(): ({EmoteDef}, {[string]: EmoteDef})
         local list: {EmoteDef} = {}
         local byId: {[string]: EmoteDef} = {}
 
@@ -10798,32 +10746,38 @@ function Module.init(runtime: any): any
             local db: Instance? = rs and rs:FindFirstChild("Database")
             local syncFolder: Instance? = db and db:FindFirstChild("Sync")
             local emotesModule: Instance? = syncFolder and syncFolder:FindFirstChild("Emotes")
-            if emotesModule then
-                local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
-                if okReq and type(syncEmotes) == "table" then
-                    for emoteId: any, info: any in pairs(syncEmotes) do
-                        if type(emoteId) == "string" and emoteId ~= "Back" and type(info) == "table" then
-                            local asset = animationUri(info.AnimationID)
-                            if type(info.Command) == "string" or asset then
-                                local entry = byId[emoteId]
-                                if not entry then
-                                    entry = { id = emoteId, name = emoteId, command = emoteId, animationId = "" }
-                                    byId[emoteId] = entry
-                                    table.insert(list, entry)
-                                end
-                                if type(info.Name) == "string" and info.Name ~= "" then
-                                    entry.name = info.Name
-                                end
-                                if type(info.Command) == "string" and info.Command ~= "" then
-                                    entry.command = info.Command
-                                end
-                                if asset then
-                                    entry.animationId = asset
-                                end
-                                entry.looped = info.Loop == true
-                            end
-                        end
+            if not emotesModule then
+                return
+            end
+            local okReq: boolean, syncEmotes: any = pcall(require, emotesModule)
+            if not okReq or type(syncEmotes) ~= "table" then
+                return
+            end
+            for _, emoteId: string in ipairs(SHOP_EMOTE_IDS) do
+                local info: any = syncEmotes[emoteId]
+                if type(info) == "table" then
+                    local entry: EmoteDef = byId[emoteId]
+                        or {
+                            id = emoteId,
+                            name = emoteId,
+                            command = emoteId,
+                            animationId = "",
+                        }
+                    if not byId[emoteId] then
+                        byId[emoteId] = entry
+                        table.insert(list, entry)
                     end
+                    if type(info.Name) == "string" and info.Name ~= "" then
+                        entry.name = info.Name
+                    end
+                    if type(info.Command) == "string" and info.Command ~= "" then
+                        entry.command = info.Command
+                    end
+                    local asset: string? = animationUri(info.AnimationID)
+                    if asset then
+                        entry.animationId = asset
+                    end
+                    entry.looped = info.Loop == true
                 end
             end
         end)
@@ -10831,11 +10785,37 @@ function Module.init(runtime: any): any
         return list, byId
     end
 
-    -- Update the client's ProfileData and inventory event when available.
-    -- Neither a local table nor a BindableEvent proves server-side ownership.
-    local function unlockAllEmotes(showNotification: boolean?): number
-        local allEmotes: {EmoteDef}, _byId: {[string]: EmoteDef} = collectAllEmotes()
-        local localCount: number = 0
+    -- Rebuild the game's own emote window from ProfileData, exactly like the
+    -- client does after InventoryDataChanged. This is what makes the emotes
+    -- usable without reopening the game UI.
+    local function refreshEmoteWindow(owned: {string}): ()
+        pcall(function(): ()
+            local rs: Instance? = game:GetService("ReplicatedStorage")
+            local modulesFolder: Instance? = rs and rs:FindFirstChild("Modules")
+            local emoteInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
+            if not emoteInst then
+                return
+            end
+            local okEm: boolean, emoteModule: any = pcall(require, emoteInst)
+            if not okEm or type(emoteModule) ~= "table" then
+                return
+            end
+            local gui: any = emoteModule.EmoteGUI
+                or (type(getgenv) == "function" and (getgenv() :: any).EmoteFrame)
+                or nil
+            if gui and type(emoteModule.GenerateEmotes) == "function" then
+                pcall(emoteModule.GenerateEmotes, owned, gui)
+            end
+        end)
+    end
+
+    -- Write the five shop ids into the client's ProfileData and wake the
+    -- inventory UI. Neither a local table nor a BindableEvent proves
+    -- server-side ownership: the server still decides what actually plays.
+    local function grantShopEmotes(showNotification: boolean?): number
+        local list: {EmoteDef} = collectEmotes()
+        local granted: number = 0
+        local ownedList: {string}? = nil
 
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
@@ -10843,10 +10823,11 @@ function Module.init(runtime: any): any
                 return
             end
 
-            -- 1. Update ReplicatedStorage.Modules.ProfileData.Emotes.Owned
+            -- 1. ReplicatedStorage.Modules.ProfileData.Emotes.Owned
+            local owned: {string}? = nil
             local modulesFolder: Instance? = rs:FindFirstChild("Modules")
-            local profileDataMod: Instance? = modulesFolder and modulesFolder:FindFirstChild("ProfileData")
-            local ownedTable: {string}? = nil
+            local profileDataMod: Instance? = modulesFolder
+                and modulesFolder:FindFirstChild("ProfileData")
             if profileDataMod then
                 local okProf: boolean, profileData: any = pcall(require, profileDataMod)
                 if okProf and type(profileData) == "table" then
@@ -10855,86 +10836,93 @@ function Module.init(runtime: any): any
                     elseif type(profileData.Emotes.Owned) ~= "table" then
                         profileData.Emotes.Owned = {}
                     end
-                    ownedTable = profileData.Emotes.Owned
+                    owned = profileData.Emotes.Owned
                 end
             end
 
-            local ownedSet: {[string]: boolean} = {}
-            if type(ownedTable) == "table" then
-                for _, existingId: any in ipairs(ownedTable) do
+            local known: {[string]: boolean} = {}
+            if owned then
+                for _, existingId: any in ipairs(owned) do
                     if type(existingId) == "string" then
-                        ownedSet[existingId] = true
+                        known[existingId] = true
                     end
                 end
+                for _, def: EmoteDef in ipairs(list) do
+                    if not known[def.id] then
+                        known[def.id] = true
+                        table.insert(owned, def.id)
+                        granted += 1
+                    end
+                end
+                ownedList = owned
             end
 
-            -- 2. Locate InventoryDataChanged BindableEvent for EmoteWindow & Inventory UI
+            -- 2. InventoryDataChanged. In MM2 this is a RemoteEvent whose
+            -- client-side channel is the inner BindableEvent (`.Event`); the
+            -- old code fired the RemoteEvent itself, which does not exist
+            -- client-side, so the emote window never rebuilt.
             local remotesFolder: Instance? = rs:FindFirstChild("Remotes")
             local invRemotes: Instance? = remotesFolder and remotesFolder:FindFirstChild("Inventory")
-            local invChanged: Instance? = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
-
-            for _, def: EmoteDef in ipairs(allEmotes) do
-                local updated: boolean = type(ownedTable) == "table"
-                if updated and not ownedSet[def.id] then
-                    ownedSet[def.id] = true
-                    table.insert(ownedTable :: {string}, def.id)
-                end
-                if invChanged and type((invChanged :: any).Fire) == "function" then
-                    pcall(function(): ()
-                        (invChanged :: any):Fire("Emotes", def.id, 1)
-                    end)
-                end
-                if updated then localCount += 1 end
-            end
-
-            -- 3. Also support EmoteModule.GenerateEmotes if used by the current UI layout
-            local emoteModInst: Instance? = modulesFolder and modulesFolder:FindFirstChild("EmoteModule")
-            if emoteModInst and type(ownedTable) == "table" then
-                pcall(function(): ()
-                    local okEm: boolean, emoteModule: any = pcall(require, emoteModInst)
-                    if okEm and type(emoteModule) == "table" and type(emoteModule.GenerateEmotes) == "function" then
-                        local emoteGui: any = (_G and (_G :: any).EmoteFrame) or emoteModule.EmoteGUI
-                        if emoteGui then
-                            pcall(emoteModule.GenerateEmotes, ownedTable, emoteGui)
-                        end
+            local invChanged: any = invRemotes and invRemotes:FindFirstChild("InventoryDataChanged")
+            if invChanged and owned then
+                for _, def: EmoteDef in ipairs(list) do
+                    if known[def.id] then
+                        pcall(function(): ()
+                            if invChanged.Event and type(invChanged.Event.Fire) == "function" then
+                                invChanged.Event:Fire("Emotes", def.id, 1)
+                            elseif type(invChanged.Fire) == "function" then
+                                invChanged:Fire("Emotes", def.id, 1)
+                            end
+                        end)
                     end
-                end)
+                end
             end
         end)
 
-        if GetAllEmotesFeature and GetAllEmotesFeature.enabled then
-            GetAllEmotesFeature:SetStatus(string.format("%d local emotes", localCount))
+        if ownedList then
+            refreshEmoteWindow(ownedList)
+        end
+
+        if GetAllEmotesFeature then
+            GetAllEmotesFeature:SetStatus(string.format("%d shop emotes", #list))
         end
         if showNotification and type(notify) == "function" then
-            pcall(notify, string.format("Get All Emotes: %d local emote entries; server ownership is not verified.", localCount))
+            pcall(
+                notify,
+                string.format(
+                    "Get All Emotes: %d shop emotes written to the local profile "
+                        .. "(%d new). The server still decides what plays.",
+                    #list,
+                    granted
+                )
+            )
         end
-        return localCount
+        return granted
     end
 
-    -- Request the game's native emote, or use the character Animator as a
-    -- fallback. The game's permissions determine playback and replication.
+    -- The game's own PlayEmote BindableEvent (Remotes.Misc.PlayEmote) takes the
+    -- emote id; the Animator is only the fallback when the game refuses.
     local function requestEmotePlayback(emoteId: string): boolean
         stopActiveTrack()
-        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectAllEmotes()
+        local _list: {EmoteDef}, byId: {[string]: EmoteDef} = collectEmotes()
         local def: EmoteDef? = byId[emoteId]
-        local firedBindable: boolean = false
+        local firedGameEvent: boolean = false
 
         pcall(function(): ()
             local rs: Instance? = game:GetService("ReplicatedStorage")
             local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
             local misc: Instance? = remotes and remotes:FindFirstChild("Misc")
-            local playEmoteEvent: Instance? = misc and misc:FindFirstChild("PlayEmote")
-            if playEmoteEvent and type((playEmoteEvent :: any).Fire) == "function" then
-                (playEmoteEvent :: any):Fire(emoteId)
-                firedBindable = true
+            local playEmoteEvent: any = misc and misc:FindFirstChild("PlayEmote")
+            if playEmoteEvent and type(playEmoteEvent.Fire) == "function" then
+                playEmoteEvent:Fire(emoteId)
+                firedGameEvent = true
             end
         end)
 
-        if firedBindable then
+        if firedGameEvent then
             return true
         end
 
-        -- Direct Humanoid/Animator fallback; replication is game-dependent.
         if not def or def.animationId == "" then
             return false
         end
@@ -10966,64 +10954,85 @@ function Module.init(runtime: any): any
         return playedFallback
     end
 
-    local function toggleGetAllEmotes(enabled: boolean): ()
-        generation += 1
-        local currentGeneration: number = generation
-        disconnectFeatureConnection("MM2GetAllEmotesRespawn")
+    -- One click: grant the five shop emotes and rebuild the game's window.
+    local function runGetAllEmotes(): ()
+        local granted: number = grantShopEmotes(true)
+        if GetAllEmotesFeature then
+            GetAllEmotesFeature:SetStatus(
+                string.format("%d shop emotes", #collectEmotes())
+            )
+        end
+        if granted == 0 and type(notify) == "function" then
+            pcall(notify, "Get All Emotes: the shop emotes were already in the local profile.")
+        end
+    end
 
-        if not enabled then
-            stopActiveTrack()
-            if GetAllEmotesFeature then
-                GetAllEmotesFeature:SetStatus(nil)
-            end
+    -- Re-apply after a respawn/reset: the game can rebuild the profile and the
+    -- emote window, and the grant is local-only, so a fresh character gets it
+    -- again without the player pressing the button.
+    local function hookRespawn(): ()
+        if featureConnections.MM2GetAllEmotesRespawn then
             return
         end
-
-        local count: number = unlockAllEmotes(true)
-        GetAllEmotesFeature:SetStatus(string.format("%d local emotes", count))
-
-        if LocalPlayer and LocalPlayer.CharacterAdded then
-            featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(function(): ()
+        if not (LocalPlayer and LocalPlayer.CharacterAdded) then
+            return
+        end
+        featureConnections.MM2GetAllEmotesRespawn = LocalPlayer.CharacterAdded:Connect(
+            function(): ()
                 task.delay(0.5, function(): ()
-                    if currentGeneration == generation and GetAllEmotesFeature and GetAllEmotesFeature.enabled then
-                        unlockAllEmotes(false)
+                    if Module.Initialized then
+                        pcall(grantShopEmotes, false)
                     end
                 end)
-            end)
-        end
+            end
+        )
     end
 
     GetAllEmotesFeature = createUniversalFeature(
         "Get All Emotes",
-        "Attempts to populate the local MM2 emote list and play selected animations. Server ownership and replication depend on the game.",
+        "Button: writes the five MM2 shop emotes (Ninja Rest, Zen, Dab, Floss, "
+            .. "Zombie) into the local emote profile and rebuilds the emote "
+            .. "window. Server ownership is not guaranteed.",
         11,
-        toggleGetAllEmotes,
+        function(): ()
+            runGetAllEmotes()
+        end,
         {
             categoryName = "Utilities",
             parent = MM2Scroll,
             registry = mm2Features,
+            action = true,
+            noOptions = false,
+            configKey = "MM2.GetAllEmotes",
         }
     )
     state.mm2GetAllEmotesFeature = GetAllEmotesFeature
 
-    addActionOption(
-        GetAllEmotesFeature,
-        "Get All Emotes",
-        function(): ()
-            unlockAllEmotes(true)
-        end,
-        "Update the local emote list; this does not prove server-side ownership."
-    )
-
+    -- The cycle widget calls the callback once at creation with the saved
+    -- value. That is a restore, not a choice: playing an emote there fired a
+    -- toast on every single boot.
+    local cycleRestored: boolean = false
     addCycleOption(
         GetAllEmotesFeature,
         "Select Emote",
-        SPECIAL_EMOTE_LABELS,
-        5,
+        EMOTE_LABELS,
+        4,
         function(value: string): ()
             selectedEmoteLabel = value
+            if not cycleRestored then
+                cycleRestored = true
+                return
+            end
+            local emoteId: string = LABEL_TO_EMOTE_ID[value] or "floss"
+            -- v180: choosing an emote plays it right away. Before this the cycle
+            -- only stored a label and the player had to press Play afterwards,
+            -- which read as "Select Emote does nothing".
+            grantShopEmotes(false)
+            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
+                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
+            end
         end,
-        "Select an MM2 emote to request through the game or the character Animator."
+        "Pick an emote and play it immediately through the game."
     )
 
     addActionOption(
@@ -11031,15 +11040,28 @@ function Module.init(runtime: any): any
         "Play Emote",
         function(): ()
             local emoteId: string = LABEL_TO_EMOTE_ID[selectedEmoteLabel] or "floss"
-            unlockAllEmotes(false)
-            requestEmotePlayback(emoteId)
+            grantShopEmotes(false)
+            if not requestEmotePlayback(emoteId) and type(notify) == "function" then
+                pcall(notify, "MM2 refused that emote; it may not be owned server-side.")
+            end
         end,
-        "Request the selected emote. Playback and visibility to others are not guaranteed."
+        "Replay the emote chosen in Select Emote."
     )
 
+    addInformationOption(
+        GetAllEmotesFeature,
+        "Button, not a toggle: one click grants the shop emotes. The button "
+            .. "stays idle until you press it again."
+    )
+
+    hookRespawn()
+
     activeCleanup = function(): ()
-        toggleGetAllEmotes(false)
-        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then state.mm2GetAllEmotesFeature = nil end
+        disconnectFeatureConnection("MM2GetAllEmotesRespawn")
+        stopActiveTrack()
+        if state.mm2GetAllEmotesFeature == GetAllEmotesFeature then
+            state.mm2GetAllEmotesFeature = nil
+        end
     end
     Module.Events = featureConnections
     Module.Initialized = true
@@ -11542,6 +11564,8 @@ local Module = {
     Runtime = nil :: any,
 }
 
+local activeCleanup: () -> () = function(): () end
+
 function Module.init(runtime: any): any
     if Module.Initialized then
         return Module
@@ -11551,20 +11575,16 @@ function Module.init(runtime: any): any
     Module.Runtime = runtime
     local trajectoryCalibration: any = core.trajectoryCalibration
 
-    -- Capture tools only exist with WURST_DEBUG on. The recorder in base.lua
-    -- keeps working either way; this is the card the player would otherwise
-    -- see between "Blurt Roles" and the real modules.
-    if state.debug ~= true then
-        Module.Events = featureConnections
-        Module.Initialized = true
-        return Module
-    end
-
+    -- v180: the capture card is back in release. What changed is consent: the
+    -- recorder only writes to the executor workspace after the player answers
+    -- the prompt with Yes. Answering No keeps everything in memory and writes
+    -- nothing.
     local TrajectoryFeature: any = state.mm2CalibrationFeature
     if not TrajectoryFeature then
         TrajectoryFeature = createUniversalFeature(
             "Calibration",
-            "MM2 shot and knife trajectory calibration; isolated from universal modules.",
+            "MM2 shot and knife calibration. Nothing is written to your workspace "
+                .. "unless you answer Yes to the calibration prompt.",
             5,
             function(): () end,
             {
@@ -11576,24 +11596,180 @@ function Module.init(runtime: any): any
         )
         state.mm2CalibrationFeature = TrajectoryFeature
     end
-    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
-        notify(trajectoryCalibration:status())
-    end)
-    addActionOption(TrajectoryFeature, "Save calibration", function(): ()
-        if trajectoryCalibration:save("manual") then
-            notify("Trajectory calibration saved in the executor workspace.")
-        else
-            notify("Trajectory calibration could not be saved; check F9.")
+
+    -- Three samples make a correction live and the window holds eight; twenty
+    -- is a settled median, which is what a dozen or two matches should reach.
+    local LEAD_SAMPLES_FOR_CONFIDENCE: number = 20
+
+    local askedThisSession: boolean = false
+
+    local function consent(): boolean?
+        if type(trajectoryCalibration) ~= "table"
+            or type(trajectoryCalibration.getConsent) ~= "function" then
+            return nil
         end
-    end)
+        local ok: boolean, value: any = pcall(trajectoryCalibration.getConsent, trajectoryCalibration)
+        if not ok then
+            return nil
+        end
+        if value == true then
+            return true
+        end
+        if value == false then
+            return false
+        end
+        return nil
+    end
+
+    local function setConsent(value: boolean?): ()
+        if type(trajectoryCalibration) ~= "table"
+            or type(trajectoryCalibration.setConsent) ~= "function" then
+            return
+        end
+        pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
+        if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+            TrajectoryFeature:SetStatus(
+                value == true and "giving calibration"
+                    or (value == false and "off" or nil)
+            )
+        end
+    end
+
+    -- The centred question. Yes starts saving; No guarantees nothing is saved
+    -- (and removes the file a previous Yes wrote).
+    local function askConsent(): ()
+        askedThisSession = true
+        local dialog: any = state.confirmDialog
+        if type(dialog) ~= "function" then
+            -- No host dialog (older bundle): stay silent rather than saving
+            -- anything without an answer.
+            setConsent(nil)
+            return
+        end
+        local ok: boolean, failure: any = pcall(dialog, {
+            title = "Give your calibration?",
+            message = "Would you like to give your calibration? MM2 will save your "
+                .. "shot and knife data to a JSON file in your executor workspace so "
+                .. "the aim can be tuned with real numbers. Choose No and nothing at "
+                .. "all is written.",
+            yes = "Yes",
+            no = "No",
+            onYes = function(): ()
+                setConsent(true)
+                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+                    TrajectoryFeature:SetStatus("giving calibration")
+                end
+                notify("Calibration ON: saving to your workspace/Telemetry folder.")
+            end,
+            onNo = function(): ()
+                setConsent(false)
+                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
+                    TrajectoryFeature:SetStatus("off")
+                end
+                notify("Calibration OFF: nothing will be saved.")
+            end,
+        })
+        if not ok then
+            warn("[Wurst] calibration prompt failed: " .. tostring(failure))
+        end
+    end
+
+    -- The point of the calibration is a predictor that is right after a dozen
+    -- matches, so the card has to say how far that has come.
+    local function learningSummary(): string
+        local predictor: any = state and state.mm2Prediction
+        if type(predictor) ~= "table" then
+            return "learning: no data yet"
+        end
+        if type(predictor.exportLeadState) ~= "function" then
+            return "learning: readiness unavailable"
+        end
+        local ok: boolean, buckets: any = pcall(predictor.exportLeadState)
+        if not ok or type(buckets) ~= "table" then
+            return "learning: readiness unavailable"
+        end
+        local parts: {string} = {}
+        for mode: string, entry: any in pairs(buckets) do
+            if type(entry) == "table" then
+                local samples: number = tonumber(entry.samples) or 0
+                local applied: number = tonumber(entry.applied) or 0
+                table.insert(
+                    parts,
+                    string.format(
+                        "%s %d/%d %+d ms",
+                        mode,
+                        samples,
+                        LEAD_SAMPLES_FOR_CONFIDENCE,
+                        math.round(applied * 1000)
+                    )
+                )
+            end
+        end
+        if #parts == 0 then
+            return "learning: no confirmed shots yet"
+        end
+        table.sort(parts)
+        return "learning: " .. table.concat(parts, " · ")
+    end
+
+    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
+        local status: string = "unavailable"
+        if type(trajectoryCalibration) == "table"
+            and type(trajectoryCalibration.status) == "function" then
+            local ok: boolean, value: any = pcall(trajectoryCalibration.status, trajectoryCalibration)
+            status = ok and tostring(value) or "unavailable"
+        end
+        notify(status .. " · " .. learningSummary())
+    end, "Shows what the recorder has measured so far.")
+
+    addActionOption(TrajectoryFeature, "Give calibration", function(): ()
+        setConsent(true)
+        notify("Calibration ON: saving to your workspace/Telemetry folder.")
+    end, "Answer Yes again and start saving the current session.")
+
+    addActionOption(TrajectoryFeature, "Stop giving calibration", function(): ()
+        setConsent(false)
+        notify("Calibration OFF: nothing will be saved and the file was removed.")
+    end, "Answer No: stop saving and delete the file this menu wrote.")
+
+    addActionOption(TrajectoryFeature, "Ask again", function(): ()
+        setConsent(nil)
+        askConsent()
+    end, "Re-open the calibration question in the middle of the screen.")
+
     addActionOption(TrajectoryFeature, "Clear MM2 history", function(): ()
-        trajectoryCalibration:reset()
+        if type(trajectoryCalibration) == "table"
+            and type(trajectoryCalibration.reset) == "function" then
+            pcall(trajectoryCalibration.reset, trajectoryCalibration)
+        end
         notify("Trajectory calibration history cleared.")
-    end)
+    end, "Forget everything measured so far.")
+
     addInformationOption(
         TrajectoryFeature,
-        "Records target windows around your shots and throws. MM2-only calibration; no universal learning observer."
+        "Records target windows around your shots and throws. MM2-only calibration; "
+            .. "nothing is written to your workspace unless you give your calibration."
     )
+
+    -- Ask once per session when the question has never been answered. A saved
+    -- answer (Yes or No) is respected: no prompt on every injection.
+    if consent() == nil and not askedThisSession then
+        task.delay(3, function(): ()
+            if Module.Initialized and consent() == nil then
+                askConsent()
+            end
+        end)
+    elseif consent() == true and type(TrajectoryFeature.SetStatus) == "function" then
+        TrajectoryFeature:SetStatus("giving calibration")
+    elseif consent() == false and type(TrajectoryFeature.SetStatus) == "function" then
+        TrajectoryFeature:SetStatus("off")
+    end
+
+    activeCleanup = function(): ()
+        if state.mm2CalibrationFeature == TrajectoryFeature then
+            state.mm2CalibrationFeature = nil
+        end
+    end
 
     Module.Events = featureConnections
     Module.Initialized = true
@@ -11605,6 +11781,8 @@ function Module.destroy(): ()
         return
     end
     Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
 end
@@ -11871,25 +12049,6 @@ local MAX_LEAD_CORRECTION: number = 0.06
 -- cannot oscillate: the error it corrects is measured after the previous
 -- correction was already in place.
 local LEAD_SLEW_PER_SAMPLE: number = 0.02
-
--- Transport prior. The horizon has always fallen back to the engine ping while
--- the echo window is still empty (a fresh session, or a round with one or two
--- confirmations), and that fallback under-leads: the exported calibration
--- sessions (schema 4, v139.4-v163) measured a FireServer -> GunFired round trip
--- of 196-204 ms on average against a Data Ping of about 150-165 ms, because the
--- acceptance also contains the server's own processing before it answers.
--- base.lua now publishes the running median/mean of its own confirmed shots and
--- the imported history through the same channel, so the pre-echo window starts
--- at the measured acceptance instead of the ping. The prior is only trusted
--- while it stays plausible for the connection actually in use.
-local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8
-local ACCEPTANCE_PRIOR_MIN_RATIO: number = 0.75
-local ACCEPTANCE_PRIOR_MAX_RATIO: number = 2.5
-
--- How far the closest blade pass may be from the predicted root before it
--- stops describing a lead error and starts describing another problem (a
--- wall, a different body, a teleport). 6 studs is ~0.35 s of running.
-local KNIFE_FEEDBACK_MAX_MISS_STUDS: number = 6
 
 local settings = {
     -- Automatic lead is the default: the measured FireServer -> GunFired echo
@@ -12680,9 +12839,9 @@ function Module.init(runtime: any): any
         if lower == "silent" or lower == "cframe" or lower == "silent aim" then
             return "CFrame"
         end
-        -- v179: the blade has its own evidence now (closest pass measured by
-        -- base.lua), so it gets its own bucket instead of writing into the
-        -- "default" key a gun without a mode also uses.
+        -- Kept from v179: a blade sample must not be averaged into the bucket a
+        -- plain gun also uses, otherwise knife confirmations would silently
+        -- retune every gun without a mode.
         if lower == "knife" or lower == "blade" then
             return "Knife"
         end
@@ -12771,6 +12930,43 @@ function Module.init(runtime: any): any
         return math.clamp(median, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
     end
 
+    -- v180: the learned part is what turns a few matches into a working
+    -- predictor, so it has to outlive the session. The calibration file keeps
+    -- one entry per aim mode (samples, median, applied correction) and the next
+    -- boot seeds it back through `seedLeadError` instead of restarting at zero.
+    local function exportLeadState(): {[string]: any}
+        local out: {[string]: any} = {}
+        for key: string, bucket: {number} in pairs(leadErrors) do
+            out[key] = {
+                samples = #bucket,
+                median = medianOf(bucket),
+                applied = leadApplied[key] or 0,
+            }
+        end
+        return out
+    end
+
+    -- Restore a bucket measured in an earlier session. The median is applied
+    -- directly (not slew-limited): those samples were already earned shot by
+    -- shot, so replaying them one step at a time would only slow the start.
+    local function seedLeadError(mode: any, seconds: any, samples: any): ()
+        if not finiteNumber(seconds) then
+            return
+        end
+        local count: number = finiteNumber(samples) and math.floor(samples) or 0
+        if count < LEAD_FEEDBACK_MIN_SAMPLES then
+            return
+        end
+        local key: string = modeKey(mode)
+        local clamped: number = math.clamp(seconds, -LEAD_FEEDBACK_SAMPLE_LIMIT, LEAD_FEEDBACK_SAMPLE_LIMIT)
+        local bucket: {number} = leadBucket(key)
+        table.clear(bucket)
+        for _index: number = 1, math.min(count, LEAD_FEEDBACK_MAX_SAMPLES) do
+            table.insert(bucket, clamped)
+        end
+        leadApplied[key] = math.clamp(clamped, -MAX_LEAD_CORRECTION, MAX_LEAD_CORRECTION)
+    end
+
     local function leadSamples(mode: any): number
         local bucket: {number}? = leadErrors[modeKey(mode)]
         return bucket and #bucket or 0
@@ -12793,38 +12989,6 @@ function Module.init(runtime: any): any
         return medianOf(absolute) or 0
     end
 
-    -- Measured acceptance published by the game adapter. Kept here so the
-    -- predictor stays independent of base.lua's runtime tables.
-    local acceptancePriorSeconds: number? = nil
-    local acceptancePriorSamples: number = 0
-
-    local function setAcceptancePrior(seconds: any, samples: any): ()
-        if not finiteNumber(seconds) or seconds <= 0 or seconds > MAX_HORIZON then
-            return
-        end
-        local count: number = finiteNumber(samples) and math.floor(samples) or 0
-        acceptancePriorSeconds = seconds
-        acceptancePriorSamples = math.max(0, count)
-    end
-
-    -- Live echo first, then the measured prior, then the smoothed ping. The
-    -- prior only replaces the ping fallback: when echoes exist they are a
-    -- fresher measurement of the same quantity and win outright.
-    local function transportHorizon(rtt: number, echo: number?): number
-        if echo then
-            return rtt * 0.6 + echo * 0.4
-        end
-        local prior: number? = acceptancePriorSeconds
-        if prior and acceptancePriorSamples >= ACCEPTANCE_PRIOR_MIN_SAMPLES then
-            local low: number = math.max(0.03, rtt * ACCEPTANCE_PRIOR_MIN_RATIO)
-            local high: number = math.min(MAX_HORIZON, rtt * ACCEPTANCE_PRIOR_MAX_RATIO)
-            if prior >= low and prior <= high then
-                return math.max(rtt, prior)
-            end
-        end
-        return rtt
-    end
-
     local function gunHorizon(mode: any): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
@@ -12838,7 +13002,9 @@ function Module.init(runtime: any): any
         -- short (echo mean 0.227 vs rtt 0.263), so a 60/40 blend avoids
         -- the jump between echo-present and echo-absent without losing
         -- the freshness signal. When echo is stale/nil, rtt stands alone.
-        local pipeline: number = transportHorizon(rtt, echo)
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Full transport, NOT the one-way half -- and this is measured,
         -- not assumed: in the saved calibration sessions the confirmed
         -- hits cluster at about +14 ms against the confirmation instant
@@ -12870,13 +13036,15 @@ function Module.init(runtime: any): any
     local function knifeHorizon(): (number, number, number?)
         local rtt: number = robustRtt()
         local echo: number? = echoMedian()
-        local pipeline: number = transportHorizon(rtt, echo)
+        local pipeline: number = echo
+            and (rtt * 0.6 + echo * 0.4)
+            or rtt
         -- Same full-transport rule as the gun (measured the same way:
         -- the blade's effective spawn behaves like a full rewind, so
         -- the intercept leads the whole round trip plus flight time).
-        -- v179: the knife now measures its own lead from the closest blade
-        -- pass (base.lua -> noteLeadError(seconds, "knife")), so this bucket
-        -- is fed by knife confirmations instead of staying empty.
+        -- The knife gets no measured feedback of its own (the captures only
+        -- score the gun), so it shares the "default" bucket instead of
+        -- borrowing the Bullet one.
         local horizon: number = pipeline
             + settings.interpolation
             + manualLead()
@@ -13452,12 +13620,7 @@ function Module.init(runtime: any): any
             echoSamples = #echoes,
             turnRate = motion.turnRate,
             brakeSeconds = motion.brakeSeconds,
-            leadCorrection = leadCorrection("knife"),
-            leadCorrectionTarget = leadTarget("knife"),
-            leadSamples = leadSamples("knife"),
-            leadUncertainty = leadUncertainty("knife"),
-            aimMode = "knife",
-            acceptancePrior = acceptancePriorSeconds,
+            leadCorrection = 0,
         }, nil
     end
 
@@ -13624,13 +13787,8 @@ function Module.init(runtime: any): any
             return estimateMotion(track, os.clock())
         end,
         noteLeadError = noteLeadError,
-        setAcceptancePrior = setAcceptancePrior,
-        getAcceptancePrior = function(): (number?, number)
-            return acceptancePriorSeconds, acceptancePriorSamples
-        end,
-        getTransport = function(): number
-            return transportHorizon(robustRtt(), echoMedian())
-        end,
+        exportLeadState = exportLeadState,
+        seedLeadError = seedLeadError,
         getLeadCorrection = leadCorrection,
         getLeadCorrectionTarget = leadTarget,
         getLeadUncertainty = leadUncertainty,
@@ -16642,6 +16800,10 @@ local function createTrajectoryCalibration(): any
         getEstimates: (self: Controller) -> Estimates,
         noteAuthoredShot: (self: Controller, info: any) -> (),
         noteTracerData: (self: Controller, info: any) -> (),
+        -- v180: nothing is written to the executor workspace until the player
+        -- answers the calibration prompt with Yes.
+        getConsent: (self: Controller) -> boolean?,
+        setConsent: (self: Controller, value: boolean?) -> (),
     }
 
     local OUTPUT_ROOT: string = host.PRODUCT.storageFolder
@@ -16683,6 +16845,11 @@ local function createTrajectoryCalibration(): any
         sessionKnifeConfirmed = 0,
         pendingGuns = {} :: {PendingGun},
         lastBlockedAt = 0,
+        -- Learned lead buckets read from the previous session, applied as soon
+        -- as the predictor exists (load order between base.lua and Prediction
+        -- is not fixed).
+        leadSeeds = nil :: any,
+        leadSeedsApplied = false,
         evictedEvents = 0,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
@@ -16701,31 +16868,10 @@ local function createTrajectoryCalibration(): any
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
 
-    -- v179: the acceptance measured on this account is the transport number
-    -- the predictor needs while its echo window is still empty. Publishing it
-    -- costs one call per confirmation and lets the aim start from a measured
-    -- 196-204 ms round trip instead of the ~150-165 ms Data Ping the exports
-    -- recorded next to it (the acceptance also carries the server's own
-    -- processing before it answers).
-    local ACCEPTANCE_PRIOR_MIN_SAMPLES: number = 8
-    local function publishAcceptancePrior(): ()
-        local stats: any = runtime.gunAcceptance
-        local prediction: any = state.mm2Prediction
-        if type(stats) ~= "table" or type(prediction) ~= "table" then
-            return
-        end
-        local setter: any = prediction.setAcceptancePrior
-        if type(setter) ~= "function" then
-            return
-        end
-        if not predictionMath.finite(stats.mean) or not predictionMath.finite(stats.count) then
-            return
-        end
-        if stats.count < ACCEPTANCE_PRIOR_MIN_SAMPLES then
-            return
-        end
-        pcall(setter, stats.mean / 1000, stats.count)
-    end
+    -- v180: the measured acceptance stays a reported statistic
+    -- (`aggregate.gunAcceptanceMs`, `estimator.gunAcceptanceMs`) but it is no
+    -- longer pushed into the predictor. With the pre-v179 prediction restored,
+    -- the horizon is the ping until a live echo exists, exactly as before.
 
     local function nextShotId(): string
         runtime.shotSequence += 1
@@ -16792,6 +16938,29 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Push the buckets measured in earlier sessions into the predictor. Safe to
+    -- call before the predictor exists: it simply reports "not applied yet".
+    local function applyLearnedSeeds(): boolean
+        if runtime.leadSeedsApplied then
+            return true
+        end
+        local seeds: any = runtime.leadSeeds
+        if type(seeds) ~= "table" then
+            return false
+        end
+        local prediction: any = state.mm2Prediction
+        if not prediction or type(prediction.seedLeadError) ~= "function" then
+            return false
+        end
+        for mode: string, entry: any in pairs(seeds) do
+            if type(entry) == "table" and predictionMath.finite(entry.median) then
+                pcall(prediction.seedLeadError, mode, entry.median, entry.samples)
+            end
+        end
+        runtime.leadSeedsApplied = true
+        return true
+    end
+
     local function loadSavedHistory(): ()
         if type(environment.readfile) ~= "function" then
             runtime.persistenceBlocked = true
@@ -16834,9 +17003,18 @@ local function createTrajectoryCalibration(): any
         importStats(runtime.gunAcceptance, aggregate.gunAcceptanceMs, 0, 2500)
         importStats(runtime.knifeSpeed, aggregate.knifeSpeedStudsPerSecond, 24, 300)
         importStats(runtime.knifeSpawnDelay, aggregate.knifeSpawnDelayMs, 0, 5000)
+        -- What the predictor already learned (lead error per aim mode) has to
+        -- survive too: without this every session restarted at zero correction
+        -- and no number of matches could ever converge.
+        local learned: any = type(decoded.predictor) == "table" and decoded.predictor or {}
+        local learnedBuckets: any = type(learned.leadErrors) == "table" and learned.leadErrors or nil
+        if learnedBuckets then
+            runtime.leadSeeds = learnedBuckets
+            runtime.leadSeedsApplied = false
+            applyLearnedSeeds()
+        end
         -- The imported history is a measurement too; the live samples that
         -- follow refine it.
-        publishAcceptancePrior()
     end
 
     local function vectorArray(value: Vector3): {number}
@@ -17132,6 +17310,13 @@ local function createTrajectoryCalibration(): any
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
+        -- Unconsented sessions never schedule a write. Read straight from the
+        -- saved config so the writer slices stay self-contained; without a
+        -- config table (unit harness) nothing is gated.
+        local states: any = type(configData) == "table" and configData.states or nil
+        if states and states["MM2.Calibration.Consent"] ~= true then
+            return
+        end
         if runtime.saveScheduled then
             return
         end
@@ -17550,6 +17735,13 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
+        -- v180 consent: without an explicit Yes the recorder keeps its data in
+        -- memory and never touches the workspace, so a player who answers No
+        -- leaves no calibration file behind.
+        local consentStates: any = type(configData) == "table" and configData.states or nil
+        if consentStates and consentStates["MM2.Calibration.Consent"] ~= true then
+            return false
+        end
         if runtime.persistenceBlocked
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
@@ -17595,6 +17787,28 @@ local function createTrajectoryCalibration(): any
                 knifeSpeedStudsPerSecond = mergedKnife,
                 knifeSpawnDelayMs = mergedDelay,
             },
+            -- The learned model, portable across sessions and machines. Same
+            -- shape the import path reads above.
+            predictor = (function(): {[string]: any}
+                local out: {[string]: any} = {}
+                local predictorState: any = state.mm2Prediction
+                if predictorState and type(predictorState.exportLeadState) == "function" then
+                    local ok: boolean, value: any = pcall(predictorState.exportLeadState)
+                    if ok and type(value) == "table" then
+                        out.leadErrors = value
+                    end
+                end
+                if predictorState and type(predictorState.getLeadSamples) == "function" then
+                    local ok: boolean, guns: any = pcall(predictorState.getLeadSamples, "gun")
+                    local okKnife: boolean, knives: any = pcall(predictorState.getLeadSamples, "knife")
+                    out.samples = {
+                        gun = ok and guns or nil,
+                        knife = okKnife and knives or nil,
+                    }
+                end
+                out.readyFor = "3+ samples per mode makes the correction live; 20+ is a settled median"
+                return out
+            end)(),
             estimator = {
                 gunAcceptanceMs = mergedGun.count > 0 and mergedGun.mean or nil,
                 knifeSpeed = mergedKnife.count > 0 and mergedKnife.mean or nil,
@@ -18160,7 +18374,6 @@ local function createTrajectoryCalibration(): any
             estimatesAt = -math.huge
         end
         addSample(runtime.gunAcceptance, latencyMs)
-        publishAcceptancePrior()
         runtime.sessionGunConfirmed += 1
         if hitTarget then
             runtime.sessionGunHitTarget += 1
@@ -18722,6 +18935,16 @@ local function createTrajectoryCalibration(): any
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
         loadSavedHistory()
+        -- The predictor may load after this adapter: retry briefly instead of
+        -- dropping what the previous matches taught it.
+        if type(task) == "table" and type(task.spawn) == "function" then
+            task.spawn(function(): ()
+                for _attempt: number = 1, 20 do
+                    if applyLearnedSeeds() then return end
+                    task.wait(0.5)
+                end
+            end)
+        end
         observeContainer(LocalPlayer:FindFirstChildOfClass("Backpack"))
         observeContainer(LocalPlayer.Character)
         trackConnection(LocalPlayer.CharacterAdded:Connect(function(
@@ -18765,6 +18988,53 @@ local function createTrajectoryCalibration(): any
         runtime.shotSequence = 0
         table.clear(runtime.pendingGuns)
         table.clear(runtime.pendingKnives)
+    end
+
+    local function consentValue(): boolean?
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states then
+            return nil
+        end
+        local value: any = states["MM2.Calibration.Consent"]
+        if value == true then return true end
+        if value == false then return false end
+        return nil
+    end
+
+    function controller:getConsent(): boolean?
+        return consentValue()
+    end
+
+    -- `true` starts saving on the next confirmed shot (and writes the current
+    -- session immediately), `false` stops every write and removes the file this
+    -- menu wrote, `nil` leaves the question unanswered.
+    function controller:setConsent(value: boolean?): ()
+        local nextValue: boolean? = nil
+        if value == true then
+            nextValue = true
+        elseif value == false then
+            nextValue = false
+        end
+        if type(configData) == "table" and configData.states then
+            configData.states["MM2.Calibration.Consent"] = nextValue
+        end
+        if type(state.queueConfigSave) == "function" then
+            pcall(state.queueConfigSave)
+        end
+        if nextValue == true then
+            runtime.dirty = true
+            saveSnapshot("consent")
+            return
+        end
+        runtime.saveScheduled = false
+        runtime.dirty = false
+        if runtime.persistenceBlocked then
+            return
+        end
+        -- A No must not leave the file the previous consent wrote behind.
+        if type(environment.delfile) == "function" then
+            pcall(environment.delfile, OUTPUT_PATH)
+        end
     end
 
     function controller:save(reason: string?): boolean
@@ -18988,12 +19258,17 @@ local function createTrajectoryCalibration(): any
         for _key: string in pairs(runtime.motionBuckets) do
             bucketCount += 1
         end
+        local consent: boolean? = consentValue()
+        local consentText: string = consent == true and "giving calibration"
+            or (consent == false and "not giving calibration")
+            or "calibration not answered"
         return string.format(
-            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s",
+            "MM2 session observations · guns %d · knives %d · motion buckets %d · knife %s · %s",
             runtime.sessionGunConfirmed,
             runtime.sessionKnifeConfirmed,
             bucketCount,
-            knifeText
+            knifeText,
+            consentText
         )
     end
 
@@ -26421,13 +26696,22 @@ function Module.init(context: Runtime): any
     local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
     local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
     local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
-    local PIN_FORCE: Vector3 = Vector3.new(math.huge, math.huge, math.huge)
+    -- v180: finite force, like YARHM and SkidFling use. `math.huge` makes the
+    -- solver fight itself on some servers (the pin "wins" every contact and the
+    -- victim never receives the impulse), which is exactly the low success
+    -- rate this card was reporting.
+    local PIN_FORCE: Vector3 = Vector3.new(9e9, 9e9, 9e9)
 
-    -- Preserve the previous defaults for the three removed controls.
-    local FLING_POWER: number = 4
+    -- v180: more power by default. 4 was the old constant with the slider
+    -- removed; 6 doubles the pose velocity against YARHM's baseline and keeps
+    -- the pin above it, and a Power slider lets the player push further when a
+    -- server eats the first pass.
+    local FLING_POWER: number = 6
+    local FLING_POWER_MIN: number = 1
+    local FLING_POWER_MAX: number = 12
     local FLING_DURATION: number = 3
     local FLING_PREDICTION: number = 0.15
-    local flingRetries: number = 1
+    local flingRetries: number = 2
     -- Temporary boost used by the second pass only (never persisted).
     local flingBoost: number = 1
 
@@ -27310,8 +27594,21 @@ function Module.init(context: Runtime): any
     end)
     addNumberOption(
         FlingFeature,
+        "Power",
+        FLING_POWER,
+        FLING_POWER_MIN,
+        FLING_POWER_MAX,
+        function(value: number): ()
+            FLING_POWER = math.clamp(tonumber(value) or FLING_POWER, FLING_POWER_MIN, FLING_POWER_MAX)
+        end,
+        "Pose velocity and pin force multiplier (3 = YARHM baseline). Raise it when a "
+            .. "victim is not launched; lower it if the local body is thrown instead.",
+        1
+    )
+    addNumberOption(
+        FlingFeature,
         "Retries",
-        1,
+        2,
         0,
         3,
         function(value: number): ()
@@ -28812,6 +29109,8 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService or game:GetService("RunService")
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
+    local addNumberOption: any = host.addNumberOption
+    local addInformationOption: any = host.addInformationOption
     local configData: any = host.configData
     local services: any = (context :: any).services
     local activity: any = services and services.activity
@@ -28824,8 +29123,17 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- No slider: this is the Infinite Yield default and it is what works.
+    -- Infinite Yield's 10000 is the baseline. v180 multiplies it: the spike is
+    -- one frame long, and a victim standing on a slope or already moving often
+    -- eats the base value without leaving the ground. The multiplier is the
+    -- "Power" row; 1x reproduces the old behaviour exactly.
     local POWER: number = 10000
+    local POWER_MULT: number = 1.5
+    local POWER_MULT_MIN: number = 1
+    local POWER_MULT_MAX: number = 3
+    local function spikePower(): number
+        return POWER * POWER_MULT
+    end
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -28919,7 +29227,8 @@ function Module.init(context: Runtime): any
                                 (part :: BasePart).CanCollide = false
                             end
                         end
-                        local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
+                        local power: number = spikePower()
+                        local spike: Vector3 = savedVelocity * power + Vector3.new(0, power, 0)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
@@ -28964,8 +29273,34 @@ function Module.init(context: Runtime): any
         "Fling on contact while walking (Infinite Yield walkfling)",
         8,
         toggleWalkFling,
-        {categoryName = "Exploits", noOptions = true}
+        {categoryName = "Exploits"}
     )
+    addNumberOption(
+        walkFlingFeature,
+        "Power",
+        POWER_MULT,
+        POWER_MULT_MIN,
+        POWER_MULT_MAX,
+        function(value: number): ()
+            POWER_MULT = math.clamp(
+                tonumber(value) or POWER_MULT,
+                POWER_MULT_MIN,
+                POWER_MULT_MAX
+            )
+            if walkFlingFeature and walkFlingFeature.enabled then
+                walkFlingFeature:SetStatus(string.format("ON · %.1fx", POWER_MULT))
+            end
+        end,
+        "Multiplier over Infinite Yield's 10000. 1x is the original; raise it when "
+            .. "walking into someone does not launch them.",
+        0.5
+    )
+    if type(addInformationOption) == "function" then
+        addInformationOption(
+            walkFlingFeature,
+            "Collisions are restored and the body parked when the card is turned off."
+        )
+    end
     addFeatureTooltip(
         walkFlingFeature,
         "While ON, every physics frame the local character is noclipped and given a "
@@ -31066,14 +31401,28 @@ function Module.init(context: Runtime): any
     local createUniversalFeature: any = host.createUniversalFeature
     local addCycleOption: any = host.addCycleOption
     local addToggleOption: any = host.addToggleOption
-    local freezeSettings = {mode = "Anchor", emotes = true, animation = false}
-    -- An old saved emote mode must not silently become Anchor on upgrade.
+    local addNumberOption: any = host.addNumberOption
+    -- "Position Lock" is what the row used to call "Anchor": it pins the body
+    -- where it stands. The new name says what the user sees, and the extra rows
+    -- let the lock be tuned instead of being an all-or-nothing anchor.
+    local LOCK_MODE: string = "Position Lock"
+    local MOTION_MODE: string = "Motion"
+    local freezeSettings = {
+        mode = LOCK_MODE,
+        emotes = true,
+        animation = false,
+        anyEmote = true,
+        lockRotation = true,
+        returnDistance = 0,
+        keepGravity = false,
+    }
+    -- An old saved emote mode must not silently become Position Lock on upgrade.
     local config: any = host.configData
     if config and config.values and config.states then
         local key: string = "Movement.FreezeMovements.Freezemode"
         local legacy: any = config.values[key]
         if legacy == "Freeze Emotes" or legacy == "Glitch Animations" then
-            config.values[key] = "Motion"
+            config.values[key] = MOTION_MODE
             local prefix: string = "Movement.FreezeMovements."
             if config.states[prefix .. "FreezeEmotes"] == nil then
                 config.states[prefix .. "FreezeEmotes"] = legacy == "Freeze Emotes"
@@ -31081,6 +31430,9 @@ function Module.init(context: Runtime): any
             if config.states[prefix .. "FreezeAnimation"] == nil then
                 config.states[prefix .. "FreezeAnimation"] = legacy == "Glitch Animations"
             end
+        elseif legacy == "Anchor" or legacy == "Freeze Physics" then
+            -- Renamed mode, same behaviour.
+            config.values[key] = LOCK_MODE
         end
     end
     local FreezeFeature: any = nil
@@ -31164,30 +31516,85 @@ function Module.init(context: Runtime): any
         dance = true, dance1 = true, dance2 = true, dance3 = true,
         wave = true, point = true, cheer = true, laugh = true,
     }
+    -- Any emote, not only Roblox's own: games ship their own dance/taunt clips
+    -- with arbitrary names and asset IDs, so the identifier is a name keyword
+    -- (checked on the track and on up to six parents) instead of a fixed list.
+    local EMOTE_KEYWORDS = {
+        "emote", "dance", "dancing", "taunt", "celebrat", "cheer", "wave",
+        "laugh", "salute", "groove", "pose", "victory", "expression",
+        "emoji", "flex", "party", "clap", "bow", "ridicule", "point",
+    }
+    -- ...but a weapon swing is not an emote, and it often sits on the same
+    -- Action priority. These win over a keyword so "SwordWave" stays a swing.
+    local NON_EMOTE_KEYWORDS = {
+        "attack", "shoot", "slash", "stab", "swing", "punch", "kick", "reload",
+        "equip", "unequip", "tool", "hit", "block", "parry", "cast", "spell",
+        "sword", "gun", "knife", "punch", "throw", "fling",
+    }
+
+    local function hasKeyword(name: string, list: {string}): boolean
+        local lower: string = string.lower(name)
+        for _, keyword: string in ipairs(list) do
+            if string.find(lower, keyword, 1, true) then return true end
+        end
+        return false
+    end
+
+    local function looksLikeEmoteName(name: string): boolean
+        local lower: string = string.lower(name)
+        if emoteNames[lower] then return true end
+        if hasKeyword(lower, NON_EMOTE_KEYWORDS) then return false end
+        lower = lower:gsub("anim$", "")
+        if CLASSIC_EMOTES[lower] == true then return true end
+        return hasKeyword(lower, EMOTE_KEYWORDS)
+    end
 
     isEmoteTrack = function(track: any): boolean
         -- Action priority is also used by weapon attacks; it is NOT an
         -- emote identifier. Avoid substring matches such as SpinAttack.
-        local function knownName(name: string): boolean
-            local lower: string = string.lower(name)
-            if emoteNames[lower] then return true end
-            lower = lower:gsub("anim$", "")
-            return CLASSIC_EMOTES[lower] == true
-        end
-        if knownName(tostring(track.Name or "")) then return true end
+        if looksLikeEmoteName(tostring(track.Name or "")) then return true end
         local animation: any = track.Animation
         if typeof(animation) == "Instance" then
-            if knownName(animation.Name) then return true end
+            if looksLikeEmoteName(animation.Name) then return true end
             local node: any = animation.Parent
             for _depth: number = 1, 6 do
                 if not node then break end
-                if knownName(node.Name) then return true end
+                if looksLikeEmoteName(node.Name) then return true end
                 node = node.Parent
             end
             local id: string? = string.match(animation.AnimationId, "%d+")
             if id and emoteIds[id] then return true end
         end
         return false
+    end
+
+    -- Custom emotes whose name says nothing ("Animation", "Clip", "Pose 3"):
+    -- while the body is standing still, a looped Action/Idle clip that nobody
+    -- blacklisted is an emote the game started, so Motion holds it too. A
+    -- moving body is never scored this way, which keeps walk cycles and weapon
+    -- swings out even when their names are meaningless.
+    local function looksLikeStandingEmote(humanoid: any, root: any, track: any): boolean
+        if not freezeSettings.anyEmote then return false end
+        if not track or ownedEmotes[track] or isEmoteTrack(track) then return false end
+        local name: string = tostring(track.Name or "")
+        if hasKeyword(name, NON_EMOTE_KEYWORDS) then return false end
+        local animation: any = track.Animation
+        if typeof(animation) ~= "Instance" then return false end
+        if track.Looped ~= true then return false end
+        local priority: any = track.Priority
+        if priority ~= Enum.AnimationPriority.Action and priority ~= Enum.AnimationPriority.Idle then
+            return false
+        end
+        if root and root.AssemblyLinearVelocity and root.AssemblyLinearVelocity.Magnitude > 2 then
+            return false
+        end
+        local ok: boolean, state: any = pcall(function(): any return humanoid:GetState() end)
+        if ok and (state == Enum.HumanoidStateType.Running
+            or state == Enum.HumanoidStateType.Jumping
+            or state == Enum.HumanoidStateType.Freefall) then
+            return false
+        end
+        return true
     end
 
     local function rememberEmote(track: any): ()
@@ -31322,6 +31729,9 @@ function Module.init(context: Runtime): any
             emoteConnection = animator.AnimationPlayed:Connect(function(track: any): ()
                 if not ownedEmotes[track] and isEmoteTrack(track) and not emoteLastSeen[track] then
                     rememberEmote(track)
+                elseif not ownedEmotes[track] and not emoteLastSeen[track]
+                    and looksLikeStandingEmote(humanoid, root, track) then
+                    rememberEmote(track)
                 elseif not ownedEmotes[track] then
                     if #pendingEmoteTracks >= 8 then table.remove(pendingEmoteTracks, 1) end
                     table.insert(pendingEmoteTracks, {track = track, at = os.clock()})
@@ -31449,11 +31859,22 @@ function Module.init(context: Runtime): any
             local ok: boolean, tracks: any = pcall(function(): any return animator:GetPlayingAnimationTracks() end)
             if not ok or type(tracks) ~= "table" then return end
             local weight: number = -1
-            for _, track: any in ipairs(tracks) do
-                if track.IsPlaying and isLocomotion(track) then
-                    local current: number = tonumber(track.WeightCurrent) or 1
-                    if current > weight then motionSource, weight = track, current end
+            local function consider(track: any): ()
+                if not track or not track.IsPlaying or ownedEmotes[track] or isEmoteTrack(track) then
+                    return
                 end
+                local current: number = tonumber(track.WeightCurrent) or 1
+                if current > weight then motionSource, weight = track, current end
+            end
+            -- Roblox's own walk/run/idle clips first: they are the common case
+            -- and keep the previous behaviour when a game plays both.
+            for _, track: any in ipairs(tracks) do
+                if isLocomotion(track) then consider(track) end
+            end
+            -- Then anything else: a game can drive locomotion with its own clip
+            -- (custom rigs, animated vehicles, tool-held run cycles).
+            if not motionSource and freezeSettings.anyAnimation then
+                for _, track: any in ipairs(tracks) do consider(track) end
             end
         end
         if not motionSource then return end
@@ -31489,8 +31910,69 @@ function Module.init(context: Runtime): any
     local function restoreFreezeMovements(): ()
         for root: BasePart, original: any in pairs(originalFreezeState) do
             root.Anchored = original.anchored
+            if original.cframe ~= nil and root.CFrame ~= nil then
+                pcall(function(): () root.CFrame = original.cframe end)
+            end
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
+    end
+
+    -- Position Lock: keep the body where it stands. Hard by default (anchored),
+    -- or with gravity kept so the character can still fall and land; the rows
+    -- decide how much of the pose is frozen and how far a push may go before it
+    -- is undone.
+    local function lockPosition(root: any): ()
+        local original: any = originalFreezeState[root]
+        if not original then
+            local cframe: any = nil
+            local look: any = nil
+            pcall(function(): ()
+                if root.CFrame ~= nil then
+                    cframe = root.CFrame
+                    look = root.CFrame.LookVector
+                end
+            end)
+            original = {
+                anchored = root.Anchored,
+                position = root.Position,
+                cframe = cframe,
+                look = look,
+            }
+            originalFreezeState[root] = original
+        end
+        local lockedPosition: any = original.position
+        local gravity: boolean = freezeSettings.keepGravity == true
+        root.Anchored = not gravity
+        if root.AssemblyLinearVelocity ~= nil then
+            if gravity then
+                local vertical: number = tonumber(root.AssemblyLinearVelocity.Y) or 0
+                root.AssemblyLinearVelocity = Vector3.new(0, math.min(vertical, 0), 0)
+            else
+                root.AssemblyLinearVelocity = Vector3.zero
+            end
+        end
+        if freezeSettings.lockRotation and root.AssemblyAngularVelocity ~= nil then
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+        if original.look ~= nil and not gravity then
+            pcall(function(): ()
+                if CFrame ~= nil and root.CFrame ~= nil then
+                    root.CFrame = CFrame.lookAt(root.Position, root.Position + original.look)
+                end
+            end)
+        end
+        local limit: number = freezeSettings.returnDistance or 0
+        if gravity and limit > 0 and lockedPosition ~= nil and root.Position ~= nil then
+            local dx: number = (tonumber(root.Position.X) or 0) - (tonumber(lockedPosition.X) or 0)
+            local dz: number = (tonumber(root.Position.Z) or 0) - (tonumber(lockedPosition.Z) or 0)
+            if math.sqrt(dx * dx + dz * dz) > limit then
+                root.Position = Vector3.new(
+                    lockedPosition.X or 0,
+                    root.Position.Y,
+                    lockedPosition.Z or 0
+                )
+            end
+        end
     end
 
     local toggleFreezeMovements: (boolean) -> ()
@@ -31546,32 +32028,63 @@ function Module.init(context: Runtime): any
                 if freezeSettings.emotes then freezeEmotesTick(humanoid, root) end
                 if freezeSettings.animation then freezeAnimationTick(humanoid) end
             elseif root then
-                if not originalFreezeState[root] then originalFreezeState[root] = {anchored = root.Anchored} end
-                root.Anchored = true
-                root.AssemblyLinearVelocity = Vector3.zero
-                root.AssemblyAngularVelocity = Vector3.zero
+                lockPosition(root)
             end
         end, nil, "Freeze Movements")
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements", "Anchor physics or keep selected animations while moving", 4,
+        "Freeze Movements",
+        "Pin the body where it stands, or keep any animation playing while moving",
+        4,
         toggleFreezeMovements,
         {categoryName = "Utilities", configKey = "Movement.FreezeMovements"}
     )
     local motionRows: {any} = {}
-    local function refreshMotionOptions(): ()
+    local lockRows: {any} = {}
+    local function refreshOptionGroups(): ()
+        local motion: boolean = freezeSettings.mode == MOTION_MODE
         for _, row: any in ipairs(motionRows) do
             if host.setOptionVisible then
-                host.setOptionVisible(FreezeFeature, row, freezeSettings.mode == "Motion")
-            else row.Visible = freezeSettings.mode == "Motion" end
+                host.setOptionVisible(FreezeFeature, row, motion)
+            else row.Visible = motion end
+        end
+        for _, row: any in ipairs(lockRows) do
+            if host.setOptionVisible then
+                host.setOptionVisible(FreezeFeature, row, not motion)
+            else row.Visible = not motion end
         end
     end
-    addCycleOption(FreezeFeature, "Freeze mode", {"Anchor", "Motion"}, 1, function(value: string): ()
-        freezeSettings.mode = value
-        refreshMotionOptions()
+    local function reapply(): ()
         if FreezeFeature and FreezeFeature.enabled then toggleFreezeMovements(true) end
+    end
+    addCycleOption(FreezeFeature, "Freeze mode", {LOCK_MODE, MOTION_MODE}, 1, function(value: string): ()
+        -- Accept an old saved value without renaming anything on disk twice.
+        if value == "Anchor" or value == "Freeze Physics" then
+            value = LOCK_MODE
+        end
+        freezeSettings.mode = value
+        refreshOptionGroups()
+        reapply()
     end)
+    -- ---- Position Lock rows -------------------------------------------------
+    local lockHeading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Position Lock settings")
+    if lockHeading then table.insert(lockRows, lockHeading) end
+    local lockRotation: any = addToggleOption(FreezeFeature, "Lock rotation", true, function(value: boolean): ()
+        freezeSettings.lockRotation = value
+        reapply()
+    end, "Also stop the body from spinning or being spun by the game. OFF keeps the position and lets the character turn.")
+    if lockRotation then table.insert(lockRows, lockRotation.Parent) end
+    local keepGravity: any = addToggleOption(FreezeFeature, "Keep gravity", false, function(value: boolean): ()
+        freezeSettings.keepGravity = value
+        reapply()
+    end, "Do not anchor the body: it can still fall and land, but pushes and knockback are erased every frame.")
+    if keepGravity then table.insert(lockRows, keepGravity.Parent) end
+    local returnRow: any = addNumberOption(FreezeFeature, "Return if pushed", 0, 0, 40, function(value: number): ()
+        freezeSettings.returnDistance = value
+    end, "Studs of drift allowed before the character is snapped back. 0 disables the return.")
+    if returnRow then table.insert(lockRows, returnRow.Parent or returnRow) end
+    -- ---- Motion rows --------------------------------------------------------
     -- The section widget renders its own caption and divider, so the card only
     -- has to keep the row in its visibility group.
     local heading: any = host.addSectionOption and host.addSectionOption(FreezeFeature, "Motion settings")
@@ -31581,14 +32094,24 @@ function Module.init(context: Runtime): any
     local emotes: any = addToggleOption(FreezeFeature, "Freeze Emotes", true, function(value: boolean): ()
         freezeSettings.emotes = value
         if not value then clearStickyEmoteTracks() end
-    end, "Keep classic and UGC emotes playing while moving. Takes precedence over the locked locomotion clip.")
+    end, "Keep emotes playing while moving, Roblox's own and the ones a game ships itself. Takes precedence over the locked clip.")
     if emotes then table.insert(motionRows, emotes.Parent) end
+    local anyEmote: any = addToggleOption(FreezeFeature, "Any emote", true, function(value: boolean): ()
+        freezeSettings.anyEmote = value
+        if not value then clearStickyEmoteTracks() end
+    end, "Hold a custom emote even when its name and asset say nothing: a looped clip started while standing still counts as one.")
+    if anyEmote then table.insert(motionRows, anyEmote.Parent) end
     local animation: any = addToggleOption(FreezeFeature, "Freeze Animation", false, function(value: boolean): ()
         freezeSettings.animation = value
         clearMotionTrack()
-    end, "Keep the current locomotion clip looping through jumps and other movement. Does not freeze a single frame.")
+    end, "Keep the current clip looping through jumps and other movement. Does not freeze a single frame.")
     if animation then table.insert(motionRows, animation.Parent) end
-    refreshMotionOptions()
+    local anyAnimation: any = addToggleOption(FreezeFeature, "Any animation", true, function(value: boolean): ()
+        freezeSettings.anyAnimation = value
+        clearMotionTrack()
+    end, "Freeze a game's own locomotion clip too, not only Roblox's walk/run/idle set.")
+    if anyAnimation then table.insert(motionRows, anyAnimation.Parent) end
+    refreshOptionGroups()
     activeCleanup = function(): () toggleFreezeMovements(false) end
     Module.Initialized = true
     return FreezeFeature
@@ -35686,11 +36209,15 @@ function Module.init(context: Runtime): any
         clickDetectors: boolean,
     }
     type PromptState = {distance: number, holdDuration: number}
+    -- Rows default OFF: the card is the master switch and turns every channel
+    -- on by itself. A row switched on with the card OFF is a deliberate opt-in
+    -- and works on its own, so nobody has to enable the whole card just for the
+    -- fast prompt.
     local interactionSettings: InteractionSettings = {
         distance = 32,
         instantPrompts = false,
-        proximityPrompts = true,
-        clickDetectors = true,
+        proximityPrompts = false,
+        clickDetectors = false,
     }
     local originalPrompts: {[ProximityPrompt]: PromptState} =
         setmetatable({}, {__mode = "k"}) :: any
@@ -35700,17 +36227,33 @@ function Module.init(context: Runtime): any
     local InteractFeature: any = nil
     local interactionRefreshClock: number = 0
 
+    -- Every channel follows its own row, so a row switched on with the card OFF
+    -- works alone and a row switched off with the card ON really stops. The card
+    -- is still a master switch: turning it on switches the rows on (visibly, not
+    -- behind the scenes) and turning it off switches them off.
+    local function promptsChannel(): boolean
+        return interactionSettings.proximityPrompts or interactionSettings.instantPrompts
+    end
+
+    local function detectorsChannel(): boolean
+        return interactionSettings.clickDetectors
+    end
+
+    local function anyChannel(): boolean
+        return promptsChannel() or detectorsChannel()
+    end
+
     local function updatePrompt(prompt: ProximityPrompt, original: PromptState): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
+        local distance: number = promptsChannel()
                 and interactionSettings.distance or original.distance
-        local hold: number = interactionExtenderEnabled and interactionSettings.proximityPrompts
-                and interactionSettings.instantPrompts and 0 or original.holdDuration
+        local hold: number = promptsChannel() and interactionSettings.instantPrompts
+                and 0 or original.holdDuration
         if prompt.MaxActivationDistance ~= distance then prompt.MaxActivationDistance = distance end
         if prompt.HoldDuration ~= hold then prompt.HoldDuration = hold end
     end
 
     local function updateDetector(detector: ClickDetector, original: number): ()
-        local distance: number = interactionExtenderEnabled and interactionSettings.clickDetectors
+        local distance: number = detectorsChannel()
                 and interactionSettings.distance or original
         if detector.MaxActivationDistance ~= distance then detector.MaxActivationDistance = distance end
     end
@@ -35725,7 +36268,7 @@ function Module.init(context: Runtime): any
     end
 
     local function applyInteractionExtension(instance: Instance): ()
-        if not interactionExtenderEnabled then
+        if not anyChannel() then
             return
         end
         if instance:IsA("ProximityPrompt") then
@@ -35744,46 +36287,127 @@ function Module.init(context: Runtime): any
         end
     end
 
+    -- Put every touched prompt/detector back to the values it had before we
+    -- saw it, then forget it. Called when no channel is live any more.
     local function restoreInteractionExtender(): ()
-        interactionExtenderEnabled = false
-        refreshInteractionExtender()
+        for prompt: ProximityPrompt, original: PromptState in pairs(originalPrompts) do
+            if prompt.Parent then
+                if prompt.MaxActivationDistance ~= original.distance then
+                    prompt.MaxActivationDistance = original.distance
+                end
+                if prompt.HoldDuration ~= original.holdDuration then
+                    prompt.HoldDuration = original.holdDuration
+                end
+            end
+        end
+        for detector: ClickDetector, original: number in pairs(originalClickDetectors) do
+            if detector.Parent and detector.MaxActivationDistance ~= original then
+                detector.MaxActivationDistance = original
+            end
+        end
         originalPrompts = setmetatable({}, {__mode = "k"}) :: any
         originalClickDetectors = setmetatable({}, {__mode = "k"}) :: any
     end
 
-    local function toggleInteractionExtender(enabled: boolean): ()
-        disconnectFeatureConnection("InteractExtender")
-        disconnectFeatureConnection("InteractExtenderRefresh")
-        restoreInteractionExtender()
-        interactionRefreshClock = 0
-        if not enabled then
-            if InteractFeature then InteractFeature:SetStatus(nil) end
-            return
-        end
-        InteractFeature:SetStatus(tostring(math.round(interactionSettings.distance)) .. " studs")
-        interactionExtenderEnabled = true
-        featureConnections.InteractExtender = workspace.DescendantAdded:Connect(
-            applyInteractionExtension
-        )
-        local scanConnection = featureConnections.InteractExtender
-        featureConnections.InteractExtenderRefresh = TaskManager:Connect(
-            function(deltaTime: number): ()
-                interactionRefreshClock += deltaTime
-                if interactionRefreshClock >= 0.5 then
-                    interactionRefreshClock = 0
-                    refreshInteractionExtender()
-                end
-            end
-        , nil, "Interact Extender")
+    local scanning: boolean = false
+    local function startScan(): ()
+        if scanning then return end
+        scanning = true
+        local scanConnection: any = featureConnections.InteractExtender
         task.spawn(function(): ()
             for index: number, instance: Instance in ipairs(workspace:GetDescendants()) do
-                if featureConnections.InteractExtender ~= scanConnection then return end
+                if featureConnections.InteractExtender ~= scanConnection then
+                    -- Superseded: a newer generation owns the flag now.
+                    scanning = false
+                    return
+                end
                 applyInteractionExtension(instance)
                 if index % 240 == 0 then
                     task.wait()
                 end
             end
+            scanning = false
         end)
+    end
+
+    -- Keep exactly the hooks the live channels need. Cheap when nothing changed,
+    -- so a single row can call it on every click without a rescan.
+    local function syncInteractions(): ()
+        if not anyChannel() then
+            disconnectFeatureConnection("InteractExtender")
+            disconnectFeatureConnection("InteractExtenderRefresh")
+            -- A scan suspended by this teardown belongs to the old generation;
+            -- releasing the flag lets the next activation start its own.
+            scanning = false
+            restoreInteractionExtender()
+            interactionRefreshClock = 0
+            if InteractFeature then
+                InteractFeature:SetStatus(nil)
+            end
+            return
+        end
+        if not featureConnections.InteractExtender then
+            featureConnections.InteractExtender =
+                workspace.DescendantAdded:Connect(applyInteractionExtension)
+        end
+        if not featureConnections.InteractExtenderRefresh then
+            featureConnections.InteractExtenderRefresh = TaskManager:Connect(
+                function(deltaTime: number): ()
+                    interactionRefreshClock += deltaTime
+                    if interactionRefreshClock >= 0.5 then
+                        interactionRefreshClock = 0
+                        refreshInteractionExtender()
+                    end
+                end
+            , nil, "Interact Extender")
+            -- First activation (card or row): pick up what already exists.
+            startScan()
+        else
+            refreshInteractionExtender()
+        end
+        if InteractFeature and interactionExtenderEnabled then
+            InteractFeature:SetStatus(
+                tostring(math.round(interactionSettings.distance)) .. " studs"
+            )
+        end
+    end
+
+    -- Keep the checkbox, the saved value and the callback in step when the card
+    -- itself switches a row.
+    local function setRow(name: string, value: boolean): ()
+        local controls: any = nil
+        pcall(function(): ()
+            if state and type(state.toggleControls) == "table" then
+                controls = state.toggleControls
+            end
+        end)
+        local control: any = controls and controls[InteractFeature.configKey .. "." .. name]
+        if control and type(control.setChecked) == "function" then
+            pcall(control.setChecked, value)
+        end
+    end
+
+    local function toggleInteractionExtender(enabled: boolean): ()
+        interactionExtenderEnabled = enabled
+        if enabled then
+            interactionSettings.proximityPrompts = true
+            interactionSettings.clickDetectors = true
+            setRow("Proximityprompts", true)
+            setRow("Clickdetectors", true)
+            -- The card was switched on: rescan once so nothing that exists right
+            -- now is missed, even if the rows were already live.
+            syncInteractions()
+            startScan()
+            return
+        else
+            interactionSettings.instantPrompts = false
+            interactionSettings.proximityPrompts = false
+            interactionSettings.clickDetectors = false
+            setRow("Instantprompts", false)
+            setRow("Proximityprompts", false)
+            setRow("Clickdetectors", false)
+        end
+        syncInteractions()
     end
 
     InteractFeature = createUniversalFeature(
@@ -35804,7 +36428,7 @@ function Module.init(context: Runtime): any
             if InteractFeature.enabled then
                 InteractFeature:SetStatus(tostring(math.round(value)) .. " studs")
             end
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35813,7 +36437,7 @@ function Module.init(context: Runtime): any
         interactionSettings.instantPrompts,
         function(value: boolean): ()
             interactionSettings.instantPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35822,7 +36446,7 @@ function Module.init(context: Runtime): any
         interactionSettings.proximityPrompts,
         function(value: boolean): ()
             interactionSettings.proximityPrompts = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
     addToggleOption(
@@ -35831,11 +36455,12 @@ function Module.init(context: Runtime): any
         interactionSettings.clickDetectors,
         function(value: boolean): ()
             interactionSettings.clickDetectors = value
-            refreshInteractionExtender()
+            syncInteractions()
         end
     )
 
     activeCleanup = function(): ()
+        interactionExtenderEnabled = false
         disconnectFeatureConnection("InteractExtender")
         disconnectFeatureConnection("InteractExtenderRefresh")
         restoreInteractionExtender()
@@ -37534,6 +38159,10 @@ function Module.init(context: Runtime): any
         end
         for name: string, provider: any in pairs(current) do
             if not providerOptions[name] then
+                -- These rows deliberately bring the card with them (see
+                -- setProviderEnabled): a provider ON must mean drawn. Flag it so
+                -- readers and the boot tests know the exception is intended.
+                if render.Feature then render.Feature.optionEntersFeature = true end
                 providerOptions[name] = render:CreateToggle({
                     Name = name,
                     Default = false,
@@ -47527,6 +48156,11 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            -- The live checkbox, so callers (and the boot tests) can read the
+            -- option without assuming what its default was.
+            getChecked = function(): boolean
+                return enabled :: boolean
+            end,
             setChecked = function(checked: boolean): ()
                 if not button.Parent then
                     return

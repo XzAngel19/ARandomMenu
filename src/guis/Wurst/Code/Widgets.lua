@@ -490,6 +490,11 @@ function Module.init(context: any): WidgetLibrary
         -- persisted state and the module callback all move together.
         state.toggleControls = state.toggleControls or {}
         state.toggleControls[optionKey] = {
+            -- The live checkbox, so callers (and the boot tests) can read the
+            -- option without assuming what its default was.
+            getChecked = function(): boolean
+                return enabled :: boolean
+            end,
             setChecked = function(checked: boolean): ()
                 if not button.Parent then
                     return

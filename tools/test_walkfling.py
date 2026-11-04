@@ -136,7 +136,9 @@ Module.init(context)
 assert(configData.states["Universal.WalkFling"] == false,
     "a saved ON state must never start a fling on injection")
 assert(feature.name == "Walk Fling", "the card is Walk Fling")
-assert(options["Power"] == nil, "Walk Fling has no options: it is a plain toggle")
+-- v180: the force was too weak, so Walk Fling exposes a bounded Power
+-- multiplier (1..3, default 1.5). 1x still reproduces the old behaviour.
+assert(options["Power"] ~= nil, "Walk Fling must expose the v180 Power row")
 
 resetWrites()
 pump(15)
@@ -147,7 +149,8 @@ pass("Walk Fling is inert on injection and while OFF")
 
 feature.toggle(true)
 pump(12)
-assert(writes.maxSpeed >= 9999, "the IY walkfling spike must run, got " .. tostring(writes.maxSpeed))
+assert(writes.maxSpeed >= 14000,
+    "the IY walkfling spike must run at 1.5x default power, got " .. tostring(writes.maxSpeed))
 assert(collisionFalse > 0, "the walkfling noclip must run while ON")
 assert(activity["walkfling"] == true, "the card marks its activity")
 pass("Walk Fling ON runs the 10000x pulse and the noclip")
