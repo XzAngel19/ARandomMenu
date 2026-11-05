@@ -189,6 +189,32 @@ local after=makeProjectile(true,96);projectileSignal:Fire(after);nativeThrow:Fir
 flush10();assert(#WRITES==before and FILES[TELEMETRY]~=nil,'No disconnects observation and preserves old files')
 print('PASS calibration capture: consent, native and menu attempts, linked/unlinked projectiles, no duplicate counts, No cleanup')
 '''
+native_gun = common + r'''
+-- Observe one native click and its redirected CFrames with consent enabled.
+-- The activation remains in the event log, but it cannot steal a Silent echo
+-- or count twice merely because the same click has an authored endpoint.
+local gun=newInst('Tool');gun.Name='Gun';gun.Parent=LocalPlayer.Character
+local gunHandle=newInst('Part');gunHandle.Name='Handle';gunHandle.Position=Vector3.new(1,2,3)
+gunHandle.CFrame=CFrame.new(gunHandle.Position);gunHandle.Parent=gun
+assert(c:setConsent(true))
+gun.Activated:Fire()
+c:noteAuthoredShot({kind='gun',source='native-redirect',tool=gun,
+ originPos=Vector3.new(49,2,3),aimPos=Vector3.new(50,2,3),target=HarnessHeroGuy,
+ settings={mode='Silent',spawn='Front'}})
+assert(c:save('native-gun'))
+local list,snapshot=events();local attempts,authored=0,0
+for _,ev in ipairs(list) do
+ if ev.kind=='gun' and ev.phase=='attempt' then attempts+=1 end
+ if ev.kind=='gun' and ev.phase=='authored' and ev.source=='native-redirect' then authored+=1 end
+end
+assert(attempts==1 and authored==1 and snapshot.session.gunAttempts==1,
+ 'one native click retains both observations without double-counting: '..tostring(attempts)..' / '..tostring(authored)..' / '..tostring(snapshot.session.gunAttempts))
+weaponService.GunFired.OnClientEvent:Fire(gun,Vector3.new(49,2,3),Vector3.new(50,2,3),nil)
+assert(c:save('native-gun-echo'))
+local _,after=events()
+assert(after.session.gunConfirmed==1,'the redirected origin matches its own pending shot')
+print('PASS calibration native Gun: one activation and redirect, one attempt and matched echo')
+'''
 archive = common + r'''
 assert(c:setConsent(true))
 -- A batch larger than the former 2,400-record limit is archived, not evicted.
@@ -465,7 +491,7 @@ assert(not c:save('encode-conflict') and FILES[TELEMETRY]=='external-during-enco
 print('PASS calibration conflict during encode: a later external writer is not overwritten')
 '''
 with tempfile.TemporaryDirectory(prefix='calibration-capture-') as tmp:
-    for name,case in [('capture',capture),('archive',archive),('archive-races',archive_races),('archive-revoke',archive_revoke),('health',health),('serialization',serialization),('observer-race',observer_race),('consent-write-race',consent_write_race),('revoke-write-race',revoke_write_race),('reset-write-race',reset_write_race),('archive-reset-race',archive_reset_race),('recovery',recovery),('partial-throw-recovery',partial_throw_recovery),('recovery-revoke',recovery_revoke),('external-during-encode',external_during_encode)]:
+    for name,case in [('capture',capture),('native-gun',native_gun),('archive',archive),('archive-races',archive_races),('archive-revoke',archive_revoke),('health',health),('serialization',serialization),('observer-race',observer_race),('consent-write-race',consent_write_race),('revoke-write-race',revoke_write_race),('reset-write-race',reset_write_race),('archive-reset-race',archive_reset_race),('recovery',recovery),('partial-throw-recovery',partial_throw_recovery),('recovery-revoke',recovery_revoke),('external-during-encode',external_during_encode)]:
         path=Path(tmp)/(name+'.luau');path.write_text(source+case,encoding='utf-8')
         result=subprocess.run([os.environ.get('LUAU','luau'),str(path)],capture_output=True,text=True)
         if result.returncode: raise SystemExit(name+' failed:\n'+result.stdout[-4000:]+'\n'+result.stderr)

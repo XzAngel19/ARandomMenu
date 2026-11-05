@@ -11,15 +11,15 @@ import audit_menu
 import build_bundle
 import gen_full_boot_harness as harness
 
-# v184 adds MM2 Notifications; Calibration stays popup-only and other places are unchanged.
+# v185 removes three universal cards; BedFight keeps its own Anti Void.
 CASES = [
-    ('Universal', 1, 36, None, None),
-    ('MM2', 142823291, 49, 'MM2', 'MM2.AutoFarm'),
-    ('BedFight', 71480482338212, 46, 'BedFight', 'BedFight.AutoSwing'),
-    ('TRS', 14315258385, 47, 'TRS', 'TRS.AutoHeader'),
-    ('VD', 93978595733734, 50, 'VD', 'VD.AutoGenerator'),
-    ('X2 Legacy', 92876937625630, 41, 'X2Duels', 'MVSD.AutoFarm'),
-    ('X2', 135856908115931, 41, 'X2Duels', 'MVSD.AutoFarm'),
+    ('Universal', 1, 33, None, None),
+    ('MM2', 142823291, 46, 'MM2', 'MM2.AutoFarm'),
+    ('BedFight', 71480482338212, 43, 'BedFight', 'BedFight.AutoSwing'),
+    ('TRS', 14315258385, 44, 'TRS', 'TRS.AutoHeader'),
+    ('VD', 93978595733734, 47, 'VD', 'VD.AutoGenerator'),
+    ('X2 Legacy', 92876937625630, 38, 'X2Duels', 'MVSD.AutoFarm'),
+    ('X2', 135856908115931, 38, 'X2Duels', 'MVSD.AutoFarm'),
 ]
 
 source = audit_menu.build(debug=True).read_text(encoding='utf-8')
@@ -101,8 +101,20 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
             assert not [card for card in cards if card['configKey'] == 'Universal.Shaders'], (
                 f'{name} {mode}: the removed Shaders card must not boot'
             )
+            assert not [card for card in cards if card['configKey'] in
+                        {'Universal.Fling', 'Universal.SwimWalk', 'Universal.AntiVoid'}], (
+                f'{name} {mode}: a removed universal card returned'
+            )
+            prompts = [card for card in cards if card['configKey'] == 'Universal.InteractExtender']
+            assert len(prompts) == 1 and prompts[0]['name'] == 'Proximity Prompts', (
+                f'{name} {mode}: prompts rename/config compatibility missing'
+            )
+            if active == 'BedFight':
+                assert any(card['name'] == 'Anti Void' and card['section'] == 'BedFight' for card in cards), (
+                    'BedFight-specific Anti Void must not be removed with the universal card'
+                )
             renamed = {card['name'] for card in cards}
-            for wanted in ('Speed Hack', 'Jump Hack', 'Swim Walk'):
+            for wanted in ('Speed Hack', 'Jump Hack', 'Proximity Prompts'):
                 if wanted in renamed:
                     break
             else:

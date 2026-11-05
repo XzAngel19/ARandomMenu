@@ -12,6 +12,7 @@ from test_mm2_precision import section
 
 ROOT = Path(__file__).resolve().parents[1]
 shoot = (ROOT / 'src/games/MM2/Blatant/Shoot.lua').read_text()
+infra = section(shoot, '    local observerGeneration: number = 0', '    local shotHookInstalled: boolean = false')
 block = section(shoot, '    local shotHookInstalled: boolean = false', '    local lastAutoStatus:')
 prelude = r'''
 local function cf(name) return {type='CFrame', id=name} end
@@ -27,7 +28,11 @@ local knifeRemote={id='knife'}
 function gun:FindFirstChild(name) return name=='Shoot' and gunRemote or nil end
 function humanoid:EquipTool(tool) tool.Parent=character end
 local LocalPlayer={Character=character}
-local function getPlayerWeapon(_,name) if name=='Gun' then return gun end end
+local weaponLookupThrows=false
+local function getPlayerWeapon(_,name)
+ if weaponLookupThrows then error('character streamed out') end
+ if name=='Gun' then return gun end
+end
 local function getCharacterParts() return character,humanoid end
 local function getSelectedShootTarget() return target end
 local waits=0
@@ -35,7 +40,12 @@ local RunService={Heartbeat={Wait=function() waits+=1 end}}
 local notifications={}
 local function notify(message) table.insert(notifications,message) end
 local delayed={}
-local task={delay=function(_,fn) table.insert(delayed,fn) end}
+local suspendedObservers={}
+local task={delay=function(_,fn) table.insert(delayed,fn) end,
+ spawn=function(fn)
+  local co=coroutine.create(fn);local ok,err=coroutine.resume(co);assert(ok,tostring(err))
+  if coroutine.status(co)=='suspended' then table.insert(suspendedObservers,co) end
+ end}
 local function flush() local jobs=delayed; delayed={}; for _,fn in ipairs(jobs) do fn() end end
 local game={}
 local sent={}
@@ -51,10 +61,15 @@ local function hook(_,name,replacement)
  assert(name=='__namecall');hooks+=1
  local previous=chain;chain=replacement;return previous
 end
-local function connectGunFiredSignal() return true end
+local observerConnections=0
+local function connectGunFiredSignal() observerConnections+=1;return true end
 local disconnected=0
 local function disconnectGunFiredObserver() disconnected+=1 end
-local function getWeaponServiceModule() return {} end
+local pauseObserver=false
+local function getWeaponServiceModule()
+ if pauseObserver then coroutine.yield() end
+ return {}
+end
 local state={isMobile=false,hookMetamethod=hook,getNamecallMethod=function() return method end,
  checkCaller=function() return executorCaller end,mm2ShotFeedback={hide=function() end}}
 local shootFeatureActive=false
@@ -68,18 +83,21 @@ local aimMode='Bullet'
 local solved=0
 local blocked=false
 local throws=false
+local throwsAfterFrames=false
+local lastRejectReason=''
+local ShootFeature={SetStatus=function() error('status UI unavailable') end}
 local keyShots=0
 local function fireGunAtTarget(p,opts)
  assert(p==target)
  solved+=1
  if throws then error('aim failure') end
  if blocked then return false end
- if opts.redirect then opts.redirect(cf(aimMode..'-origin'),cf(aimMode..'-end'))
+ if opts.redirect then
+  assert(opts.nativeRedirect==true and opts.nativeOrigin.id=='native-origin', 'native call options propagate')
+  opts.redirect(cf(aimMode..'-origin'),cf(aimMode..'-end'))
+  if throwsAfterFrames then error('post-solve observer failed') end
  else keyShots+=1 end
  return true
-end
-local function refreshShootInfrastructure()
- state.mm2ShotFeedback.shootActive=shootFeatureActive or autoShootActive or transientShotActive
 end
 local function last() return sent[#sent] end
 local function click(remote,a,b,...)
@@ -93,6 +111,16 @@ checks = r'''
 local originalA,originalB=cf('native-origin'),cf('native-end')
 local args=click(gunRemote,originalA,originalB,'tail',nil,'last')
 assert(args[1]==originalA and args[2]==originalB and solved==0,'OFF leaves native shot unchanged')
+-- An unavailable/yielding optional weapon observer cannot delay the PC hook;
+-- a stale observer cannot attach after the user disables the module.
+pauseObserver=true;local beforeConnections=observerConnections
+toggleShootMurderer(true)
+assert(shotHookInstalled and #suspendedObservers==1,'hook installs while observer discovery waits')
+args=click(gunRemote,originalA,originalB);assert(args[1].id=='Bullet-origin')
+toggleShootMurderer(false)
+local co=table.remove(suspendedObservers);local ok,err=coroutine.resume(co);assert(ok,tostring(err))
+assert(observerConnections==beforeConnections,'stale observer cannot reattach after OFF')
+pauseObserver=false
 toggleShootMurderer(true)
 assert(shotHookInstalled and chain~=transport)
 args=click(gunRemote,originalA,originalB,'tail',nil,'last')
@@ -106,12 +134,19 @@ blocked=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and args[2]==originalB,'WallCheck failure passes the original click')
 blocked=false;throws=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and args[2]==originalB,'failed solver preserves native click')
-throws=false
+throws=false;throwsAfterFrames=true;args=click(gunRemote,originalA,originalB)
+assert(args[1].id=='Silent(CFrame)-origin' and args[2].id=='Silent(CFrame)-end',
+ 'valid frames survive an optional error after construction')
+throwsAfterFrames=false
 local solvedBefore=solved
 executorCaller=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and solved==solvedBefore,'Auto Shoot/Farm/executor packets are not redirected')
 executorCaller=false;args=click(knifeRemote,originalA,originalB)
 assert(args[1]==originalA and solved==solvedBefore,'Knife and unrelated remotes untouched')
+weaponLookupThrows=true;args=click(gunRemote,originalA,originalB)
+assert(args[1]==originalA and args[2]==originalB and solved==solvedBefore,
+ 'streaming/weapon lookup errors cannot swallow the native click')
+weaponLookupThrows=false
 args=click(gunRemote,'unexpected-format',originalB)
 assert(args[1]=='unexpected-format' and solved==solvedBefore,'unknown packet contracts pass through')
 method='InvokeServer';args=click(gunRemote,originalA,originalB)
@@ -153,5 +188,5 @@ toggleShootMurderer(false)
 print('PASS Gun PC native: Bullet/Silent, one transport, untouched camera/other remotes, WallCheck, off key, mobile, cleanup and third-party hooks')
 '''
 with tempfile.TemporaryDirectory(prefix='gun-native-') as tmp:
-    path=Path(tmp)/'test.luau';path.write_text(prelude+block+'\n'+checks)
+    path=Path(tmp)/'test.luau';path.write_text(prelude+infra+block+'\n'+checks)
     subprocess.run([os.environ.get('LUAU','luau'),str(path)],check=True)

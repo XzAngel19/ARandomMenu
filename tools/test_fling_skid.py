@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Execute the real universal Fling module, ported from the YARHM SkidFling.
+"""Execute the real internal MM2 Fling engine, ported from the YARHM SkidFling.
 
 The user compared both: theirs teleports onto the target, does a short choreography
 and launches them; ours orbited and the local character seemed to fade. The two
 concrete defects were pinned down and are asserted here:
 
-  1. The BodyVelocity must be "EpixVel" with Velocity (9e8, 9e8, 9e8) and infinite
-     MaxForce - a catapult. Our old port used Velocity zero, which transfers
+  1. The BodyVelocity must be "EpixVel" with Velocity (9e8, 9e8, 9e8) and
+     finite 9e9 MaxForce - a catapult. Our old port used Velocity zero, which transfers
      nothing.
   2. The pose is written with RootPart.CFrame *and* SetPrimaryPartCFrame plus
      RootPart.Velocity/RotVelocity only. Writing AssemblyLinearVelocity and
@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "src/games/universal/Blatant/Fling.lua").read_text()
+SOURCE = (ROOT / "src/games/MM2/Other/FlingEngine.lua").read_text()
 
 PRELUDE = r'''
 local Vector3 = {}
@@ -327,7 +327,8 @@ services = {
     protectedTargets={isProtected=function() return false end},
     gameBridge={},
 }
-context = {host=host, services=services}
+state.frameworkEnvironment=host
+context = {Services=services}
 local function resetWrites()
     writes.maxVelocity = 0; writes.maxRotVelocity = 0; writes.poses = 0
     writes.primaries = 0; writes.assemblyWrites = 0
@@ -343,33 +344,22 @@ end
 
 SCRIPT = PRELUDE + "\nlocal Module = (function()\n" + SOURCE + "\nend)()\n" + r'''
 Module.init(context)
-assert(options["Auto Fling Selected Target"] == nil, "Auto Fling must be gone")
-assert(options["Touch Fling"] == nil, "Touch Fling moved to its own card")
-assert(options["Select Target"] == nil, "the Select Target dropdown must be gone")
-assert(options["Target player"] ~= nil, "Target player is the only target input")
-assert(options["Fling"] ~= nil and options["Fling Murderer"] ~= nil, "actions stay")
--- v180: the user asked for more force, so Power is back as a bounded slider
--- (1..12, default 6). Duration and Prediction stay removed.
-for _, name in ipairs({"Duration", "Prediction"}) do
-    assert(options[name] == nil, name .. " slider must not be created")
+assert(feature == nil and next(options) == nil, "MM2 engine must not create a Fling card")
+assert(type(state.mm2PerformFling) == "function" and type(state.mm2FlingStep) == "function",
+    "internal exports remain available to Auto Farm and Auto Win")
+assert(configData.states["MM2.Fling.AutoFlingSelectedTarget"] == nil
+    and configData.states["MM2.Fling.TouchFling"] == nil
+    and configData.states["Universal.Fling"] == false, "stale saved actions cannot restart")
+assert(not state.mm2PerformFling(nil), "a missing target cannot start a fling")
+local function startFling()
+    assert(state.mm2PerformFling(victimPlayer, {blocking=false, silent=false}))
 end
-assert(options.Power ~= nil, "the Power slider is required in v180")
-assert(options.Retries, "the unrelated retry option must remain available")
-assert(type(state.mm2PerformFling) == "function", "mm2PerformFling export must survive for Auto Win")
-pass("Fling retains target, actions and Retries without the three removed controls")
-
--- Empty target ------------------------------------------------------------
-notifications = {}
-options["Fling"]()
-assert(#notifications > 0 and string.find(notifications[1], "No player matched") ~= nil,
-    "an empty Target player must say so instead of flinging")
-pass("an empty Target player never flings")
+pass("internal engine exports are present without a universal Fling card")
 
 -- The fling itself --------------------------------------------------------
 victimSpeed = 0
 resetWrites()
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(80, function(index) if index == 10 then victimSpeed = 900 end end)
 
 assert(writes.poses >= 6, "the six-pose YARHM choreography must run, got " .. writes.poses)
@@ -407,8 +397,7 @@ pass("SkidFling poses 9e7/9e8 with an EpixVel 9e8 catapult, then restores everyt
 victimSpeed = 0
 resetWrites()
 notifications = {}
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(60)
 assert(#notifications == 0,
     "after 0.6 s the fling must still be running, got: " .. tostring(notifications[1]))
@@ -460,22 +449,11 @@ assert(stepPin.destroyed == true, "the per-frame pin is cleaned up when the call
 assert(activityService.flags["fling"] == false, "the per-frame fling releases its activity")
 pass("the per-frame pose (Auto Win) uses the same fling and cleans up after itself")
 
--- Role actions outside MM2 ------------------------------------------------
-local savedCore = state.mm2Core
-state.mm2Core = nil
-notifications = {}
-options["Fling Murderer"]()
-assert(#notifications == 1 and string.find(notifications[1], "Murder Mystery 2") ~= nil,
-    "role actions must explain that they need MM2")
-state.mm2Core = savedCore
-pass("MM2 role actions degrade cleanly outside MM2")
-
 -- A failed YARHM pose still restores the local body, pin and void setting.
 notifications = {}
 victimSpeed = 0
 failNextPose = true
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(10)
 assert(#notifications == 1 and notifications[1]:find("fling failed", 1, true),
     "pose errors must be reported")
@@ -496,8 +474,7 @@ victimSpeed = 100
 networkPing = 0.3
 notifications = {}
 resetWrites()
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(650)
 assert(#notifications == 1, "the fling must finish, got " .. tostring(notifications[1]))
 local furthest = 0
@@ -515,8 +492,7 @@ networkPing = 0
 victimSpeed = 0
 notifications = {}
 resetWrites()
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(650)
 assert(writes.maxVelocity >= 1.75e9,
     "default Power 6 must double the old strength, got " .. tostring(writes.maxVelocity))
@@ -534,23 +510,13 @@ pass("default Power 6 raises pose and pin strength")
 victimSpeed = 0
 notifications = {}
 resetWrites()
-options["Target player"]("Victim")
-options["Fling"]()
+startFling()
 pump(650)
 assert(#notifications == 1, "one notification, got " .. tostring(#notifications))
 assert(state.mm2LastFling and (state.mm2LastFling.retries or 0) >= 1,
     "a victim that did not move must trigger the second pass")
 assert(writes.poses >= 24, "the second pass writes more poses, got " .. writes.poses)
 pass("a motionless victim gets a second pass on its other part")
-
-options.Retries(0)
-notifications = {}
-options["Fling"]()
-pump(500)
-assert(#notifications == 1 and state.mm2LastFling and (state.mm2LastFling.retries or 0) == 0,
-    "Retries 0 must keep the original one-pass behavior")
-options.Retries(1)
-pass("the unrelated Retries control still changes the number of passes")
 
 -- Auto Farm cancels a running full-bag fling when the round ends. Roblox may
 -- teleport the very same body to lobby while the real SkidFling is suspended
@@ -624,7 +590,19 @@ near(rootProps.Position.Y, 70.5, 0.01)
 assert(activityService.flags["fling"] == false)
 pass("Auto Win-style stopped fling keeps its explicit safe return")
 
-print("PASS " .. passed .. " SkidFling suites")
+-- Destruct during a yielded pose cancels the worker, destroys the active pin
+-- immediately, and never returns the body to an old position afterward.
+root.CFrame=CFrame.new(0,10,0);victimSpeed=0;resetWrites()
+assert(state.mm2PerformFling(victimPlayer,{silent=true,duration=3}))
+local writesAtUnload=writes.cframeWrites
+Module.destroy()
+assert(state.mm2PerformFling == nil and state.mm2FlingStep == nil, "unload clears internal exports")
+for _,object in ipairs(created) do if object.Name=='EpixVel' then assert(object.destroyed) end end
+pump(20)
+assert(writes.cframeWrites==writesAtUnload and world.FallenPartsDestroyHeight==-500
+ and activityService.flags['fling']==false, 'destruct stops poses and restores world state')
+pass("destruction cancels a running internal fling and releases its pin")
+print("PASS " .. passed .. " MM2 SkidFling suites")
 '''
 
 with tempfile.TemporaryDirectory() as tmp:

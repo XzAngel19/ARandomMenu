@@ -33,14 +33,19 @@ function humanoid:GetState() return self.current end
 function humanoid:ChangeState(v) self.current=v;self.changes+=1 end
 local character={FindFirstChildOfClass=function() return humanoid end,FindFirstChild=function(_,n) return n=='HumanoidRootPart' and root end}
 local player={Character=character,FindFirstChildOfClass=function(_,name) return name=='PlayerGui' and playerGui end}
-local input={TouchEnabled=true,InputBegan=signal(),InputEnded=signal(),WindowFocusReleased=signal(),JumpRequest=signal(),touches={}}
+local input={TouchEnabled=true,InputBegan=signal(),InputEnded=signal(),WindowFocusReleased=signal(),TextBoxFocused=signal(),JumpRequest=signal(),touches={},focused=false}
 function input:GetTouches() return self.touches end
+function input:GetFocusedTextBox() return self.focused and {} or nil end
 local run={PreSimulation=signal()}
 local move={onJumpRequest=function(fn) return input.JumpRequest:Connect(fn) end}
 local card
 local framework={Categories={Exploits={CreateModule=function(_,d)
  card={Enabled=false,Options={},cleanups={}}
  function card:CreateSlider(o) self.Options[o.Name]={Value=o.Default} end
+ function card:CreateDropdown(o)
+  local option={Value=o.List[o.Index]};self.Options[o.Name]=option
+  function option:Set(value) self.Value=value;if o.Function then o.Function(value) end end
+ end
  function card:SetStatus(v) self.status=v end
  function card:Clean(item) table.insert(self.cleanups,item) end
  function card:Toggle(v)
@@ -82,10 +87,35 @@ assert(root.AssemblyLinearVelocity.Y==-2,'seated characters cannot boost')
 input.InputEnded:Fire(space);humanoid.current='Running';humanoid.FloorMaterial='Ground'
 card.Options['Jump Power'].Value=-20;now+=1;input.InputBegan:Fire(space,false)
 assert(root.AssemblyLinearVelocity.Y==-20 and humanoid.current=='Freefall','negative power inverts ground jump physics')
+input.InputEnded:Fire(space)
+-- Rise applies vertical velocity for every physics frame of a hold, without
+-- changing horizontal velocity or needing repeated JumpRequest events.
+card.Options['Jump Power'].Value=50;card.Options.Mode:Set('Rise')
+humanoid.current='Running';humanoid.FloorMaterial='Ground';now+=1
+root.AssemblyLinearVelocity=Vector3.new(3,0,4)
+input.InputBegan:Fire(space,false);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==50 and root.AssemblyLinearVelocity.X==3 and root.AssemblyLinearVelocity.Z==4)
+root.AssemblyLinearVelocity=Vector3.new(3,7,4);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==50,'held Rise continues every physics frame')
+input.InputEnded:Fire(space);root.AssemblyLinearVelocity=Vector3.new(3,7,4);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==7,'releasing Space stops the rise without overwriting gravity')
+input.InputBegan:Fire(space,false);input.WindowFocusReleased:Fire();root.AssemblyLinearVelocity=Vector3.new(3,6,4);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==6,'window focus loss releases Rise')
+input.focused=true;input.InputBegan:Fire(space,false);input.JumpRequest:Fire();run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==6,'typing cannot start Rise')
+input.focused=false;humanoid.current='Seated';input.InputBegan:Fire(space,false);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==6,'Rise never fights a seat')
+input.InputEnded:Fire(space);humanoid.current='Running';input.TouchEnabled=true;input.touches={finger}
+input.InputBegan:Fire(finger,true);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==50,'holding the mobile jump button also rises')
+input.InputEnded:Fire(finger);root.AssemblyLinearVelocity=Vector3.new(3,4,4);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==4,'releasing the mobile button stops Rise')
+card.Options.Mode:Set('Normal');run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y==4,'Normal does not turn into a held-flight loop')
 Module.destroy()
 assert(not card.Enabled and input.InputBegan:Count()==0 and input.InputEnded:Count()==0
- and input.JumpRequest:Count()==0 and run.PreSimulation:Count()==0,'unload must detach all listeners')
-print('PASS Infinite Jump: native mobile ground takeoff, PC/touch air boosts, deduplication, negative physics and cleanup')
+ and input.JumpRequest:Count()==0 and input.TextBoxFocused:Count()==0 and run.PreSimulation:Count()==0,'unload must detach all listeners')
+print('PASS Infinite Jump: Normal tap, PC/mobile Rise hold and release, focus/seat safety, negative physics and cleanup')
 '''
 with tempfile.TemporaryDirectory(prefix='infinite-jump-') as tmp:
     path = Path(tmp) / 'test.luau'

@@ -54,6 +54,10 @@ function Module.init(_runtime: any): any
     local coinsCollectedStat: any = nil
     local farmTimeStat: any = nil
     local safeZonePlatform: Part? = nil
+    -- Installed by the current farm generation; used by both the master OFF
+    -- and the Safe Zone row OFF. Never send an already-respawned body to an
+    -- old map, and never remove its only floor when no return is possible.
+    local leaveSafeZone: ((boolean?, boolean?) -> boolean)? = nil
 
     local function formatFarmTime(totalSeconds: number): string
         local whole: number = math.max(0, math.floor(totalSeconds))
@@ -88,7 +92,7 @@ function Module.init(_runtime: any): any
         end
     end
 
-    local function ensureSafeZonePlatform(originPos: Vector3): Vector3
+    local function ensureSafeZonePlatform(originPos: Vector3): Vector3?
         local voidCenter: Vector3 = Vector3.new(
             originPos.X + 650,
             math.max(originPos.Y + 280, 380),
@@ -115,7 +119,8 @@ function Module.init(_runtime: any): any
         if safeZonePlatform and safeZonePlatform.Parent then
             return safeZonePlatform.Position + Vector3.new(0, 5, 0)
         end
-        return voidCenter + Vector3.new(0, 5, 0)
+        -- A missing platform is not a safe destination.
+        return nil
     end
 
     -- Two ways to reach a coin, chosen with Farm Mode:
@@ -416,6 +421,7 @@ function Module.init(_runtime: any): any
     local function toggleAutoFarm(enabled: boolean): ()
         farmGeneration += 1
         local enableGeneration: number = farmGeneration
+        disconnectFeatureConnection("MM2AutoFarmSafeZoneRetry")
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
@@ -435,6 +441,26 @@ function Module.init(_runtime: any): any
             setStatus(nil)
             return
         end
+        -- A previously stranded Safe Zone still owns its one protective pad.
+        -- Do not start farming from the void or forget its return destination.
+        if leaveSafeZone and not leaveSafeZone(false) then
+            setStatus("Auto Farm: waiting in Safe Zone for the original map")
+            -- Keep ON meaningful if the user re-enables while the old map is
+            -- temporarily unavailable: retry quietly, then start a fresh farm
+            -- generation only after a safe return or a server teleport.
+            local retryElapsed: number = 0
+            featureConnections.MM2AutoFarmSafeZoneRetry = TaskManager:Connect(function(delta: number): ()
+                if farmGeneration ~= enableGeneration then return end
+                retryElapsed += math.max(0, tonumber(delta) or 0)
+                if retryElapsed < 1 then return end
+                retryElapsed = 0
+                if leaveSafeZone and leaveSafeZone(false, true) then
+                    toggleAutoFarm(true)
+                end
+            end, nil, "MM2 Auto Farm Safe Zone Retry")
+            return
+        end
+        leaveSafeZone = nil
         fallbackScanAt = -math.huge
         fallbackScanMap = nil
         fallbackPickups = {}
@@ -478,6 +504,10 @@ function Module.init(_runtime: any): any
         local engagedCharacter: Model? = nil
         local homeCFrame: CFrame? = nil
         local homeCharacter: Model? = nil
+        local parkedCharacter: Model? = nil
+        local parkedMap: Instance? = nil
+        local parkedReturn: CFrame? = nil
+        local parkedPosition: Vector3? = nil
         local hiddenUnderMap: boolean = false
         local savedCollide: {[Instance]: boolean} = {}
         local engagedMode: string? = nil
@@ -957,8 +987,12 @@ function Module.init(_runtime: any): any
                             homeCFrame.Position,
                             character
                         )
+                        local mapReturn: CFrame = CFrame.new(destPosition)
+                            * CFrame.Angles(0, yawOf(homeCFrame), 0)
+                        local zoneDestination: Vector3? = nil
                         if enabled and settings.safeZone and bagAmount >= 50 then
-                            destPosition = ensureSafeZonePlatform(homeCFrame.Position)
+                            zoneDestination = ensureSafeZonePlatform(homeCFrame.Position)
+                            if zoneDestination then destPosition = zoneDestination end
                         end
                         local targetCF: CFrame = CFrame.new(destPosition)
                             * CFrame.Angles(0, yawOf(homeCFrame), 0)
@@ -968,6 +1002,10 @@ function Module.init(_runtime: any): any
                             end)
                         end
                         root.CFrame = targetCF
+                        if zoneDestination then
+                            parkedCharacter, parkedMap = character, currentRoundMap
+                            parkedReturn, parkedPosition = mapReturn, zoneDestination
+                        end
                         if bagAmount >= 50 then
                             teleportedHomeThisRound = true
                             homeCFrame = nil
@@ -1002,6 +1040,46 @@ function Module.init(_runtime: any): any
             walkCarryDirection = nil
             walkCarryUntil = 0
             walkBodyReady = false
+        end
+
+        local function stillParked(): boolean
+            local character: Model?, humanoid: Humanoid?, root: BasePart? = characterParts()
+            if not parkedReturn or not parkedPosition or character ~= parkedCharacter
+                or not root or not humanoid or humanoid.Health <= 0 then return false end
+            return (root.Position - (parkedPosition :: Vector3)).Magnitude <= 120
+        end
+
+        leaveSafeZone = function(cancelBusy: boolean?, quiet: boolean?): boolean
+            if not stillParked() then
+                parkedCharacter, parkedMap, parkedReturn, parkedPosition = nil, nil, nil, nil
+                destroySafeZonePlatform()
+                return true
+            end
+            if cancelBusy then
+                roundGeneration += 1
+                busy = false
+            end
+            local character: Model?, _, root: BasePart? = characterParts()
+            local okMap: boolean, map: any = pcall(function(): any
+                return type(findMM2Map) == "function" and findMM2Map() or nil
+            end)
+            if not okMap or not parkedMap or map ~= parkedMap or not parkedMap.Parent or not root then
+                -- The old map is gone; leave the floor in place rather than
+                -- teleport to a stale location or drop the player into void.
+                if not quiet then notify("Auto Farm: waiting in Safe Zone; the original map is unavailable.") end
+                return false
+            end
+            local destination: CFrame = parkedReturn :: CFrame
+            local moved: boolean = pcall(function(): ()
+                if character then pcall(function(): () character:PivotTo(destination) end) end
+                root.CFrame = destination
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end)
+            if not moved then return false end
+            parkedCharacter, parkedMap, parkedReturn, parkedPosition = nil, nil, nil, nil
+            destroySafeZonePlatform()
+            return true
         end
 
         -- A round may end while the character is absent, so the ordinary
@@ -1046,7 +1124,10 @@ function Module.init(_runtime: any): any
             travelPart = nil
             travelBestDistance = math.huge
             travelProgressAt = 0
-            destroySafeZonePlatform()
+            if not stillParked() then
+                parkedCharacter, parkedMap, parkedReturn, parkedPosition = nil, nil, nil, nil
+                destroySafeZonePlatform()
+            end
         end
 
         local function enterRound(character: Model, root: BasePart, map: Instance): ()
@@ -1711,8 +1792,20 @@ function Module.init(_runtime: any): any
                     return
                 end
 
+                -- If the Safe Zone row was switched OFF while its map was
+                -- missing, keep the floor and retry until a safe exit exists.
+                if stillParked() and not settings.safeZone and leaveSafeZone then
+                    if not leaveSafeZone(false, true) then
+                        setStatus("Auto Farm: waiting in Safe Zone for the original map")
+                        return
+                    end
+                end
                 -- Strict lobby & non-round guard: NEVER activate, move,
                 -- or farm in the lobby or outside an active round on a map.
+                if stillParked() and parkedMap ~= map then
+                    setStatus("Auto Farm: waiting for the round teleport")
+                    return
+                end
                 local inActiveRound: boolean = map ~= nil and isCharacterInActiveRound(root, map)
                 if not inActiveRound then
                     if wasInActiveRound or engaged or hiddenUnderMap then
@@ -1989,7 +2082,7 @@ function Module.init(_runtime: any): any
         -- character is put back where the farm first grabbed it.
         featureConnections.MM2AutoFarmRestore = {
             Disconnect = function(): ()
-                destroySafeZonePlatform()
+                if leaveSafeZone then leaveSafeZone(false) end
                 restoreCharacter(true)
             end,
         }
@@ -2031,7 +2124,8 @@ function Module.init(_runtime: any): any
     addToggleOption(AutoFarmFeature, "Safe Zone", true,
         function(value: boolean): ()
             settings.safeZone = value == true
-        end, "When you reach 50 coins, teleports you to a platform in the void so the Murderer cannot reach or kill you.")
+            if not settings.safeZone and leaveSafeZone then leaveSafeZone(true) end
+        end, "After 50 coins, use a safe platform. Turning this option or Auto Farm off returns the same character to the current map.")
     addToggleOption(AutoFarmFeature, "Reset When Full Coin Bag", true,
         function(value: boolean): ()
             settings.resetOnFull = value
@@ -2054,7 +2148,7 @@ function Module.init(_runtime: any): any
         end, "As Murderer, when the bag fills: pull everyone in front of you and slash (YARHM Kill All).")
     addInformationOption(
         AutoFarmFeature,
-        "The body moves at full Farm Speed to the nearest coin, touches it and moves on to the next one the same frame it is collected (a coin that does not pay is retried later, never waited on). Below (Hitbox) skims under the floor with the root hitbox grown so coins pay from underneath; Walk does it on the ground. If Below ever kicks you for Invalid position, lower Farm Speed. Turning it off restores collisions, hitbox and WalkSpeed and returns you where you started."
+        "The body moves at full Farm Speed to the nearest coin, touches it and moves on to the next one the same frame it is collected (a coin that does not pay is retried later, never waited on). Below (Hitbox) skims under the floor with the root hitbox grown so coins pay from underneath; Walk does it on the ground. If Below ever kicks you for Invalid position, lower Farm Speed. Turning it off restores collisions, hitbox and WalkSpeed; from Safe Zone it returns you to the current map."
     )
 
     activeCleanup = function(): ()

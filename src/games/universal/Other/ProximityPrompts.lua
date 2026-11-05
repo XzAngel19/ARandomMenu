@@ -5,7 +5,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "InteractExtender",
+    Name = "ProximityPrompts",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -178,7 +178,7 @@ function Module.init(context: Runtime): any
                         refreshInteractionExtender()
                     end
                 end
-            , nil, "Interact Extender")
+            , nil, "Proximity Prompts")
             -- First activation (card or row): pick up what already exists.
             startScan()
         else
@@ -230,11 +230,11 @@ function Module.init(context: Runtime): any
     end
 
     InteractFeature = createUniversalFeature(
-        "Interact Extender",
+        "Proximity Prompts",
         "Extend prompt and click interaction range without auto-firing",
         24,
         toggleInteractionExtender,
-        {categoryName = "Exploits"}
+        {categoryName = "Exploits", configKey = "Universal.InteractExtender"}
     )
     addNumberOption(
         InteractFeature,

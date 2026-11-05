@@ -161,8 +161,17 @@ local function signal()
     return self
 end
 
-local Instance = {new = function(class) return {ClassName = class, Parent = nil,
-    Destroy = function(self) self.Parent = nil end} end}
+local createdParts = {}
+local Instance = {new = function(class)
+    local props={ClassName=class, Parent=nil}
+    local object=setmetatable({}, {__index=props, __newindex=function(_, key, value)
+        props[key]=value
+        if key=='CFrame' and value then props.Position=value.Position end
+    end})
+    props.Destroy=function(self) self.Parent=nil;props.destroyed=true end
+    table.insert(createdParts,object)
+    return object
+end}
 
 -- The local body ----------------------------------------------------------
 local rootProps = {Position = Vector3.new(0, 12, 0), Size = Vector3.new(2, 2, 1),
@@ -458,6 +467,8 @@ end
 SCRIPT = PRELUDE + "\nlocal Module = (function()\n" + SOURCE + "\nend)()\n" + r'''
 Module.init(nil)
 assert(feature.onToggle, "Auto Farm must build its card")
+-- Prior movement/transition suites do not exercise the optional safe platform.
+optionCallbacks["Safe Zone"](false)
 local function setMode(value) optionCallbacks["Farm Mode"](value) end
 local function setSpeed(value) optionCallbacks["Farm Speed"](value) end
 
@@ -1248,6 +1259,91 @@ assert(rootProps.Position.Z > 5, "farm resumes after transient failures")
 feature.onToggle(false)
 assert(workspace.DescendantAdded.count() == 0, "pickup listener disconnects on OFF")
 pass("transient tick failures recover without removing the farm task")
+
+-- v185: after full-bag parking, both controls return only the same body to
+-- the still-active map. Reset/fling/grab are disabled to isolate OFF behavior.
+feature.onToggle(false);resetBody();table.clear(coins);activeMap=mapModel
+localRole='Innocent';lifecycleActive=true;asyncMode=false;autoCollect=false;flingCalls=0
+setMode('Walk');optionCallbacks["Stay Under When Round starts"](false)
+optionCallbacks["Reset When Full Coin Bag"](false)
+optionCallbacks["Fling Murder after full bag"](false)
+optionCallbacks["Fling Sheriff after full bag"](false)
+optionCallbacks["Auto Grab gun and Shoot"](false)
+optionCallbacks["Auto Kill All When full coin bag"](false)
+local function parkForSafeZone()
+    optionCallbacks["Safe Zone"](true)
+    table.clear(coins);makeCoin(Vector3.new(40,10,0))
+    feature.onToggle(true);frames(20)
+    assert(coinCollectedSignal.count()==1,'coin listener must be installed')
+    coinCollectedSignal:Fire(nil,50,50);frames(1)
+    assert(rootProps.Position.X>600 and rootProps.Position.Y>=380,
+        "full bag must actually place the body on the Safe Zone: " .. tostring(rootProps.Position.X) .. "," .. tostring(rootProps.Position.Y) .. "; " .. tostring(feature.status) .. "; parts=" .. tostring(#createdParts))
+    local pad=createdParts[#createdParts]
+    assert(pad and pad.Name=='Wurst_AutoFarmSafeZone' and pad.Parent,
+        'safe platform must exist before returning')
+    return pad
+end
+local pad=parkForSafeZone()
+feature.onToggle(false)
+assert(math.abs(rootProps.Position.X)<10 and rootProps.Position.Y<30,
+    'Auto Farm OFF returns the parked body to the map')
+assert(pad.Parent==nil and rootProps.AssemblyLinearVelocity.Magnitude==0,
+    'successful return removes the platform and stops residual velocity')
+assert(humanoid.Health==100 and flingCalls==0, 'OFF cannot reset or initiate a fling')
+pass('Auto Farm OFF returns from Safe Zone and does no other action')
+resetBody();pad=parkForSafeZone()
+optionCallbacks["Safe Zone"](false)
+assert(math.abs(rootProps.Position.X)<10 and rootProps.Position.Y<30 and pad.Parent==nil,
+    'Safe Zone OFF returns to map without switching off Auto Farm')
+local returnedX=rootProps.Position.X
+frames(2)
+assert(math.abs(rootProps.Position.X-returnedX)<1,'full bag must not send the body back to Safe Zone')
+feature.onToggle(false)
+pass('Safe Zone OFF returns to map while Auto Farm stays enabled')
+resetBody();pad=parkForSafeZone()
+activeMap=nil
+local before=rootProps.Position
+feature.onToggle(false)
+assert(rootProps.Position==before and pad.Parent~=nil,
+    'if the old map vanished, do not teleport to it or remove the only floor')
+rootProps.Position=Vector3.new(1000,12,0) -- game moves the body elsewhere
+optionCallbacks["Safe Zone"](false)
+assert(rootProps.Position.X==1000 and pad.Parent==nil,
+    'a server teleport is not overwritten and stale platform is cleaned up')
+activeMap=mapModel
+pass('missing map preserves platform, stale return never pulls a teleported body')
+
+-- If the map is temporarily unavailable, OFF/ON must not leave a permanently
+-- enabled but workerless card. The actual retry starts a new farm generation.
+feature.onToggle(false);resetBody();pad=parkForSafeZone();activeMap=nil
+feature.onToggle(false);feature.onToggle(true)
+assert(featureConnections.MM2AutoFarmSafeZoneRetry and not featureConnections.MM2AutoFarmTick,
+    'ON while stranded installs only the safe retry, not the farm worker')
+local parked=rootProps.Position
+for _=1,90 do stepFrame();rootProps.Position=parked;rootProps.AssemblyLinearVelocity=Vector3.zero end
+assert(pad.Parent~=nil,'waiting preserves the floor')
+activeMap=mapModel
+for _=1,90 do
+ stepFrame()
+ if pad.Parent then rootProps.Position=parked;rootProps.AssemblyLinearVelocity=Vector3.zero end
+end
+assert(pad.Parent==nil and rootProps.Position.X<100 and featureConnections.MM2AutoFarmTick
+ and not featureConnections.MM2AutoFarmSafeZoneRetry,
+ 'map recovery returns safely and restarts the ON farm automatically')
+feature.onToggle(false)
+pass('ON while stranded retries safely and restarts when the map returns')
+
+-- Safe Zone OFF without turning off the farm also retries when the same map
+-- returns, without resetting or flinging the character.
+resetBody();activeMap=mapModel;pad=parkForSafeZone();activeMap=nil
+optionCallbacks["Safe Zone"](false);parked=rootProps.Position
+for _=1,15 do stepFrame();rootProps.Position=parked;rootProps.AssemblyLinearVelocity=Vector3.zero end
+assert(pad.Parent~=nil,'unavailable map keeps its safe platform')
+activeMap=mapModel;frames(2)
+assert(pad.Parent==nil and rootProps.Position.X<100 and humanoid.Health==100 and flingCalls==0,
+ 'Safe Zone OFF automatically exits once the original map is available')
+feature.onToggle(false)
+pass('Safe Zone OFF retries a temporarily unavailable map')
 
 print("PASS " .. passed .. " Auto Farm motion suites")
 '''

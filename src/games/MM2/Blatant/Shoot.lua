@@ -212,6 +212,8 @@ function Module.init(runtime: any): any
         -- Native PC hook: construct the same shot but let the original
         -- FireServer send it once instead of sending a second packet.
         redirect: ((CFrame, CFrame) -> ())?,
+        nativeRedirect: boolean?,
+        nativeOrigin: CFrame?,
     }
 
     -- Experimental policy, not a measured hit-rate optimization: prefer the
@@ -363,6 +365,10 @@ function Module.init(runtime: any): any
         end
         local quiet: boolean = opts.quiet == true
         local continuous: boolean = opts.continuous == true
+        -- An intercepted native FireServer is already being sent by the game.
+        -- Rechecking a Tool that the native script just put on cooldown can
+        -- only suppress the redirect, not prevent an extra shot.
+        local nativeRedirect: boolean = opts.nativeRedirect == true and type(opts.redirect) == "function"
         local useRaw: boolean = mm2Settings.shootRaw
             or (continuous and silent)
         local useWallCheck: boolean = if opts.wallCheck ~= nil
@@ -387,13 +393,17 @@ function Module.init(runtime: any): any
         if not gun or gun.Parent ~= character then
             return reject("Equip the sheriff gun yourself to shoot.")
         end
-        if gun.Enabled == false or gun:GetAttribute("Disabled") == true
-            or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
+        if not nativeRedirect and (gun.Enabled == false or gun:GetAttribute("Disabled") == true
+            or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true) then
             return reject("The gun is disabled or reloading.")
         end
 
         local remote: Instance? = gun and gun:FindFirstChild("Shoot")
-        local origin: CFrame? = getGunOriginCFrame(character, gun)
+        local okOrigin: boolean, foundOrigin: any = pcall(getGunOriginCFrame, character, gun)
+        local origin: CFrame? = okOrigin and foundOrigin or nil
+        if not origin and nativeRedirect and typeof(opts.nativeOrigin) == "CFrame" then
+            origin = opts.nativeOrigin
+        end
 
         -- v160: the two cheap gates move ABOVE the aim solve. Auto Shoot runs
         -- this function every frame; during the 1.5 s confirmation window it
@@ -402,7 +412,7 @@ function Module.init(runtime: any): any
         -- instant unchanged (the gate is time based) and makes an Auto Shoot
         -- that is holding fire cost almost nothing per frame.
         local pendingShot: any = state.mm2ShotFeedback.pending
-        if not continuous
+        if not continuous and not nativeRedirect
             and type(pendingShot) == "table"
             and type(pendingShot.queuedAt) == "number"
             and os.clock() - pendingShot.queuedAt < SHOT_CONFIRM_WINDOW then
@@ -412,6 +422,10 @@ function Module.init(runtime: any): any
                 "Shot gate: waiting for the previous shot (%.1f s left).",
                 remaining))
         end
+        -- Do not overwrite the feedback record for an earlier shot just to
+        -- redirect a second click; telemetry is optional and cannot gate it.
+        local trackFeedback: boolean = not continuous
+            and not (nativeRedirect and type(pendingShot) == "table")
         if not remote or not remote:IsA("RemoteEvent") or not origin then
             return reject(not origin and "The gun has no usable origin."
                 or "The murderer is unavailable or obstructed.")
@@ -437,7 +451,7 @@ function Module.init(runtime: any): any
         -- samples yet on the first frame, fall back immediately to the
         -- target's current root position (+ short velocity lead) so the shot
         -- fires without waiting even a single second.
-        if (useRaw or continuous) and not info and target.Character then
+        if (useRaw or continuous or nativeRedirect) and not info and target.Character then
             local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
                 local vel: Vector3 = Vector3.zero
@@ -531,8 +545,9 @@ function Module.init(runtime: any): any
             shotEnd: CFrame,
             muzzle: CFrame?
         ): boolean
-            if gun.Parent ~= character or gun.Enabled == false or gun:GetAttribute("Disabled") == true
-                or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then
+            if gun.Parent ~= character or (not nativeRedirect and (gun.Enabled == false
+                or gun:GetAttribute("Disabled") == true or gun:GetAttribute("Reloading") == true
+                or gun:GetAttribute("IsReloading") == true)) then
                 return reject("The gun is disabled or reloading.")
             end
             -- v139.4: "raw" means "do not wait for the near-target origin
@@ -652,8 +667,8 @@ function Module.init(runtime: any): any
                 sweep = 0
             end
             if not safeToSend(shotOrigin,shotEnd,origin) then return false end
-            if not continuous then
-                state.mm2ShotFeedback.queue(target, gun, shotOrigin, shotEnd)
+            if trackFeedback then
+                pcall(state.mm2ShotFeedback.queue, target, gun, shotOrigin, shotEnd)
             end
 
             state.lastSilentShotInfo = {
@@ -667,34 +682,45 @@ function Module.init(runtime: any): any
                 remote:FireServer(shotOrigin, shotEnd)
             end
 
-            pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-                kind = "gun",
-                tool = gun,
-                toolName = gun and gun.Name or "Gun",
-                originPos = shotOrigin.Position,
-                aimPos = shotEnd.Position,
-                target = target,
-                silent = true,
-                variant = variant,
-                offset = offset,
-                settings = {mode = "Silent", spawn = variant,
-                    sweep = sweep, wallCheck = useWallCheck,
-                    leadSeconds = info.leadSeconds, motionSource = info.motionSource,
-                    model = info.model,
-                    sampleAge = info.sampleAge, samples = info.samples,
-                    referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
-                    predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
-                    sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                    rtt = info.rtt, echoDelay = info.echoDelay,
-                    rttEngine = info.rttEngine, rttData = info.rttData,
-                    occluder = lastGunOccluder,
-                    echoSamples = info.echoSamples,
-                    turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                    leadCorrection = info.leadCorrection,
-                    leadCorrectionTarget = info.leadCorrectionTarget,
-                    leadSamples = info.leadSamples, aimMode = info.aimMode,
-                    ghostAvoided = info.ghostAvoided},
-            })
+            local function recordSilent(): ()
+                pcall(function(): ()
+                    if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot) ~= "function" then return end
+                    trajectoryCalibration:noteAuthoredShot({
+                        kind = "gun",
+                        source = nativeRedirect and "native-redirect" or "menu",
+                        tool = gun,
+                        toolName = gun and gun.Name or "Gun",
+                        originPos = shotOrigin.Position,
+                        aimPos = shotEnd.Position,
+                        target = target,
+                        silent = true,
+                        variant = variant,
+                        offset = offset,
+                        settings = {mode = "Silent", spawn = variant,
+                            sweep = sweep, wallCheck = useWallCheck,
+                            leadSeconds = info.leadSeconds, motionSource = info.motionSource,
+                            model = info.model,
+                            sampleAge = info.sampleAge, samples = info.samples,
+                            referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
+                            predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
+                            sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
+                            rtt = info.rtt, echoDelay = info.echoDelay,
+                            rttEngine = info.rttEngine, rttData = info.rttData,
+                            occluder = lastGunOccluder,
+                            echoSamples = info.echoSamples,
+                            turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                            leadCorrection = info.leadCorrection,
+                            leadCorrectionTarget = info.leadCorrectionTarget,
+                            leadSamples = info.leadSamples, aimMode = info.aimMode,
+                            ghostAvoided = info.ghostAvoided},
+                    })
+                end)
+            end
+            if nativeRedirect and task and type(task.defer) == "function" then
+                task.defer(recordSilent)
+            else
+                recordSilent()
+            end
             if not quiet and ShootFeature then
                 ShootFeature:SetStatus(experimental and "Experimental · CFrame · request sent" or nil)
             end
@@ -706,8 +732,8 @@ function Module.init(runtime: any): any
 
         local shotEndCFrame: CFrame = CFrame.new(info.endpoint)
         if not safeToSend(origin, shotEndCFrame) then return false end
-        if not continuous then
-            state.mm2ShotFeedback.queue(target, gun, origin, shotEndCFrame)
+        if trackFeedback then
+            pcall(state.mm2ShotFeedback.queue, target, gun, origin, shotEndCFrame)
         end
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
@@ -718,31 +744,42 @@ function Module.init(runtime: any): any
         else
             remote:FireServer(shotOriginCFrame, shotEndCFrame)
         end
-        pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
-            kind = "gun",
-            tool = gun,
-            toolName = gun and gun.Name or "Gun",
-            originPos = origin.Position,
-            aimPos = info.endpoint,
-            target = target,
-            silent = false,
-            settings = {mode = "Normal", wallCheck = useWallCheck,
-                leadSeconds = info.leadSeconds, motionSource = info.motionSource,
-                model = info.model,
-                sampleAge = info.sampleAge, samples = info.samples,
-                referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
-                predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
-                sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
-                rtt = info.rtt, echoDelay = info.echoDelay,
-                rttEngine = info.rttEngine, rttData = info.rttData,
-                occluder = lastGunOccluder,
-                echoSamples = info.echoSamples,
-                turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
-                leadCorrection = info.leadCorrection,
-                leadCorrectionTarget = info.leadCorrectionTarget,
-                leadSamples = info.leadSamples, aimMode = info.aimMode,
-                ghostAvoided = info.ghostAvoided},
-        })
+        local function recordBullet(): ()
+            pcall(function(): ()
+                if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot) ~= "function" then return end
+                trajectoryCalibration:noteAuthoredShot({
+                    kind = "gun",
+                    source = nativeRedirect and "native-redirect" or "menu",
+                    tool = gun,
+                    toolName = gun and gun.Name or "Gun",
+                    originPos = origin.Position,
+                    aimPos = info.endpoint,
+                    target = target,
+                    silent = false,
+                    settings = {mode = "Normal", wallCheck = useWallCheck,
+                        leadSeconds = info.leadSeconds, motionSource = info.motionSource,
+                        model = info.model,
+                        sampleAge = info.sampleAge, samples = info.samples,
+                        referencePoint = info.capturedPosition and {info.capturedPosition.X, info.capturedPosition.Y, info.capturedPosition.Z},
+                        predictedPoint = {info.endpoint.X, info.endpoint.Y, info.endpoint.Z},
+                        sampledVelocity = {info.velocity.X, info.velocity.Y, info.velocity.Z},
+                        rtt = info.rtt, echoDelay = info.echoDelay,
+                        rttEngine = info.rttEngine, rttData = info.rttData,
+                        occluder = lastGunOccluder,
+                        echoSamples = info.echoSamples,
+                        turnRate = info.turnRate, brakeSeconds = info.brakeSeconds,
+                        leadCorrection = info.leadCorrection,
+                        leadCorrectionTarget = info.leadCorrectionTarget,
+                        leadSamples = info.leadSamples, aimMode = info.aimMode,
+                        ghostAvoided = info.ghostAvoided},
+                })
+            end)
+        end
+        if nativeRedirect and task and type(task.defer) == "function" then
+            task.defer(recordBullet)
+        else
+            recordBullet()
+        end
         if not quiet and ShootFeature then
             ShootFeature:SetStatus(experimental and "Experimental · Bullet · request sent" or nil)
         end
@@ -760,13 +797,22 @@ function Module.init(runtime: any): any
     local transientShotGeneration: number = 0
     local updateAutoShootConnection: (() -> ())? = nil
 
+    local observerGeneration: number = 0
     local function refreshShootInfrastructure(): ()
+        observerGeneration += 1
+        local generation: number = observerGeneration
         local wantActive: boolean = shootFeatureActive or autoShootActive or transientShotActive
         state.mm2ShotFeedback.shootActive = wantActive
         if wantActive then
-            local weaponService: any = getWeaponServiceModule()
-            if type(weaponService) == "table" then
-                connectGunFiredSignal(weaponService)
+            local function observe(): ()
+                local weaponService: any = getWeaponServiceModule()
+                if generation ~= observerGeneration or not state.mm2ShotFeedback.shootActive then return end
+                if type(weaponService) == "table" then connectGunFiredSignal(weaponService) end
+            end
+            if state.isMobile then
+                observe() -- preserve the mobile path
+            else
+                task.spawn(observe) -- never delay PC click redirection for an observer
             end
             return
         end
@@ -805,27 +851,44 @@ function Module.init(runtime: any): any
                 return predecessor(remote, ...)
             end
             local character: Model? = LocalPlayer and LocalPlayer.Character
-            local gun: Tool? = character and getPlayerWeapon(LocalPlayer, "Gun", true) or nil
-            if not gun or gun.Parent ~= character or remote ~= gun:FindFirstChild("Shoot") then
+            local okGun: boolean, foundGun: any = pcall(getPlayerWeapon, LocalPlayer, "Gun", true)
+            local gun: Tool? = if okGun then foundGun else nil
+            if not character or not gun or gun.Parent ~= character then
                 return predecessor(remote, ...)
             end
+            local okRemote: boolean, shootRemote: any = pcall(function(): any
+                return gun:FindFirstChild("Shoot")
+            end)
+            if not okRemote or remote ~= shootRemote then return predecessor(remote, ...) end
             local arguments: any = table.pack(...)
             if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
                 return predecessor(remote, ...)
             end
             local shotOrigin: CFrame? = nil
             local shotEnd: CFrame? = nil
-            local ok: boolean, redirected: any = pcall(function(): boolean
+            local ok: boolean = pcall(function(): boolean
+                lastRejectReason = ""
                 return fireGunAtTarget(getSelectedShootTarget(), {
                     quiet = true,
+                    nativeRedirect = true,
+                    nativeOrigin = arguments[1],
                     redirect = function(origin: CFrame, endpoint: CFrame): ()
                         shotOrigin, shotEnd = origin, endpoint
                     end,
                 })
             end)
-            if ok and redirected and shotOrigin and shotEnd then
+            if shotOrigin and shotEnd then
                 arguments[1], arguments[2] = shotOrigin, shotEnd
+                if ShootFeature then
+                    pcall(function(): () ShootFeature:SetStatus("Native click redirected") end)
+                end
                 return predecessor(remote, table.unpack(arguments, 1, arguments.n))
+            end
+            if ShootFeature then
+                pcall(function(): ()
+                    ShootFeature:SetStatus(if not ok then "Native redirect failed; original click kept"
+                        else (lastRejectReason ~= "" and lastRejectReason or "Native click unchanged"))
+                end)
             end
             -- No target, blocked line, unsupported geometry or an error: keep
             -- the native click intact instead of blocking it or firing twice.
@@ -902,7 +965,6 @@ function Module.init(runtime: any): any
         state.mm2SilentAimEnabled = enabled
         if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         autoShootActive = shootFeatureActive and autoShootWanted
-        refreshShootInfrastructure()
         if enabled and not state.isMobile then
             if not installNativeGunHook() then
                 notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
@@ -910,6 +972,7 @@ function Module.init(runtime: any): any
         elseif not enabled then
             uninstallNativeGunHook()
         end
+        refreshShootInfrastructure()
         if updateAutoShootConnection then updateAutoShootConnection() end
     end
 

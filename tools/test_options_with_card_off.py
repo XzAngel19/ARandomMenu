@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sub-options must be switchable while their card is OFF.
 
-The user reported that options such as Interact Extender's fast prompt or
+The user reported that options such as Proximity Prompts' instant prompt or
 Speed's Sprint could look impossible to change with the card disabled. This
 boots the real bundle and, for every disabled card, flips every visible toggle
 option in both directions, asserting that the checkbox, the stored config value

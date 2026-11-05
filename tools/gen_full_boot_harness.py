@@ -986,8 +986,8 @@ do
     assert(ex.state.moduleSearch.Resolve("Aim Assist").entry.displayName == "Aimbot", "old Aimbot search alias must work")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Interact Extender", "Fling", "Walk Fling"},
-      Utilities = {"Auto Shoot", "Anti Void", "Teleport", "Motion Lock", "Ghost", "Anti Fling"},
+      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Proximity Prompts", "Walk Fling"},
+      Utilities = {"Auto Shoot", "Teleport", "Motion Lock", "Ghost", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -1110,44 +1110,22 @@ do
       assert(autoShoot.categoryName == "Utilities", "Auto Shoot must be in Utilities")
     end
     assert(not findFeature("Time Changer"))
-    -- v138.2: Anti Fling is its own card and Anti Void is the invisible platform,
-    -- so neither the old fold-in nor the old "Anti fling" sub-option may return.
-    assert(not findFeature("Anti Void").options:FindFirstChild("Option_Antifling"))
-    local fling = findFeature("Fling")
-    assert(fling and fling.configKey == "Universal.Fling", "Fling is a universal card since v138.3")
-    assert(fling.categoryName == "Exploits", "Fling must stay in Exploits")
-    assert(fling.options:FindFirstChild("Option_Targetplayer"), "Target player is the only target input")
-    assert(fling.options:FindFirstChild("Option_Fling"))
-    -- v180: the user asked for more force, so Fling gets a bounded Power
-    -- slider (1..12) and a Retries row. Duration and Prediction stay removed.
-    assert(fling.options:FindFirstChild("Option_Power"), "Fling must expose the v180 Power slider")
-    assert(fling.options:FindFirstChild("Option_Retries"), "Fling must expose the retry budget")
-    for _, label in ipairs({"Duration", "Prediction"}) do
-      assert(not fling.options:FindFirstChild("Option_" .. label), "Fling slider must be removed: " .. label)
-    end
-    assert(fling.options:FindFirstChild("Option_Retries"), "unrelated retry option must remain")
-    for _, label in ipairs({"FlingMurderer", "FlingSheriff", "FlingAllInnocents"}) do
-      assert(fling.options:FindFirstChild("Option_" .. label), "Fling action must remain: " .. label)
-    end
-    assert(not fling.options:FindFirstChild("Option_SelectTarget"), "the Select Target dropdown is gone")
-    -- Auto Win and Auto Farm still drive flings through these exports; the card
-    -- moved to Universal, so they must be published from there.
-    assert(type(ex.state.mm2PerformFling) == "function", "mm2PerformFling must exist after boot")
-    assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
+    -- v185 removes only the universal cards; MM2 retains its internal
+    -- engine for Auto Farm/Auto Win and Walk Fling stays universal.
+    assert(not findFeature("Fling") and not findFeature("Swim Walk") and not findFeature("Anti Void"),
+      "removed universal cards must not return in MM2")
+    assert(type(ex.state.mm2PerformFling) == "function", "MM2 Farm/Win fling export missing")
+    assert(type(ex.state.mm2FlingStep) == "function", "MM2 per-frame fling export missing")
     local walkFling = findFeature("Walk Fling")
-    assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
-    assert(not walkFling.options:FindFirstChild("Option_Power"), "Walk Fling uses fixed high power")
-    assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
-    assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
-    -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.
-    do
-      local antiFling = findFeature("Anti Fling")
-      assert(antiFling, "Anti Fling must exist")
-      assert(antiFling.hasOptions() == false,
-        "Anti Fling must not expose any option row")
-      assert(antiFling.options:FindFirstChild("Option_Sensitivity") == nil,
-        "the Sensitivity row must be gone")
-    end
+    assert(walkFling and walkFling.categoryName == "Exploits" and not walkFling.options:FindFirstChild("Option_Power"))
+    local prompt = findFeature("Proximity Prompts")
+    assert(prompt and prompt.configKey == "Universal.InteractExtender" and prompt.options:FindFirstChild("Option_Clickdetectors"),
+      "renamed prompts preserve old config and Click detectors")
+    local jump = ex.state.framework:GetModule("Infinite Jump")
+    assert(jump and jump.Options.Mode, "Infinite Jump exposes the Normal/Rise mode")
+    local antiFling = findFeature("Anti Fling")
+    assert(antiFling and antiFling.options:FindFirstChild("Option_PlayerShield")
+      and antiFling.options:FindFirstChild("Option_ImpactShield"), "Collision Shield options missing")
     local fullbright=ex.state.framework:GetModule("Fullbright")
     assert(fullbright.Options["Time Changer"] and not fullbright.Options.Time.Visible)
     fullbright.Options["Time Changer"].Metadata.callback(true);assert(fullbright.Options.Time.Visible)

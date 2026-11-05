@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Run Interact Extender lifecycle, settings and interrupted scans in mocked Roblox."""
+"""Run Proximity Prompts lifecycle, settings and interrupted scans in mocked Roblox."""
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "src/games/universal/Other/InteractExtender.lua").read_text()
+SOURCE = (ROOT / "src/games/universal/Other/ProximityPrompts.lua").read_text()
 
 script = r'''
 local function signal()
@@ -112,7 +112,7 @@ assert(workspace.objects[241].MaxActivationDistance==80, "current scan reaches t
 Module.destroy()
 assert(not tick and workspace.DescendantAdded:Count()==0 and workspace.objects[241].MaxActivationDistance==8,
     "unload restores the latest scan")
-print("PASS Interact Extender: per-type settings, dynamic objects, refresh, scan cancellation and cleanup")
+print("PASS Proximity Prompts: per-type settings, dynamic objects, refresh, scan cancellation and cleanup")
 '''
 
 with tempfile.TemporaryDirectory(prefix="interact-") as tmp:

@@ -26,6 +26,13 @@ function Module.init(context: Runtime): any
     local lastBoostAt: number = -math.huge
     local pressHeld: boolean = false
     local jumpTouch: any = nil
+    local heldKey: any = nil
+    local infiniteJump: any
+
+    local function mode(): string
+        local option: any = infiniteJump and infiniteJump.Options and infiniteJump.Options.Mode
+        return option and option.Value == "Rise" and "Rise" or "Normal"
+    end
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
         local character: Model? = LocalPlayer and LocalPlayer.Character
@@ -51,23 +58,23 @@ function Module.init(context: Runtime): any
             and currentState ~= Enum.HumanoidStateType.Dead
     end
 
-    local infiniteJump: any
     infiniteJump = framework.Categories.Exploits:CreateModule({
         Name = "Infinite Jump",
         Category = "Exploits",
         ConfigKey = "Universal.InfiniteJump",
         Order = 10,
-        Tooltip = "Jump repeatedly in mid-air on both PC (Spacebar) and Mobile (Touch Jump button).",
+        Tooltip = "Normal adds one jump per press; Rise ascends while the jump key or mobile jump button is held.",
         Function = function(enabled: boolean): ()
             lastBoostAt = -math.huge
             pressHeld = false
             jumpTouch = nil
+            heldKey = nil
             if not enabled then
                 infiniteJump:SetStatus(nil)
                 return
             end
 
-            infiniteJump:SetStatus("Active")
+            infiniteJump:SetStatus(mode())
 
             local function executeAirJump(): ()
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
@@ -98,6 +105,8 @@ function Module.init(context: Runtime): any
             end
 
             local function onJumpRequested(): ()
+                if UserInputService and type(UserInputService.GetFocusedTextBox) == "function"
+                    and UserInputService:GetFocusedTextBox() then return end
                 if pressHeld then
                     return
                 end
@@ -143,7 +152,10 @@ function Module.init(context: Runtime): any
             if UserInputService and UserInputService.InputBegan then
                 infiniteJump:Clean(UserInputService.InputBegan:Connect(function(input: any, gameProcessed: boolean): ()
                     if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA then
-                        if not gameProcessed then
+                        local typing: boolean = type(UserInputService.GetFocusedTextBox) == "function"
+                            and UserInputService:GetFocusedTextBox() ~= nil
+                        if not gameProcessed and not typing then
+                            heldKey = input.KeyCode
                             onJumpRequested()
                         end
                     elseif input.UserInputType == Enum.UserInputType.Touch then
@@ -169,10 +181,13 @@ function Module.init(context: Runtime): any
 
             if UserInputService and UserInputService.InputEnded then
                 infiniteJump:Clean(UserInputService.InputEnded:Connect(function(event: any): ()
-                    if event.KeyCode == Enum.KeyCode.Space
-                        or event.KeyCode == Enum.KeyCode.ButtonA
-                        or (event.UserInputType == Enum.UserInputType.Touch
-                            and (not jumpTouch or event == jumpTouch)) then
+                    if (event.KeyCode == Enum.KeyCode.Space or event.KeyCode == Enum.KeyCode.ButtonA)
+                        and (heldKey == nil or heldKey == event.KeyCode) then
+                        pressHeld = false
+                        heldKey = nil
+                        jumpTouch = nil
+                    elseif event.UserInputType == Enum.UserInputType.Touch
+                        and not heldKey and (not jumpTouch or event == jumpTouch) then
                         pressHeld = false
                         jumpTouch = nil
                     end
@@ -183,6 +198,14 @@ function Module.init(context: Runtime): any
                 infiniteJump:Clean(UserInputService.WindowFocusReleased:Connect(function(): ()
                     pressHeld = false
                     jumpTouch = nil
+                    heldKey = nil
+                end))
+            end
+            if UserInputService and UserInputService.TextBoxFocused then
+                infiniteJump:Clean(UserInputService.TextBoxFocused:Connect(function(): ()
+                    pressHeld = false
+                    jumpTouch = nil
+                    heldKey = nil
                 end))
             end
 
@@ -195,13 +218,39 @@ function Module.init(context: Runtime): any
                     local power: number = infiniteJump.Options["Jump Power"]
                         and infiniteJump.Options["Jump Power"].Value
                         or 50
-                    if power < 0 and humanoid:GetState() == Enum.HumanoidStateType.Jumping then
+                    local typing: boolean = type(UserInputService.GetFocusedTextBox) == "function"
+                        and UserInputService:GetFocusedTextBox() ~= nil
+                    if typing then
+                        pressHeld = false
+                        jumpTouch = nil
+                        heldKey = nil
+                        return
+                    end
+                    if mode() == "Rise" and pressHeld and not root.Anchored and canBoostJump(humanoid) then
+                        -- A held jump is an ongoing vertical velocity, not a
+                        -- second auto-jump loop. Preserve horizontal motion.
+                        local vel: Vector3 = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(vel.X, power, vel.Z)
+                        if power < 0 and humanoid:GetState() == Enum.HumanoidStateType.Jumping then
+                            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+                        end
+                    elseif mode() == "Normal" and power < 0
+                        and humanoid:GetState() == Enum.HumanoidStateType.Jumping then
                         local vel: Vector3 = root.AssemblyLinearVelocity
                         root.AssemblyLinearVelocity = Vector3.new(vel.X, power, vel.Z)
                         humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
                     end
                 end))
             end
+        end,
+    })
+
+    infiniteJump:CreateDropdown({
+        Name = "Mode",
+        List = {"Normal", "Rise"},
+        Index = 1,
+        Function = function(value: string): ()
+            if infiniteJump.Enabled then infiniteJump:SetStatus(value) end
         end,
     })
 

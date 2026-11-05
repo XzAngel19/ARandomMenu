@@ -1860,6 +1860,7 @@ local function createTrajectoryCalibration(): any
     }
     type PendingGun = {
         shotId: string?,
+        source: string?,
         attemptCounted: boolean?,
         tool: Tool,
         activatedAt: number,
@@ -4353,6 +4354,7 @@ local function createTrajectoryCalibration(): any
                 runtime.sessionGunAttempts += 1
                 beginPendingShot("gun", {
                     shotId = shotId,
+                    source = "native-activation",
                     attemptCounted = true,
                     tool = tool,
                     activatedAt = now,
@@ -4788,7 +4790,25 @@ local function createTrajectoryCalibration(): any
 
             if isGun or authoredTool ~= nil then
                 if isGun then
-                    runtime.sessionGunAttempts += 1
+                    local countedActivation: boolean = false
+                    if info.source == "native-redirect" and authoredTool then
+                        -- Tool.Activated and the redirected native packet are
+                        -- two observations of one click. Keep both events but
+                        -- retire the tentative pending entry so its muzzle
+                        -- cannot steal the CFrame echo or double-count it.
+                        for index: number = #runtime.pendingGuns, 1, -1 do
+                            local pending: any = runtime.pendingGuns[index]
+                            local age: number = now - (pending.activatedAt or now)
+                            if pending.source == "native-activation" and pending.tool == authoredTool
+                                and not pending.confirmedAt and age >= 0 and age <= 0.3 then
+                                if pending.healthConnection then pending.healthConnection:Disconnect() end
+                                table.remove(runtime.pendingGuns, index)
+                                countedActivation = true
+                                break
+                            end
+                        end
+                    end
+                    if not countedActivation then runtime.sessionGunAttempts += 1 end
                 else
                     runtime.sessionKnifeAttempts += 1
                     if info.source == "native-throw-event" then

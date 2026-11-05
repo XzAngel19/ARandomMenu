@@ -147,6 +147,12 @@ pass('actual validateGunShot: game filter, transparent skip, walls, innocents, r
 code += r'''
 do
 local character,humanoid=own,{}
+local deferred={}
+local task={defer=function(fn) table.insert(deferred,fn) end}
+local function typeof(value)
+ if type(value)=='table' and value.Position then return 'CFrame' end
+ return type(value)
+end
 local endpoint=Vector3.new(20,0,0)
 local mm2Settings={silentAim=false,shootWallCheck=true,silentSpawn='Through',silentSweep=0}
 local remote={IsA=function() return true end}
@@ -239,8 +245,45 @@ state.mm2ShotFeedback.pending=nil
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==4,'v106: the gun is free again once the request resolves')
 gun.Enabled=false
-assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
+assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}), 'manual fire must still respect tool cooldown')
+-- Native script often disables/reloads the Tool before its existing FireServer.
+-- An earlier authored feedback record also cannot veto that existing packet.
+local pending={queuedAt=os.clock()};state.mm2ShotFeedback.pending=pending
+local queueBefore=queues;frames=nil
+assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,
+ nativeOrigin=CFrame.new(Vector3.zero),redirect=function(a,b) frames={a,b} end}))
+assert(frames and sends==4 and state.mm2ShotFeedback.pending==pending and queues==queueBefore,
+ 'native cooldown and a prior pending record cannot suppress or overwrite the click')
+state.mm2ShotFeedback.pending=nil
+-- Optional feedback and Calibration may fail: neither may invalidate already
+-- constructed frames. Telemetry is deferred until after the native callback.
+local originalQueue=state.mm2ShotFeedback.queue
+state.mm2ShotFeedback.queue=function() error('feedback unavailable') end
+trajectoryCalibration.noteAuthoredShot=function() error('calibration unavailable') end
+local beforeDeferred=#deferred;frames=nil
+assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,
+ redirect=function(a,b) frames={a,b} end}) and frames and sends==4)
+assert(#deferred==beforeDeferred+1,'native Calibration work is deferred')
+for _,job in ipairs(deferred) do job() end -- errors inside optional recorder are contained
+state.mm2ShotFeedback.queue=originalQueue
+trajectoryCalibration.noteAuthoredShot=function(_,info) notes+=1;lastAuthored=info end
+-- A fresh native click can use live body coordinates if the predictor has no
+-- history yet; it must still pass final validation. The actual native origin
+-- is a safe fallback if the muzzle attachment has not appeared.
+body.AssemblyLinearVelocity=Vector3.zero
+local getOrigin=getGunOriginCFrame;getGunOriginCFrame=function() return nil end
+prediction.gunAim=function() return nil,nil,'stale sample' end
+local nativeOrigin=CFrame.new(Vector3.new(0,0,-7));frames=nil
+assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,nativeOrigin=nativeOrigin,
+ redirect=function(a,b) frames={a,b} end}) and frames and sends==4)
+assert(seenMuzzle.Z==-7,'native packet origin is used only when muzzle is unavailable')
+safe=false;frames=nil
+assert(not fireGunAtTarget(target,{quiet=true,nativeRedirect=true,nativeOrigin=nativeOrigin,
+ redirect=function(a,b) frames={a,b} end}) and not frames,
+ 'native fallback does not bypass safety/WallCheck')
+safe=true;getGunOriginCFrame=getOrigin;prediction.gunAim=original
 gun.Enabled=true
+pass('native cooldown/pending isolation, deferred failing observers and validated first-sample fallback')
 nearPathClear=false
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==5 and lastAuthored.settings.spawn=='Muzzle'

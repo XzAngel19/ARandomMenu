@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v184-20261104-farm-teams-notifications`**.
+> **Estado actual:** build **`v185-20261105-collision-safety-pc`**.
 > Esta sesión trabaja exclusivamente en `arena/9492e6b6-arandommenu`; integró
 > v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -35,6 +35,37 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v185 — Collision Shield, Safe Zone y Gun PC (2026-11-05)
+
+Detalle y límites en `docs/FIXES-v185.md`. Esta petición sustituye las
+referencias históricas que siguen a continuación:
+
+- Fling, Swim Walk y Anti Void **universales** fuera; Walk Fling queda. El
+  motor SkidFling pasa a `MM2/Other/FlingEngine.lua` sin tarjeta, exporta las
+  funciones de Auto Farm/Auto Win y cancela una ejecución al destruirse. La
+  Anti Void específica de BedFight no se retiró.
+- Infinite Jump ofrece Normal y Rise (subida sostenida mientras se mantiene el
+  salto). Interact Extender se renombró Proximity Prompts sin perder Click
+  detectors ni `Universal.InteractExtender`.
+- Anti Fling se llama internamente Collision Shield: pares de no-colisión solo
+  locales, protección para jugadores y objetos de velocidad/giro extremo,
+  límites de escaneo y presupuesto, exclusión de suelos/vehículos/herramientas
+  ordinarias, pausa durante flings voluntarios y limpieza OFF/respawn. No es
+  una garantía de física del servidor ni de objetos aún no replicados.
+- En Safe Zone, Auto Farm OFF o Safe Zone OFF intenta devolver al mismo cuerpo al
+  mismo mapa sin activar otras acciones. Si falta el mapa conserva el soporte;
+  reintenta de forma segura y no arrastra un respawn o una teleportación del
+  servidor al mapa viejo. ON mientras espera vuelve a iniciar el worker al salir.
+- Gun PC redirige el paquete nativo ya existente sin vetarlo por cooldown de la
+  Tool o feedback anterior. El observador no bloquea la instalación, Calibration
+  se difiere y se aísla de errores, y un fallback de primera muestra sigue bajo
+  validación y WallCheck. Un solo paquete y cámara intacta; móvil no cambia.
+  Calibration no se identificó como causa del fallo y el contrato del script
+  nativo, Delta, física y daño del servidor siguen pendientes EN VIVO.
+- `bash tools/validate.sh`: 81 fuentes compiladas, 126 suites, bundle de 79,
+  boot `failures=0`, 46 tarjetas MM2 debug/release y siete perfiles de boot.
+  Las pruebas simuladas no sustituyen las pruebas reales Roblox/Delta.
 
 ## v184 — Auto Farm, Team Check, Kill Aura y Notifications (2026-11-04)
 
@@ -1977,6 +2008,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-04 · v184. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-05 · v185. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

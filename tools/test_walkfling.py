@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "src/games/universal/Blatant/WalkFling.lua").read_text()
-FLING = (ROOT / "src/games/universal/Blatant/Fling.lua").read_text()
+FLING = (ROOT / "src/games/MM2/Other/FlingEngine.lua").read_text()
 MANIFEST = (ROOT / "src/libraries/Manifest.lua").read_text()
 LOADER = (ROOT / "src/Wurst.lua").read_text()
 
