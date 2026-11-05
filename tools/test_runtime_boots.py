@@ -11,10 +11,10 @@ import audit_menu
 import build_bundle
 import gen_full_boot_harness as harness
 
-# v183 makes MM2 Calibration popup-only; all other place counts are unchanged.
+# v184 adds MM2 Notifications; Calibration stays popup-only and other places are unchanged.
 CASES = [
     ('Universal', 1, 36, None, None),
-    ('MM2', 142823291, 48, 'MM2', 'MM2.AutoFarm'),
+    ('MM2', 142823291, 49, 'MM2', 'MM2.AutoFarm'),
     ('BedFight', 71480482338212, 46, 'BedFight', 'BedFight.AutoSwing'),
     ('TRS', 14315258385, 47, 'TRS', 'TRS.AutoHeader'),
     ('VD', 93978595733734, 50, 'VD', 'VD.AutoGenerator'),

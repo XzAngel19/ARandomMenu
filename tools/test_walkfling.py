@@ -4,7 +4,7 @@
 The pulse was approved by the user; what is asserted here is the contract:
   - it never runs on injection (the persisted state is dropped),
   - OFF does nothing at all,
-  - ON produces the 10000x velocity spike and the noclip the card promises,
+  - ON produces the fixed 30000x velocity spike and the noclip the card promises,
   - OFF/destroy restore the original CanCollide and park the velocity,
   - Fling no longer owns a Touch Fling option (it moved here).
 """
@@ -136,9 +136,8 @@ Module.init(context)
 assert(configData.states["Universal.WalkFling"] == false,
     "a saved ON state must never start a fling on injection")
 assert(feature.name == "Walk Fling", "the card is Walk Fling")
--- v180: the force was too weak, so Walk Fling exposes a bounded Power
--- multiplier (1..3, default 1.5). 1x still reproduces the old behaviour.
-assert(options["Power"] ~= nil, "Walk Fling must expose the v180 Power row")
+-- A fixed high pulse replaces the Power row; stale settings cannot alter it.
+assert(options["Power"] == nil, "Walk Fling must not have a Power row")
 
 resetWrites()
 pump(15)
@@ -149,11 +148,11 @@ pass("Walk Fling is inert on injection and while OFF")
 
 feature.toggle(true)
 pump(12)
-assert(writes.maxSpeed >= 14000,
-    "the IY walkfling spike must run at 1.5x default power, got " .. tostring(writes.maxSpeed))
+assert(writes.maxSpeed >= 30000,
+    "the fixed IY pulse must use the previous maximum, got " .. tostring(writes.maxSpeed))
 assert(collisionFalse > 0, "the walkfling noclip must run while ON")
 assert(activity["walkfling"] == true, "the card marks its activity")
-pass("Walk Fling ON runs the 10000x pulse and the noclip")
+pass("Walk Fling ON runs the fixed 30000 pulse and the noclip")
 
 feature.toggle(false)
 pump(12)
@@ -165,6 +164,17 @@ pump(12)
 assert(writes.maxSpeed == 0, "no frame work after OFF")
 pass("Walk Fling OFF restores collisions and stops the loop")
 
+-- Destroying an already OFF module must not zero natural player motion.
+rootProps.Velocity=Vector3.new(3,4,5)
+rootProps.AssemblyLinearVelocity=Vector3.new(3,4,5)
+rootProps.AssemblyAngularVelocity=Vector3.new(1,2,3)
+resetWrites()
+Module.destroy()
+assert(rootProps.AssemblyLinearVelocity.X==3 and rootProps.AssemblyLinearVelocity.Y==4
+    and rootProps.AssemblyAngularVelocity.Z==3 and writes.maxSpeed==0 and writes.spins==0,
+    "destroy while OFF leaves linear and angular velocity untouched")
+pass("destroy while OFF preserves natural player velocity")
+Module.init(context)
 feature.toggle(true)
 pump(8)
 resetWrites()

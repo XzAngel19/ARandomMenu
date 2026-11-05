@@ -244,8 +244,228 @@ current,snapshot=events()
 assert(#current==2401 and #snapshot.session.archiveFiles==0,'resuming retains the unarchived batch')
 print('PASS calibration archive revoke: No during a write preserves data and prevents later writes')
 '''
+health = common + r'''
+assert(c:setConsent(true))
+heroHum.Health=50
+c:noteAuthoredShot({kind='knife',tool=knife,originPos=Vector3.new(1,2,3),
+ aimPos=Vector3.new(50,2,3),target=HarnessHeroGuy,source='healing-only'})
+local p=makeProjectile(true,96);projectileSignal:Fire(p)
+heroHum.HealthChanged:Fire(75)
+p.Destroying:Fire()
+heroHum.Health=50
+c:noteAuthoredShot({kind='knife',tool=knife,originPos=Vector3.new(1,2,3),
+ aimPos=Vector3.new(50,2,3),target=HarnessHeroGuy,source='healed-then-drop'})
+local p2=makeProjectile(true,96);projectileSignal:Fire(p2)
+heroHum.HealthChanged:Fire(100);heroHum.HealthChanged:Fire(75)
+p2.Destroying:Fire()
+assert(c:save('health'))
+local list=events();local only,drop
+for _,ev in ipairs(list) do
+ if ev.phase=='projectile-observed' and ev.source=='healing-only' then only=ev end
+ if ev.phase=='projectile-observed' and ev.source=='healed-then-drop' then drop=ev end
+end
+assert(only and only.targetHealthAtAim==50 and only.targetHealthLatest==75 and only.targetHealthAfter==nil,
+ 'a heal is captured as latest health, never as damage')
+assert(drop and drop.targetHealthAtAim==50 and drop.targetHealthLatest==75 and drop.targetHealthAfter==75,
+ 'a drop after a heal is recorded even when above initial health')
+print('PASS calibration health evidence: healing, later decrease and latest value are distinguished')
+'''
+serialization = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='before-write'})
+local originalWrite=writefile
+local intervened=false
+function writefile(path,content)
+ if path==TELEMETRY and not intervened then
+  intervened=true
+  c:noteAuthoredShot({kind='knife',source='during-snapshot-write'})
+  assert(not c:save('nested'), 'overlapping snapshot is coalesced, not written out of order')
+ end
+ return originalWrite(path,content)
+end
+assert(c:save('outer'))
+local list=events();local first,second=false,false
+for _,ev in ipairs(list) do
+ if ev.source=='before-write' then first=true end
+ if ev.source=='during-snapshot-write' then second=true end
+end
+assert(intervened and first and second, 'coalesced snapshot includes both revisions')
+print('PASS calibration serialization: overlapping snapshots cannot roll back newer events')
+'''
+observer_race = common + r'''
+local jobs={}
+local countRequire=0
+ex.state.requireModule=function(module)
+ assert(module==weaponModule)
+ countRequire+=1
+ if countRequire==1 then coroutine.yield() end
+ return weaponService
+end
+task.spawn=function(fn,...)
+ local thread=coroutine.create(fn);table.insert(jobs,thread)
+ local ok,err=coroutine.resume(thread,...);assert(ok,tostring(err))
+end
+task.wait=function() coroutine.yield() end
+assert(c:setConsent(true))
+assert(c:setConsent(false))
+assert(c:setConsent(true))
+local function activeCount(signal)
+ local n=0;for _,conn in ipairs(signal.connections) do if conn.Connected then n+=1 end end;return n
+end
+assert(activeCount(nativeThrow)==1 and activeCount(weaponService.GunFired.OnClientEvent)==1)
+for _,thread in ipairs(jobs) do
+ if coroutine.status(thread)=='suspended' then local ok,err=coroutine.resume(thread);assert(ok,tostring(err)) end
+end
+assert(activeCount(nativeThrow)==1 and activeCount(weaponService.GunFired.OnClientEvent)==1,
+ 'a stale yielding service load must not install duplicate observers after No/Yes')
+nativeThrow:Fire();assert(c:save('observer-race'))
+local list=events();local attempts=0
+for _,ev in ipairs(list) do if ev.source=='native-throw-event' and ev.phase=='authored' then attempts+=1 end end
+assert(attempts==1, 'one native throw generates one authored event after the race')
+print('PASS calibration observer race: stale asynchronous loaders cannot reattach after No/Yes')
+'''
+consent_write_race = common + r'''
+local originalWrite=writefile
+local hold=true
+function writefile(path,content)
+ if path==TELEMETRY and hold then hold=false;coroutine.yield() end
+ return originalWrite(path,content)
+end
+local firstResult
+local thread=coroutine.create(function() firstResult=c:setConsent(true) end)
+local ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+assert(coroutine.status(thread)=='suspended','initial snapshot is in flight')
+assert(c:setConsent(false))
+assert(c:setConsent(true),'Yes during an old write is accepted and queued')
+c:noteAuthoredShot({kind='knife',source='after-reconsent'})
+ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+assert(coroutine.status(thread)=='dead')
+assert(c:getConsent()==true and c:save('after-race'), 'the new recorder remains active and can save')
+local list=events();local found=false
+for _,ev in ipairs(list) do if ev.source=='after-reconsent' then found=true end end
+assert(found, 'a stale consent attempt cannot destroy the new session or lose its data')
+print('PASS calibration No/Yes during initial write: newer consent and events survive')
+'''
+revoke_write_race = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='before-revoke'})
+local originalWrite=writefile
+local hold=true
+function writefile(path,content)
+ if path==TELEMETRY and hold then hold=false;coroutine.yield() end
+ return originalWrite(path,content)
+end
+local thread=coroutine.create(function() c:save('in-flight') end)
+local ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+assert(c:setConsent(false))
+ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+assert(coroutine.status(thread)=='dead' and c:getConsent()==false)
+assert(c:setConsent(true), 'a verified own in-flight write must not look like an external conflict after No')
+assert(c:save('resumed'))
+local list=events();local found=false
+for _,ev in ipairs(list) do if ev.source=='before-revoke' then found=true end end
+assert(found, 'resuming after No preserves previously recorded events')
+print('PASS calibration No during write: verified own bytes allow later consent to resume')
+'''
+reset_write_race = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='before-reset'})
+local originalWrite=writefile
+local hold=true
+function writefile(path,content)
+ if path==TELEMETRY and hold then hold=false;coroutine.yield() end
+ return originalWrite(path,content)
+end
+local thread=coroutine.create(function() c:save('old-snapshot') end)
+local ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+c:reset()
+c:noteAuthoredShot({kind='knife',source='after-reset'})
+ok,err=coroutine.resume(thread);assert(ok,tostring(err))
+local list=events();local before,after=false,false
+for _,ev in ipairs(list) do
+ if ev.source=='before-reset' then before=true end
+ if ev.source=='after-reset' then after=true end
+end
+assert(not before and after, 'an older in-flight snapshot cannot undo a requested reset')
+assert(c:save('after-reset'), 'later snapshots remain writable after reset')
+print('PASS calibration reset during write: newer state cannot be rolled back')
+'''
+archive_reset_race = common + r'''
+assert(c:setConsent(true))
+for i=1,2401 do c:noteAuthoredShot({kind='knife',source='old-batch'}) end
+archiveHook=function()
+ c:reset()
+ c:noteAuthoredShot({kind='knife',source='new-session-event'})
+end
+flush10()
+assert(c:save('after-archive-reset'))
+local list,snapshot=events()
+assert(#list==1 and list[1].source=='new-session-event' and snapshot.session.archivedEvents==0,
+ 'a stale archive cannot discard a new session event after reset')
+print('PASS calibration reset during archive: stale batch cannot discard new observations')
+'''
+recovery = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='save-recovery'})
+local originalWrite=writefile
+function writefile(path,bytes)
+ if path==TELEMETRY then FILES[path]='truncated';table.insert(WRITES,{path,'truncated'});return end
+ return originalWrite(path,bytes)
+end
+assert(not c:save('truncation'))
+local recovered
+for _,write in ipairs(WRITES) do
+ if write[1]:find('.recovery-',1,true) then recovered=decoded(write[1]) end
+end
+assert(recovered and #recovered.session.events==1 and recovered.session.events[1].source=='save-recovery',
+ 'the verified recovery file contains the buffered observations, even with no previous main file')
+local count=#WRITES;assert(not c:save('blocked') and #WRITES==count)
+print('PASS calibration recovery: truncated main does not erase the new encoded observations')
+'''
+partial_throw_recovery = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='throw-after-partial'})
+local originalWrite=writefile
+function writefile(path,bytes)
+ if path==TELEMETRY then FILES[path]='partial';error('failed after truncation') end
+ return originalWrite(path,bytes)
+end
+assert(not c:save('partial-throw'))
+local recovered
+for _,write in ipairs(WRITES) do if write[1]:find('.recovery-',1,true) then recovered=decoded(write[1]) end end
+assert(recovered and recovered.session.events[1].source=='throw-after-partial',
+ 'exceptions after partial writes trigger verified recovery')
+print('PASS calibration recovery: write errors after truncation retain the new encoded observations')
+'''
+recovery_revoke = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='before-no'})
+local originalWrite=writefile
+function writefile(path,bytes)
+ if path==TELEMETRY then FILES[path]='truncated';c:setConsent(false);return end
+ return originalWrite(path,bytes)
+end
+local before=#WRITES
+assert(not c:save('revoke-during-write') and c:getConsent()==false)
+assert(#WRITES==before, 'No prevents starting a recovery write after an in-flight main write')
+print('PASS calibration recovery honors No: no new file writes after consent is revoked')
+'''
+external_during_encode = common + r'''
+assert(c:setConsent(true))
+c:noteAuthoredShot({kind='knife',source='encode-conflict'})
+local originalEncode=HttpService.JSONEncode
+function HttpService:JSONEncode(value)
+ local result=originalEncode(self,value)
+ FILES[TELEMETRY]='external-during-encode'
+ return result
+end
+local count=#WRITES
+assert(not c:save('encode-conflict') and FILES[TELEMETRY]=='external-during-encode' and #WRITES==count,
+ 'changes after encoding starts are detected before the main write')
+print('PASS calibration conflict during encode: a later external writer is not overwritten')
+'''
 with tempfile.TemporaryDirectory(prefix='calibration-capture-') as tmp:
-    for name,case in [('capture',capture),('archive',archive),('archive-races',archive_races),('archive-revoke',archive_revoke)]:
+    for name,case in [('capture',capture),('archive',archive),('archive-races',archive_races),('archive-revoke',archive_revoke),('health',health),('serialization',serialization),('observer-race',observer_race),('consent-write-race',consent_write_race),('revoke-write-race',revoke_write_race),('reset-write-race',reset_write_race),('archive-reset-race',archive_reset_race),('recovery',recovery),('partial-throw-recovery',partial_throw_recovery),('recovery-revoke',recovery_revoke),('external-during-encode',external_during_encode)]:
         path=Path(tmp)/(name+'.luau');path.write_text(source+case,encoding='utf-8')
         result=subprocess.run([os.environ.get('LUAU','luau'),str(path)],capture_output=True,text=True)
         if result.returncode: raise SystemExit(name+' failed:\n'+result.stdout[-4000:]+'\n'+result.stderr)

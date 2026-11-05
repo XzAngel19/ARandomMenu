@@ -165,40 +165,66 @@ function Module.init(_runtime: any): any
         return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
 
-    -- The pickup parts of the family in use, shared with Coin ESP.
-    -- A throttled local scan keeps this working if Coin ESP is off.
+    -- Prefer Coin ESP's current family, but an empty/stale family cache must
+    -- not hide real pickups from Auto Farm. The fallback is throttled separately
+    -- (including when there are zero coins) and never searches a different map.
+    local fallbackScanAt: number = -math.huge
+    local fallbackScanMap: Instance? = nil
+    local fallbackPickups: {Instance} = {}
     local function coinPickups(): {Instance}
+        local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+        local out: {Instance} = {}
+        local function consider(object: Instance): ()
+            if not object.Parent or not object:IsA("BasePart") then return end
+            -- A real Instance can verify ancestry; do not chase a lobby or an
+            -- old map's pickup just because it still has the CoinVisual tag.
+            if map and type(object.IsDescendantOf) == "function"
+                and not object:IsDescendantOf(map) then return end
+            local ok: boolean, usable: any = pcall(function(): boolean
+                local parent: Instance? = object.Parent
+                local server: Instance = if parent and parent.Name == "Coin_Server" then parent else object
+                return object:GetAttribute("Collected") ~= true
+                    and object:GetAttribute("Delete") ~= true
+                    and server:GetAttribute("Collected") ~= true
+                    and server:GetAttribute("Delete") ~= true
+            end)
+            if ok and usable then table.insert(out, object) end
+        end
         if type(state.mm2CoinPickups) == "function" then
             local ok: boolean, list: any = pcall(state.mm2CoinPickups)
             if ok and type(list) == "table" then
-                return list
+                -- Coin ESP scans the entire workspace: a non-empty list can
+                -- still consist solely of old-map or already-collected items.
+                for _, object: Instance in ipairs(list) do consider(object) end
+                if #out > 0 then return out end
             end
         end
-        -- Cheap first: the game's own tag list. The descendant walk
-        -- below is only for builds where the tag list is unavailable.
+        local now: number = os.clock()
+        if map == fallbackScanMap and now - fallbackScanAt < 0.5 then
+            return fallbackPickups
+        end
+        fallbackScanAt = now
+        fallbackScanMap = map
         local okTagged: boolean, tagged: any = pcall(function(): any
             return game:GetService("CollectionService"):GetTagged("CoinVisual")
         end)
-        if okTagged and type(tagged) == "table" and #tagged > 0 then
-            return tagged
+        if okTagged and type(tagged) == "table" then
+            for _, object: Instance in ipairs(tagged) do consider(object) end
         end
-        local out: {Instance} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
-        end)
-        if ok and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                if object.Name == "Coin_Server" and object:IsA("BasePart") then
-                    local collected: any = nil
-                    pcall(function(): ()
-                        collected = (object :: any):GetAttribute("Collected")
-                    end)
-                    if collected ~= true then
-                        table.insert(out, object)
-                    end
+        if #out == 0 then
+            local ok: boolean, descendants: any = pcall(function(): any
+                -- Pickups live under the active map's CoinContainer; avoid
+                -- walking the lobby and every unrelated streamed character.
+                if map and type(map.GetDescendants) == "function" then return map:GetDescendants() end
+                return workspace:GetDescendants()
+            end)
+            if ok and type(descendants) == "table" then
+                for _, object: Instance in ipairs(descendants) do
+                    if object.Name == "Coin_Server" then consider(object) end
                 end
             end
         end
+        fallbackPickups = out
         return out
     end
 
@@ -393,8 +419,12 @@ function Module.init(_runtime: any): any
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
+        disconnectFeatureConnection("MM2AutoFarmCoinAdded")
         disconnectFeatureConnection("MM2AutoFarmRoundEnd")
         disconnectFeatureConnection("MM2AutoFarmRoundStart")
+        for _, name: string in ipairs({"RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            disconnectFeatureConnection("MM2AutoFarmStart_" .. name)
+        end
         -- Invokes the restore closure the previous enable registered:
         -- collisions, PlatformStand, AutoRotate and the root all go
         -- back, and the character returns to where the farm grabbed
@@ -405,6 +435,9 @@ function Module.init(_runtime: any): any
             setStatus(nil)
             return
         end
+        fallbackScanAt = -math.huge
+        fallbackScanMap = nil
+        fallbackPickups = {}
 
         local bagAmount: number = 0
         local bagLimit: number = 50
@@ -433,6 +466,10 @@ function Module.init(_runtime: any): any
         local stuckPart: Instance? = nil
         local stuckSince: number = 0
         local lastTouchPulse: number = 0
+        local travelPart: Instance? = nil
+        local travelBestDistance: number = math.huge
+        local travelProgressAt: number = 0
+        local TRAVEL_STALL_SECONDS: number = 3.5
 
         -- Engagement state. The farm touches the character ONLY while engaged
         -- inside an active round on a map. In the lobby or between rounds, the
@@ -720,6 +757,7 @@ function Module.init(_runtime: any): any
                     root.AssemblyAngularVelocity = Vector3.zero
                 end
             end)
+            if not lastSteppedPosition then lastSteppedPosition = root.Position end
         end
 
         -- Puts the body back inside the farm's altitude budget after a fall.
@@ -1005,6 +1043,9 @@ function Module.init(_runtime: any): any
             stuckPart = nil
             stuckSince = 0
             lastTouchPulse = 0
+            travelPart = nil
+            travelBestDistance = math.huge
+            travelProgressAt = 0
             destroySafeZonePlatform()
         end
 
@@ -1074,6 +1115,8 @@ function Module.init(_runtime: any): any
                         root.Size = HITBOX_SIZE
                     end)
                 end
+                -- The server can teleport before the first Stepped callback.
+                lastSteppedPosition = root.Position
             end
             if settings.mode == "Walk" then
                 -- Walk on the real ground: collisions stay exactly as they are
@@ -1224,11 +1267,14 @@ function Module.init(_runtime: any): any
                 return false
             end
             local server: Instance? = serverPartOf(part)
-            local collected: any = nil
-            pcall(function(): ()
-                collected = (server :: any):GetAttribute("Collected")
+            local ok: boolean, usable: any = pcall(function(): boolean
+                return part:GetAttribute("Collected") ~= true
+                    and part:GetAttribute("Delete") ~= true
+                    and server ~= nil
+                    and server:GetAttribute("Collected") ~= true
+                    and server:GetAttribute("Delete") ~= true
             end)
-            return collected ~= true
+            return ok and usable == true
         end
 
     -- The gun grab is an in-round action for non-Murderer roles: as
@@ -1505,6 +1551,20 @@ function Module.init(_runtime: any): any
             end)
         end
 
+        -- Wake the throttled cache immediately when a new pickup streams in,
+        -- without scanning the whole workspace every frame while coins are absent.
+        if workspace.DescendantAdded then
+            featureConnections.MM2AutoFarmCoinAdded = workspace.DescendantAdded:Connect(
+                function(object: Instance): ()
+                    if object:IsA("BasePart")
+                        and (object.Name == "Coin_Server" or object.Name == "CoinVisual") then
+                        fallbackScanAt = -math.huge
+                        scanAt = -math.huge
+                    end
+                end
+            )
+        end
+
         local remotes: any = core.mm2GameplayRemotes
         local roundEnd: Instance? = remotes and remotes:FindFirstChild("RoundEndFade")
         if roundEnd and roundEnd:IsA("RemoteEvent") then
@@ -1526,6 +1586,22 @@ function Module.init(_runtime: any): any
                     end
                 end
             )
+        end
+        -- RoundStart's duration is not always available. These are independent
+        -- positive new-round signals; unlike an old loaded map or a respawn,
+        -- they can release the end-of-round gate for a reused map.
+        for _, name: string in ipairs({"RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            local remote: Instance? = remotes and remotes:FindFirstChild(name)
+            if remote and remote:IsA("RemoteEvent") then
+                featureConnections["MM2AutoFarmStart_" .. name] = (remote :: any).OnClientEvent:Connect(
+                    function(): ()
+                        if waitingForNextRound then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
+                    end
+                )
+            end
         end
         local collected: Instance? = remotes
             and remotes:FindFirstChild("CoinCollected")
@@ -1608,8 +1684,7 @@ function Module.init(_runtime: any): any
             )
         end
 
-        featureConnections.MM2AutoFarmTick = TaskManager:Connect(
-            function(deltaTime: number): ()
+        local function farmTick(deltaTime: number): ()
                 if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
@@ -1772,7 +1847,7 @@ function Module.init(_runtime: any): any
                             homeCharacter = character
                         end
                     end
-                    scanAt = now - 0.25
+                    travelPart = nil
                     -- No coin to chase right now. At round start that is exactly
                     -- what "Stay Under When Round starts" is for: wait under the
                     -- map (both modes) until the first coins appear. Once the farm
@@ -1809,6 +1884,15 @@ function Module.init(_runtime: any): any
                 -- bagAmount < 50 inside the active round.
                 engage(character, humanoid, root)
                 local coinPosition: Vector3 = nearestPosition :: Vector3
+                if travelPart ~= nearest then
+                    travelPart = nearest
+                    travelBestDistance = math.huge
+                    travelProgressAt = now
+                    walkLastDistance = math.huge
+                    walkStuckSince = now
+                    walkCarryUntil = 0
+                    walkCarryDirection = nil
+                end
                 local remaining: number
                 if settings.mode == "Walk" then
                     remaining = walkTowards(humanoid, root, coinPosition)
@@ -1824,6 +1908,19 @@ function Module.init(_runtime: any): any
                 -- the body does not have to crawl onto the exact centre.
                 local reach: number = if settings.mode == "Walk" then 2.0 else 3.5
                 local arrived: boolean = remaining <= reach
+                if not arrived then
+                    if remaining < travelBestDistance - 0.35 then
+                        travelBestDistance = remaining
+                        travelProgressAt = now
+                    elseif now - travelProgressAt >= TRAVEL_STALL_SECONDS then
+                        -- Unreachable coins used to monopolize the nearest scan
+                        -- forever because only arrivals had a retry timeout.
+                        blacklist[nearest] = now + BLACKLIST_SECONDS
+                        travelPart = nil
+                        stuckPart = nil
+                        return
+                    end
+                end
                 if arrived then
                     if stuckPart ~= nearest then
                         -- New coin: pulse on THIS tick instead of waiting for the
@@ -1869,8 +1966,23 @@ function Module.init(_runtime: any): any
                     math.round(math.clamp(settings.speed, 5, 60)),
                     pingMillis()
                 ))
+        end
+
+        local retryTickAt: number = 0
+        local warnTickAt: number = -math.huge
+        featureConnections.MM2AutoFarmTick = TaskManager:Connect(function(deltaTime: number): ()
+            local now: number = os.clock()
+            if now < retryTickAt then return end
+            local ok: boolean, err: any = pcall(farmTick, deltaTime)
+            if not ok then
+                retryTickAt = now + 0.25
+                if now >= warnTickAt then
+                    warnTickAt = now + 5
+                    warn("Auto Farm tick failed; retrying: " .. tostring(err))
+                    setStatus("Auto Farm: retrying after a temporary error")
+                end
             end
-        , nil, "Auto Farm tick")
+        end, nil, "Auto Farm tick")
 
         -- Turning the feature off runs this through
         -- disconnectFeatureConnection above: full restore, and the

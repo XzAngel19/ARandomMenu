@@ -1893,6 +1893,7 @@ local function createTrajectoryCalibration(): any
         targetHealthAtAim: number?,
         targetHealthAtConfirmation: number?,
         targetHealthAfter: number?,
+        targetHealthLatest: number?,
         targetHealthDropAt: number?,
         targetHealthDropServerTime: number?,
         targetDiedAt: number?,
@@ -1930,6 +1931,7 @@ local function createTrajectoryCalibration(): any
         lastSeenPosition: Vector3?,
         targetHealthAtAim: number?,
         targetHealthAfter: number?,
+        targetHealthLatest: number?,
         healthConnection: RBXScriptConnection?,
     }
     type KnifeTrack = {
@@ -2064,6 +2066,11 @@ local function createTrajectoryCalibration(): any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
         active = false,
+        observationGeneration = 0,
+        snapshotInProgress = false,
+        resaveRequested = false,
+        lastSnapshotBytes = nil :: string?,
+        recoverySequence = 0,
         historyLoaded = false,
         dirty = false,
         revision = 0,
@@ -2313,12 +2320,12 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    -- Health is the only client-visible proof that a shot did damage. The
-    -- `hitPart` of GunFired says a ray touched the target; a drop says the
-    -- server applied it. Both are recorded, with both clocks, per shot.
+    -- Record client-visible health separately from ray/projectile evidence.
+    -- A decrease may have another cause; a heal is not a damage event.
     local function watchPendingHealth(pending: any, target: Player?): ()
         pending.targetHealthAtAim = nil
         pending.targetHealthAfter = nil
+        pending.targetHealthLatest = nil
         pending.targetHealthDropAt = nil
         pending.targetDiedAt = nil
         local character: Model? = target and target.Character
@@ -2328,6 +2335,7 @@ local function createTrajectoryCalibration(): any
             return
         end
         pending.targetHealthAtAim = humanoid.Health
+        pending.targetHealthLatest = humanoid.Health
         if pending.healthConnection then
             pending.healthConnection:Disconnect()
             pending.healthConnection = nil
@@ -2337,8 +2345,10 @@ local function createTrajectoryCalibration(): any
                 if not predictionMath.finite(health) then
                     return
                 end
-                if pending.targetHealthAfter == nil
-                    or health < pending.targetHealthAfter then
+                local previous: number? = pending.targetHealthLatest
+                pending.targetHealthLatest = health
+                if previous ~= nil and health < previous
+                    and (pending.targetHealthAfter == nil or health < pending.targetHealthAfter) then
                     pending.targetHealthAfter = health
                     if pending.targetHealthDropAt == nil then
                         pending.targetHealthDropAt = os.clock()
@@ -2969,7 +2979,42 @@ local function createTrajectoryCalibration(): any
         return estimatesCache :: Estimates
     end
 
-    saveSnapshot = function(reason: string): boolean
+    -- Keep the exact encoded observations in a fresh file only when the main
+    -- write is known/possibly corrupt. This is exceptional IO, not an extra
+    -- full snapshot every autosave. Never overwrite another recovery file.
+    local function preserveFailedSnapshot(encoded: string, generation: number, sessionId: string): ()
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states or states["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or type(environment.isfile) ~= "function" or type(environment.readfile) ~= "function"
+            or type(environment.writefile) ~= "function"
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return end
+        for _attempt: number = 1, 32 do
+            runtime.recoverySequence += 1
+            local path: string = OUTPUT_PATH .. ".recovery-" .. sessionId
+                .. "-" .. tostring(runtime.recoverySequence) .. ".json"
+            local okExists: boolean, exists: any = pcall(environment.isfile, path)
+            if not okExists or type(exists) ~= "boolean" then break end
+            if not exists then
+                if states["MM2.Calibration.Consent"] ~= true or not runtime.active
+                    or runtime.observationGeneration ~= generation
+                    or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return end
+                local okWrite: boolean = pcall(environment.writefile, path, encoded)
+                local okRead: boolean, recovered: any = pcall(environment.readfile, path)
+                if okWrite and okRead and recovered == encoded then
+                    warn(trajectoryLogPrefix .. " Verified recovery snapshot: " .. path)
+                else
+                    warn(trajectoryLogPrefix .. " Recovery write could not be verified; data remains in memory.")
+                end
+                return
+            end
+        end
+        warn(trajectoryLogPrefix .. " Could not reserve a recovery path; data remains in memory.")
+    end
+
+    local function writeSnapshot(reason: string): boolean
+        local generation: number = runtime.observationGeneration
+        local snapshotSessionId: string = runtime.sessionId
         -- Without an explicit Yes the recorder is inactive and does not write
         -- telemetry. A No also preserves files from earlier sessions.
         local consentStates: any = type(configData) == "table" and configData.states or nil
@@ -2996,7 +3041,15 @@ local function createTrajectoryCalibration(): any
             end
             if not runtime.historyBackup then
                 local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
-                if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active then return false end
+                local okExists: boolean, exists: any = pcall(environment.isfile, backup)
+                if not okExists or exists ~= false then
+                    runtime.persistenceBlocked = true
+                    warn(trajectoryLogPrefix .. " Backup path is occupied or unavailable; existing files are untouched.")
+                    return false
+                end
+                if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+                    or runtime.observationGeneration ~= generation
+                    or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return false end
                 local okBackup: boolean = pcall(environment.writefile, backup, prior)
                 local okVerify, backedUp = pcall(environment.readfile, backup)
                 if not okBackup or not okVerify or backedUp ~= prior then
@@ -3005,15 +3058,6 @@ local function createTrajectoryCalibration(): any
                     return false
                 end
                 runtime.historyBackup = backup
-            end
-        elseif runtime.historyExpectedAbsent then
-            -- A different writer can create a file while the question is open.
-            -- Treat that as a conflict instead of replacing unimported data.
-            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
-            if not okExists or exists ~= false then
-                runtime.persistenceBlocked = true
-                warn(trajectoryLogPrefix .. " History appeared before consent; it will not be overwritten.")
-                return false
             end
         end
 
@@ -3179,6 +3223,32 @@ local function createTrajectoryCalibration(): any
             pcall(environment.makefolder, OUTPUT_FOLDER)
         end
         if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return false
+        end
+        -- Recheck immediately before the main write. Backup, encoding and
+        -- folder IO may all yield; another writer could have changed or created
+        -- the file since the earlier check. Executor IO is not atomic, but this
+        -- avoids knowingly replacing bytes we did not import or write.
+        local expected: string? = if type(prior) == "string" then prior else runtime.lastSnapshotBytes
+        if type(expected) == "string" then
+            local okCurrent: boolean, current: any = pcall(environment.readfile, OUTPUT_PATH)
+            if not okCurrent or current ~= expected then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History changed while saving; it will not be overwritten.")
+                return false
+            end
+        elseif runtime.historyExpectedAbsent then
+            local okExists: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
+            if not okExists or exists ~= false then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History appeared before saving; it will not be overwritten.")
+                return false
+            end
+        end
+        if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
         end
@@ -3189,11 +3259,44 @@ local function createTrajectoryCalibration(): any
         )
         if not writeOk then
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
+            -- Some executors throw *after* truncating the target. A clean
+            -- failure may be retried; unknown/changed bytes must be protected.
+            local changed: boolean
+            if type(expected) == "string" then
+                local okCurrent: boolean, current: any = pcall(environment.readfile, OUTPUT_PATH)
+                changed = not okCurrent or current ~= expected
+            else
+                local okExists: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
+                changed = not okExists or exists ~= false
+            end
+            if changed then
+                runtime.persistenceBlocked = true
+                preserveFailedSnapshot(encoded, generation, snapshotSessionId)
+            end
             return false
         end
-
+        -- Some executors return success after a truncated write. Retain the
+        -- prior verified backup and buffered observations instead of reporting
+        -- that corrupt bytes were saved or clearing the dirty flag.
+        local okRead: boolean, written: any = pcall(environment.readfile, OUTPUT_PATH)
+        if not okRead or written ~= encoded then
+            runtime.persistenceBlocked = true
+            warn(trajectoryLogPrefix .. " Snapshot readback failed; the previous verified backup is kept.")
+            preserveFailedSnapshot(encoded, generation, snapshotSessionId)
+            return false
+        end
+        -- This exact write began while consent was valid. Even if No arrived
+        -- while it yielded, remember its verified bytes as our own so a later
+        -- Yes does not misidentify them as an external writer. This does not
+        -- start any new write after No.
+        runtime.lastSnapshotBytes = encoded
         runtime.pendingHistoryBackup = nil
         runtime.historyExpectedAbsent = false
+        if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return true
+        end
         -- A yielding executor write must not clear events recorded meanwhile.
         runtime.dirty = runtime.revision ~= savedRevision
         print(
@@ -3206,6 +3309,27 @@ local function createTrajectoryCalibration(): any
         return true
     end
 
+    saveSnapshot = function(reason: string): boolean
+        -- Executor file functions may yield. Serialize snapshots so an older
+        -- writer cannot finish after a newer one and roll the file backwards.
+        if runtime.snapshotInProgress then
+            runtime.resaveRequested = true
+            return false
+        end
+        runtime.snapshotInProgress = true
+        local ok: boolean, saved: any = pcall(writeSnapshot, reason)
+        runtime.snapshotInProgress = false
+        local resave: boolean = runtime.resaveRequested
+        runtime.resaveRequested = false
+        if not ok then warn(trajectoryLogPrefix .. " Snapshot error: " .. tostring(saved)) end
+        if resave and runtime.active and runtime.dirty and not runtime.persistenceBlocked then
+            task.defer(function(): ()
+                if runtime.active and runtime.dirty then saveSnapshot("coalesced") end
+            end)
+        end
+        return ok and saved == true
+    end
+
     archiveEvents = function(): boolean
         local states: any = type(configData) == "table" and configData.states or nil
         if not runtime.active or not states or states["MM2.Calibration.Consent"] ~= true
@@ -3216,6 +3340,8 @@ local function createTrajectoryCalibration(): any
             return false
         end
         runtime.archiveInProgress = true
+        local generation: number = runtime.observationGeneration
+        local archiveSessionId: string = runtime.sessionId
         local captured: {any} = table.clone(runtime.events)
         local count: number = #captured
         local path: string? = nil
@@ -3247,12 +3373,21 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " Archive encode failed; events remain in memory.")
             return false
         end
+        -- Any lookup/encode can yield in an executor. Do not start an archive
+        -- after No or a reset/restart, even if the operation began earlier.
+        if not runtime.active or states["MM2.Calibration.Consent"] ~= true
+            or runtime.observationGeneration ~= generation or runtime.sessionId ~= archiveSessionId
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            runtime.archiveInProgress = false
+            return false
+        end
         -- A yielding write can overlap No/unload; do not discard the live
         -- buffer unless this exact archive is verified and consent still holds.
         local okWrite: boolean = pcall(environment.writefile, path, encoded)
         local okRead: boolean, verified: any = pcall(environment.readfile, path)
         if not okWrite or not okRead or verified ~= encoded
             or not runtime.active or states["MM2.Calibration.Consent"] ~= true
+            or runtime.observationGeneration ~= generation or runtime.sessionId ~= archiveSessionId
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             runtime.archiveInProgress = false
             warn(trajectoryLogPrefix .. " Archive could not be verified; events remain in memory.")
@@ -3578,6 +3713,8 @@ local function createTrajectoryCalibration(): any
             healthAtAim = pending.targetHealthAtAim,
             healthAtConfirmation = pending.targetHealthAtConfirmation,
             healthAfter = pending.targetHealthAfter,
+            healthLatest = pending.targetHealthLatest,
+            healthEvidenceScope = "client-observed health; not proof this shot caused a change",
             healthDropAt = pending.targetHealthDropAt,
             healthDropServerTime = pending.targetHealthDropServerTime,
             diedAt = pending.targetDiedAt,
@@ -3885,6 +4022,7 @@ local function createTrajectoryCalibration(): any
             aimLeadSeconds = track.aimLeadSeconds,
             targetHealthAtAim = pending and pending.targetHealthAtAim or nil,
             targetHealthAfter = pending and pending.targetHealthAfter or nil,
+            targetHealthLatest = pending and pending.targetHealthLatest or nil,
             healthEvidenceScope = "client-observed health; not proof this projectile caused a change",
             passedThroughBody = track.closestApproach ~= nil and track.bodyRadius ~= nil
                 and track.closestApproach <= track.bodyRadius or nil,
@@ -4255,12 +4393,15 @@ local function createTrajectoryCalibration(): any
         end))
     end
 
-    local function installGunConfirmation(): ()
+    local function installGunConfirmation(generation: number): ()
+        local function current(): boolean
+            return runtime.active and runtime.observationGeneration == generation
+        end
         task.spawn(function(): ()
             local clientServices: Instance? = nil
             local weaponModule: Instance? = nil
             for _attempt: number = 1, 20 do
-                if not runtime.active then
+                if not current() then
                     return
                 end
                 clientServices = game:GetService("ReplicatedStorage")
@@ -4280,6 +4421,7 @@ local function createTrajectoryCalibration(): any
                 state.requireModule,
                 weaponModule
             )
+            if not current() then return end
             if not loaded or type(weaponService) ~= "table" then
                 warn(
                     trajectoryLogPrefix .. " Could not observe WeaponService: "
@@ -4291,7 +4433,7 @@ local function createTrajectoryCalibration(): any
                 local signal: any = weaponService.KnifeThrown and weaponService.KnifeThrown.Event
                 if not signal or type(signal.Connect) ~= "function" then return end
                 trackConnection(signal:Connect(function(): ()
-                    if not runtime.active then return end
+                    if not current() then return end
                     local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
                     if not knife or knife.Parent ~= LocalPlayer.Character then return end
                     local aim: Vector3? = getRequestedAim()
@@ -4304,7 +4446,9 @@ local function createTrajectoryCalibration(): any
                 end))
             end)
             local connected: boolean, connection: any = pcall(function(): any
-                return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
+                return weaponService.GunFired.OnClientEvent:Connect(function(...: any): ()
+                    if current() then handleGunFired(...) end
+                end)
             end)
             if connected and connection then
                 trackConnection(connection :: RBXScriptConnection)
@@ -4341,6 +4485,8 @@ local function createTrajectoryCalibration(): any
             return
         end
         runtime.active = true
+        runtime.observationGeneration += 1
+        local generation: number = runtime.observationGeneration
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
         self:prepare()
@@ -4349,6 +4495,7 @@ local function createTrajectoryCalibration(): any
         if type(task) == "table" and type(task.spawn) == "function" then
             task.spawn(function(): ()
                 for _attempt: number = 1, 20 do
+                    if not runtime.active or runtime.observationGeneration ~= generation then return end
                     if applyLearnedSeeds() then return end
                     task.wait(0.5)
                 end
@@ -4371,7 +4518,7 @@ local function createTrajectoryCalibration(): any
                 resolveKnifeProjectile(projectile)
             end
         end)
-        installGunConfirmation()
+        installGunConfirmation(generation)
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
@@ -4399,6 +4546,11 @@ local function createTrajectoryCalibration(): any
         runtime.startedAtUnix = os.time()
         for _, track in pairs(runtime.tracks) do
             if track.destroyConnection then track.destroyConnection:Disconnect() end
+        end
+        for _, queue in ipairs({runtime.pendingGuns, runtime.pendingKnives}) do
+            for _, pending in ipairs(queue) do
+                if pending.healthConnection then pending.healthConnection:Disconnect() end
+            end
         end
         table.clear(runtime.tracks)
         disconnectFeatureConnection("MM2TrajectorySampler")
@@ -4442,12 +4594,19 @@ local function createTrajectoryCalibration(): any
             self:start()
             if not runtime.active then return false end
             runtime.dirty = true
+            local generation: number = runtime.observationGeneration
+            -- The call is synchronous until it reaches the writer: capture
+            -- whether this consent save will be coalesced rather than failed.
+            local queued: boolean = runtime.snapshotInProgress
             local saved: boolean = saveSnapshot("consent")
-            if not saved then
+            -- A No/Yes while an executor write yielded started a newer
+            -- recorder. The old call must never tear that recorder down.
+            if runtime.observationGeneration ~= generation then return saved or queued end
+            if not saved and not queued then
                 runtime.dirty = false
                 self:destroy()
             end
-            return saved
+            return saved or queued
         end
         runtime.saveScheduled = false
         runtime.dirty = false
@@ -4461,22 +4620,25 @@ local function createTrajectoryCalibration(): any
         if not runtime.active then
             return false
         end
-        return saveSnapshot(reason or "manual")
+        local saved: boolean = saveSnapshot(reason or "manual")
+        return saved
     end
 
     function controller:reset(): ()
-        if consentValue() ~= true then return end
+        if consentValue() ~= true or not runtime.active or runtime.persistenceBlocked then return end
+        -- Use the same conflict checks and serialized writer as every other
+        -- snapshot. Deleting the file out of band lets an older yielding save
+        -- resurrect cleared history and makes the next save look conflicted.
         clearHistory()
-        runtime.dirty = false
-        runtime.pendingHistoryBackup = nil
-        if type(environment.delfile) == "function" then
-            pcall(environment.delfile, OUTPUT_PATH)
-        elseif consentValue() == true and type(environment.writefile) == "function" then
-            -- An executor without delfile can clear by writing an empty file,
-            -- but never write even that fallback without an explicit Yes.
-            pcall(environment.writefile, OUTPUT_PATH, "{}")
+        runtime.revision += 1
+        runtime.dirty = true
+        local queued: boolean = runtime.snapshotInProgress
+        local saved: boolean = saveSnapshot("reset")
+        if saved or queued then
+            print(trajectoryLogPrefix .. " History cleared.")
+        else
+            warn(trajectoryLogPrefix .. " Cleared in memory; the new snapshot could not be saved.")
         end
-        print(trajectoryLogPrefix .. " History cleared.")
     end
 
     function controller:getEstimates(): Estimates
@@ -4721,6 +4883,8 @@ local function createTrajectoryCalibration(): any
         if not runtime.active then
             return
         end
+        -- Retire pending async service loads before any save can yield.
+        runtime.observationGeneration += 1
         if consentValue() == true then
             local projectiles: {Instance} = {}
             for projectile: Instance in pairs(runtime.tracks) do table.insert(projectiles, projectile) end

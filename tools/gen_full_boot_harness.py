@@ -1136,9 +1136,7 @@ do
     assert(type(ex.state.mm2FlingStep) == "function", "mm2FlingStep must exist after boot")
     local walkFling = findFeature("Walk Fling")
     assert(walkFling and walkFling.categoryName == "Exploits", "Walk Fling must exist in Exploits")
-    -- v180: Walk Fling gained a bounded Power multiplier (1..3) because the
-    -- previous fixed force was too weak to send anyone flying.
-    assert(walkFling.options:FindFirstChild("Option_Power"), "Walk Fling must expose the v180 Power row")
+    assert(not walkFling.options:FindFirstChild("Option_Power"), "Walk Fling uses fixed high power")
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Distance"))
     assert(findFeature("Anti Void").options:FindFirstChild("Option_Showplatform"))
     -- v138.8: Anti Fling is a plain ON/OFF card with no options at all.
@@ -1236,8 +1234,10 @@ do
         end)
     end
     local blurt = findFeature("Blurt Roles")
-    -- Option identity is also persisted in the widget toggle registry.
-    assert(ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Instant Roles must be a Blurt Roles option")
+    local notifications = findFeature("Notifications")
+    assert(notifications and notifications.categoryName == "Utilities", "MM2 Notifications must have its own card")
+    assert(ex.state.toggleControls["MM2.Notifications.InstantRoles"], "Instant Roles belongs to Notifications")
+    assert(not ex.state.toggleControls["MM2.BlurtRoles.InstantRoles"], "Blurt Roles must remain public chat only")
     assert(ex.state.mm2Prediction and type(ex.state.mm2Prediction.gunAim) == "function", "MM2 Prediction must own aiming")
     assert(type(ex.state.mm2Core.validateGunShot) == "function" and type(ex.state.mm2Core.isWeaponPathClear) == "function")
     

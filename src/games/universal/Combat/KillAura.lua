@@ -73,11 +73,9 @@ local function toolHandle(tool: Tool?): BasePart?
     return nil
 end
 
-local function activateTool(tool: Tool?): ()
-    if not tool then
-        return
-    end
-    pcall(function(): ()
+local function activateTool(tool: Tool?): boolean
+    if not tool or tool.Enabled == false then return false end
+    return pcall(function(): ()
         tool:Activate()
     end)
 end
@@ -92,8 +90,8 @@ local function fireContact(handle: BasePart?, target: BasePart): ()
         return
     end
 
-    pcall(fire, handle, target, 1)
     pcall(fire, handle, target, 0)
+    pcall(fire, handle, target, 1)
 end
 
 function Module.init(context: Runtime): any
@@ -334,7 +332,8 @@ function Module.init(context: Runtime): any
                 entityLibrary:Refresh()
                 local targets: {any} = entityLibrary:InRange({
                     Range = options["Reach"].Value,
-                    Limit = math.round(options["Max targets"].Value),
+                    -- Limit after all filters: ignored/protected teammates must
+                    -- not consume slots ahead of valid enemies.
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
                     Angle = options["Field of view"].Value,
@@ -368,6 +367,8 @@ function Module.init(context: Runtime): any
                     end
                     targets = kept
                 end
+                local targetLimit: number = math.max(1, math.round(options["Max targets"].Value))
+                while #targets > targetLimit do table.remove(targets) end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -420,8 +421,7 @@ function Module.init(context: Runtime): any
                         end
                     end
                     if not swung and tool then
-                        activateTool(tool)
-                        swung = true
+                        swung = activateTool(tool)
                     end
                     if not swung and weapons then
 

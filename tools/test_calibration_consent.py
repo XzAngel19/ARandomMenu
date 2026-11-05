@@ -118,6 +118,62 @@ assert(not c:setConsent(true) and FILES[TELEMETRY]=='changed-after-failure' and 
  'a failed first save must re-check original bytes before retrying')
 print('PASS calibration retry: a failed initial write cannot overwrite a later change')
 '''
+external_during_backup = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+local originalWrite=writefile
+function writefile(path,bytes)
+ originalWrite(path,bytes)
+ if tostring(path):find('.before-',1,true) then FILES[TELEMETRY]='external-during-backup' end
+end
+assert(not c:setConsent(true), 'a changed main file during backup must be detected before write')
+assert(FILES[TELEMETRY]=='external-during-backup' and #WRITES==1
+ and WRITES[1][2]=='existing-history', 'external bytes and verified original backup both survive')
+print('PASS calibration conflict during backup: external change is not overwritten')
+'''
+backup_conflict = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+local originalIsfile=isfile
+local occupied
+function isfile(path)
+ if tostring(path):find('.before-',1,true) then
+  occupied=path;FILES[path]='another-backup';return true
+ end
+ return originalIsfile(path)
+end
+assert(not c:setConsent(true) and #WRITES==0 and FILES[TELEMETRY]=='existing-history',
+ 'an occupied backup name prevents replacing the main file')
+assert(occupied and FILES[occupied]=='another-backup', 'the existing backup is never overwritten')
+print('PASS calibration backup conflict: pre-existing backup and original are preserved')
+'''
+main_truncated = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+local originalWrite=writefile
+function writefile(path,content)
+ if path==TELEMETRY then
+  table.insert(WRITES,{path,'truncated'})
+  FILES[path]='truncated'
+  return
+ end
+ return originalWrite(path,content)
+end
+assert(not c:setConsent(true), 'a successful but truncated write must fail verification')
+assert(#WRITES==3 and WRITES[1][1]~=TELEMETRY and FILES[WRITES[1][1]]=='existing-history',
+ 'the original remains in the verified backup')
+assert(WRITES[3][1]:find('.recovery-',1,true) and FILES[WRITES[3][1]]=='{}',
+ 'a fresh recovery file keeps the complete encoded snapshot')
+local count=#WRITES;writefile=originalWrite
+assert(not c:save('retry') and #WRITES==count, 'corrupt readback blocks unsafe further writes')
+print('PASS calibration main snapshot: truncated write rejected and original backup preserved')
+'''
+external_writer = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+assert(c:setConsent(true))
+local count=#WRITES
+FILES[TELEMETRY]='new-external-history'
+assert(not c:save('conflict') and FILES[TELEMETRY]=='new-external-history' and #WRITES==count,
+ 'a later writer cannot be silently overwritten by an autosave')
+print('PASS calibration mid-session conflict: external data is not overwritten')
+'''
 prompt_success = r'''
 for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
 local gui=assert(ex.state.frameworkEnvironment.ScreenGui)
@@ -218,7 +274,8 @@ print('PASS calibration legacy or unchecked answer: asks again and stays inactiv
 with tempfile.TemporaryDirectory(prefix='calibration-consent-') as tmp:
     cases = [('consent',probe,None),('conflict',conflict,None),
              ('appeared',appeared,None),('empty-history',empty_history,None),
-             ('main-write-failure',main_write_failure,None),
+             ('main-write-failure',main_write_failure,None),('main-truncated',main_truncated,None),('backup-conflict',backup_conflict,None),('external-during-backup',external_during_backup,None),
+             ('external-writer',external_writer,None),
              ('backup-error',backup_error,None),('backup-corrupt',backup_corrupt,None),
              ('prompt-success',prompt_success,None),('prompt-failure',prompt_failure,None),
              ('remember-yes-click',prompt_remember_yes,None),('remember-no-click',prompt_remember_no,None),

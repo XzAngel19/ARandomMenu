@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v183-20261104-native-gun-calibration`**.
+> **Estado actual:** build **`v184-20261104-farm-teams-notifications`**.
 > Esta sesión trabaja exclusivamente en `arena/9492e6b6-arandommenu`; integró
 > v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -35,6 +35,41 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v184 — Auto Farm, Team Check, Kill Aura y Notifications (2026-11-04)
+
+Detalle y límites en `docs/FIXES-v184.md`. Lo vigente sobre v183 se conserva:
+
+- Auto Farm reintenta errores del tick y abandona monedas inaccesibles o ya
+  recogidas. Si Coin ESP devuelve una lista vacía o con entradas viejas, usa
+  un fallback acotado y filtrado por mapa; una moneda nueva invalida la caché.
+  Señales positivas de inicio liberan el bloqueo al reutilizar mapa. Lobby y
+  full-bag siguen protegidos. En 28 escenarios simulados se verifica la lógica,
+  no la recolección aceptada en una ronda real.
+- Walk Fling ya no tiene Power: pulso fijo 30000, solo ON explícito. OFF restaura
+  colisiones; destruirlo apagado no modifica velocidad natural. La tarjeta
+  Fling independiente conserva Power/Retries.
+- Team Check respeta proveedores y equipo/facción explícitos, FFA, neutralidad
+  y roles. Un proveedor/rol desconocido no prueba hostilidad. Entity comparte
+  el criterio; Kill Aura filtra antes de limitar objetivos y mejora activación
+  y contactos. Knife Stab cancela acciones diferidas obsoletas y revalida
+  herramienta, rol, distancia y protección; X2 conserva su adaptador.
+- Notifications es una tarjeta privada en MM2 Utilities. Instant Roles migra
+  desde Blurt Roles y respeta configuración nueva explícita; Gun Notification,
+  Murder Close (30 studs, histéresis/cooldown), Your Role, Round Events y
+  Murderer Defeated son opciones. Blurt Roles permanece como chat público.
+- Calibration mantiene popup y consentimiento v183. Escrituras simultáneas se
+  serializan, verifican y detectan cambios externos; un backup anterior se
+  conserva y ante snapshot corrupto se intenta una copia de recuperación con
+  nombre nuevo. No/Yes invalida observadores antiguos; reset y archivo de lotes
+  no deben borrar eventos más nuevos. Salud curada y caída son observaciones
+  separadas, no evidencia de que un cuchillo haya causado daño. Sin atomicidad
+  garantizada del executor ni observación completa del servidor.
+- `bash tools/validate.sh`: 83 fuentes Lua, 127 suites, bundle de 81 fuentes,
+  boot `failures=0`, 49 tarjetas debug/release. La matriz simulada incluye los
+  otros juegos, PC/móvil y fallback por fuente.
+- Faltan pruebas reales Roblox/Delta de movimiento, replicación, daño y FPS;
+  mocks y compilación no los demuestran.
 
 ## v183 — Gun PC, Calibration y Motion Lock (2026-11-04)
 
@@ -1942,6 +1977,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-03 · v178. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-04 · v184. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

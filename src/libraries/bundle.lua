@@ -1,5 +1,5 @@
 return {
-    stamp = "v183-20261104-native-gun-calibration",
+    stamp = "v184-20261104-farm-teams-notifications",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1473,7 +1473,7 @@ function Module.init(runtime: any): any
         return getPlayerWeapon(LocalPlayer, name, true)
     end
 
-    local function canUseEquippedKnife(): (Tool?, BasePart?)
+    local function canUseEquippedKnife(requireReady: boolean?): (Tool?, BasePart?)
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid")
@@ -1487,6 +1487,7 @@ function Module.init(runtime: any): any
             or humanoid.Health <= 0
             or not root
             or not knife
+            or (requireReady == true and knife.Enabled == false)
             or knife:GetAttribute("Disabled") == true
             or getPlayerRole(LocalPlayer) ~= "Murderer" then
             return nil, nil
@@ -1529,9 +1530,10 @@ function Module.init(runtime: any): any
         return closest
     end
 
+    local knifeControllerGeneration: number = 0
     local function processKnifeAura(): ()
         if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
-        local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
+        local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife(true)
         if not knife or not localRoot then
             return
         end
@@ -1557,21 +1559,26 @@ function Module.init(runtime: any): any
             return
         end
 
-        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
         local events: Instance? = knife:FindFirstChild("Events")
         local handleTouched: Instance? = events
             and events:FindFirstChild("HandleTouched")
-        knife:Activate()
+        local activated: boolean = pcall(function(): () knife:Activate() end)
+        if not activated then return end
+        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
+        local swingGeneration: number = knifeControllerGeneration
         task.delay(0.025, function(): ()
+            -- The swing itself may set Tool.Enabled=false for its cooldown;
+            -- readiness matters before Activate, not after it has succeeded.
             local currentKnife: Tool?, currentLocalRoot: BasePart? =
-                canUseEquippedKnife()
+                canUseEquippedKnife(false)
             local currentCharacter: Model? = target.Character
             local currentRoot: BasePart? = currentCharacter
                 and currentCharacter:FindFirstChild("HumanoidRootPart")
                 :: BasePart?
             local currentHandle: BasePart? =
                 knife:FindFirstChild("Handle") :: BasePart?
-            if not knifeSettings.aura
+            if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled
+                or swingGeneration ~= knifeControllerGeneration
                 or currentKnife ~= knife
                 or not currentLocalRoot
                 or currentCharacter ~= targetCharacter
@@ -1584,9 +1591,11 @@ function Module.init(runtime: any): any
                 return
             end
 
+            local sent: boolean = false
             if handleTouched and handleTouched:IsA("RemoteEvent") then
-                handleTouched:FireServer(currentRoot)
-            elseif type(state.fireTouchInterest) == "function" then
+                sent = pcall(function(): () (handleTouched :: RemoteEvent):FireServer(currentRoot) end)
+            end
+            if not sent and type(state.fireTouchInterest) == "function" then
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
             end
@@ -1601,6 +1610,7 @@ function Module.init(runtime: any): any
     end
 
     local function refreshKnifeController(): ()
+        knifeControllerGeneration += 1
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")
@@ -5041,24 +5051,12 @@ function Module.init(runtime: any): any
         end)
     end
 
-    local instantSent: boolean = false
-    local function notifyInstantRoles(): ()
-        if not mm2Settings.instantRoleNotify or instantSent or not hasActiveRoundRoles() then return end
-        local murderer: Player? = findMurderer()
-        local sheriff: Player? = findSheriff()
-        if not murderer or not sheriff then return end
-        instantSent = true
-        notify("Roles ready - Murderer: " .. murderer.Name .. " | Sheriff/Hero: " .. sheriff.Name)
-    end
-
     local unsubscribe: () -> () = core.onRoundRoles(function(active: boolean): ()
         if not active then
             cancelPendingBlurt()
             blurtSignature = ""
-            instantSent = false
             return
         end
-        notifyInstantRoles()
         scheduleBlurt()
     end)
 
@@ -5096,10 +5094,6 @@ function Module.init(runtime: any): any
             registry = mm2Features,
         }
     )
-    addToggleOption(BlurtFeature, "Instant Roles", mm2Settings.instantRoleNotify, function(value: boolean): ()
-        mm2Settings.instantRoleNotify = value
-        if value then notifyInstantRoles() end
-    end, "Private notification once per round, independent of public chat announcements.")
     addNumberOption(
         BlurtFeature,
         "Delay",
@@ -5142,7 +5136,6 @@ function Module.init(runtime: any): any
 
     activeCleanup = function(): ()
         pcall(unsubscribe)
-        mm2Settings.instantRoleNotify = false
         toggleBlurtRoles(false)
     end
     Module.Events = featureConnections
@@ -5768,40 +5761,66 @@ function Module.init(_runtime: any): any
         return character:FindFirstChild("HumanoidRootPart") :: BasePart?
     end
 
-    -- The pickup parts of the family in use, shared with Coin ESP.
-    -- A throttled local scan keeps this working if Coin ESP is off.
+    -- Prefer Coin ESP's current family, but an empty/stale family cache must
+    -- not hide real pickups from Auto Farm. The fallback is throttled separately
+    -- (including when there are zero coins) and never searches a different map.
+    local fallbackScanAt: number = -math.huge
+    local fallbackScanMap: Instance? = nil
+    local fallbackPickups: {Instance} = {}
     local function coinPickups(): {Instance}
+        local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+        local out: {Instance} = {}
+        local function consider(object: Instance): ()
+            if not object.Parent or not object:IsA("BasePart") then return end
+            -- A real Instance can verify ancestry; do not chase a lobby or an
+            -- old map's pickup just because it still has the CoinVisual tag.
+            if map and type(object.IsDescendantOf) == "function"
+                and not object:IsDescendantOf(map) then return end
+            local ok: boolean, usable: any = pcall(function(): boolean
+                local parent: Instance? = object.Parent
+                local server: Instance = if parent and parent.Name == "Coin_Server" then parent else object
+                return object:GetAttribute("Collected") ~= true
+                    and object:GetAttribute("Delete") ~= true
+                    and server:GetAttribute("Collected") ~= true
+                    and server:GetAttribute("Delete") ~= true
+            end)
+            if ok and usable then table.insert(out, object) end
+        end
         if type(state.mm2CoinPickups) == "function" then
             local ok: boolean, list: any = pcall(state.mm2CoinPickups)
             if ok and type(list) == "table" then
-                return list
+                -- Coin ESP scans the entire workspace: a non-empty list can
+                -- still consist solely of old-map or already-collected items.
+                for _, object: Instance in ipairs(list) do consider(object) end
+                if #out > 0 then return out end
             end
         end
-        -- Cheap first: the game's own tag list. The descendant walk
-        -- below is only for builds where the tag list is unavailable.
+        local now: number = os.clock()
+        if map == fallbackScanMap and now - fallbackScanAt < 0.5 then
+            return fallbackPickups
+        end
+        fallbackScanAt = now
+        fallbackScanMap = map
         local okTagged: boolean, tagged: any = pcall(function(): any
             return game:GetService("CollectionService"):GetTagged("CoinVisual")
         end)
-        if okTagged and type(tagged) == "table" and #tagged > 0 then
-            return tagged
+        if okTagged and type(tagged) == "table" then
+            for _, object: Instance in ipairs(tagged) do consider(object) end
         end
-        local out: {Instance} = {}
-        local ok: boolean, descendants: any = pcall(function(): any
-            return workspace:GetDescendants()
-        end)
-        if ok and type(descendants) == "table" then
-            for _, object: Instance in ipairs(descendants) do
-                if object.Name == "Coin_Server" and object:IsA("BasePart") then
-                    local collected: any = nil
-                    pcall(function(): ()
-                        collected = (object :: any):GetAttribute("Collected")
-                    end)
-                    if collected ~= true then
-                        table.insert(out, object)
-                    end
+        if #out == 0 then
+            local ok: boolean, descendants: any = pcall(function(): any
+                -- Pickups live under the active map's CoinContainer; avoid
+                -- walking the lobby and every unrelated streamed character.
+                if map and type(map.GetDescendants) == "function" then return map:GetDescendants() end
+                return workspace:GetDescendants()
+            end)
+            if ok and type(descendants) == "table" then
+                for _, object: Instance in ipairs(descendants) do
+                    if object.Name == "Coin_Server" then consider(object) end
                 end
             end
         end
+        fallbackPickups = out
         return out
     end
 
@@ -5996,8 +6015,12 @@ function Module.init(_runtime: any): any
         disconnectFeatureConnection("MM2AutoFarmTick")
         disconnectFeatureConnection("MM2AutoFarmStepped")
         disconnectFeatureConnection("MM2AutoFarmCoinCollected")
+        disconnectFeatureConnection("MM2AutoFarmCoinAdded")
         disconnectFeatureConnection("MM2AutoFarmRoundEnd")
         disconnectFeatureConnection("MM2AutoFarmRoundStart")
+        for _, name: string in ipairs({"RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            disconnectFeatureConnection("MM2AutoFarmStart_" .. name)
+        end
         -- Invokes the restore closure the previous enable registered:
         -- collisions, PlatformStand, AutoRotate and the root all go
         -- back, and the character returns to where the farm grabbed
@@ -6008,6 +6031,9 @@ function Module.init(_runtime: any): any
             setStatus(nil)
             return
         end
+        fallbackScanAt = -math.huge
+        fallbackScanMap = nil
+        fallbackPickups = {}
 
         local bagAmount: number = 0
         local bagLimit: number = 50
@@ -6036,6 +6062,10 @@ function Module.init(_runtime: any): any
         local stuckPart: Instance? = nil
         local stuckSince: number = 0
         local lastTouchPulse: number = 0
+        local travelPart: Instance? = nil
+        local travelBestDistance: number = math.huge
+        local travelProgressAt: number = 0
+        local TRAVEL_STALL_SECONDS: number = 3.5
 
         -- Engagement state. The farm touches the character ONLY while engaged
         -- inside an active round on a map. In the lobby or between rounds, the
@@ -6323,6 +6353,7 @@ function Module.init(_runtime: any): any
                     root.AssemblyAngularVelocity = Vector3.zero
                 end
             end)
+            if not lastSteppedPosition then lastSteppedPosition = root.Position end
         end
 
         -- Puts the body back inside the farm's altitude budget after a fall.
@@ -6608,6 +6639,9 @@ function Module.init(_runtime: any): any
             stuckPart = nil
             stuckSince = 0
             lastTouchPulse = 0
+            travelPart = nil
+            travelBestDistance = math.huge
+            travelProgressAt = 0
             destroySafeZonePlatform()
         end
 
@@ -6677,6 +6711,8 @@ function Module.init(_runtime: any): any
                         root.Size = HITBOX_SIZE
                     end)
                 end
+                -- The server can teleport before the first Stepped callback.
+                lastSteppedPosition = root.Position
             end
             if settings.mode == "Walk" then
                 -- Walk on the real ground: collisions stay exactly as they are
@@ -6827,11 +6863,14 @@ function Module.init(_runtime: any): any
                 return false
             end
             local server: Instance? = serverPartOf(part)
-            local collected: any = nil
-            pcall(function(): ()
-                collected = (server :: any):GetAttribute("Collected")
+            local ok: boolean, usable: any = pcall(function(): boolean
+                return part:GetAttribute("Collected") ~= true
+                    and part:GetAttribute("Delete") ~= true
+                    and server ~= nil
+                    and server:GetAttribute("Collected") ~= true
+                    and server:GetAttribute("Delete") ~= true
             end)
-            return collected ~= true
+            return ok and usable == true
         end
 
     -- The gun grab is an in-round action for non-Murderer roles: as
@@ -7108,6 +7147,20 @@ function Module.init(_runtime: any): any
             end)
         end
 
+        -- Wake the throttled cache immediately when a new pickup streams in,
+        -- without scanning the whole workspace every frame while coins are absent.
+        if workspace.DescendantAdded then
+            featureConnections.MM2AutoFarmCoinAdded = workspace.DescendantAdded:Connect(
+                function(object: Instance): ()
+                    if object:IsA("BasePart")
+                        and (object.Name == "Coin_Server" or object.Name == "CoinVisual") then
+                        fallbackScanAt = -math.huge
+                        scanAt = -math.huge
+                    end
+                end
+            )
+        end
+
         local remotes: any = core.mm2GameplayRemotes
         local roundEnd: Instance? = remotes and remotes:FindFirstChild("RoundEndFade")
         if roundEnd and roundEnd:IsA("RemoteEvent") then
@@ -7129,6 +7182,22 @@ function Module.init(_runtime: any): any
                     end
                 end
             )
+        end
+        -- RoundStart's duration is not always available. These are independent
+        -- positive new-round signals; unlike an old loaded map or a respawn,
+        -- they can release the end-of-round gate for a reused map.
+        for _, name: string in ipairs({"RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            local remote: Instance? = remotes and remotes:FindFirstChild(name)
+            if remote and remote:IsA("RemoteEvent") then
+                featureConnections["MM2AutoFarmStart_" .. name] = (remote :: any).OnClientEvent:Connect(
+                    function(): ()
+                        if waitingForNextRound then
+                            waitingForNextRound = false
+                            endedMap = nil
+                        end
+                    end
+                )
+            end
         end
         local collected: Instance? = remotes
             and remotes:FindFirstChild("CoinCollected")
@@ -7211,8 +7280,7 @@ function Module.init(_runtime: any): any
             )
         end
 
-        featureConnections.MM2AutoFarmTick = TaskManager:Connect(
-            function(deltaTime: number): ()
+        local function farmTick(deltaTime: number): ()
                 if type(deltaTime) == "number" and deltaTime > 0 and deltaTime < 5 then
                     farmElapsedSeconds += deltaTime
                     refreshFarmOverlay()
@@ -7375,7 +7443,7 @@ function Module.init(_runtime: any): any
                             homeCharacter = character
                         end
                     end
-                    scanAt = now - 0.25
+                    travelPart = nil
                     -- No coin to chase right now. At round start that is exactly
                     -- what "Stay Under When Round starts" is for: wait under the
                     -- map (both modes) until the first coins appear. Once the farm
@@ -7412,6 +7480,15 @@ function Module.init(_runtime: any): any
                 -- bagAmount < 50 inside the active round.
                 engage(character, humanoid, root)
                 local coinPosition: Vector3 = nearestPosition :: Vector3
+                if travelPart ~= nearest then
+                    travelPart = nearest
+                    travelBestDistance = math.huge
+                    travelProgressAt = now
+                    walkLastDistance = math.huge
+                    walkStuckSince = now
+                    walkCarryUntil = 0
+                    walkCarryDirection = nil
+                end
                 local remaining: number
                 if settings.mode == "Walk" then
                     remaining = walkTowards(humanoid, root, coinPosition)
@@ -7427,6 +7504,19 @@ function Module.init(_runtime: any): any
                 -- the body does not have to crawl onto the exact centre.
                 local reach: number = if settings.mode == "Walk" then 2.0 else 3.5
                 local arrived: boolean = remaining <= reach
+                if not arrived then
+                    if remaining < travelBestDistance - 0.35 then
+                        travelBestDistance = remaining
+                        travelProgressAt = now
+                    elseif now - travelProgressAt >= TRAVEL_STALL_SECONDS then
+                        -- Unreachable coins used to monopolize the nearest scan
+                        -- forever because only arrivals had a retry timeout.
+                        blacklist[nearest] = now + BLACKLIST_SECONDS
+                        travelPart = nil
+                        stuckPart = nil
+                        return
+                    end
+                end
                 if arrived then
                     if stuckPart ~= nearest then
                         -- New coin: pulse on THIS tick instead of waiting for the
@@ -7472,8 +7562,23 @@ function Module.init(_runtime: any): any
                     math.round(math.clamp(settings.speed, 5, 60)),
                     pingMillis()
                 ))
+        end
+
+        local retryTickAt: number = 0
+        local warnTickAt: number = -math.huge
+        featureConnections.MM2AutoFarmTick = TaskManager:Connect(function(deltaTime: number): ()
+            local now: number = os.clock()
+            if now < retryTickAt then return end
+            local ok: boolean, err: any = pcall(farmTick, deltaTime)
+            if not ok then
+                retryTickAt = now + 0.25
+                if now >= warnTickAt then
+                    warnTickAt = now + 5
+                    warn("Auto Farm tick failed; retrying: " .. tostring(err))
+                    setStatus("Auto Farm: retrying after a temporary error")
+                end
             end
-        , nil, "Auto Farm tick")
+        end, nil, "Auto Farm tick")
 
         -- Turning the feature off runs this through
         -- disconnectFeatureConnection above: full restore, and the
@@ -11567,6 +11672,331 @@ function Module.destroy(): ()
     end
     Module.Initialized = false
     pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
+        ["src/games/MM2/Other/Notifications.lua"] = [[
+local Module = {
+    Name = "MM2 Notifications",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then return Module end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Notifications requires the MM2 core")
+    Module.Runtime = runtime
+
+    -- Instant Roles used to be an independent Blurt Roles checkbox. Preserve
+    -- both its value and its old independent-on behavior, without overriding a
+    -- newer Notifications master setting on subsequent boots.
+    if type(configData) == "table" and type(configData.states) == "table" then
+        local states: any = configData.states
+        local oldKey: string = "MM2.BlurtRoles.InstantRoles"
+        local newKey: string = "MM2.Notifications.InstantRoles"
+        local old: any = states[oldKey]
+        local changed: boolean = false
+        if states[newKey] == nil and type(old) == "boolean" then
+            states[newKey] = old
+            if old and states["MM2.Notifications"] == nil then
+                states["MM2.Notifications"] = true
+            end
+            changed = true
+        end
+        if old ~= nil then states[oldKey] = nil; changed = true end
+        if changed and type(queueConfigSave) == "function" then queueConfigSave() end
+    end
+
+    local settings: any = {
+        instantRoles = false,
+        gun = true,
+        murderClose = true,
+        yourRole = true,
+        roundEvents = true,
+        murderDefeated = true,
+    }
+    local enabled: boolean = false
+    local phase: string = type(core.getRoundPhase) == "function" and core.getRoundPhase() or "unknown"
+    local elapsed: number = 0
+    local murdererSeen: boolean = false
+    local sheriffSeen: boolean = false
+    local lastLocalRole: string? = nil
+    local lastMurderer: Player? = nil
+    local defeatNotified: boolean = false
+    local nearMurderer: boolean = false
+    local lastCloseAt: number = -math.huge
+    local gunWasDropped: boolean = false
+    local gunLastSeenAt: number = -math.huge
+    local gunDropPreviousHolder: Player? = nil
+    local lastGunHolder: Player? = nil
+    local gunHolderInitialized: boolean = false
+
+    local function resetRound(): ()
+        murdererSeen = false
+        sheriffSeen = false
+        lastLocalRole = nil
+        lastMurderer = nil
+        defeatNotified = false
+        nearMurderer = false
+        lastCloseAt = -math.huge
+        gunWasDropped = false
+        gunLastSeenAt = -math.huge
+        gunDropPreviousHolder = nil
+        lastGunHolder = nil
+        gunHolderInitialized = false
+    end
+
+    local function inRound(): boolean
+        if type(core.isRoundLifecycleActive) == "function"
+            and core.isRoundLifecycleActive() == false then return false end
+        if phase == "lobby" then return false end
+        return phase == "map" or (type(core.hasActiveRoundRoles) == "function" and core.hasActiveRoundRoles())
+    end
+
+    local function rootOf(player: Player?): BasePart?
+        local character: Model? = player and player.Character
+        return character and character:FindFirstChild("HumanoidRootPart") :: BasePart? or nil
+    end
+
+    local function isAlive(player: Player?): boolean
+        if not player then return false end
+        if type(core.isPlayerAlive) == "function" then return core.isPlayerAlive(player) == true end
+        return rootOf(player) ~= nil
+    end
+
+    local function showRoles(murderer: Player?, sheriff: Player?): ()
+        if not enabled or not settings.instantRoles or not inRound() then return end
+        if not murdererSeen and not sheriffSeen and murderer and sheriff then
+            murdererSeen = true
+            sheriffSeen = true
+            notify("Roles ready - Murderer: " .. murderer.Name .. " | Sheriff/Hero: " .. sheriff.Name)
+            return
+        end
+        if murderer and not murdererSeen then
+            murdererSeen = true
+            notify("Murderer: " .. murderer.Name)
+        end
+        if sheriff and not sheriffSeen then
+            sheriffSeen = true
+            notify("Sheriff/Hero: " .. sheriff.Name)
+        end
+    end
+
+    local function gunDistance(drop: Instance?): number?
+        local root: BasePart? = rootOf(LocalPlayer)
+        if not root or not drop then return nil end
+        local ok: boolean, distance: any = pcall(function(): number
+            local position: Vector3 = if drop:IsA("BasePart")
+                then (drop :: BasePart).Position
+                else (drop :: Model):GetPivot().Position
+            return (position - root.Position).Magnitude
+        end)
+        return if ok and type(distance) == "number" then distance else nil
+    end
+
+    local function updateGun(sheriff: Player?): ()
+        if not settings.gun or type(core.findDroppedGun) ~= "function" then return end
+        local now: number = os.clock()
+        local drop: Instance? = core.findDroppedGun()
+        local holder: Player? = nil
+        if sheriff and isAlive(sheriff) and type(core.getPlayerWeapon) == "function"
+            and core.getPlayerWeapon(sheriff, "Gun") ~= nil then holder = sheriff end
+        if drop then
+            if not gunWasDropped then
+                -- The previous owner's Tool may still replicate briefly after
+                -- the drop appears. It is not evidence they picked it back up.
+                gunDropPreviousHolder = lastGunHolder or holder
+                local distance: number? = gunDistance(drop)
+                notify("Gun dropped" .. (distance and (" · " .. tostring(math.round(distance)) .. " studs away") or ""))
+            end
+            gunWasDropped = true
+            gunLastSeenAt = now
+        elseif gunWasDropped and holder and holder ~= gunDropPreviousHolder then
+            notify("Gun picked up by " .. holder.Name)
+            gunWasDropped = false
+            gunDropPreviousHolder = nil
+        elseif gunWasDropped and now - gunLastSeenAt >= 2 then
+            -- Missing/streamed-out is not proof of a pickup.
+            gunWasDropped = false
+            gunDropPreviousHolder = nil
+        elseif holder and gunHolderInitialized and lastGunHolder and holder ~= lastGunHolder then
+            notify("Gun is now held by " .. holder.Name)
+        end
+        if holder then
+            lastGunHolder = holder
+            gunHolderInitialized = true
+        end
+    end
+
+    local function confirmedDead(player: Player?): boolean
+        if not player then return false end
+        -- getPlayerRole can infer Dead when a character streams out. Only
+        -- explicit round data or a visible zero-health humanoid is evidence.
+        if type(core.getRoundRole) == "function" and core.getRoundRole(player) == "Dead" then return true end
+        local character: Model? = player.Character
+        local humanoid: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        return humanoid ~= nil and humanoid.Health <= 0
+    end
+
+    local function updateProximity(murderer: Player?): ()
+        if not settings.murderClose or not murderer or murderer == LocalPlayer
+            or not isAlive(LocalPlayer) or not isAlive(murderer) then
+            nearMurderer = false
+            return
+        end
+        local localRoot: BasePart? = rootOf(LocalPlayer)
+        local murderRoot: BasePart? = rootOf(murderer)
+        if not localRoot or not murderRoot then nearMurderer = false; return end
+        local distance: number = (murderRoot.Position - localRoot.Position).Magnitude
+        local now: number = os.clock()
+        if distance <= 30 and not nearMurderer and now - lastCloseAt >= 8 then
+            nearMurderer = true
+            lastCloseAt = now
+            notify("Murderer close: " .. murderer.Name .. " · " .. tostring(math.round(distance)) .. " studs")
+        elseif distance > 38 then
+            nearMurderer = false
+        end
+    end
+
+    local function sample(): ()
+        if not enabled or not inRound() then return end
+        local murderer: Player? = type(core.findMurderer) == "function" and core.findMurderer() or nil
+        local sheriff: Player? = type(core.findSheriff) == "function" and core.findSheriff() or nil
+        if murderer then lastMurderer = murderer end
+        showRoles(murderer, sheriff)
+        if settings.yourRole and type(core.getPlayerRole) == "function" then
+            local myRole: any = core.getPlayerRole(LocalPlayer)
+            if (myRole == "Innocent" or myRole == "Sheriff" or myRole == "Hero" or myRole == "Murderer")
+                and myRole ~= lastLocalRole then
+                lastLocalRole = myRole
+                notify("Your role: " .. myRole)
+            end
+        end
+        updateGun(sheriff)
+        updateProximity(murderer)
+        if settings.murderDefeated and not defeatNotified and confirmedDead(lastMurderer) then
+            defeatNotified = true
+            notify("Murderer defeated: " .. (lastMurderer :: Player).Name)
+        end
+    end
+
+    local nextWarningAt: number = -math.huge
+    local sampling: boolean = false
+    local sampleAgain: boolean = false
+    local function trySample(): ()
+        -- A role lookup can rebuild the core index and synchronously emit
+        -- onRoundRoles. Coalesce that callback instead of recursing into a
+        -- partially updated sample; the regular tick handles further changes.
+        if sampling then sampleAgain = true; return end
+        sampling = true
+        for _pass: number = 1, 2 do
+            sampleAgain = false
+            local ok: boolean, err: any = pcall(sample)
+            if not ok and os.clock() >= nextWarningAt then
+                nextWarningAt = os.clock() + 5
+                warn("MM2 Notifications: " .. tostring(err))
+            end
+            if not sampleAgain or not enabled then break end
+        end
+        sampling = false
+    end
+
+    local unsubscribeRoles: () -> () = core.onRoundRoles(function(active: boolean): ()
+        if active and enabled then trySample() end
+    end)
+    local unsubscribePhase: () -> () = core.onRoundPhase(function(nextPhase: string, reason: string): ()
+        local previous: string = phase
+        phase = nextPhase
+        if nextPhase == "lobby" and previous ~= "lobby" then
+            if enabled and settings.roundEvents and previous == "map" and reason ~= "subscribe" then
+                notify("Round ended")
+            end
+            resetRound()
+        elseif nextPhase == "map" and previous ~= "map" then
+            resetRound()
+            if enabled and settings.roundEvents and reason ~= "subscribe" then
+                notify("Entered the map - round starting")
+            end
+            if enabled then trySample() end
+        end
+    end)
+
+    local function toggleNotifications(value: boolean): ()
+        enabled = value == true
+        disconnectFeatureConnection("MM2NotificationsTick")
+        elapsed = 0
+        if not enabled then return end
+        trySample()
+        featureConnections.MM2NotificationsTick = TaskManager:Connect(function(deltaTime: number): ()
+            elapsed += math.max(0, deltaTime)
+            if elapsed < 0.25 then return end
+            elapsed = 0
+            trySample()
+        end, nil, "MM2 Notifications")
+    end
+
+    local feature: any = createUniversalFeature(
+        "Notifications", "Private MM2 alerts for roles, the gun, nearby danger and rounds.",
+        4, toggleNotifications,
+        {categoryName = "Utilities", parent = MM2Scroll, registry = mm2Features}
+    )
+    addToggleOption(feature, "Instant Roles", false, function(value: boolean): ()
+        settings.instantRoles = value
+        core.mm2Settings.instantRoleNotify = value
+        if enabled and value then trySample() end
+    end, "Private role alerts as soon as each role is known; never sends public chat.")
+    addToggleOption(feature, "Gun Notification", true, function(value: boolean): ()
+        settings.gun = value
+        if not value then
+            gunWasDropped = false
+            gunDropPreviousHolder = nil
+            lastGunHolder = nil
+            gunHolderInitialized = false
+        elseif enabled then
+            trySample()
+        end
+    end, "Announces a dropped gun and a confirmed new holder.")
+    addToggleOption(feature, "Murder Close", true, function(value: boolean): ()
+        settings.murderClose = value
+        if enabled and value then trySample() end
+    end, "Warns when the living Murderer is within 30 studs; includes a cooldown.")
+    addToggleOption(feature, "Your Role", true, function(value: boolean): ()
+        settings.yourRole = value
+        if enabled and value then trySample() end
+    end, "Notifies you when your role becomes known or changes.")
+    addToggleOption(feature, "Round Events", true, function(value: boolean): ()
+        settings.roundEvents = value
+    end, "Private alerts for entering the map and the round ending.")
+    addToggleOption(feature, "Murderer Defeated", true, function(value: boolean): ()
+        settings.murderDefeated = value
+        if enabled and value then trySample() end
+    end, "Warns only when the known Murderer is confirmed dead.")
+    addInformationOption(feature, "These alerts are private. Blurt Roles is the separate public-chat feature.")
+
+    activeCleanup = function(): ()
+        toggleNotifications(false)
+        pcall(unsubscribeRoles)
+        pcall(unsubscribePhase)
+        core.mm2Settings.instantRoleNotify = false
+    end
+    Module.Events = featureConnections
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then return end
+    Module.Initialized = false
+    activeCleanup()
     activeCleanup = function(): () end
     Module.Events = {}
     Module.Runtime = nil
@@ -16437,6 +16867,7 @@ local function createTrajectoryCalibration(): any
         targetHealthAtAim: number?,
         targetHealthAtConfirmation: number?,
         targetHealthAfter: number?,
+        targetHealthLatest: number?,
         targetHealthDropAt: number?,
         targetHealthDropServerTime: number?,
         targetDiedAt: number?,
@@ -16474,6 +16905,7 @@ local function createTrajectoryCalibration(): any
         lastSeenPosition: Vector3?,
         targetHealthAtAim: number?,
         targetHealthAfter: number?,
+        targetHealthLatest: number?,
         healthConnection: RBXScriptConnection?,
     }
     type KnifeTrack = {
@@ -16608,6 +17040,11 @@ local function createTrajectoryCalibration(): any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
         active = false,
+        observationGeneration = 0,
+        snapshotInProgress = false,
+        resaveRequested = false,
+        lastSnapshotBytes = nil :: string?,
+        recoverySequence = 0,
         historyLoaded = false,
         dirty = false,
         revision = 0,
@@ -16857,12 +17294,12 @@ local function createTrajectoryCalibration(): any
         }
     end
 
-    -- Health is the only client-visible proof that a shot did damage. The
-    -- `hitPart` of GunFired says a ray touched the target; a drop says the
-    -- server applied it. Both are recorded, with both clocks, per shot.
+    -- Record client-visible health separately from ray/projectile evidence.
+    -- A decrease may have another cause; a heal is not a damage event.
     local function watchPendingHealth(pending: any, target: Player?): ()
         pending.targetHealthAtAim = nil
         pending.targetHealthAfter = nil
+        pending.targetHealthLatest = nil
         pending.targetHealthDropAt = nil
         pending.targetDiedAt = nil
         local character: Model? = target and target.Character
@@ -16872,6 +17309,7 @@ local function createTrajectoryCalibration(): any
             return
         end
         pending.targetHealthAtAim = humanoid.Health
+        pending.targetHealthLatest = humanoid.Health
         if pending.healthConnection then
             pending.healthConnection:Disconnect()
             pending.healthConnection = nil
@@ -16881,8 +17319,10 @@ local function createTrajectoryCalibration(): any
                 if not predictionMath.finite(health) then
                     return
                 end
-                if pending.targetHealthAfter == nil
-                    or health < pending.targetHealthAfter then
+                local previous: number? = pending.targetHealthLatest
+                pending.targetHealthLatest = health
+                if previous ~= nil and health < previous
+                    and (pending.targetHealthAfter == nil or health < pending.targetHealthAfter) then
                     pending.targetHealthAfter = health
                     if pending.targetHealthDropAt == nil then
                         pending.targetHealthDropAt = os.clock()
@@ -17513,7 +17953,42 @@ local function createTrajectoryCalibration(): any
         return estimatesCache :: Estimates
     end
 
-    saveSnapshot = function(reason: string): boolean
+    -- Keep the exact encoded observations in a fresh file only when the main
+    -- write is known/possibly corrupt. This is exceptional IO, not an extra
+    -- full snapshot every autosave. Never overwrite another recovery file.
+    local function preserveFailedSnapshot(encoded: string, generation: number, sessionId: string): ()
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states or states["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or type(environment.isfile) ~= "function" or type(environment.readfile) ~= "function"
+            or type(environment.writefile) ~= "function"
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return end
+        for _attempt: number = 1, 32 do
+            runtime.recoverySequence += 1
+            local path: string = OUTPUT_PATH .. ".recovery-" .. sessionId
+                .. "-" .. tostring(runtime.recoverySequence) .. ".json"
+            local okExists: boolean, exists: any = pcall(environment.isfile, path)
+            if not okExists or type(exists) ~= "boolean" then break end
+            if not exists then
+                if states["MM2.Calibration.Consent"] ~= true or not runtime.active
+                    or runtime.observationGeneration ~= generation
+                    or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return end
+                local okWrite: boolean = pcall(environment.writefile, path, encoded)
+                local okRead: boolean, recovered: any = pcall(environment.readfile, path)
+                if okWrite and okRead and recovered == encoded then
+                    warn(trajectoryLogPrefix .. " Verified recovery snapshot: " .. path)
+                else
+                    warn(trajectoryLogPrefix .. " Recovery write could not be verified; data remains in memory.")
+                end
+                return
+            end
+        end
+        warn(trajectoryLogPrefix .. " Could not reserve a recovery path; data remains in memory.")
+    end
+
+    local function writeSnapshot(reason: string): boolean
+        local generation: number = runtime.observationGeneration
+        local snapshotSessionId: string = runtime.sessionId
         -- Without an explicit Yes the recorder is inactive and does not write
         -- telemetry. A No also preserves files from earlier sessions.
         local consentStates: any = type(configData) == "table" and configData.states or nil
@@ -17540,7 +18015,15 @@ local function createTrajectoryCalibration(): any
             end
             if not runtime.historyBackup then
                 local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
-                if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active then return false end
+                local okExists: boolean, exists: any = pcall(environment.isfile, backup)
+                if not okExists or exists ~= false then
+                    runtime.persistenceBlocked = true
+                    warn(trajectoryLogPrefix .. " Backup path is occupied or unavailable; existing files are untouched.")
+                    return false
+                end
+                if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+                    or runtime.observationGeneration ~= generation
+                    or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then return false end
                 local okBackup: boolean = pcall(environment.writefile, backup, prior)
                 local okVerify, backedUp = pcall(environment.readfile, backup)
                 if not okBackup or not okVerify or backedUp ~= prior then
@@ -17549,15 +18032,6 @@ local function createTrajectoryCalibration(): any
                     return false
                 end
                 runtime.historyBackup = backup
-            end
-        elseif runtime.historyExpectedAbsent then
-            -- A different writer can create a file while the question is open.
-            -- Treat that as a conflict instead of replacing unimported data.
-            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
-            if not okExists or exists ~= false then
-                runtime.persistenceBlocked = true
-                warn(trajectoryLogPrefix .. " History appeared before consent; it will not be overwritten.")
-                return false
             end
         end
 
@@ -17723,6 +18197,32 @@ local function createTrajectoryCalibration(): any
             pcall(environment.makefolder, OUTPUT_FOLDER)
         end
         if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return false
+        end
+        -- Recheck immediately before the main write. Backup, encoding and
+        -- folder IO may all yield; another writer could have changed or created
+        -- the file since the earlier check. Executor IO is not atomic, but this
+        -- avoids knowingly replacing bytes we did not import or write.
+        local expected: string? = if type(prior) == "string" then prior else runtime.lastSnapshotBytes
+        if type(expected) == "string" then
+            local okCurrent: boolean, current: any = pcall(environment.readfile, OUTPUT_PATH)
+            if not okCurrent or current ~= expected then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History changed while saving; it will not be overwritten.")
+                return false
+            end
+        elseif runtime.historyExpectedAbsent then
+            local okExists: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
+            if not okExists or exists ~= false then
+                runtime.persistenceBlocked = true
+                warn(trajectoryLogPrefix .. " History appeared before saving; it will not be overwritten.")
+                return false
+            end
+        end
+        if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
         end
@@ -17733,11 +18233,44 @@ local function createTrajectoryCalibration(): any
         )
         if not writeOk then
             warn(trajectoryLogPrefix .. " writefile failed: " .. tostring(writeError))
+            -- Some executors throw *after* truncating the target. A clean
+            -- failure may be retried; unknown/changed bytes must be protected.
+            local changed: boolean
+            if type(expected) == "string" then
+                local okCurrent: boolean, current: any = pcall(environment.readfile, OUTPUT_PATH)
+                changed = not okCurrent or current ~= expected
+            else
+                local okExists: boolean, exists: any = pcall(environment.isfile, OUTPUT_PATH)
+                changed = not okExists or exists ~= false
+            end
+            if changed then
+                runtime.persistenceBlocked = true
+                preserveFailedSnapshot(encoded, generation, snapshotSessionId)
+            end
             return false
         end
-
+        -- Some executors return success after a truncated write. Retain the
+        -- prior verified backup and buffered observations instead of reporting
+        -- that corrupt bytes were saved or clearing the dirty flag.
+        local okRead: boolean, written: any = pcall(environment.readfile, OUTPUT_PATH)
+        if not okRead or written ~= encoded then
+            runtime.persistenceBlocked = true
+            warn(trajectoryLogPrefix .. " Snapshot readback failed; the previous verified backup is kept.")
+            preserveFailedSnapshot(encoded, generation, snapshotSessionId)
+            return false
+        end
+        -- This exact write began while consent was valid. Even if No arrived
+        -- while it yielded, remember its verified bytes as our own so a later
+        -- Yes does not misidentify them as an external writer. This does not
+        -- start any new write after No.
+        runtime.lastSnapshotBytes = encoded
         runtime.pendingHistoryBackup = nil
         runtime.historyExpectedAbsent = false
+        if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or runtime.observationGeneration ~= generation
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return true
+        end
         -- A yielding executor write must not clear events recorded meanwhile.
         runtime.dirty = runtime.revision ~= savedRevision
         print(
@@ -17750,6 +18283,27 @@ local function createTrajectoryCalibration(): any
         return true
     end
 
+    saveSnapshot = function(reason: string): boolean
+        -- Executor file functions may yield. Serialize snapshots so an older
+        -- writer cannot finish after a newer one and roll the file backwards.
+        if runtime.snapshotInProgress then
+            runtime.resaveRequested = true
+            return false
+        end
+        runtime.snapshotInProgress = true
+        local ok: boolean, saved: any = pcall(writeSnapshot, reason)
+        runtime.snapshotInProgress = false
+        local resave: boolean = runtime.resaveRequested
+        runtime.resaveRequested = false
+        if not ok then warn(trajectoryLogPrefix .. " Snapshot error: " .. tostring(saved)) end
+        if resave and runtime.active and runtime.dirty and not runtime.persistenceBlocked then
+            task.defer(function(): ()
+                if runtime.active and runtime.dirty then saveSnapshot("coalesced") end
+            end)
+        end
+        return ok and saved == true
+    end
+
     archiveEvents = function(): boolean
         local states: any = type(configData) == "table" and configData.states or nil
         if not runtime.active or not states or states["MM2.Calibration.Consent"] ~= true
@@ -17760,6 +18314,8 @@ local function createTrajectoryCalibration(): any
             return false
         end
         runtime.archiveInProgress = true
+        local generation: number = runtime.observationGeneration
+        local archiveSessionId: string = runtime.sessionId
         local captured: {any} = table.clone(runtime.events)
         local count: number = #captured
         local path: string? = nil
@@ -17791,12 +18347,21 @@ local function createTrajectoryCalibration(): any
             warn(trajectoryLogPrefix .. " Archive encode failed; events remain in memory.")
             return false
         end
+        -- Any lookup/encode can yield in an executor. Do not start an archive
+        -- after No or a reset/restart, even if the operation began earlier.
+        if not runtime.active or states["MM2.Calibration.Consent"] ~= true
+            or runtime.observationGeneration ~= generation or runtime.sessionId ~= archiveSessionId
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            runtime.archiveInProgress = false
+            return false
+        end
         -- A yielding write can overlap No/unload; do not discard the live
         -- buffer unless this exact archive is verified and consent still holds.
         local okWrite: boolean = pcall(environment.writefile, path, encoded)
         local okRead: boolean, verified: any = pcall(environment.readfile, path)
         if not okWrite or not okRead or verified ~= encoded
             or not runtime.active or states["MM2.Calibration.Consent"] ~= true
+            or runtime.observationGeneration ~= generation or runtime.sessionId ~= archiveSessionId
             or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             runtime.archiveInProgress = false
             warn(trajectoryLogPrefix .. " Archive could not be verified; events remain in memory.")
@@ -18122,6 +18687,8 @@ local function createTrajectoryCalibration(): any
             healthAtAim = pending.targetHealthAtAim,
             healthAtConfirmation = pending.targetHealthAtConfirmation,
             healthAfter = pending.targetHealthAfter,
+            healthLatest = pending.targetHealthLatest,
+            healthEvidenceScope = "client-observed health; not proof this shot caused a change",
             healthDropAt = pending.targetHealthDropAt,
             healthDropServerTime = pending.targetHealthDropServerTime,
             diedAt = pending.targetDiedAt,
@@ -18429,6 +18996,7 @@ local function createTrajectoryCalibration(): any
             aimLeadSeconds = track.aimLeadSeconds,
             targetHealthAtAim = pending and pending.targetHealthAtAim or nil,
             targetHealthAfter = pending and pending.targetHealthAfter or nil,
+            targetHealthLatest = pending and pending.targetHealthLatest or nil,
             healthEvidenceScope = "client-observed health; not proof this projectile caused a change",
             passedThroughBody = track.closestApproach ~= nil and track.bodyRadius ~= nil
                 and track.closestApproach <= track.bodyRadius or nil,
@@ -18799,12 +19367,15 @@ local function createTrajectoryCalibration(): any
         end))
     end
 
-    local function installGunConfirmation(): ()
+    local function installGunConfirmation(generation: number): ()
+        local function current(): boolean
+            return runtime.active and runtime.observationGeneration == generation
+        end
         task.spawn(function(): ()
             local clientServices: Instance? = nil
             local weaponModule: Instance? = nil
             for _attempt: number = 1, 20 do
-                if not runtime.active then
+                if not current() then
                     return
                 end
                 clientServices = game:GetService("ReplicatedStorage")
@@ -18824,6 +19395,7 @@ local function createTrajectoryCalibration(): any
                 state.requireModule,
                 weaponModule
             )
+            if not current() then return end
             if not loaded or type(weaponService) ~= "table" then
                 warn(
                     trajectoryLogPrefix .. " Could not observe WeaponService: "
@@ -18835,7 +19407,7 @@ local function createTrajectoryCalibration(): any
                 local signal: any = weaponService.KnifeThrown and weaponService.KnifeThrown.Event
                 if not signal or type(signal.Connect) ~= "function" then return end
                 trackConnection(signal:Connect(function(): ()
-                    if not runtime.active then return end
+                    if not current() then return end
                     local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
                     if not knife or knife.Parent ~= LocalPlayer.Character then return end
                     local aim: Vector3? = getRequestedAim()
@@ -18848,7 +19420,9 @@ local function createTrajectoryCalibration(): any
                 end))
             end)
             local connected: boolean, connection: any = pcall(function(): any
-                return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
+                return weaponService.GunFired.OnClientEvent:Connect(function(...: any): ()
+                    if current() then handleGunFired(...) end
+                end)
             end)
             if connected and connection then
                 trackConnection(connection :: RBXScriptConnection)
@@ -18885,6 +19459,8 @@ local function createTrajectoryCalibration(): any
             return
         end
         runtime.active = true
+        runtime.observationGeneration += 1
+        local generation: number = runtime.observationGeneration
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
         self:prepare()
@@ -18893,6 +19469,7 @@ local function createTrajectoryCalibration(): any
         if type(task) == "table" and type(task.spawn) == "function" then
             task.spawn(function(): ()
                 for _attempt: number = 1, 20 do
+                    if not runtime.active or runtime.observationGeneration ~= generation then return end
                     if applyLearnedSeeds() then return end
                     task.wait(0.5)
                 end
@@ -18915,7 +19492,7 @@ local function createTrajectoryCalibration(): any
                 resolveKnifeProjectile(projectile)
             end
         end)
-        installGunConfirmation()
+        installGunConfirmation(generation)
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
 
@@ -18943,6 +19520,11 @@ local function createTrajectoryCalibration(): any
         runtime.startedAtUnix = os.time()
         for _, track in pairs(runtime.tracks) do
             if track.destroyConnection then track.destroyConnection:Disconnect() end
+        end
+        for _, queue in ipairs({runtime.pendingGuns, runtime.pendingKnives}) do
+            for _, pending in ipairs(queue) do
+                if pending.healthConnection then pending.healthConnection:Disconnect() end
+            end
         end
         table.clear(runtime.tracks)
         disconnectFeatureConnection("MM2TrajectorySampler")
@@ -18986,12 +19568,19 @@ local function createTrajectoryCalibration(): any
             self:start()
             if not runtime.active then return false end
             runtime.dirty = true
+            local generation: number = runtime.observationGeneration
+            -- The call is synchronous until it reaches the writer: capture
+            -- whether this consent save will be coalesced rather than failed.
+            local queued: boolean = runtime.snapshotInProgress
             local saved: boolean = saveSnapshot("consent")
-            if not saved then
+            -- A No/Yes while an executor write yielded started a newer
+            -- recorder. The old call must never tear that recorder down.
+            if runtime.observationGeneration ~= generation then return saved or queued end
+            if not saved and not queued then
                 runtime.dirty = false
                 self:destroy()
             end
-            return saved
+            return saved or queued
         end
         runtime.saveScheduled = false
         runtime.dirty = false
@@ -19005,22 +19594,25 @@ local function createTrajectoryCalibration(): any
         if not runtime.active then
             return false
         end
-        return saveSnapshot(reason or "manual")
+        local saved: boolean = saveSnapshot(reason or "manual")
+        return saved
     end
 
     function controller:reset(): ()
-        if consentValue() ~= true then return end
+        if consentValue() ~= true or not runtime.active or runtime.persistenceBlocked then return end
+        -- Use the same conflict checks and serialized writer as every other
+        -- snapshot. Deleting the file out of band lets an older yielding save
+        -- resurrect cleared history and makes the next save look conflicted.
         clearHistory()
-        runtime.dirty = false
-        runtime.pendingHistoryBackup = nil
-        if type(environment.delfile) == "function" then
-            pcall(environment.delfile, OUTPUT_PATH)
-        elseif consentValue() == true and type(environment.writefile) == "function" then
-            -- An executor without delfile can clear by writing an empty file,
-            -- but never write even that fallback without an explicit Yes.
-            pcall(environment.writefile, OUTPUT_PATH, "{}")
+        runtime.revision += 1
+        runtime.dirty = true
+        local queued: boolean = runtime.snapshotInProgress
+        local saved: boolean = saveSnapshot("reset")
+        if saved or queued then
+            print(trajectoryLogPrefix .. " History cleared.")
+        else
+            warn(trajectoryLogPrefix .. " Cleared in memory; the new snapshot could not be saved.")
         end
-        print(trajectoryLogPrefix .. " History cleared.")
     end
 
     function controller:getEstimates(): Estimates
@@ -19265,6 +19857,8 @@ local function createTrajectoryCalibration(): any
         if not runtime.active then
             return
         end
+        -- Retire pending async service loads before any save can yield.
+        runtime.observationGeneration += 1
         if consentValue() == true then
             local projectiles: {Instance} = {}
             for projectile: Instance in pairs(runtime.tracks) do table.insert(projectiles, projectile) end
@@ -29163,7 +29757,6 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService or game:GetService("RunService")
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local addNumberOption: any = host.addNumberOption
     local addInformationOption: any = host.addInformationOption
     local configData: any = host.configData
     local services: any = (context :: any).services
@@ -29177,17 +29770,9 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- Infinite Yield's 10000 is the baseline. v180 multiplies it: the spike is
-    -- one frame long, and a victim standing on a slope or already moving often
-    -- eats the base value without leaving the ground. The multiplier is the
-    -- "Power" row; 1x reproduces the old behaviour exactly.
-    local POWER: number = 10000
-    local POWER_MULT: number = 1.5
-    local POWER_MULT_MIN: number = 1
-    local POWER_MULT_MAX: number = 3
-    local function spikePower(): number
-        return POWER * POWER_MULT
-    end
+    -- Fixed at the previous maximum (3x Infinite Yield's baseline). There is
+    -- no Power option: only an explicit ON toggle may produce this pulse.
+    local POWER: number = 30000
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -29226,11 +29811,12 @@ function Module.init(context: Runtime): any
     end
 
     local function stopWalkFling(): ()
+        local wasEnabled: boolean = enabled
         enabled = false
         session += 1
         restoreCollision()
         local _character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
-        if root and root.Parent then
+        if wasEnabled and root and root.Parent then
             pcall(function(): ()
                 root.Velocity = Vector3.zero
                 root.AssemblyLinearVelocity = Vector3.zero
@@ -29281,8 +29867,7 @@ function Module.init(context: Runtime): any
                                 (part :: BasePart).CanCollide = false
                             end
                         end
-                        local power: number = spikePower()
-                        local spike: Vector3 = savedVelocity * power + Vector3.new(0, power, 0)
+                        local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
@@ -29328,26 +29913,6 @@ function Module.init(context: Runtime): any
         8,
         toggleWalkFling,
         {categoryName = "Exploits"}
-    )
-    addNumberOption(
-        walkFlingFeature,
-        "Power",
-        POWER_MULT,
-        POWER_MULT_MIN,
-        POWER_MULT_MAX,
-        function(value: number): ()
-            POWER_MULT = math.clamp(
-                tonumber(value) or POWER_MULT,
-                POWER_MULT_MIN,
-                POWER_MULT_MAX
-            )
-            if walkFlingFeature and walkFlingFeature.enabled then
-                walkFlingFeature:SetStatus(string.format("ON · %.1fx", POWER_MULT))
-            end
-        end,
-        "Multiplier over Infinite Yield's 10000. 1x is the original; raise it when "
-            .. "walking into someone does not launch them.",
-        0.5
     )
     if type(addInformationOption) == "function" then
         addInformationOption(
@@ -29737,11 +30302,9 @@ local function toolHandle(tool: Tool?): BasePart?
     return nil
 end
 
-local function activateTool(tool: Tool?): ()
-    if not tool then
-        return
-    end
-    pcall(function(): ()
+local function activateTool(tool: Tool?): boolean
+    if not tool or tool.Enabled == false then return false end
+    return pcall(function(): ()
         tool:Activate()
     end)
 end
@@ -29756,8 +30319,8 @@ local function fireContact(handle: BasePart?, target: BasePart): ()
         return
     end
 
-    pcall(fire, handle, target, 1)
     pcall(fire, handle, target, 0)
+    pcall(fire, handle, target, 1)
 end
 
 function Module.init(context: Runtime): any
@@ -29998,7 +30561,8 @@ function Module.init(context: Runtime): any
                 entityLibrary:Refresh()
                 local targets: {any} = entityLibrary:InRange({
                     Range = options["Reach"].Value,
-                    Limit = math.round(options["Max targets"].Value),
+                    -- Limit after all filters: ignored/protected teammates must
+                    -- not consume slots ahead of valid enemies.
                     IgnoreTeam = not options["Team check"].Value,
                     IgnoreWalls = not options["Wall check"].Value,
                     Angle = options["Field of view"].Value,
@@ -30032,6 +30596,8 @@ function Module.init(context: Runtime): any
                     end
                     targets = kept
                 end
+                local targetLimit: number = math.max(1, math.round(options["Max targets"].Value))
+                while #targets > targetLimit do table.remove(targets) end
                 updateTargetStatus(#targets)
                 if #targets == 0 then
                     clearHighlights()
@@ -30084,8 +30650,7 @@ function Module.init(context: Runtime): any
                         end
                     end
                     if not swung and tool then
-                        activateTool(tool)
-                        swung = true
+                        swung = activateTool(tool)
                     end
                     if not swung and weapons then
 
@@ -52417,10 +52982,23 @@ function Module.init(context: any): EntityLibrary
         return true, nil
     end
 
+    local function advancedVerdict(player: Player): any
+        local checker: any = host.state and host.state.teamCheck
+        if checker and type(checker.analyze) == "function" then
+            local ok: boolean, verdict: any = pcall(checker.analyze, player)
+            if ok and type(verdict) == "table" then return verdict end
+        end
+        return nil
+    end
+
     function library:IsFriendly(player: Player?): boolean
         if not player or player == localPlayer then
             return false
         end
+        local verdict: any = advancedVerdict(player)
+        -- A generic unknown is not authoritative: preserve legacy Entity
+        -- token/child detection. Provider/role unknowns must still fail closed.
+        if verdict and verdict.method ~= "unknown" then return verdict.sameTeam == true end
 
         local handled: boolean, relation: string? = providerRelation(player)
         if handled then
@@ -52477,6 +53055,13 @@ function Module.init(context: any): EntityLibrary
     function library:IsEnemy(player: Player?): boolean?
         if not player or player == localPlayer then
             return false
+        end
+        local verdict: any = advancedVerdict(player)
+        if verdict then
+            if type(verdict.hostile) == "boolean" then return verdict.hostile end
+            if verdict.method == "provider-unknown" or verdict.method == "roles-unknown"
+                or verdict.method == "attributes-unknown" then return false end
+            return nil
         end
         local handled: boolean, relation: string? = providerRelation(player)
         if handled then
@@ -54004,6 +54589,7 @@ local Manifest: Manifest = {
         ["Fling"] = "Exploits",
         ["Fly"] = "Exploits",
         ["Motion Lock"] = "Utilities",
+        ["Notifications"] = "Utilities",
         ["Fullbright"] = "Render",
         ["Ghost"] = "Utilities",
         ["Goalkeeper Assist"] = "Exploits",
@@ -54146,6 +54732,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Movement/Sprint.lua",
             "src/games/MM2/Movement/Teleport.lua",
             "src/games/MM2/Fun/BlurtRoles.lua",
+            "src/games/MM2/Other/Notifications.lua",
             "src/games/MM2/Other/AutoUnbox.lua",
             "src/games/MM2/Other/AutoFarm.lua",
             "src/games/MM2/Other/AutoVote.lua",
@@ -55518,7 +56105,8 @@ function Module.init(context: any): WeaponLibrary
                 return candidate
             end
         end
-        return found[1]
+        -- Do not return a backpack tool that was explicitly skipped above.
+        return nil
     end
 
     function library:Swing(): boolean
@@ -55556,6 +56144,11 @@ function Module.init(context: any): WeaponLibrary
                         (humanoid :: Humanoid):EquipTool(tool)
                     end)
                 end
+            end
+            -- Tool:Activate on a disabled or unequipped tool can be a
+            -- successful no-op; report failure so KillAura can try a held tool.
+            if tool.Parent ~= localPlayer.Character or tool.Enabled == false then
+                return false
             end
             return pcall(function(): ()
                 tool:Activate()

@@ -272,10 +272,23 @@ function Module.init(context: any): EntityLibrary
         return true, nil
     end
 
+    local function advancedVerdict(player: Player): any
+        local checker: any = host.state and host.state.teamCheck
+        if checker and type(checker.analyze) == "function" then
+            local ok: boolean, verdict: any = pcall(checker.analyze, player)
+            if ok and type(verdict) == "table" then return verdict end
+        end
+        return nil
+    end
+
     function library:IsFriendly(player: Player?): boolean
         if not player or player == localPlayer then
             return false
         end
+        local verdict: any = advancedVerdict(player)
+        -- A generic unknown is not authoritative: preserve legacy Entity
+        -- token/child detection. Provider/role unknowns must still fail closed.
+        if verdict and verdict.method ~= "unknown" then return verdict.sameTeam == true end
 
         local handled: boolean, relation: string? = providerRelation(player)
         if handled then
@@ -332,6 +345,13 @@ function Module.init(context: any): EntityLibrary
     function library:IsEnemy(player: Player?): boolean?
         if not player or player == localPlayer then
             return false
+        end
+        local verdict: any = advancedVerdict(player)
+        if verdict then
+            if type(verdict.hostile) == "boolean" then return verdict.hostile end
+            if verdict.method == "provider-unknown" or verdict.method == "roles-unknown"
+                or verdict.method == "attributes-unknown" then return false end
+            return nil
         end
         local handled: boolean, relation: string? = providerRelation(player)
         if handled then

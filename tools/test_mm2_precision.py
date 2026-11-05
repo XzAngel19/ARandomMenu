@@ -546,7 +546,7 @@ end
 do
 local state={}
 local configData={states={['MM2.Calibration.Consent']=true}}
-local runtime={active=true,dirty=true,revision=0,startedAt=0,events={},motionBuckets={},sessionGunAttempts=1,sessionGunConfirmed=1,sessionKnifeAttempts=2,sessionKnifeConfirmed=1,
+local runtime={active=true,dirty=true,revision=0,observationGeneration=0,recoverySequence=0,startedAt=0,events={},motionBuckets={},sessionGunAttempts=1,sessionGunConfirmed=1,sessionKnifeAttempts=2,sessionKnifeConfirmed=1,
     gunAcceptance={count=1,mean=120,m2=0,minimum=120,maximum=120},
     knifeSpeed={count=1,mean=96,m2=0,minimum=96,maximum=96},
     knifeSpawnDelay={count=1,mean=80,m2=0,minimum=80,maximum=80}}
@@ -555,7 +555,14 @@ local payloads={}
 local failWrite=false
 local appendDuringWrite=false
 local reads=0
-local environment={writefile=function() if failWrite then error("IO failed") end; if appendDuringWrite then runtime.revision+=1; runtime.dirty=true end end,readfile=function() reads+=1; error("save must not reread") end}
+local file=nil
+-- v184 reads bytes to detect external writers and verify each successful write.
+-- It still never JSON-decodes/re-merges the old aggregate on each save.
+local environment={
+    writefile=function(_,bytes) if failWrite then error("IO failed") end; file=bytes; if appendDuringWrite then runtime.revision+=1; runtime.dirty=true end end,
+    readfile=function() reads+=1; if file==nil then error("missing") end; return file end,
+    isfile=function() return file~=nil end,
+}
 local HttpService={JSONEncode=function(self,payload) table.insert(payloads,payload); return "{}" end}
 local DateTime={now=function() return {ToIsoDate=function() return "test" end} end}
 local game={PlaceId=142823291}
@@ -565,7 +572,7 @@ local saveSnapshot
 ''', section(BASE, "    local function statsPayload(", "    local function getPingMilliseconds"),
                section(BASE, "    local function restoreMotionBucket(", "    local function loadSavedHistory"),
                section(BASE, "    local function motionModelPayload(", "    local function median("),
-               section(BASE, "    saveSnapshot = function", "    local function normalizeGun"), r'''
+               section(BASE, "    local function preserveFailedSnapshot", "    local function normalizeGun"), r'''
 local MAX_EVENTS=2400
 local workspace={GetServerTimeNow=function() return 123 end}
 local function getPingMilliseconds() return 80 end
@@ -637,7 +644,7 @@ assert(payloads[1].session.gunAttempts==1 and payloads[2].session.gunAttempts==1
 near(payloads[2].analytics.motionModel.test.meanDurationSeconds,0.2)
 local restored=restoreMotionBucket(payloads[2].analytics.motionModel.test)
 near(restored.durationSum,0.4); near(restored.horizontalLeadSum,0.2)
-assert(restored.count==2 and reads==0)
+assert(restored.count==2 and reads==5, "one readback then one conflict check/readback per later save")
 runtime.sessionGunAttempts+=1; runtime.dirty=true
 failWrite=true; assert(not saveSnapshot("failed")); assert(runtime.dirty)
 failWrite=false; assert(saveSnapshot("retry")); assert(not runtime.dirty)
@@ -647,7 +654,7 @@ appendDuringWrite=true
 assert(saveSnapshot("yielding-write") and runtime.dirty)
 appendDuringWrite=false
 assert(saveSnapshot("next") and not runtime.dirty)
-pass("real telemetry writer: idempotent saves, no disk reread, retry preserves counts, legacy migration")
+pass("real telemetry writer: idempotent saves, verified bytes, retry preserves counts, legacy migration")
 end
 ''']
 

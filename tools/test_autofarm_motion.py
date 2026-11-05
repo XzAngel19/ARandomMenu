@@ -112,6 +112,8 @@ Color3 = {fromRGB = Color3_fromRGB}
 -- clock -------------------------------------------------------------------
 -- The module times everything with os.clock(), so the simulation owns it.
 local now = 0
+local warnings = {}
+local function warn(message) table.insert(warnings, tostring(message)) end
 local function currentTime() return now end
 local os = {clock = currentTime, time = currentTime}
 local asyncMode = false
@@ -261,17 +263,20 @@ local function makeCoin(position)
     end
     function coin:FindFirstChild() return nil end
     table.insert(coins, {part = coin, props = props})
+    if workspace and workspace.DescendantAdded then workspace.DescendantAdded:Fire(coin) end
     return coin
 end
 
-workspace = {FallenPartsDestroyHeight = -500, CurrentCamera = nil}
+workspace = {FallenPartsDestroyHeight = -500, CurrentCamera = nil, DescendantAdded = signal()}
 local simulatedLobby = nil
 function workspace:GetChildren()
     local result = {mapModel, mapFloor}
     if simulatedLobby then table.insert(result, simulatedLobby) end
     return result
 end
+local descendantScans = 0
 function workspace:GetDescendants()
+    descendantScans += 1
     local out = {}
     for _, entry in ipairs(coins) do table.insert(out, entry.part) end
     return out
@@ -321,11 +326,14 @@ end}
 -- The MM2 core -----------------------------------------------------------
 state = {}
 local activeMap = mapModel
+local mapFailures = 0
 local lifecycleActive = true
 local coinCollectedSignal, roundEndSignal, roundStartSignal = signal(), signal(), signal()
+local roleSelectSignal, coinsStartedSignal = signal(), signal()
 local remotesByName = {}
 for name, eventSignal in pairs({CoinCollected = coinCollectedSignal,
-    RoundEndFade = roundEndSignal, RoundStart = roundStartSignal}) do
+    RoundEndFade = roundEndSignal, RoundStart = roundStartSignal,
+    RoleSelect = roleSelectSignal, CoinsStarted = coinsStartedSignal}) do
     remotesByName[name] = {OnClientEvent = eventSignal,
         IsA = function(_, class) return class == "RemoteEvent" end}
 end
@@ -345,7 +353,10 @@ state.mm2Core = {
     findSheriff = function() return nil end,
     findDroppedGun = function() return nil end,
     isRoundLifecycleActive = function() return lifecycleActive end,
-    findMM2Map = function() return activeMap end,
+    findMM2Map = function()
+        if mapFailures > 0 then mapFailures -= 1; error("temporary map streaming error") end
+        return activeMap
+    end,
     mm2GameplayRemotes = gameplayRemotes,
     getEstimatedLatency = function() return 0.05 end,
     getGunOriginCFrame = function() return CFrame.new(0, 12, 0) end,
@@ -1078,6 +1089,166 @@ assert(slashes == 1 and touched == 1 and not victimRoot.Anchored,
     "same-round Kill All still fires and releases its victim")
 feature.onToggle(false)
 pass("full-bag Kill All preserves normal behavior and cancels safely")
+-- A reused map must resume on RoleSelect/CoinsStarted even if a valid
+-- RoundStart duration was never delivered. A zero duration is not itself a start.
+feature.onToggle(false)
+resetBody()
+table.clear(coins)
+activeMap, lifecycleActive, localRole = mapModel, true, "Innocent"
+optionCallbacks["Auto Kill All When full coin bag"](false)
+optionCallbacks["Reset When Full Coin Bag"](false)
+optionCallbacks["Stay Under When Round starts"](false)
+setMode("Walk")
+feature.onToggle(true)
+frames(2)
+roundEndSignal:Fire()
+roundStartSignal:Fire(0)
+makeCoin(Vector3.new(40, 10, 0))
+frames(20)
+assert(rootProps.Position.X == 0 and feature.status:find("next round", 1, true),
+    "an ending old map remains gated without a positive start")
+roleSelectSignal:Fire("Innocent")
+frames(180)
+assert(rootProps.Position.X > 5, "RoleSelect resumes the reused map without RoundStart")
+roundEndSignal:Fire()
+rootProps.Position = Vector3.new(0, 12, 0)
+rootProps.AssemblyLinearVelocity = Vector3.zero
+frames(2)
+coinsStartedSignal:Fire({Coin = true})
+frames(180)
+assert(rootProps.Position.X > 5, "CoinsStarted also resumes without a timer")
+feature.onToggle(false)
+assert(roleSelectSignal.count() == 0 and coinsStartedSignal.count() == 0,
+    "new-round listeners disconnect when the farm is OFF")
+pass("role and coin start signals safely release a reused-map gate")
+
+-- The nearest coin can be behind a wall, so arrival-only timeouts cannot
+-- help. Freeze the body, wait through the progress deadline, and verify a
+-- farther reachable direction is selected without toggling the farm.
+resetBody()
+table.clear(coins)
+activeMap, lifecycleActive = mapModel, true
+setMode("Walk")
+makeCoin(Vector3.new(6, 10, 0))
+makeCoin(Vector3.new(0, 10, 22))
+feature.onToggle(true)
+for _ = 1, 250 do
+    stepFrame()
+    rootProps.Position = Vector3.new(0, 12, 0)
+    rootProps.AssemblyLinearVelocity = Vector3.zero
+end
+assert(humanoid.movedDirection and humanoid.movedDirection.Z > 0.9,
+    "unreachable nearest coin must be skipped for another direction")
+frames(190)
+assert(rootProps.Position.Z > 5, "the farm actually progresses to the next coin")
+feature.onToggle(false)
+pass("stalled approach retargets an unreachable nearest coin")
+
+-- An empty Coin ESP cache cannot suppress a real, newly streamed pickup.
+-- Idle fallback scans stay bounded and a DescendantAdded wakes the cache.
+resetBody()
+table.clear(coins)
+state.mm2CoinPickups = function() return {} end
+descendantScans = 0
+feature.onToggle(true)
+frames(120)
+assert(descendantScans <= 6, "idle fallback must not scan the workspace every frame")
+makeCoin(Vector3.new(0, 10, 25))
+frames(2)
+assert(humanoid.movedDirection and humanoid.movedDirection.Z > 0.9,
+    "a new pickup wakes an empty provider cache on the next tick")
+feature.onToggle(false)
+state.mm2CoinPickups = nil
+pass("empty Coin ESP cache falls back with bounded scans and immediate wakeup")
+
+-- The local fallback should scan the active map, not all workspace descendants.
+resetBody()
+table.clear(coins)
+makeCoin(Vector3.new(0, 10, 20))
+state.mm2CoinPickups = function() return {} end
+local mapScans = 0
+descendantScans = 0
+mapModel.GetDescendants = function()
+    mapScans += 1
+    local list = {}
+    for _, entry in ipairs(coins) do table.insert(list, entry.part) end
+    return list
+end
+feature.onToggle(true)
+frames(12)
+assert(mapScans > 0 and descendantScans == 0 and humanoid.movedDirection.Z > 0.9,
+    "fallback limits descendant enumeration to the active map")
+feature.onToggle(false)
+mapModel.GetDescendants = nil
+state.mm2CoinPickups = nil
+pass("fallback scans the active map rather than the whole workspace")
+
+-- Coin ESP scans the whole workspace. A nonempty result with only stale
+-- items must not hide a real pickup in the current map.
+resetBody()
+table.clear(coins)
+local oldCoin = makeCoin(Vector3.new(4, 10, 0))
+oldCoin.IsDescendantOf = function() return false end
+local realCoin = makeCoin(Vector3.new(0, 10, 20))
+realCoin.IsDescendantOf = function(_, map) return map == mapModel end
+state.mm2CoinPickups = function() return {oldCoin} end
+feature.onToggle(true)
+frames(12)
+assert(humanoid.movedDirection and humanoid.movedDirection.Z > 0.9,
+    "old-map provider entry must be filtered and current pickup found")
+feature.onToggle(false)
+state.mm2CoinPickups = nil
+pass("stale nonempty provider list cannot hide the current map")
+
+resetBody()
+table.clear(coins)
+local ghost = makeCoin(Vector3.new(4, 10, 0))
+ghost:SetAttribute("Collected", true)
+makeCoin(Vector3.new(0, 10, 20))
+state.mm2CoinPickups = function() return {ghost} end
+feature.onToggle(true)
+frames(12)
+assert(humanoid.movedDirection and humanoid.movedDirection.Z > 0.9,
+    "a provider containing only collected items must fall back")
+feature.onToggle(false)
+state.mm2CoinPickups = nil
+pass("collected nonempty provider list cannot hide live pickups")
+
+-- Coin ESP returns CoinVisual: its own Collected flag can change before the
+-- server part's flag. Do not chase it just because the parent looks alive.
+resetBody()
+table.clear(coins)
+local parentCoin = makeCoin(Vector3.new(4, 10, 0))
+local visual = {Name="CoinVisual", Parent=parentCoin, Position=Vector3.new(4,10,0),
+    IsA=function(_, class) return class == "BasePart" end,
+    GetAttribute=function(_, name) return name == "Collected" end}
+local nextCoin = makeCoin(Vector3.new(0, 10, 20))
+state.mm2CoinPickups = function() return {visual, nextCoin} end
+feature.onToggle(true)
+frames(12)
+assert(humanoid.movedDirection and humanoid.movedDirection.Z > 0.9,
+    "collected visual is ignored even if its server part has not updated")
+feature.onToggle(false)
+state.mm2CoinPickups = nil
+pass("collected visual cannot trap targeting on a ghost coin")
+
+-- Three successive map errors used to trigger TaskManager's permanent removal.
+-- The protected tick must keep its connection and retry after streaming settles.
+resetBody()
+table.clear(coins)
+makeCoin(Vector3.new(0, 10, 25))
+feature.onToggle(true)
+local tasksBefore = #tasks
+mapFailures = 4
+frames(100)
+assert(#tasks == tasksBefore and #warnings >= 1 and #warnings <= 2,
+    "transient failures are retried with throttled warning, not disconnected")
+frames(160)
+assert(rootProps.Position.Z > 5, "farm resumes after transient failures")
+feature.onToggle(false)
+assert(workspace.DescendantAdded.count() == 0, "pickup listener disconnects on OFF")
+pass("transient tick failures recover without removing the farm task")
+
 print("PASS " .. passed .. " Auto Farm motion suites")
 '''
 

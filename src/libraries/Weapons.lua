@@ -479,7 +479,8 @@ function Module.init(context: any): WeaponLibrary
                 return candidate
             end
         end
-        return found[1]
+        -- Do not return a backpack tool that was explicitly skipped above.
+        return nil
     end
 
     function library:Swing(): boolean
@@ -517,6 +518,11 @@ function Module.init(context: any): WeaponLibrary
                         (humanoid :: Humanoid):EquipTool(tool)
                     end)
                 end
+            end
+            -- Tool:Activate on a disabled or unequipped tool can be a
+            -- successful no-op; report failure so KillAura can try a held tool.
+            if tool.Parent ~= localPlayer.Character or tool.Enabled == false then
+                return false
             end
             return pcall(function(): ()
                 tool:Activate()

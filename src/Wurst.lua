@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v183-20261104-native-gun-calibration"
+local SOURCE_STAMP: string = "v184-20261104-farm-teams-notifications"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -5192,7 +5192,8 @@ end
 state.registerTeamProvider = function(provider: any): ()
     if type(provider) ~= "table"
         or (type(provider.IsFriendly) ~= "function"
-            and type(provider.Get) ~= "function") then
+            and type(provider.Get) ~= "function"
+            and type(provider.GetRelation) ~= "function") then
         return
     end
     state.gameBridge.teamProvider = provider
@@ -5266,6 +5267,41 @@ local TEAM_SIDE_BY_ROLE: {[string]: string} = {
 
 state.teamCheck = {}
 
+-- Team/faction attributes are explicit game data, not Roblox's shared
+-- lobby Team. Check the same common names used by the entity library.
+local TEAM_ATTRIBUTE_NAMES: {string} = {"Team", "TeamId", "TeamID", "Faction", "FactionId", "FactionID"}
+local function normalizeTeamToken(value: any): string?
+    if typeof(value) == "Instance" then value = value.Name end
+    if type(value) ~= "string" and type(value) ~= "number" then return nil end
+    local token: string = string.lower(string.gsub(tostring(value), "^%s*(.-)%s*$", "%1"))
+    if token == "" or token == "none" or token == "unknown" or token == "outside" then return nil end
+    return token
+end
+
+local function teamAttribute(player: Player): string?
+    for _, name: string in ipairs(TEAM_ATTRIBUTE_NAMES) do
+        local ok: boolean, value: any = pcall(player.GetAttribute, player, name)
+        local token: string? = ok and normalizeTeamToken(value) or nil
+        if token then return token end
+    end
+    -- Some games expose a StringValue/ObjectValue named Team instead of a
+    -- Roblox Team property; retain Entity's existing support for that form.
+    local ok: boolean, value: any = pcall(function(): any
+        local child: Instance? = player:FindFirstChild("Team")
+        return child and (child :: any).Value or nil
+    end)
+    return ok and normalizeTeamToken(value) or nil
+end
+
+local function providerToken(provider: any, player: Player): string?
+    local ok: boolean, value: any = pcall(provider.Get, player)
+    return ok and normalizeTeamToken(value) or nil
+end
+
+local function isFfaToken(token: string?): boolean
+    return token == "ffa" or token == "freeforall"
+end
+
 function state.teamCheck.analyze(player: Player?): {[string]: any}
     if not player or player == LocalPlayer then
         return {sameTeam = false, method = "self", hostile = false}
@@ -5274,17 +5310,14 @@ function state.teamCheck.analyze(player: Player?): {[string]: any}
     local provider: any = state.gameBridge.teamProvider
     if provider and type(provider.GetRelation) == "function" then
         local ok: boolean, relation: any = pcall(provider.GetRelation, player)
-        if ok and type(relation) == "string" then
-            if relation == "Teammate" then
-                return {sameTeam = true, method = "provider", hostile = false}
-            end
-            if relation == "Enemy" then
-                return {sameTeam = false, method = "provider", hostile = true}
-            end
-            -- Unknown/Outside are not hostile confirmations. In particular,
-            -- never reinterpret them using a shared Roblox lobby Team.
-            return {sameTeam = nil, method = "provider", hostile = nil}
+        if ok and relation == "Teammate" then
+            return {sameTeam = true, method = "provider", hostile = false}
         end
+        if ok and relation == "Enemy" then
+            return {sameTeam = false, method = "provider", hostile = true}
+        end
+        -- Unknown/Outside are not hostile confirmations. Never reinterpret
+        -- them using a shared Roblox lobby Team.
         return {sameTeam = nil, method = "provider-unknown", hostile = nil}
     end
     if provider and type(provider.IsFriendly) == "function" then
@@ -5293,26 +5326,64 @@ function state.teamCheck.analyze(player: Player?): {[string]: any}
             return {sameTeam = friendly, method = "provider", hostile = not friendly}
         end
     end
+    if provider and type(provider.Get) == "function" then
+        local mine: string? = providerToken(provider, LocalPlayer)
+        local theirs: string? = providerToken(provider, player :: Player)
+        if mine and theirs then
+            if isFfaToken(mine) and isFfaToken(theirs) then
+                return {sameTeam = false, method = "provider-ffa", hostile = true}
+            end
+            if not isFfaToken(mine) and not isFfaToken(theirs) then
+                return {sameTeam = mine == theirs, method = "provider", hostile = mine ~= theirs}
+            end
+        end
+        -- A provider owns this decision even while its data is incomplete.
+        return {sameTeam = nil, method = "provider-unknown", hostile = nil}
+    end
+    if provider then
+        return {sameTeam = nil, method = "provider-unknown", hostile = nil}
+    end
 
-    if state.gameBridge.roleProvider and type(state.playerRole) == "function" then
-        local myRole: string? = state.playerRole(LocalPlayer)
-        local theirRole: string? = state.playerRole(player :: Player)
-        if myRole and theirRole then
+    local roleProvider: any = state.gameBridge.roleProvider
+    if roleProvider and type(state.playerRole) == "function" then
+        local myRole: any = state.playerRole(LocalPlayer)
+        local theirRole: any = state.playerRole(player :: Player)
+        if type(myRole) == "string" and type(theirRole) == "string" then
             local mySide: string? = TEAM_SIDE_BY_ROLE[string.lower(myRole)]
             local theirSide: string? = TEAM_SIDE_BY_ROLE[string.lower(theirRole)]
             if mySide and theirSide and mySide ~= "none" and theirSide ~= "none" then
-                return {
-                    sameTeam = mySide == theirSide,
-                    method = "roles",
-                    hostile = mySide ~= theirSide,
-                }
+                return {sameTeam = mySide == theirSide, method = "roles", hostile = mySide ~= theirSide}
             end
-            if myRole == theirRole then
+            if not mySide and not theirSide and myRole == theirRole
+                and myRole ~= "Unknown" and myRole ~= "None" then
                 return {sameTeam = true, method = "roles", hostile = false}
             end
         end
+        if roleProvider.ReplacesTeams == true then
+            return {sameTeam = nil, method = "roles-unknown", hostile = nil}
+        end
     end
 
+    local myAttribute: string? = teamAttribute(LocalPlayer)
+    local theirAttribute: string? = teamAttribute(player :: Player)
+    if myAttribute or theirAttribute then
+        if not myAttribute or not theirAttribute then
+            return {sameTeam = nil, method = "attributes-unknown", hostile = nil}
+        end
+        if isFfaToken(myAttribute) and isFfaToken(theirAttribute) then
+            return {sameTeam = false, method = "attributes-ffa", hostile = true}
+        end
+        if isFfaToken(myAttribute) or isFfaToken(theirAttribute) then
+            return {sameTeam = nil, method = "attributes-unknown", hostile = nil}
+        end
+        return {sameTeam = myAttribute == theirAttribute, method = "attributes", hostile = myAttribute ~= theirAttribute}
+    end
+
+    -- Neutral is checked before Team/TeamColor. An assigned but inactive Team
+    -- must not make two neutral players allies.
+    if LocalPlayer.Neutral == true or (player :: Player).Neutral == true then
+        return {sameTeam = false, method = "neutral", hostile = true}
+    end
     local myTeam: Team? = LocalPlayer.Team
     local theirTeam: Team? = (player :: Player).Team
     if myTeam ~= nil or theirTeam ~= nil then
@@ -5328,22 +5399,9 @@ function state.teamCheck.analyze(player: Player?): {[string]: any}
 
     local teamsService: any = game:FindService("Teams")
     if teamsService and #teamsService:GetTeams() > 0 then
-        if LocalPlayer.Neutral or (player :: Player).Neutral then
-            return {sameTeam = false, method = "teamcolor", hostile = true}
-        end
-        local sameColour: boolean =
-            LocalPlayer.TeamColor == (player :: Player).TeamColor
-        return {
-            sameTeam = sameColour,
-            method = "teamcolor",
-            hostile = not sameColour,
-        }
+        local sameColour: boolean = LocalPlayer.TeamColor == (player :: Player).TeamColor
+        return {sameTeam = sameColour, method = "teamcolor", hostile = not sameColour}
     end
-
-    if LocalPlayer.Neutral and (player :: Player).Neutral then
-        return {sameTeam = false, method = "neutral", hostile = true}
-    end
-
     return {sameTeam = nil, method = "unknown", hostile = nil}
 end
 

@@ -26,13 +26,16 @@ end end
 instrumented = wurst.replace(anchor, expose + anchor, 1)
 
 SETUP = r'''
-FILES={}; QUEUED={}; CLOSES={}; DELAYED={}
+FILES={}; FILE_WRITES={}; QUEUED={}; CLOSES={}; DELAYED={}
 function isfolder() return true end
 function makefolder() end
 function isfile(path)
     return FILES[path]~=nil or tostring(path):find('Game_20260716',1,true)~=nil
 end
-function writefile(path,content) FILES[path]=content end
+function writefile(path,content)
+    FILES[path]=content
+    FILE_WRITES[path]=(FILE_WRITES[path] or 0)+1
+end
 function readfile(path)
     if FILES[path]~=nil then return FILES[path] end
     if tostring(path):find('Game_20260716',1,true) then return HarnessSavedConfig end
@@ -256,8 +259,11 @@ local recorder=assert(b.state.mm2TrajectoryCalibration)
 assert(recorder:setConsent(false))
 CLOSES[4]();assert(FILES[telemetry]=='prior', 'answering No must never write the calibration file')
 assert(recorder:setConsent(true), 'Yes starts the real recorder and backs up prior data')
-FILES[telemetry]='marker-before-close'
-CLOSES[4]();assert(FILES[telemetry]=='{}', 'active MM2 close must still save after consent')
+-- v184 protects externally changed bytes. Count the real write instead of
+-- replacing the file with a marker that should now be treated as a conflict.
+local writesBeforeClose=FILE_WRITES[telemetry] or 0
+CLOSES[4]();assert(FILES[telemetry]=='{}' and FILE_WRITES[telemetry]==writesBeforeClose+1,
+    'active MM2 close must still save its verified snapshot after consent')
 FILES[telemetry]='newer-runtime'
 CLOSES[2]()
 assert(FILES[telemetry]=='newer-runtime', 'retired MM2 close overwrote newer calibration')

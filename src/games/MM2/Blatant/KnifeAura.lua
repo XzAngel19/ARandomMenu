@@ -46,7 +46,7 @@ function Module.init(runtime: any): any
         return getPlayerWeapon(LocalPlayer, name, true)
     end
 
-    local function canUseEquippedKnife(): (Tool?, BasePart?)
+    local function canUseEquippedKnife(requireReady: boolean?): (Tool?, BasePart?)
         local character: Model? = LocalPlayer.Character
         local humanoid: Humanoid? = character
             and character:FindFirstChildOfClass("Humanoid")
@@ -60,6 +60,7 @@ function Module.init(runtime: any): any
             or humanoid.Health <= 0
             or not root
             or not knife
+            or (requireReady == true and knife.Enabled == false)
             or knife:GetAttribute("Disabled") == true
             or getPlayerRole(LocalPlayer) ~= "Murderer" then
             return nil, nil
@@ -102,9 +103,10 @@ function Module.init(runtime: any): any
         return closest
     end
 
+    local knifeControllerGeneration: number = 0
     local function processKnifeAura(): ()
         if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
-        local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife()
+        local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife(true)
         if not knife or not localRoot then
             return
         end
@@ -130,21 +132,26 @@ function Module.init(runtime: any): any
             return
         end
 
-        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
         local events: Instance? = knife:FindFirstChild("Events")
         local handleTouched: Instance? = events
             and events:FindFirstChild("HandleTouched")
-        knife:Activate()
+        local activated: boolean = pcall(function(): () knife:Activate() end)
+        if not activated then return end
+        state.mm2KnifeRuntime.lastAuraSwing = os.clock()
+        local swingGeneration: number = knifeControllerGeneration
         task.delay(0.025, function(): ()
+            -- The swing itself may set Tool.Enabled=false for its cooldown;
+            -- readiness matters before Activate, not after it has succeeded.
             local currentKnife: Tool?, currentLocalRoot: BasePart? =
-                canUseEquippedKnife()
+                canUseEquippedKnife(false)
             local currentCharacter: Model? = target.Character
             local currentRoot: BasePart? = currentCharacter
                 and currentCharacter:FindFirstChild("HumanoidRootPart")
                 :: BasePart?
             local currentHandle: BasePart? =
                 knife:FindFirstChild("Handle") :: BasePart?
-            if not knifeSettings.aura
+            if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled
+                or swingGeneration ~= knifeControllerGeneration
                 or currentKnife ~= knife
                 or not currentLocalRoot
                 or currentCharacter ~= targetCharacter
@@ -157,9 +164,11 @@ function Module.init(runtime: any): any
                 return
             end
 
+            local sent: boolean = false
             if handleTouched and handleTouched:IsA("RemoteEvent") then
-                handleTouched:FireServer(currentRoot)
-            elseif type(state.fireTouchInterest) == "function" then
+                sent = pcall(function(): () (handleTouched :: RemoteEvent):FireServer(currentRoot) end)
+            end
+            if not sent and type(state.fireTouchInterest) == "function" then
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 0)
                 pcall(state.fireTouchInterest, currentHandle, currentRoot, 1)
             end
@@ -174,6 +183,7 @@ function Module.init(runtime: any): any
     end
 
     local function refreshKnifeController(): ()
+        knifeControllerGeneration += 1
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")

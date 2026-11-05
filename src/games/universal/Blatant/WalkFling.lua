@@ -19,7 +19,6 @@ function Module.init(context: Runtime): any
     local RunService: any = host.RunService or game:GetService("RunService")
     local createUniversalFeature: any = host.createUniversalFeature
     local addFeatureTooltip: any = host.addFeatureTooltip
-    local addNumberOption: any = host.addNumberOption
     local addInformationOption: any = host.addInformationOption
     local configData: any = host.configData
     local services: any = (context :: any).services
@@ -33,17 +32,9 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- Infinite Yield's 10000 is the baseline. v180 multiplies it: the spike is
-    -- one frame long, and a victim standing on a slope or already moving often
-    -- eats the base value without leaving the ground. The multiplier is the
-    -- "Power" row; 1x reproduces the old behaviour exactly.
-    local POWER: number = 10000
-    local POWER_MULT: number = 1.5
-    local POWER_MULT_MIN: number = 1
-    local POWER_MULT_MAX: number = 3
-    local function spikePower(): number
-        return POWER * POWER_MULT
-    end
+    -- Fixed at the previous maximum (3x Infinite Yield's baseline). There is
+    -- no Power option: only an explicit ON toggle may produce this pulse.
+    local POWER: number = 30000
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -82,11 +73,12 @@ function Module.init(context: Runtime): any
     end
 
     local function stopWalkFling(): ()
+        local wasEnabled: boolean = enabled
         enabled = false
         session += 1
         restoreCollision()
         local _character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
-        if root and root.Parent then
+        if wasEnabled and root and root.Parent then
             pcall(function(): ()
                 root.Velocity = Vector3.zero
                 root.AssemblyLinearVelocity = Vector3.zero
@@ -137,8 +129,7 @@ function Module.init(context: Runtime): any
                                 (part :: BasePart).CanCollide = false
                             end
                         end
-                        local power: number = spikePower()
-                        local spike: Vector3 = savedVelocity * power + Vector3.new(0, power, 0)
+                        local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
                     end)
@@ -184,26 +175,6 @@ function Module.init(context: Runtime): any
         8,
         toggleWalkFling,
         {categoryName = "Exploits"}
-    )
-    addNumberOption(
-        walkFlingFeature,
-        "Power",
-        POWER_MULT,
-        POWER_MULT_MIN,
-        POWER_MULT_MAX,
-        function(value: number): ()
-            POWER_MULT = math.clamp(
-                tonumber(value) or POWER_MULT,
-                POWER_MULT_MIN,
-                POWER_MULT_MAX
-            )
-            if walkFlingFeature and walkFlingFeature.enabled then
-                walkFlingFeature:SetStatus(string.format("ON · %.1fx", POWER_MULT))
-            end
-        end,
-        "Multiplier over Infinite Yield's 10000. 1x is the original; raise it when "
-            .. "walking into someone does not launch them.",
-        0.5
     )
     if type(addInformationOption) == "function" then
         addInformationOption(
