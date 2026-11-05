@@ -2175,6 +2175,33 @@ function Module.init(context: any): WidgetLibrary
         return button :: TextButton
     end
 
+    -- A card can expose its existing action shortcut as an option without
+    -- creating a second key or a second persistence entry. This remains in
+    -- sync with the Shortcuts settings page and old saved bindings.
+    state.addFeatureShortcutOption = function(feature: any, label: string, hint: string?): any
+        local binding: any = state.shortcutBindings and state.shortcutBindings[feature.configKey]
+        if not binding or state.isMobile then return nil end
+        local option: any = createOptionRow(feature, label, hint)
+        local button: TextButton = (makeButton(option, "", 11) :: any) :: TextButton
+        state.layoutOptionControl(option, button, 0.5)
+        applyKeySlotStyle(button)
+        local previousRefresh: any = binding.refresh
+        binding.refresh = function(): ()
+            if type(previousRefresh) == "function" then previousRefresh() end
+            local key: any = binding.key
+            button.Text = key and key ~= Enum.KeyCode.Unknown
+                and state.keyDisplayName(key.Name) or ""
+            button:SetAttribute("CaptureIdleText", button.Text)
+        end
+        binding.refresh()
+        trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+            beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+                binding.assign(keyCode)
+            end)
+        end))
+        return button
+    end
+
     local function addTextOption(
         feature: any,
         labelText: string,

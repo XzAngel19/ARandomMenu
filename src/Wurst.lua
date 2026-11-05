@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v182-20261104-mm2-ui-calibration-repair"
+local SOURCE_STAMP: string = "v183-20261104-native-gun-calibration"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -1017,8 +1017,7 @@ end
 
 local state: any = {
 
-    -- Dev surfaces (MM2 calibration capture) ask for this before they build
-    -- a card. A release boot must not show capture tools to players.
+    -- Diagnostics use the same boot flag in release and debug builds.
     debug = DEBUG_LOGS,
     visible = false,
     isMobile = IS_MOBILE_DEVICE,
@@ -1032,6 +1031,7 @@ local state: any = {
     hookFunction = (getfenv() :: any).hookfunction,
     hookMetamethod = (getfenv() :: any).hookmetamethod,
     getNamecallMethod = (getfenv() :: any).getnamecallmethod,
+    checkCaller = (getfenv() :: any).checkcaller,
     newCClosure = (getfenv() :: any).newcclosure,
     fireTouchInterest = (getfenv() :: any).firetouchinterest,
     requireModule = require,
@@ -3836,6 +3836,8 @@ local function confirmDialog(options: any): Frame?
     local noText: string = tostring(options.no or "No")
     local onYes: any = options.onYes
     local onNo: any = options.onNo
+    local rememberLabel: any = options.rememberLabel
+    local remember: boolean = options.rememberDefault == true
 
     -- PopupLayer has the menu's UIScale and is anchored at the top left.
     -- A 50% position inside it therefore is not the viewport centre when the
@@ -3930,10 +3932,69 @@ local function confirmDialog(options: any): Frame?
         ZIndex = 402,
     }) :: any) :: TextLabel
 
+    if type(rememberLabel) == "string" and rememberLabel ~= "" then
+        local row: TextButton = (create("TextButton", {
+            Parent = panel,
+            Name = "RememberChoice",
+            LayoutOrder = 3,
+            Size = UDim2.new(1, 0, 0, 26),
+            BackgroundTransparency = 1,
+            AutoButtonColor = false,
+            Text = "",
+            ZIndex = 402,
+        }) :: any) :: TextButton
+        local box: Frame = (create("Frame", {
+            Parent = row,
+            Name = "Box",
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 0, 0.5, 0),
+            Size = UDim2.fromOffset(16, 16),
+            BackgroundColor3 = Theme.button,
+            BorderSizePixel = 0,
+            ZIndex = 403,
+        }) :: any) :: Frame
+        create("UICorner", {Parent = box, CornerRadius = cornerRadius(UI_RADIUS.control)})
+        create("UIStroke", {Parent = box, Color = Theme.outline, Thickness = 1})
+        local mark: TextLabel = (create("TextLabel", {
+            Parent = box,
+            Name = "Check",
+            BackgroundTransparency = 1,
+            Size = UDim2.fromScale(1, 1),
+            FontFace = CONTROL_FONT,
+            Text = "✓",
+            TextColor3 = Theme.accentText,
+            TextSize = 14,
+            Visible = remember,
+            ZIndex = 404,
+        }) :: any) :: TextLabel
+        create("TextLabel", {
+            Parent = row,
+            Name = "Label",
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(24, 0),
+            Size = UDim2.new(1, -24, 1, 0),
+            FontFace = CONTROL_FONT,
+            Text = rememberLabel,
+            TextColor3 = Theme.text,
+            TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 403,
+        })
+        local function refreshRemember(): ()
+            mark.Visible = remember
+            box.BackgroundColor3 = remember and Theme.accent or Theme.button
+        end
+        refreshRemember()
+        row.MouseButton1Click:Connect(function(): ()
+            remember = not remember
+            refreshRemember()
+        end)
+    end
+
     local actions: Frame = (create("Frame", {
         Parent = panel,
         Name = "Actions",
-        LayoutOrder = 3,
+        LayoutOrder = 4,
         BackgroundTransparency = 1,
         Size = UDim2.new(1, 0, 0, 30),
         ZIndex = 402,
@@ -3958,7 +4019,7 @@ local function confirmDialog(options: any): Frame?
         end
         local callback: any = answer == true and onYes or onNo
         if type(callback) == "function" then
-            local ok: boolean, failure: any = pcall(callback)
+            local ok: boolean, failure: any = pcall(callback, remember)
             if not ok then
                 warn("[" .. PRODUCT.name .. "] confirm dialog: " .. tostring(failure))
             end
@@ -4426,7 +4487,7 @@ local function runBucket(
             deltaTime
         )
         -- Elapsed time, not a CPU profiler; a yielding callback may include
-        -- time spent waiting. Retain the peak until the user resets the report.
+        -- time spent waiting. Retain the peak for the internal session metrics.
         local finishedAt: number = os.clock()
         local cost: number = math.max(0, (finishedAt - startedAt) * 1000)
         local performance: any = state.performance
@@ -4553,65 +4614,6 @@ TaskManager.renderConnection = RunService.RenderStepped:Connect(function(
     local total: number = runBucket(TaskManager.renderTasks, deltaTime, "render")
     TaskManager.renderMs = total
 end)
-
--- Human readable snapshot for the console: `print(state.perfReport())`.
-state.perfReport = function(): string
-    local stats: any = TaskManager:Stats()
-    local lines: {string} = {
-        string.format(
-            "FPS %.0f (%.1f ms) · sampled tasks %.2f ms (%d) · render %.2f ms (%d)",
-            state.performance.fps,
-            state.performance.frameMs,
-            stats.tasksMs,
-            stats.taskCount,
-            stats.renderMs,
-            stats.renderCount
-        ),
-    }
-    local performance: any = state.performance
-    table.insert(lines, string.format("observation %.1f s · frame intervals >= %.0f ms: %d · worst %.0f ms",
-        math.max(0, os.clock() - (performance.observedSince or os.clock())),
-        SPIKE_MS,
-        performance.spikeCount,
-        performance.worstSpikeMs))
-    if performance.peakTask then
-        table.insert(lines, string.format(
-            "longest callback %s · %.2f ms elapsed (%s) · not linked to worst frame",
-            tostring(performance.peakTask),
-            performance.peakTaskMs,
-            tostring(performance.peakTaskPhase or "unknown")
-        ))
-    else
-        table.insert(lines, "longest callback n/a")
-    end
-    table.insert(lines, "callback timings may include waits; detached work and GPU are not necessarily measured")
-    table.insert(lines, "current task scores (recent peak with decay; not frame attribution):")
-    for index: number, entry: any in ipairs(stats.top) do
-        if index > 6 then
-            break
-        end
-        table.insert(
-            lines,
-            string.format("  %-40s %.2f ms", tostring(entry.label), entry.ms)
-        )
-    end
-    return table.concat(lines, "\n")
-end
-
--- Reset the interval consistently for both heartbeat and render tasks.
-state.resetPerfReport = function(): ()
-    local performance: any = state.performance
-    performance.spikeCount = 0
-    performance.worstSpikeMs = 0
-    performance.spikeAt = nil
-    performance.spikeAgo = -1
-    performance.spikeMs = 0
-    performance.peakTask = nil
-    performance.peakTaskMs = 0
-    performance.peakTaskPhase = nil
-    performance.peakTaskAt = nil
-    performance.observedSince = os.clock()
-end
 
 state.taskManager = TaskManager
 

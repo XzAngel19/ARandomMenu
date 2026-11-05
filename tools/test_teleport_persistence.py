@@ -236,6 +236,8 @@ a.configData.values.HandoffMarker='latest-before-reinject'
 a.queueConfigSave()
 local pending=DELAYED[#DELAYED]
 assert(pending and pending.seconds==0.35)
+local telemetry='Wurst/Telemetry/MM2_Trajectory_Calibration.json'
+FILES[telemetry]='prior' -- b must import an existing history before consent
 local b=boot() -- real new boot must synchronously retire a before reading config
 assert(a.state.teleportPersist.closed and listeners()==1)
 assert(b.configData.values.HandoffMarker=='latest-before-reinject', 'previous config was not flushed before reload')
@@ -250,12 +252,11 @@ local profile='Wurst/Profiles/Game_20260716.lua'
 local saved=FILES[profile];assert(saved and saved:find('new%-runtime'))
 CLOSES[1]();pending.fn(table.unpack(pending.args))
 assert(FILES[profile]==saved, 'retired callbacks must not overwrite the new config')
-local telemetry='Wurst/Telemetry/MM2_Trajectory_Calibration.json'
-FILES[telemetry]='prior'
--- v180: the calibration only writes after the player answered Yes.
-b.configData.states['MM2.Calibration.Consent']=false
+local recorder=assert(b.state.mm2TrajectoryCalibration)
+assert(recorder:setConsent(false))
 CLOSES[4]();assert(FILES[telemetry]=='prior', 'answering No must never write the calibration file')
-b.configData.states['MM2.Calibration.Consent']=true
+assert(recorder:setConsent(true), 'Yes starts the real recorder and backs up prior data')
+FILES[telemetry]='marker-before-close'
 CLOSES[4]();assert(FILES[telemetry]=='{}', 'active MM2 close must still save after consent')
 FILES[telemetry]='newer-runtime'
 CLOSES[2]()

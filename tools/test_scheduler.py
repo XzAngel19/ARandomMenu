@@ -11,8 +11,7 @@ how many callbacks run per frame for the whole menu, so it gets its own suite:
   3. a self-disconnecting task survives the frame without skipping its neighbour;
   4. errors disable a task after three failures instead of breaking the frame;
   5. Stats() reports counts, costs and the slowest task, sorted;
-  6. perfReport() is a readable string;
-  7. the render bucket is separate from the heartbeat bucket.
+  6. the render bucket is separate from the heartbeat bucket.
 """
 import os
 import subprocess
@@ -160,14 +159,7 @@ assert(state.performance.tasksMs >= 0, "state.performance mirrors the bucket")
 assert(state.performance.taskCount == #state.taskManager.tasks, "performance counts the tasks")
 pass("Stats reports counts, costs and the slowest task")
 
--- 6) perfReport() ---------------------------------------------------------
-local report = state.perfReport()
-assert(type(report) == "string" and #report > 0, "perfReport returns text")
-assert(string.find(report, "FPS") ~= nil, "the report starts with FPS")
-assert(string.find(report, "tasks") ~= nil, "the report lists the task bucket")
-pass("perfReport is a readable snapshot")
-
--- 7) the render bucket is independent -------------------------------------
+-- 6) the render bucket is independent -------------------------------------
 local rendered = 0
 local renderTask = state.taskManager:Connect(function() rendered += 1 end, "render")
 assert(#state.taskManager.renderTasks == 1, "render task registered in its own bucket")

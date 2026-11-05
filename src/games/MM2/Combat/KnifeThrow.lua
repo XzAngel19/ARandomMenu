@@ -688,9 +688,27 @@ function Module.init(runtime: any): any
         end
 
         local fired: boolean = false
+        local noted: boolean = false
+        local function noteThrowAttempt(): ()
+            if noted then return end
+            noted = true
+            local recorder: any = core and core.trajectoryCalibration
+            if recorder and type(recorder.noteAuthoredShot) == "function" then
+                local root: BasePart? = target.Character
+                    and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                pcall(recorder.noteAuthoredShot, recorder, {
+                    kind = "knife", tool = knife, toolName = knife.Name,
+                    originPos = originCF.Position, aimPos = aimPos, target = target,
+                    aimVelocity = root and root.AssemblyLinearVelocity or nil,
+                    source = "menu-auto-throw",
+                    settings = {mode = "Auto Knife Throw", wallCheck = settings.wallCheck},
+                })
+            end
+        end
         local eventsFolder: Instance? = knife:FindFirstChild("Events")
         local knifeThrownRemote: Instance? = eventsFolder and eventsFolder:FindFirstChild("KnifeThrown")
         if knifeThrownRemote and knifeThrownRemote:IsA("RemoteEvent") then
+            noteThrowAttempt()
             local okFire: boolean = pcall(function(): ()
                 (knifeThrownRemote :: RemoteEvent):FireServer(originCF, CFrame.new(aimPos))
             end)
@@ -705,6 +723,7 @@ function Module.init(runtime: any): any
                 local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
                 local throwRemote: Instance? = remotes and remotes:FindFirstChild("Event")
                 if throwRemote and throwRemote:IsA("RemoteEvent") then
+                    noteThrowAttempt()
                     local dir: Vector3 = (aimPos - originCF.Position).Unit
                     local rem: RemoteEvent = throwRemote :: RemoteEvent
                     rem:FireServer("Throw", aimPos, dir)

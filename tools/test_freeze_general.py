@@ -17,8 +17,16 @@ SOURCE = (ROOT / "src/games/universal/Movement/FreezeMovements.lua").read_text()
 PRELUDE = r'''
 local now = 0
 local os = {clock = function() return now end}
-local Vector3 = {zero = {Magnitude = 0}}
-function Vector3.new(x, y, z) return {X = x or 0, Y = y or 0, Z = z or 0} end
+local Vector3 = {}
+local vectorMeta = {__add = function(a,b) return Vector3.new(a.X+b.X,a.Y+b.Y,a.Z+b.Z) end}
+function Vector3.new(x, y, z)
+ x=x or 0;y=y or 0;z=z or 0
+ return setmetatable({X=x,Y=y,Z=z,Magnitude=math.sqrt(x*x+y*y+z*z)},vectorMeta)
+end
+Vector3.zero=Vector3.new(0,0,0)
+local CFrame={lookAt=function(position,target)
+ return {Position=position,LookVector=Vector3.new(target.X-position.X,target.Y-position.Y,target.Z-position.Z)}
+end}
 local Enum = {
     HumanoidStateType = {Jumping = 'Jumping', Running = 'Running', Freefall = 'Freefall', Dead = 'Dead', Idle = 'Idle'},
     AnimationPriority = {Core = 'Core', Movement = 'Movement', Action = 'Action', Idle = 'Idle'},
@@ -60,7 +68,8 @@ function animator:LoadAnimation(animation)
     return t
 end
 local root = {
-    Parent = true, Anchored = false, Position = {X = 0, Y = 5, Z = 0},
+    Parent = true, Anchored = false, Position = Vector3.new(0,5,0),
+    CFrame = CFrame.lookAt(Vector3.new(0,5,0),Vector3.new(0,5,-1)),
     AssemblyLinearVelocity = {Magnitude = 0, X = 0, Y = 0, Z = 0},
     AssemblyAngularVelocity = {Magnitude = 0},
 }
@@ -121,10 +130,18 @@ assert(sections['Position Lock settings'] and sections['Motion settings'])
 feature.enabled = true; toggle(true)
 mode('Position Lock'); tick()
 assert(root.Anchored == true, 'hard lock anchors the body')
+root.CFrame=CFrame.lookAt(root.Position,root.Position+Vector3.new(1,0,0))
+root.AssemblyAngularVelocity=Vector3.new(1,2,3);tick()
+assert(root.CFrame.LookVector.Z==-1 and root.AssemblyAngularVelocity==Vector3.zero,
+    'Lock rotation ON restores the original orientation and stops spinning')
 
 -- Keep gravity: no anchor, pushes erased, falling preserved.
 checkboxes['Keep gravity'](true); tick()
 assert(root.Anchored == false, 'keep gravity must not anchor')
+root.CFrame=CFrame.lookAt(root.Position,root.Position+Vector3.new(1,0,0))
+root.AssemblyAngularVelocity=Vector3.new(1,2,3);tick()
+assert(root.CFrame.LookVector.Z==-1 and root.AssemblyAngularVelocity==Vector3.zero,
+    'Lock rotation ON still works while falling')
 root.AssemblyLinearVelocity = {Magnitude = 30, X = 20, Y = -40, Z = 3}
 tick()
 assert(root.AssemblyLinearVelocity.X == 0 and root.AssemblyLinearVelocity.Z == 0
@@ -132,16 +149,28 @@ assert(root.AssemblyLinearVelocity.X == 0 and root.AssemblyLinearVelocity.Z == 0
 
 -- Return if pushed: a drift beyond the limit snaps back, a smaller one does not.
 numbers['Return if pushed'](3)
-root.Position = {X = 2, Y = 5, Z = 0}; tick()
+root.Position = Vector3.new(2,5,0); tick()
 assert(root.Position.X == 2, 'drift inside the limit is allowed')
-root.Position = {X = 9, Y = 6, Z = 4}; tick()
+root.Position = Vector3.new(9,6,4); tick()
 assert(root.Position.X == 0 and root.Position.Z == 0 and root.Position.Y == 6,
     'drift beyond the limit is undone, the height is kept')
 checkboxes['Keep gravity'](false); numbers['Return if pushed'](0); tick()
 assert(root.Anchored == true)
 
--- Motion: a game emote identified only by its name keyword.
+-- Rotation OFF must really leave the body able to turn, not anchor it.
+checkboxes['Lock rotation'](false);tick()
+local pinned=root.Position
+local freeTurn=CFrame.lookAt(pinned,pinned+Vector3.new(1,0,0))
+local spin=Vector3.new(1,2,3)
+root.CFrame=freeTurn;root.AssemblyAngularVelocity=spin
+root.Position=Vector3.new(pinned.X+5,pinned.Y+3,pinned.Z-7);tick()
+assert(not root.Anchored and root.Position==pinned,'free rotation pins position without anchoring')
+assert(root.CFrame==freeTurn and root.AssemblyAngularVelocity==spin,'free rotation does not override the turn')
+
+-- Motion releases the lock without resetting the last position/orientation.
 mode('Motion'); tick()
+assert(not root.Anchored and root.Position==pinned and root.CFrame==freeTurn,
+    'mode change restores anchor ownership without teleporting or rotating')
 now += 1
 local named = track('DancePartyEmote', 5150, 'Action')
 root.AssemblyLinearVelocity = {Magnitude = 16}
@@ -189,7 +218,7 @@ assert(#loaded == 3, 'Any emote off keeps the strict detection')
 
 feature.enabled = false; toggle(false)
 assert(not tick and not root.Anchored)
-print('PASS v180 Freeze Movements: keyword + standing custom emotes, attack exclusion, any animation, Position Lock rows')
+print('PASS Motion Lock: lock rotation on/off, gravity, horizontal return, no exit teleport, custom Motion/emotes and independent rows')
 '''
 
 with tempfile.TemporaryDirectory(prefix="freeze-general-") as tmp:

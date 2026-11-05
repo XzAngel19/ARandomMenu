@@ -823,10 +823,8 @@ do
       return nil
     end
     assert(not findFeature("Weapon Visuals"), "removed cosmetics must not load")
-    local calibration = findFeature("Calibration")
-    assert(calibration.options:FindFirstChild("Option_TrailESP"), "TrailESP belongs in Calibration")
-    assert(not calibration.options:FindFirstChild("Option_TracerData"), "no duplicate tracer recorder")
-    assert(not calibration.options:FindFirstChild("Option_Mode"), "no one-choice Calibration mode")
+    assert(not findFeature("Calibration"), "Calibration must not have a visible card")
+    assert(ex.state.mm2TrajectoryCalibration, "consent-gated recorder must remain available")
     local items = ex.state.framework:GetModule("ItemESP")
     assert(items.Options["Gun ESP"] and items.Options["Trap ESP"], "MM2 item providers must actually register")
     items:Toggle(true)
@@ -843,18 +841,18 @@ do
     assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
       "removing Shaders must leave the place lighting untouched")
     print("[HARNESS] SHADERS REMOVED")
-    local freeze = findFeature("Freeze Movements")
-    assert(freeze, "Freeze Movements feature must exist after boot")
+    local freeze = findFeature("Motion Lock")
+    assert(freeze, "Motion Lock feature must exist after boot")
     for cycle = 1, 2 do
       local okF, errF = pcall(freeze.onToggle, true)
-      assert(okF, "Freeze Movements ON must not error: " .. tostring(errF))
+      assert(okF, "Motion Lock ON must not error: " .. tostring(errF))
       -- mode switches while enabled re-apply the feature (the stuck-anchor
       -- bug); exercise it like the cycle option does
       local okR1 = pcall(freeze.onToggle, false)
       local okR2 = pcall(freeze.onToggle, true)
-      assert(okR1 and okR2, "Freeze Movements re-apply must not error")
+      assert(okR1 and okR2, "Motion Lock re-apply must not error")
       local okFOff, errFOff = pcall(freeze.onToggle, false)
-      assert(okFOff, "Freeze Movements OFF must not error: " .. tostring(errFOff))
+      assert(okFOff, "Motion Lock OFF must not error: " .. tostring(errFOff))
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local coinsAura = findFeature("Coins Aura")
@@ -940,28 +938,23 @@ do
       local target, targetName = values["MM2.Shoot.Target"], values["MM2.Shoot.Targetplayer"]
       assert(aim and gunWall and gunMacro and target and targetName, "Gun Aimbot controls missing")
       assert(not toggles["MM2.Shoot.Avoidinnocents"] and not findFeature("Gun Aimbot").options:FindFirstChild("Option_Avoidinnocents"), "Avoid Innocents must be removed")
-      aim.apply("Normal(Bullet)")
+      aim.apply("Bullet")
       gunWall.setChecked(false); gunMacro.setChecked(true)
       target.apply("Custom"); targetName.apply("TestPlayer")
       local nameBox = findFeature("Gun Aimbot").options:FindFirstChild("Option_Targetplayer"):FindFirstChildOfClass("TextBox")
       nameBox:GetPropertyChangedSignal("Text"):Fire() -- the mock does not auto-fire property signals
-      aim.apply("Silent(Cframe)")
+      aim.apply("Silent(CFrame)")
       assert(ex.state.mm2Core.mm2Settings.silentAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true
         and ex.state.mm2Core.mm2Settings.shootMode == "Murder", "Silent inherited Bullet settings")
       gunMacro.setChecked(true); gunWall.setChecked(false)
-      aim.apply("Experimental")
-      assert(ex.state.mm2Core.mm2Settings.experimentalAim == true and ex.state.mm2Core.mm2Settings.shootWallCheck == true,
-        "Experimental inherited Gun settings")
-      aim.apply("Normal(Bullet)")
+      aim.apply("Bullet")
       assert(ex.state.mm2Core.mm2Settings.shootWallCheck == false
         and ex.state.mm2Core.mm2Settings.shootMode == "Custom" and ex.state.mm2Core.mm2Settings.shootTarget == "TestPlayer"
         and cfg.states["MM2.Shoot.Bullet.Macro"] == true, "Bullet Gun settings were not restored")
-      aim.apply("Experimental"); gunWall.setChecked(false)
-      assert(cfg.states["MM2.Shoot.Experimental.WallCheck"] == false, "Experimental Gun options were not retained")
       -- Reset test changes to avoid contaminating later boot assertions.
-      gunWall.setChecked(true); aim.apply("Normal(Bullet)"); gunWall.setChecked(true); gunMacro.setChecked(false)
+      gunWall.setChecked(true); aim.apply("Bullet"); gunWall.setChecked(true); gunMacro.setChecked(false)
       target.apply("Murder"); targetName.apply("")
-      aim.apply("Silent(Cframe)"); gunWall.setChecked(true); gunMacro.setChecked(false); aim.apply("Normal(Bullet)")
+      aim.apply("Silent(CFrame)"); gunWall.setChecked(true); gunMacro.setChecked(false); aim.apply("Bullet")
 
       local mode = values["MM2.AutoShoot.Mode"]
       local wall, prox, aura = toggles["MM2.AutoShoot.WallCheck"], toggles["MM2.AutoShoot.Proximity"], values["MM2.AutoShoot.Aura"]
@@ -994,7 +987,7 @@ do
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Interact Extender", "Fling", "Walk Fling"},
-      Utilities = {"Auto Shoot", "Anti Void", "Teleport", "Freeze Movements", "Ghost", "Anti Fling"},
+      Utilities = {"Auto Shoot", "Anti Void", "Teleport", "Motion Lock", "Ghost", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -1031,10 +1024,7 @@ do
       local alwaysOn = #manager.tasks
       assert(alwaysOn > 0, "the always-on scheduler must have tasks")
       assert(alwaysOn <= 26, "too many always-on per-frame tasks: " .. tostring(alwaysOn))
-      local report = ex.state.perfReport()
-      assert(type(report) == "string" and string.find(report, "FPS") ~= nil,
-        "state.perfReport() must return a readable summary")
-      assert(string.find(report, "tasks") ~= nil, "the report must list the task bucket")
+      assert(ex.state.perfReport == nil, "Perf report was removed")
 
       -- Leak check: an ESP registers a render connection on enable and the
       -- framework must take it away on disable, every single time.
@@ -1255,9 +1245,9 @@ do
     local shoot = findFeature("Gun Aimbot")
     local aimMethod = ex.state.valueControls["MM2.Shoot.Aimmethod"]
     assert(shoot and aimMethod and shoot.options:FindFirstChild("Section_Gun"))
-    aimMethod.apply("Silent(Cframe)")
+    aimMethod.apply("Silent(CFrame)")
     assert(shoot.options:FindFirstChild("Option_WallCheck").Visible, "WallCheck applies to Silent too")
-    aimMethod.apply("Normal(Bullet)")
+    aimMethod.apply("Bullet")
     assert(ex.state.shortcutBindings["MM2.Shoot"], "Shoot keeps its main activation shortcut")
     assert(not shoot.options:FindFirstChild("Option_AutoShoot") and not shoot.options:FindFirstChild("Option_KnifeThrow"),
       "independent cards must not be duplicated in Gun Aimbot")
@@ -1363,8 +1353,7 @@ do
         end
       end
     end
-    local calibration = findFeature("Calibration")
-    assert(calibration and string.find(calibration.configKey, "MM2", 1, true), "MM2 Calibration must remain separate")
+    assert(not findFeature("Calibration"), "Calibration remains popup-only")
     assert(ex.state.clickGui and not ex.state.clickGui.categories.Fun, "Fun window must be removed")
     local freecam = ex.state.framework:GetModule("FreeCam")
     assert(freecam and freecam.Category == "World" and freecam.Options.Speed and freecam.Options.Sensitivity)

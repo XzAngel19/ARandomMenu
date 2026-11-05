@@ -209,6 +209,9 @@ function Module.init(runtime: any): any
         whenReady: boolean?,
         continuous: boolean?,
         wallCheck: boolean?,
+        -- Native PC hook: construct the same shot but let the original
+        -- FireServer send it once instead of sending a second packet.
+        redirect: ((CFrame, CFrame) -> ())?,
     }
 
     -- Experimental policy, not a measured hit-rate optimization: prefer the
@@ -658,7 +661,11 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
-            remote:FireServer(shotOrigin, shotEnd)
+            if opts.redirect then
+                opts.redirect(shotOrigin, shotEnd)
+            else
+                remote:FireServer(shotOrigin, shotEnd)
+            end
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "gun",
@@ -705,10 +712,12 @@ function Module.init(runtime: any): any
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
         -- duration or an authoritative hit-rate denominator.
-        remote:FireServer(
-            CFrame.lookAt(origin.Position, info.endpoint),
-            shotEndCFrame
-        )
+        local shotOriginCFrame: CFrame = CFrame.lookAt(origin.Position, info.endpoint)
+        if opts.redirect then
+            opts.redirect(shotOriginCFrame, shotEndCFrame)
+        else
+            remote:FireServer(shotOriginCFrame, shotEndCFrame)
+        end
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
             tool = gun,
@@ -747,10 +756,12 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
+    local transientShotActive: boolean = false
+    local transientShotGeneration: number = 0
     local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()
-        local wantActive: boolean = shootFeatureActive or autoShootActive
+        local wantActive: boolean = shootFeatureActive or autoShootActive or transientShotActive
         state.mm2ShotFeedback.shootActive = wantActive
         if wantActive then
             local weaponService: any = getWeaponServiceModule()
@@ -765,10 +776,90 @@ function Module.init(runtime: any): any
         state.mm2ShotFeedback.hide()
     end
 
+    local shotHookInstalled: boolean = false
+    local shotHookWrapper: any = nil
+    local originalNamecall: any = nil
+    local function installNativeGunHook(): boolean
+        if state.isMobile then return true end
+        if shotHookInstalled then return true end
+        local hook: any = state.hookMetamethod
+        local getMethod: any = state.getNamecallMethod
+        local checkCaller: any = state.checkCaller
+        if type(hook) ~= "function" or type(getMethod) ~= "function"
+            or type(checkCaller) ~= "function" then
+            return false
+        end
+        local predecessor: any = nil
+        local function redirectNamecall(remote: any, ...: any): any
+            if not shootFeatureActive or not shootOptionsReady then
+                return predecessor(remote, ...)
+            end
+            local okMethod: boolean, method: any = pcall(getMethod)
+            if not okMethod or method ~= "FireServer" then
+                return predecessor(remote, ...)
+            end
+            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
+            if not okCaller or fromExecutor ~= false then
+                -- Auto Shoot, Auto Farm, Knife and other executor-originated
+                -- packets keep their own settings and never enter this hook.
+                return predecessor(remote, ...)
+            end
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local gun: Tool? = character and getPlayerWeapon(LocalPlayer, "Gun", true) or nil
+            if not gun or gun.Parent ~= character or remote ~= gun:FindFirstChild("Shoot") then
+                return predecessor(remote, ...)
+            end
+            local arguments: any = table.pack(...)
+            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
+                return predecessor(remote, ...)
+            end
+            local shotOrigin: CFrame? = nil
+            local shotEnd: CFrame? = nil
+            local ok: boolean, redirected: any = pcall(function(): boolean
+                return fireGunAtTarget(getSelectedShootTarget(), {
+                    quiet = true,
+                    redirect = function(origin: CFrame, endpoint: CFrame): ()
+                        shotOrigin, shotEnd = origin, endpoint
+                    end,
+                })
+            end)
+            if ok and redirected and shotOrigin and shotEnd then
+                arguments[1], arguments[2] = shotOrigin, shotEnd
+                return predecessor(remote, table.unpack(arguments, 1, arguments.n))
+            end
+            -- No target, blocked line, unsupported geometry or an error: keep
+            -- the native click intact instead of blocking it or firing twice.
+            return predecessor(remote, ...)
+        end
+        local callback: any = redirectNamecall
+        if type(state.newCClosure) == "function" then
+            local ok: boolean, wrapped: any = pcall(state.newCClosure, callback)
+            if ok and type(wrapped) == "function" then callback = wrapped end
+        end
+        local ok: boolean, old: any = pcall(hook, game, "__namecall", callback)
+        if not ok or type(old) ~= "function" then return false end
+        predecessor = old
+        originalNamecall, shotHookWrapper, shotHookInstalled = old, callback, true
+        return true
+    end
+
+    local function uninstallNativeGunHook(): ()
+        if not shotHookInstalled or type(state.hookMetamethod) ~= "function" then return end
+        local ok: boolean, displaced: any = pcall(state.hookMetamethod, game, "__namecall", originalNamecall)
+        if not ok then return end
+        if displaced == shotHookWrapper then
+            shotHookInstalled, shotHookWrapper, originalNamecall = false, nil, nil
+        elseif type(displaced) == "function" then
+            -- Someone else wrapped us. Put their hook back and leave our
+            -- now-inert wrapper in their chain instead of clobbering it.
+            pcall(state.hookMetamethod, game, "__namecall", displaced)
+        end
+    end
+
     local manualShotPending: boolean = false
     local function triggerManualShot(): ()
-        if not shootFeatureActive then
-            notify("Enable SilentAIM first.")
+        if state.isMobile and not shootFeatureActive then
+            notify("Enable Gun Aimbot first.")
             return
         end
         if manualShotPending then return end
@@ -786,7 +877,19 @@ function Module.init(runtime: any): any
                 RunService.Heartbeat:Wait()
             end
             -- Never re-equip if the user switched away during that frame.
-            if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
+            if (not state.isMobile or shootFeatureActive)
+                and LocalPlayer.Character == character and gun.Parent == character then
+                if not shootFeatureActive and not state.isMobile then
+                    transientShotGeneration += 1
+                    local generation: number = transientShotGeneration
+                    transientShotActive = true
+                    refreshShootInfrastructure()
+                    task.delay(2, function(): ()
+                        if generation ~= transientShotGeneration then return end
+                        transientShotActive = false
+                        refreshShootInfrastructure()
+                    end)
+                end
                 fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
@@ -800,6 +903,13 @@ function Module.init(runtime: any): any
         if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
+        if enabled and not state.isMobile then
+            if not installNativeGunHook() then
+                notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+            end
+        elseif not enabled then
+            uninstallNativeGunHook()
+        end
         if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
@@ -879,7 +989,9 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "Gun Aimbot",
-        "Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned key fires/equips Gun; WallCheck is configurable per mode.",
+        state.isMobile
+            and "Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned action fires/equips Gun; WallCheck is configurable per mode."
+            or "Redirect native clicks with Bullet or Silent(CFrame). One optional keybind fires even while the module is off.",
         4,
         toggleShootMurderer,
         {
@@ -924,15 +1036,25 @@ function Module.init(runtime: any): any
     -- per-mode settings and remain valid when loading existing profiles.
     local function modeKey(value: any): string
         if value == "Experimental" then return "Experimental" end
-        if value == "CFrame" or value == "Silent(Cframe)" then return "CFrame" end
+        if value == "CFrame" or value == "Silent(Cframe)" or value == "Silent(CFrame)" then return "CFrame" end
         return "Bullet"
     end
     local savedMode: any = values["MM2.Shoot.Aimmethod"]
     local initialMode: string = modeKey(savedMode
         or (mm2Settings.experimentalAim and "Experimental" or (mm2Settings.silentAim and "CFrame" or "Bullet")))
-    if savedMode == "Bullet" or savedMode == "CFrame" then
-        values["MM2.Shoot.Aimmethod"] = savedMode == "CFrame" and "Silent(Cframe)" or "Normal(Bullet)"
-        if type(queueConfigSave) == "function" then queueConfigSave() end
+    if state.isMobile then
+        if savedMode == "Bullet" or savedMode == "CFrame" or savedMode == "Silent(CFrame)" then
+            values["MM2.Shoot.Aimmethod"] = (savedMode == "CFrame" or savedMode == "Silent(CFrame)")
+                and "Silent(Cframe)" or "Normal(Bullet)"
+            if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
+    else
+        if initialMode == "Experimental" then initialMode = "Bullet" end
+        local normalized: string = initialMode == "CFrame" and "Silent(CFrame)" or "Bullet"
+        if values["MM2.Shoot.Aimmethod"] ~= normalized then
+            values["MM2.Shoot.Aimmethod"] = normalized
+            if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
     end
     local function modeConfig(mode: string): any
         local prefix: string = "MM2.Shoot." .. mode .. "."
@@ -982,7 +1104,10 @@ function Module.init(runtime: any): any
         switching = false
         refreshShootOptions()
     end
-    addCycleOption(ShootFeature, "Aim method", {"Normal(Bullet)", "Silent(Cframe)", "Experimental"},
+    local aimMethods: {string} = state.isMobile
+        and {"Normal(Bullet)", "Silent(Cframe)", "Experimental"}
+        or {"Bullet", "Silent(CFrame)"}
+    addCycleOption(ShootFeature, "Aim method", aimMethods,
         initialMode == "Experimental" and 3 or (initialMode == "CFrame" and 2 or 1),
         function(value: string): ()
             activeModeKey = modeKey(value)
@@ -990,7 +1115,9 @@ function Module.init(runtime: any): any
             mm2Settings.silentAim = activeModeKey == "CFrame"
             syncMode()
         end,
-        "Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode.")
+        state.isMobile
+            and "Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode."
+            or "One keybind is shared; WallCheck and target settings are saved per mode.")
     addCycleOption(ShootFeature, "Target", {"Murder", "Custom"}, 1, function(value: string): ()
         mm2Settings.shootMode = value
         if optionsReady and not switching then
@@ -1001,6 +1128,14 @@ function Module.init(runtime: any): any
     end)
     if state.bindFeatureActivationKey then
         state.bindFeatureActivationKey(ShootFeature, mm2Settings.shootKey, triggerManualShot)
+    end
+    if not state.isMobile then
+        local binding: any = state.shortcutBindings and state.shortcutBindings[ShootFeature.configKey]
+        if binding then binding.feedback = nil end
+        if type(state.addFeatureShortcutOption) == "function" then
+            state.addFeatureShortcutOption(ShootFeature, "Keybind",
+                "Optional: click the box and press a key. It fires in either mode, even when Gun Aimbot is off.")
+        end
     end
     addToggleOption(ShootFeature, "WallCheck", true, function(value: boolean): ()
         mm2Settings.shootWallCheck = value == true
@@ -1030,9 +1165,16 @@ function Module.init(runtime: any): any
     -- The visible Auto control is at the top, but arming waits until saved
     -- aim method/target options below have all been restored.
     shootOptionsReady = true
+    if shootFeatureActive and not state.isMobile and not shotHookInstalled then
+        if not installNativeGunHook() then
+            notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+        end
+    end
     if updateAutoShootConnection then updateAutoShootConnection() end
 
     activeCleanup = function(): ()
+        transientShotGeneration += 1
+        transientShotActive = false
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil

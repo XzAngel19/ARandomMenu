@@ -106,6 +106,9 @@ local Players = {GetPlayers = function()
     return lobby
 end}
 local state = {mm2Prediction = nil, mm2Core = {}}
+local core = state.mm2Core
+local authored = {}
+core.trajectoryCalibration = {noteAuthoredShot = function(_,info) table.insert(authored,info) end}
 local roundActive = true
 state.mm2Core.isRoundLifecycleActive = function() return roundActive end
 local blocked, hasGround = false, true
@@ -200,12 +203,18 @@ knife.Parent = character
 ok = throwKnife(target, knife)
 assert(ok == true, 'an equipped blade must throw')
 assert(#fired == 1, 'exactly one packet per throw')
+assert(#authored == 1 and authored[1].source == 'menu-auto-throw'
+    and authored[1].tool == knife and authored[1].target == target
+    and authored[1].originPos == fired[1].origin.Position
+    and authored[1].aimPos == fired[1].target.Position,
+    'actual menu throw records the sent origin, endpoint and target once')
 assert(equips == 1, 'no extra equip once the blade is in hand')
 
 -- 4. Already equipped from the start: fire immediately.
 fired = {}
 assert(throwKnife(target, knife) == true, 'an already equipped blade throws at once')
 assert(#fired == 1 and equips == 1, 'one packet, no equip churn')
+assert(#authored == 2, 'each new menu throw adds exactly one authored record')
 
 -- 5. Manual-only mode has no reason to predict 15 times per second: both
 -- native WeaponService hooks below solve at the actual input event instead.

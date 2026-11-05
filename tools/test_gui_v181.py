@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GUI regressions fixed in v181, on the real booted menu.
 
-1. Freeze Movements: switching Mode (Position Lock <-> Motion) must never empty
+1. Motion Lock: switching Mode (Position Lock <-> Motion) must never empty
    the card. The old code hid the whole options container instead of the rows
    because addToggleOption returns the button and addNumberOption the row.
 2. HackList: the overlay only shows when Settings -> UI -> HackList -> Show is
@@ -26,10 +26,10 @@ local function byName(name)
     end
 end
 
--- 1. Freeze Movements mode switching.
-local freeze = byName('Freeze Movements')
-assert(freeze, 'Freeze Movements card is missing')
-assert(freeze.options, 'Freeze Movements has no options container')
+-- 1. Motion Lock mode switching.
+local freeze = byName('Motion Lock')
+assert(freeze, 'Motion Lock card is missing')
+assert(freeze.options, 'Motion Lock has no options container')
 local ctl = ex.state.valueControls['Movement.FreezeMovements.Freezemode']
 assert(ctl and ctl.apply, 'the Freeze mode control is missing')
 
@@ -42,7 +42,7 @@ local function visibleRows()
 end
 
 local startRows = visibleRows()
-assert(startRows > 0, 'Freeze Movements starts with visible rows: ' .. startRows)
+assert(startRows > 0, 'Motion Lock starts with visible rows: ' .. startRows)
 -- The card starts collapsed, so only the rows themselves (not the container)
 -- are asserted here; opening the card is what the reported bug did.
 local containerWasVisible = freeze.options.Visible
@@ -152,7 +152,7 @@ for _, feature in ipairs(ex.allFeatures) do
 end
 assert(withRows >= 40, 'cards still carry their rows: ' .. withRows)
 
-print('PASS GUI v181: Freeze Movements mode switching keeps every row, HackList needs Show, '
+print('PASS GUI v181: Motion Lock mode switching keeps every row, HackList needs Show, '
     .. 'options container protected, opacity and menu scale keep the windows intact')
 '''
 

@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v182-20261104-mm2-ui-calibration-repair`**.
+> **Estado actual:** build **`v183-20261104-native-gun-calibration`**.
 > Esta sesión trabaja exclusivamente en `arena/9492e6b6-arandommenu`; integró
 > v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
@@ -36,7 +36,37 @@
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
 
-## v182 — Reparación MM2/UI (2026-11-04)
+## v183 — Gun PC, Calibration y Motion Lock (2026-11-04)
+
+Detalle, tests y límites en `docs/FIXES-v183.md`. Decisiones vigentes:
+
+- Perf report eliminado; Move dock se conserva solo en móvil. Session Info aún
+  usa las métricas internas; no volver a introducir el reporte visible.
+- Calibration es exclusivamente el popup centrado Yes/No con **Don't Show
+  Again**, sin tarjeta ni opciones. Solo se recuerda la respuesta al marcar la
+  casilla; perfiles legacy vuelven a preguntar. Yes registra en el workspace
+  cuchillos observados, manuales y del menú; No no borra los archivos previos.
+  El historial se respalda/verifica antes de sobrescribirse. El cliente no ve
+  necesariamente todos los eventos del servidor. Los lotes de 2400 se archivan
+  solo tras verificar snapshot, archivo y consentimiento; archivos parciales no
+  se sobrescriben. Ruta principal `Wurst/Telemetry/MM2_Trajectory_Calibration.json`.
+- Gun Aimbot **PC**: Bullet y Silent(CFrame), un solo shortcut compartido y
+  opcional que funciona OFF. El hook del clic nativo requiere `hookmetamethod`,
+  `getnamecallmethod` y `checkcaller`, no envía un segundo paquete ni toca
+  llamadas de Auto Shoot/Farm; si falla preserva el clic original. WallCheck
+  bloqueado impide redirigir, no bloquea el clic nativo. Móvil conserva sus tres
+  modos y controles, incluido Experimental. El contrato nativo del juego y la
+  aceptación/daño por servidor no están probados en Roblox/Delta.
+- Freeze Movements se renombró a **Motion Lock**, mantiene la config y los dos
+  modos. Position Lock respeta Lock rotation también con gravedad; con giro
+  libre fija posición sin anclar. Cambiar/apagar restaura anclaje sin devolver
+  el CFrame viejo. Motion conserva los emotes y animaciones independientes.
+- `bash tools/validate.sh`: 82 fuentes compiladas, 121 suites, bundle de 80
+  fuentes, boot `failures=0` y 48 tarjetas en debug/release. Las suites nuevas
+  prueban captura y archivo, hook PC y controles PC/móvil con mocks; no prueban
+  píxeles, física real, servidor ni FPS.
+
+## v182 — Reparación MM2/UI (2026-11-04; histórico)
 
 Detalle y límites en `docs/FIXES-v182.md`. La versión v181 de
 `arena/979b8402-arandommenu` se integró antes de reparar. Las decisiones vigentes:
@@ -57,9 +87,9 @@ Detalle y límites en `docs/FIXES-v182.md`. La versión v181 de
 - **Calibration:** diálogo no escalado bajo `ScreenGui`, centrado y con altura
   automática; la copia del historial se hace y verifica solamente tras Yes y
   antes de sobrescribir. Un archivo cambiado o backup fallido bloquea guardado.
-  No intenta borrar backups antiguos y la eliminación con No depende de
-  `delfile`. El estado refleja el buffer real de hasta 8 muestras, sin afirmar
-  convergencia.
+  En v182 se intentaba eliminar el archivo principal con No; v183 sustituyó ese
+  comportamiento y ahora conserva todos los archivos anteriores. El predictor
+  conserva hasta 8 muestras por modo, sin afirmar convergencia.
 - Los nuevos tests de Emotes, escala/reflow, modal/opacidad y consentimiento
   ejecutan fuentes/bundle con mocks. Roblox/Delta, visualización real, FPS,
   permisos y servidor siguen sin validación directa.

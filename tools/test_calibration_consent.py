@@ -54,7 +54,7 @@ assert(WRITES[2][1]==TELEMETRY and FILES[TELEMETRY]=='{}','second write is the n
 c:setConsent(nil)
 assert(FILES[TELEMETRY]=='{}','Ask again must not delete an existing snapshot before an answer')
 c:setConsent(false)
-assert(c:getConsent()==false and FILES[TELEMETRY]==nil,'No stops saving and removes the current file when supported')
+assert(c:getConsent()==false and FILES[TELEMETRY]=='{}','No stops recording and preserves existing telemetry')
 local before=#WRITES
 assert(not c:save('manual') and #WRITES==before,'No must prohibit manual writes')
 -- Explicitly clearing history with an executor lacking delfile must not write
@@ -88,6 +88,36 @@ assert(FILES[TELEMETRY]=='existing-history' and #WRITES==0,
 assert(not c:save('manual') and #WRITES==0,'failed backup must block later saves')
 print('PASS calibration backup error: original is preserved')
 '''
+appeared = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+assert(FILES[TELEMETRY]==nil and #WRITES==0)
+FILES[TELEMETRY]='created-after-boot'
+assert(not c:setConsent(true),'newly appeared history must be treated as a conflict')
+assert(FILES[TELEMETRY]=='created-after-boot' and #WRITES==0,'unimported data must never be overwritten')
+print('PASS calibration conflict: file appearing while prompt is open is preserved')
+'''
+empty_history = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+assert(FILES[TELEMETRY]=='')
+assert(c:setConsent(true) and #WRITES==2)
+assert(WRITES[1][2]=='' and WRITES[1][1]~=TELEMETRY,
+ 'an existing empty history is verified and backed up too')
+print('PASS calibration backup: empty existing history is protected')
+'''
+main_write_failure = r'''
+local c=assert(ex.state.mm2TrajectoryCalibration)
+local originalWrite=writefile
+function writefile(path,content)
+ if path==TELEMETRY then error('main write denied') end
+ return originalWrite(path,content)
+end
+assert(not c:setConsent(true) and FILES[TELEMETRY]=='existing-history' and #WRITES==1)
+writefile=originalWrite
+FILES[TELEMETRY]='changed-after-failure'
+assert(not c:setConsent(true) and FILES[TELEMETRY]=='changed-after-failure' and #WRITES==1,
+ 'a failed first save must re-check original bytes before retrying')
+print('PASS calibration retry: a failed initial write cannot overwrite a later change')
+'''
 prompt_success = r'''
 for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
 local gui=assert(ex.state.frameworkEnvironment.ScreenGui)
@@ -97,8 +127,11 @@ assert(panel.Parent.Parent==gui and panel.Position.X.Scale==0.5 and panel.Positi
  'the actual Calibration prompt must be centred under ScreenGui')
 assert(#WRITES==0,'the prompt alone must not write telemetry')
 assert(panel:FindFirstChild('Actions'):FindFirstChild('Yes')).MouseButton1Click:Fire()
-assert(ex.state.mm2CalibrationFeature.status=='giving calibration' and #WRITES==2,
- 'Yes must save and update the actual Calibration card')
+assert(ex.state.mm2TrajectoryCalibration:getConsent()==true and #WRITES==2,
+ 'Yes must start and save without creating a card')
+assert(ex.configData.states['MM2.Calibration.DontShowAgain']==false,
+ 'leaving the box unchecked must not remember the answer')
+for _,f in ipairs(ex.allFeatures) do assert(f.name~='Calibration','no Calibration card') end
 print('PASS calibration prompt: centred real callback and successful Yes')
 '''
 prompt_failure = r'''
@@ -108,11 +141,11 @@ local backdrop=assert(gui:FindFirstChild('ConfirmDialog'))
 local yes=assert(backdrop:FindFirstChild('Panel'):FindFirstChild('Actions'):FindFirstChild('Yes'))
 FILES[TELEMETRY]='external-change'
 yes.MouseButton1Click:Fire()
-assert(ex.state.mm2CalibrationFeature.status=='saving unavailable',
+assert(ex.state.mm2TrajectoryCalibration:status():find('saving unavailable',1,true),
  'failed Yes must not claim the file is being saved')
 assert(FILES[TELEMETRY]=='external-change' and #WRITES==0,
  'the real prompt must preserve a conflicted file')
-print('PASS calibration prompt: save failures reach the card')
+print('PASS calibration prompt: save failures reach the user')
 '''
 backup_corrupt = r'''
 local c=assert(ex.state.mm2TrajectoryCalibration)
@@ -131,11 +164,83 @@ assert(FILES[TELEMETRY]=='existing-history' and #WRITES==1,
 assert(not c:save('manual') and #WRITES==1,'unverified backup must block later saves')
 print('PASS calibration backup verification: original is preserved')
 '''
+prompt_remember_yes = r'''
+for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
+local panel=assert(ex.state.frameworkEnvironment.ScreenGui:FindFirstChild('ConfirmDialog')):FindFirstChild('Panel')
+local remember=assert(panel:FindFirstChild('RememberChoice'))
+assert(remember:FindFirstChild('Label').Text=="Don't Show Again")
+local mark=remember:FindFirstChild('Box'):FindFirstChild('Check')
+assert(mark.Visible==false,'remember must be opt-in')
+remember.MouseButton1Click:Fire();assert(mark.Visible==true,'checkbox visibly turns on')
+remember.MouseButton1Click:Fire();assert(mark.Visible==false,'checkbox visibly turns off')
+remember.MouseButton1Click:Fire()
+panel:FindFirstChild('Actions'):FindFirstChild('Yes').MouseButton1Click:Fire()
+assert(ex.configData.states['MM2.Calibration.DontShowAgain']==true)
+assert(ex.configData.states['MM2.Calibration.Consent']==true and #WRITES==2)
+local configWritten=false
+for path,bytes in pairs(FILES) do
+ if tostring(path):find('Game_20260716',1,true) and type(bytes)=='string'
+    and bytes:find('MM2.Calibration.DontShowAgain',1,true) then configWritten=true end
+end
+assert(configWritten,'remembered answer must reach persisted config')
+print('PASS calibration prompt: checked Yes persists the remembered decision')
+'''
+prompt_remember_no = r'''
+for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
+local panel=assert(ex.state.frameworkEnvironment.ScreenGui:FindFirstChild('ConfirmDialog')):FindFirstChild('Panel')
+panel:FindFirstChild('RememberChoice').MouseButton1Click:Fire()
+panel:FindFirstChild('Actions'):FindFirstChild('No').MouseButton1Click:Fire()
+assert(ex.configData.states['MM2.Calibration.DontShowAgain']==true)
+assert(ex.configData.states['MM2.Calibration.Consent']==false)
+assert(FILES[TELEMETRY]=='existing-history' and #WRITES==0,'No must keep old data and never write telemetry')
+assert(not ex.state.mm2TrajectoryCalibration:save('no'))
+print('PASS calibration prompt: checked No is remembered without deleting prior data')
+'''
+remembered_yes = r'''
+for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
+assert(not ex.state.frameworkEnvironment.ScreenGui:FindFirstChild('ConfirmDialog'))
+assert(ex.state.mm2TrajectoryCalibration:getConsent()==true and #WRITES==2)
+print('PASS calibration remembered Yes: no prompt, backup and recording restored')
+'''
+remembered_no = r'''
+for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
+assert(not ex.state.frameworkEnvironment.ScreenGui:FindFirstChild('ConfirmDialog'))
+assert(ex.state.mm2TrajectoryCalibration:getConsent()==false and #WRITES==0)
+assert(FILES[TELEMETRY]=='existing-history')
+print('PASS calibration remembered No: no prompt or telemetry writes')
+'''
+unremembered = r'''
+for _,fn in ipairs(table.clone(DEFERRED_3)) do pcall(fn) end
+assert(ex.state.frameworkEnvironment.ScreenGui:FindFirstChild('ConfirmDialog'))
+assert(ex.state.mm2TrajectoryCalibration:getConsent()==nil and #WRITES==0)
+print('PASS calibration legacy or unchecked answer: asks again and stays inactive')
+'''
 with tempfile.TemporaryDirectory(prefix='calibration-consent-') as tmp:
-    for name, case in [('consent',probe),('conflict',conflict),
-                       ('backup-error',backup_error),('backup-corrupt',backup_corrupt),
-                       ('prompt-success',prompt_success),('prompt-failure',prompt_failure)]:
-        path=Path(tmp)/(name+'.luau');path.write_text(source+case,encoding='utf-8')
+    cases = [('consent',probe,None),('conflict',conflict,None),
+             ('appeared',appeared,None),('empty-history',empty_history,None),
+             ('main-write-failure',main_write_failure,None),
+             ('backup-error',backup_error,None),('backup-corrupt',backup_corrupt,None),
+             ('prompt-success',prompt_success,None),('prompt-failure',prompt_failure,None),
+             ('remember-yes-click',prompt_remember_yes,None),('remember-no-click',prompt_remember_no,None),
+             ('remembered-yes',remembered_yes,'true, ["MM2.Calibration.DontShowAgain"] = true'),
+             ('remembered-no',remembered_no,'false, ["MM2.Calibration.DontShowAgain"] = true'),
+             ('legacy-yes',unremembered,'true'),
+             ('unchecked-yes',unremembered,'true, ["MM2.Calibration.DontShowAgain"] = false')]
+    for name, case, saved in cases:
+        boot=source
+        initial="local FILES={[TELEMETRY]='existing-history'}"
+        if name=='appeared':
+            assert boot.count(initial)==1
+            boot=boot.replace(initial,'local FILES={}',1)
+        elif name=='empty-history':
+            assert boot.count(initial)==1
+            boot=boot.replace(initial,"local FILES={[TELEMETRY]=''}",1)
+        if saved is not None:
+            old='states = { ["ClickGUI.Showdock"] = false },'
+            new='states = { ["ClickGUI.Showdock"] = false, ["MM2.Calibration.Consent"] = '+saved+' },'
+            assert boot.count(old)==1
+            boot=boot.replace(old,new,1)
+        path=Path(tmp)/(name+'.luau');path.write_text(boot+case,encoding='utf-8')
         result=subprocess.run([os.environ.get('LUAU','luau'),str(path)],capture_output=True,text=True)
         if result.returncode: raise SystemExit(name+' failed:\n'+result.stdout[-2000:]+'\n'+result.stderr)
         assert 'PASS calibration' in result.stdout

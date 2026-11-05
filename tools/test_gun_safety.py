@@ -206,6 +206,21 @@ assert(seenOrigin and seenOrigin.Z==0,
 assert(lastAuthored and lastAuthored.settings.spawn=='Front'
  and lastAuthored.settings.sweep==0.5,
  'silent telemetry records the actual resolved geometry and sweep')
+-- Native PC redirection constructs the same safe frames without firing its
+-- own packet. The original namecall is responsible for the single send.
+local frames
+local beforeNative=sends
+assert(fireGunAtTarget(target,{quiet=true,redirect=function(a,b) frames={a,b} end}))
+assert(sends==beforeNative and frames and frames[1].Position.Z==0 and frames[2].Position==endpoint,
+ 'Silent redirect must construct frames but not send a duplicate')
+mm2Settings.silentAim=false;frames=nil
+assert(fireGunAtTarget(target,{quiet=true,redirect=function(a,b) frames={a,b} end}))
+assert(sends==beforeNative and frames and frames[1].Position.Z==-10 and frames[2].Position==endpoint,
+ 'Bullet redirect must keep the real muzzle and send no duplicate')
+safe=false;frames=nil
+assert(not fireGunAtTarget(target,{quiet=true,redirect=function(a,b) frames={a,b} end}) and not frames)
+assert(sends==beforeNative,'WallCheck refusal must never send a second packet')
+safe=true;mm2Settings.silentAim=true
 buildSilentShot=function() return nil,nil,0,0,'Front' end
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==2,'blocked silent geometry cannot send')

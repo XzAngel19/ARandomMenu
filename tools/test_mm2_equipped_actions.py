@@ -101,14 +101,26 @@ local RunService={Heartbeat={Wait=function() if cancel then gun.Parent={} end en
 local function getSelectedShootTarget() return {} end
 local function fireGunAtTarget(_,opts) assert(opts.whenReady==true and opts.maxError==nil);shots+=1 end
 local shootFeatureActive=true
-local function notify() end
+local transientShotActive=false
+local transientShotGeneration=0
+local state={isMobile=false}
+local delayed={}
+local task={delay=function(_,fn) table.insert(delayed,fn) end}
+local function refreshShootInfrastructure() end
+local messages={}
+local function notify(msg) table.insert(messages,msg) end
 '''+section(S,'    local manualShotPending:','    local function toggleShootMurderer')+r'''
 triggerManualShot();assert(equips==1 and shots==1)
 triggerManualShot();assert(equips==1 and shots==2,'held manual gun must not re-equip')
 gun.Parent={};cancel=true;triggerManualShot()
 assert(equips==2 and shots==2,'manual action must respect an unequip during the equip frame')
-shootFeatureActive=false;triggerManualShot();assert(equips==2)
-pass('actual manual Shoot: equips once, fires; respects unequip and OFF; Auto route stays held-only')
+shootFeatureActive=false;cancel=false;triggerManualShot()
+assert(equips==3 and shots==3 and transientShotActive,'PC key fires while the module is OFF')
+for _,fn in ipairs(delayed) do fn() end
+assert(not transientShotActive and #messages==0,'temporary feedback is cleaned without an error')
+state.isMobile=true;gun.Parent={};triggerManualShot()
+assert(equips==3 and shots==3 and #messages==1,'mobile OFF keeps its existing behavior')
+pass('actual manual Shoot: equip/fire, unequip race, PC OFF shortcut and unchanged mobile gate')
 end
 
 '''

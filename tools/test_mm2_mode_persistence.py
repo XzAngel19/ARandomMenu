@@ -24,48 +24,62 @@ assert source.count(old) == 1
 source = source.replace(old, new, 1)
 marker = '-- harness epilogue: inspect what the boot built'
 assert source.count(marker) == 1
+source = source.split(marker, 1)[0]
 checks = r'''
 do
     local ex = GENV.__expose
     local cfg, mm = ex.configData, ex.state.mm2Core.mm2Settings
-    assert(mm.experimentalAim == true and mm.shootWallCheck == false
-        and mm.shootMode == 'Custom' and mm.shootTarget == 'SavedPlayer',
-        'Gun Experimental settings were overwritten during startup')
-    assert(cfg.states['MM2.Shoot.Experimental.WallCheck'] == false,
-        'Gun per-mode persisted setting changed during startup')
+    local mobile = __MOBILE__
+    if mobile then
+        assert(mm.experimentalAim == true and mm.shootWallCheck == false
+            and mm.shootMode == 'Custom' and mm.shootTarget == 'SavedPlayer',
+            'mobile Gun Experimental settings were overwritten during startup')
+    else
+        assert(mm.experimentalAim == false and mm.shootWallCheck == true
+            and cfg.values['MM2.Shoot.Aimmethod'] == 'Bullet',
+            'PC must migrate the removed Experimental selection to Bullet')
+    end
+    assert(cfg.states['MM2.Shoot.Experimental.WallCheck'] == false
+        and cfg.values['MM2.Shoot.Experimental.TargetPlayer'] == 'SavedPlayer',
+        'old Experimental per-mode data must not be destroyed')
     assert(cfg.states['MM2.AutoShoot.CFrame.WallCheck'] == false
         and cfg.states['MM2.AutoShoot.WallCheck'] == false
         and cfg.states['MM2.AutoShoot.Proximity'] == true
         and cfg.values['MM2.AutoShoot.Aura'] == 88,
         'Auto Shoot CFrame settings were overwritten during startup')
     local aim = ex.state.valueControls['MM2.Shoot.Aimmethod']
-    aim.apply('Normal(Bullet)')
+    aim.apply(mobile and 'Normal(Bullet)' or 'Bullet')
     assert(mm.shootWallCheck == true and mm.shootMode == 'Murder', 'saved Bullet state was lost')
-    aim.apply('Experimental')
-    assert(mm.shootWallCheck == false and mm.shootTarget == 'SavedPlayer', 'Experimental restore failed')
+    if mobile then
+        aim.apply('Experimental')
+        assert(mm.shootWallCheck == false and mm.shootTarget == 'SavedPlayer', 'mobile Experimental restore failed')
+    else
+        aim.apply('Silent(CFrame)')
+        assert(mm.silentAim and not mm.experimentalAim,'PC Silent mode must remain available')
+        aim.apply('Experimental')
+        assert(not mm.experimentalAim,'PC must reject the removed mode')
+    end
     local mode = ex.state.valueControls['MM2.AutoShoot.Mode']
     mode.apply('Bullet')
-    assert(cfg.states['MM2.AutoShoot.WallCheck'] == true, 'Bullet default did not restore')
+    assert(cfg.states['MM2.AutoShoot.WallCheck'] == true, 'Auto Shoot Bullet default did not restore')
     mode.apply('CFrame')
     assert(cfg.states['MM2.AutoShoot.WallCheck'] == false and cfg.values['MM2.AutoShoot.Aura'] == 88,
-        'saved CFrame options did not restore')
-    -- Let the ordinary harness run with the defaults it expects.
-    ex.state.toggleControls['MM2.Shoot.WallCheck'].setChecked(true)
-    ex.state.valueControls['MM2.Shoot.Target'].apply('Murder')
-    aim.apply('Normal(Bullet)')
-    ex.state.toggleControls['MM2.AutoShoot.WallCheck'].setChecked(true)
-    ex.state.toggleControls['MM2.AutoShoot.Proximity'].setChecked(false)
-    ex.state.valueControls['MM2.AutoShoot.Aura'].apply(25)
-    mode.apply('Bullet')
-    print('PASS saved per-mode MM2 options survive boot and switches')
+        'saved Auto Shoot CFrame options did not restore')
+    print('PASS saved per-mode MM2 options')
 end
 '''
-source = source.replace(marker, checks + '\n' + marker, 1)
 with tempfile.TemporaryDirectory(prefix='mm2-mode-persist-') as directory:
     script = Path(directory) / 'boot.luau'
-    script.write_text(source)
-    result = subprocess.run([os.environ.get('LUAU', 'luau'), str(script)], text=True, capture_output=True)
-    if result.returncode:
-        raise SystemExit(result.stdout[-5000:] + result.stderr)
-    assert 'PASS saved per-mode MM2 options survive boot and switches' in result.stdout
-    print('PASS saved per-mode MM2 options survive boot and switches')
+    for mobile in (False, True):
+        boot = source
+        if mobile:
+            boot = boot.replace('UserInputService.props.TouchEnabled = false',
+                                'UserInputService.props.TouchEnabled = true', 1)
+            boot = boot.replace('UserInputService.props.KeyboardEnabled = true',
+                                'UserInputService.props.KeyboardEnabled = false', 1)
+        script.write_text(boot + checks.replace('__MOBILE__', str(mobile).lower()))
+        result = subprocess.run([os.environ.get('LUAU', 'luau'), str(script)], text=True, capture_output=True)
+        if result.returncode:
+            raise SystemExit(f'{mobile=}:\n'+result.stdout[-5000:]+result.stderr)
+        assert 'PASS saved per-mode MM2 options' in result.stdout
+print('PASS saved MM2 options: PC two modes, mobile Experimental, Auto Shoot settings')

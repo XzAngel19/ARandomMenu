@@ -2132,42 +2132,12 @@ function Module.init(context: any): any
         end)
     end
 
-    -- Frame intervals and callback elapsed times are separate observations;
-    -- neither the last nor the largest callback proves what caused a spike.
-    host.addActionOption(uiPanel, "Perf report", function(): ()
-        local performance: any = state.performance or {}
-        local report: string = "no report"
-        if type(state.perfReport) == "function" then
-            local ok: boolean, text: any = pcall(state.perfReport)
-            if ok and type(text) == "string" then
-                report = text
-            end
-        end
-        print(report)
-        local peak: string = performance.peakTask
-            and string.format("%s %.2f ms", tostring(performance.peakTask),
-                tonumber(performance.peakTaskMs) or 0)
-            or "n/a"
-        notify(string.format(
-            "FPS %.0f · menu sample %.2f+%.2f ms\nspikes %d · worst %.0f ms\ncallback peak %s (independent)",
-            tonumber(performance.fps) or 0,
-            tonumber(performance.tasksMs) or 0,
-            tonumber(performance.renderMs) or 0,
-            tonumber(performance.spikeCount) or 0,
-            tonumber(performance.worstSpikeMs) or 0,
-            peak
-        ))
-        if type(state.resetPerfReport) == "function" then
-            state.resetPerfReport()
-        end
-        print("[perf] observation reset")
-    end, "Prints sampled FPS, frame intervals and the longest callback separately "
-        .. "to the console, then resets the observation. Callback time can "
-        .. "include waits, may miss detached work, and does not identify the cause of a frame spike.")
-
-    host.addActionOption(uiPanel, "Move dock", function(): ()
-        if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
-    end, "Temporarily show the dock. Drag and release to save its position; Escape cancels. Show dock still controls visibility.")
+    -- Dock placement is a touch affordance; desktop does not need this action.
+    if touchPrimary then
+        host.addActionOption(uiPanel, "Move dock", function(): ()
+            if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
+        end, "Drag and release the dock to save its position.")
+    end
 
     uiRecord.placed = true
     if windows.ReflowWindow then

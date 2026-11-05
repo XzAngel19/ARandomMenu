@@ -1,5 +1,5 @@
 return {
-    stamp = "v182-20261104-mm2-ui-calibration-repair",
+    stamp = "v183-20261104-native-gun-calibration",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2166,6 +2166,9 @@ function Module.init(runtime: any): any
         whenReady: boolean?,
         continuous: boolean?,
         wallCheck: boolean?,
+        -- Native PC hook: construct the same shot but let the original
+        -- FireServer send it once instead of sending a second packet.
+        redirect: ((CFrame, CFrame) -> ())?,
     }
 
     -- Experimental policy, not a measured hit-rate optimization: prefer the
@@ -2615,7 +2618,11 @@ function Module.init(runtime: any): any
                 at = os.clock(),
                 offset = math.floor(offset * 10) / 10,
             }
-            remote:FireServer(shotOrigin, shotEnd)
+            if opts.redirect then
+                opts.redirect(shotOrigin, shotEnd)
+            else
+                remote:FireServer(shotOrigin, shotEnd)
+            end
 
             pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
                 kind = "gun",
@@ -2662,10 +2669,12 @@ function Module.init(runtime: any): any
         -- Author one endpoint, without speculative "piercing" past it.
         -- Echo timing documents transport/visual confirmation, NOT rewind
         -- duration or an authoritative hit-rate denominator.
-        remote:FireServer(
-            CFrame.lookAt(origin.Position, info.endpoint),
-            shotEndCFrame
-        )
+        local shotOriginCFrame: CFrame = CFrame.lookAt(origin.Position, info.endpoint)
+        if opts.redirect then
+            opts.redirect(shotOriginCFrame, shotEndCFrame)
+        else
+            remote:FireServer(shotOriginCFrame, shotEndCFrame)
+        end
         pcall(trajectoryCalibration.noteAuthoredShot, trajectoryCalibration, {
             kind = "gun",
             tool = gun,
@@ -2704,10 +2713,12 @@ function Module.init(runtime: any): any
     local shootFeatureActive: boolean = false
     local autoShootActive: boolean = false
     local autoShootWanted: boolean = false
+    local transientShotActive: boolean = false
+    local transientShotGeneration: number = 0
     local updateAutoShootConnection: (() -> ())? = nil
 
     local function refreshShootInfrastructure(): ()
-        local wantActive: boolean = shootFeatureActive or autoShootActive
+        local wantActive: boolean = shootFeatureActive or autoShootActive or transientShotActive
         state.mm2ShotFeedback.shootActive = wantActive
         if wantActive then
             local weaponService: any = getWeaponServiceModule()
@@ -2722,10 +2733,90 @@ function Module.init(runtime: any): any
         state.mm2ShotFeedback.hide()
     end
 
+    local shotHookInstalled: boolean = false
+    local shotHookWrapper: any = nil
+    local originalNamecall: any = nil
+    local function installNativeGunHook(): boolean
+        if state.isMobile then return true end
+        if shotHookInstalled then return true end
+        local hook: any = state.hookMetamethod
+        local getMethod: any = state.getNamecallMethod
+        local checkCaller: any = state.checkCaller
+        if type(hook) ~= "function" or type(getMethod) ~= "function"
+            or type(checkCaller) ~= "function" then
+            return false
+        end
+        local predecessor: any = nil
+        local function redirectNamecall(remote: any, ...: any): any
+            if not shootFeatureActive or not shootOptionsReady then
+                return predecessor(remote, ...)
+            end
+            local okMethod: boolean, method: any = pcall(getMethod)
+            if not okMethod or method ~= "FireServer" then
+                return predecessor(remote, ...)
+            end
+            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
+            if not okCaller or fromExecutor ~= false then
+                -- Auto Shoot, Auto Farm, Knife and other executor-originated
+                -- packets keep their own settings and never enter this hook.
+                return predecessor(remote, ...)
+            end
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            local gun: Tool? = character and getPlayerWeapon(LocalPlayer, "Gun", true) or nil
+            if not gun or gun.Parent ~= character or remote ~= gun:FindFirstChild("Shoot") then
+                return predecessor(remote, ...)
+            end
+            local arguments: any = table.pack(...)
+            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
+                return predecessor(remote, ...)
+            end
+            local shotOrigin: CFrame? = nil
+            local shotEnd: CFrame? = nil
+            local ok: boolean, redirected: any = pcall(function(): boolean
+                return fireGunAtTarget(getSelectedShootTarget(), {
+                    quiet = true,
+                    redirect = function(origin: CFrame, endpoint: CFrame): ()
+                        shotOrigin, shotEnd = origin, endpoint
+                    end,
+                })
+            end)
+            if ok and redirected and shotOrigin and shotEnd then
+                arguments[1], arguments[2] = shotOrigin, shotEnd
+                return predecessor(remote, table.unpack(arguments, 1, arguments.n))
+            end
+            -- No target, blocked line, unsupported geometry or an error: keep
+            -- the native click intact instead of blocking it or firing twice.
+            return predecessor(remote, ...)
+        end
+        local callback: any = redirectNamecall
+        if type(state.newCClosure) == "function" then
+            local ok: boolean, wrapped: any = pcall(state.newCClosure, callback)
+            if ok and type(wrapped) == "function" then callback = wrapped end
+        end
+        local ok: boolean, old: any = pcall(hook, game, "__namecall", callback)
+        if not ok or type(old) ~= "function" then return false end
+        predecessor = old
+        originalNamecall, shotHookWrapper, shotHookInstalled = old, callback, true
+        return true
+    end
+
+    local function uninstallNativeGunHook(): ()
+        if not shotHookInstalled or type(state.hookMetamethod) ~= "function" then return end
+        local ok: boolean, displaced: any = pcall(state.hookMetamethod, game, "__namecall", originalNamecall)
+        if not ok then return end
+        if displaced == shotHookWrapper then
+            shotHookInstalled, shotHookWrapper, originalNamecall = false, nil, nil
+        elseif type(displaced) == "function" then
+            -- Someone else wrapped us. Put their hook back and leave our
+            -- now-inert wrapper in their chain instead of clobbering it.
+            pcall(state.hookMetamethod, game, "__namecall", displaced)
+        end
+    end
+
     local manualShotPending: boolean = false
     local function triggerManualShot(): ()
-        if not shootFeatureActive then
-            notify("Enable SilentAIM first.")
+        if state.isMobile and not shootFeatureActive then
+            notify("Enable Gun Aimbot first.")
             return
         end
         if manualShotPending then return end
@@ -2743,7 +2834,19 @@ function Module.init(runtime: any): any
                 RunService.Heartbeat:Wait()
             end
             -- Never re-equip if the user switched away during that frame.
-            if shootFeatureActive and LocalPlayer.Character == character and gun.Parent == character then
+            if (not state.isMobile or shootFeatureActive)
+                and LocalPlayer.Character == character and gun.Parent == character then
+                if not shootFeatureActive and not state.isMobile then
+                    transientShotGeneration += 1
+                    local generation: number = transientShotGeneration
+                    transientShotActive = true
+                    refreshShootInfrastructure()
+                    task.delay(2, function(): ()
+                        if generation ~= transientShotGeneration then return end
+                        transientShotActive = false
+                        refreshShootInfrastructure()
+                    end)
+                end
                 fireGunAtTarget(getSelectedShootTarget(), {whenReady = true})
             end
         end)
@@ -2757,6 +2860,13 @@ function Module.init(runtime: any): any
         if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh() end
         autoShootActive = shootFeatureActive and autoShootWanted
         refreshShootInfrastructure()
+        if enabled and not state.isMobile then
+            if not installNativeGunHook() then
+                notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+            end
+        elseif not enabled then
+            uninstallNativeGunHook()
+        end
         if updateAutoShootConnection then updateAutoShootConnection() end
     end
 
@@ -2836,7 +2946,9 @@ function Module.init(runtime: any): any
     end
     ShootFeature = createUniversalFeature(
         "Gun Aimbot",
-        "Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned key fires/equips Gun; WallCheck is configurable per mode.",
+        state.isMobile
+            and "Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned action fires/equips Gun; WallCheck is configurable per mode."
+            or "Redirect native clicks with Bullet or Silent(CFrame). One optional keybind fires even while the module is off.",
         4,
         toggleShootMurderer,
         {
@@ -2881,15 +2993,25 @@ function Module.init(runtime: any): any
     -- per-mode settings and remain valid when loading existing profiles.
     local function modeKey(value: any): string
         if value == "Experimental" then return "Experimental" end
-        if value == "CFrame" or value == "Silent(Cframe)" then return "CFrame" end
+        if value == "CFrame" or value == "Silent(Cframe)" or value == "Silent(CFrame)" then return "CFrame" end
         return "Bullet"
     end
     local savedMode: any = values["MM2.Shoot.Aimmethod"]
     local initialMode: string = modeKey(savedMode
         or (mm2Settings.experimentalAim and "Experimental" or (mm2Settings.silentAim and "CFrame" or "Bullet")))
-    if savedMode == "Bullet" or savedMode == "CFrame" then
-        values["MM2.Shoot.Aimmethod"] = savedMode == "CFrame" and "Silent(Cframe)" or "Normal(Bullet)"
-        if type(queueConfigSave) == "function" then queueConfigSave() end
+    if state.isMobile then
+        if savedMode == "Bullet" or savedMode == "CFrame" or savedMode == "Silent(CFrame)" then
+            values["MM2.Shoot.Aimmethod"] = (savedMode == "CFrame" or savedMode == "Silent(CFrame)")
+                and "Silent(Cframe)" or "Normal(Bullet)"
+            if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
+    else
+        if initialMode == "Experimental" then initialMode = "Bullet" end
+        local normalized: string = initialMode == "CFrame" and "Silent(CFrame)" or "Bullet"
+        if values["MM2.Shoot.Aimmethod"] ~= normalized then
+            values["MM2.Shoot.Aimmethod"] = normalized
+            if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
     end
     local function modeConfig(mode: string): any
         local prefix: string = "MM2.Shoot." .. mode .. "."
@@ -2939,7 +3061,10 @@ function Module.init(runtime: any): any
         switching = false
         refreshShootOptions()
     end
-    addCycleOption(ShootFeature, "Aim method", {"Normal(Bullet)", "Silent(Cframe)", "Experimental"},
+    local aimMethods: {string} = state.isMobile
+        and {"Normal(Bullet)", "Silent(Cframe)", "Experimental"}
+        or {"Bullet", "Silent(CFrame)"}
+    addCycleOption(ShootFeature, "Aim method", aimMethods,
         initialMode == "Experimental" and 3 or (initialMode == "CFrame" and 2 or 1),
         function(value: string): ()
             activeModeKey = modeKey(value)
@@ -2947,7 +3072,9 @@ function Module.init(runtime: any): any
             mm2Settings.silentAim = activeModeKey == "CFrame"
             syncMode()
         end,
-        "Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode.")
+        state.isMobile
+            and "Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode."
+            or "One keybind is shared; WallCheck and target settings are saved per mode.")
     addCycleOption(ShootFeature, "Target", {"Murder", "Custom"}, 1, function(value: string): ()
         mm2Settings.shootMode = value
         if optionsReady and not switching then
@@ -2958,6 +3085,14 @@ function Module.init(runtime: any): any
     end)
     if state.bindFeatureActivationKey then
         state.bindFeatureActivationKey(ShootFeature, mm2Settings.shootKey, triggerManualShot)
+    end
+    if not state.isMobile then
+        local binding: any = state.shortcutBindings and state.shortcutBindings[ShootFeature.configKey]
+        if binding then binding.feedback = nil end
+        if type(state.addFeatureShortcutOption) == "function" then
+            state.addFeatureShortcutOption(ShootFeature, "Keybind",
+                "Optional: click the box and press a key. It fires in either mode, even when Gun Aimbot is off.")
+        end
     end
     addToggleOption(ShootFeature, "WallCheck", true, function(value: boolean): ()
         mm2Settings.shootWallCheck = value == true
@@ -2987,9 +3122,16 @@ function Module.init(runtime: any): any
     -- The visible Auto control is at the top, but arming waits until saved
     -- aim method/target options below have all been restored.
     shootOptionsReady = true
+    if shootFeatureActive and not state.isMobile and not shotHookInstalled then
+        if not installNativeGunHook() then
+            notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+        end
+    end
     if updateAutoShootConnection then updateAutoShootConnection() end
 
     activeCleanup = function(): ()
+        transientShotGeneration += 1
+        transientShotActive = false
         toggleShootMurderer(false)
         state.mm2SilentAimFeature = nil
         state.mm2FireSilentShot = nil
@@ -4338,9 +4480,27 @@ function Module.init(runtime: any): any
         end
 
         local fired: boolean = false
+        local noted: boolean = false
+        local function noteThrowAttempt(): ()
+            if noted then return end
+            noted = true
+            local recorder: any = core and core.trajectoryCalibration
+            if recorder and type(recorder.noteAuthoredShot) == "function" then
+                local root: BasePart? = target.Character
+                    and target.Character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                pcall(recorder.noteAuthoredShot, recorder, {
+                    kind = "knife", tool = knife, toolName = knife.Name,
+                    originPos = originCF.Position, aimPos = aimPos, target = target,
+                    aimVelocity = root and root.AssemblyLinearVelocity or nil,
+                    source = "menu-auto-throw",
+                    settings = {mode = "Auto Knife Throw", wallCheck = settings.wallCheck},
+                })
+            end
+        end
         local eventsFolder: Instance? = knife:FindFirstChild("Events")
         local knifeThrownRemote: Instance? = eventsFolder and eventsFolder:FindFirstChild("KnifeThrown")
         if knifeThrownRemote and knifeThrownRemote:IsA("RemoteEvent") then
+            noteThrowAttempt()
             local okFire: boolean = pcall(function(): ()
                 (knifeThrownRemote :: RemoteEvent):FireServer(originCF, CFrame.new(aimPos))
             end)
@@ -4355,6 +4515,7 @@ function Module.init(runtime: any): any
                 local remotes: Instance? = rs and rs:FindFirstChild("Remotes")
                 local throwRemote: Instance? = remotes and remotes:FindFirstChild("Event")
                 if throwRemote and throwRemote:IsA("RemoteEvent") then
+                    noteThrowAttempt()
                     local dir: Vector3 = (aimPos - originCF.Position).Unit
                     local rem: RemoteEvent = throwRemote :: RemoteEvent
                     rem:FireServer("Throw", aimPos, dir)
@@ -10216,149 +10377,6 @@ end
 return Module
 
 ]],
-        ["src/games/MM2/Other/CalibrationTrails.lua"] = [[
-local Module = {Name = "MM2 Calibration Trails", Initialized = false}
-local activeCleanup = function() end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then return Module end
-    local core = state.mm2Core
-    -- The Calibration card is a debug surface: no card, no trail options.
-    if not state.mm2CalibrationFeature then
-        Module.Initialized = true
-        return Module
-    end
-    assert(core, "Calibration Trails requires the MM2 core module")
-    local options = {trailEsp = false, color = Color3.fromRGB(100, 185, 255)}
-    local trailFolder: Folder? = nil
-    local connection: any = nil
-    local function ensureTrailFolder(): Folder
-        if not trailFolder or not trailFolder.Parent then
-            trailFolder = Instance.new("Folder")
-            trailFolder.Name = "MM2TrailESP"
-            trailFolder.Parent = workspace
-        end
-        -- Bound transient visuals even if many players fire together.
-        local children: {Instance} = trailFolder:GetChildren()
-        while #children >= 64 do
-            children[1]:Destroy()
-            table.remove(children, 1)
-        end
-        return trailFolder :: Folder
-    end
-
-    local function clearTrails(): ()
-        if trailFolder then
-            trailFolder:Destroy()
-            trailFolder = nil
-        end
-    end
-
-    local function drawShotTrail(origin: Vector3, hit: Vector3): ()
-        local folder: Folder = ensureTrailFolder()
-        local segment: Vector3 = hit - origin
-        local length: number = segment.Magnitude
-        if options.trailEsp and length > 0.5 then
-            local beam: Part = Instance.new("Part")
-            beam.Name = "TrailSegment"
-            beam.Anchored = true
-            beam.CanCollide = false
-            beam.CanQuery = false
-            beam.CanTouch = false
-            beam.CastShadow = false
-            beam.Material = Enum.Material.Neon
-            beam.Color = options.color
-            beam.Transparency = 0.25
-            beam.Size = Vector3.new(0.07, 0.07, length)
-            beam.CFrame = CFrame.lookAt(origin + segment * 0.5, hit)
-            beam.Parent = folder
-            TweenService:Create(
-                beam,
-                TweenInfo.new(1.4, Enum.EasingStyle.Linear),
-                { Transparency = 1 }
-            ):Play()
-            task.delay(1.55, function(): ()
-                if beam.Parent then beam:Destroy() end
-            end)
-        end
-        -- Pixel-sized ring at the reported endpoint; never highlight the
-        -- entire hitPart (a single hitPart can be a whole wall).
-        local anchor: Part = Instance.new("Part")
-        anchor.Name = "TrailLanding"
-        anchor.Size = Vector3.new(0.02, 0.02, 0.02)
-        anchor.Transparency = 1
-        anchor.Anchored = true
-        anchor.CanCollide = false
-        anchor.CanQuery = false
-        anchor.CanTouch = false
-        anchor.Position = hit
-        anchor.Parent = folder
-        local billboard: BillboardGui = Instance.new("BillboardGui")
-        billboard.Name = "LandingCircle"
-        billboard.Adornee = anchor
-        billboard.AlwaysOnTop = true
-        billboard.Size = UDim2.fromOffset(12, 12)
-        billboard.Parent = anchor
-        local ring: Frame = Instance.new("Frame")
-        ring.Size = UDim2.fromScale(1, 1)
-        ring.BackgroundTransparency = 1
-        ring.Parent = billboard
-        local corner: UICorner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(1, 0)
-        corner.Parent = ring
-        local stroke: UIStroke = Instance.new("UIStroke")
-        stroke.Color = options.color
-        stroke.Thickness = 2
-        stroke.Parent = ring
-        task.delay(1.55, function(): ()
-            if anchor.Parent then anchor:Destroy() end
-        end)
-    end
-
-
-    local function toggle(enabled: boolean)
-        options.trailEsp = enabled
-        if connection then connection:Disconnect(); connection = nil end
-        clearTrails()
-        if not enabled then return end
-        local ok, service = pcall(core.getWeaponServiceModule)
-        if not ok or type(service) ~= "table" or not service.GunFired then return end
-        local connected, result = pcall(function()
-            return service.GunFired.OnClientEvent:Connect(function(_handle, origin, hit)
-                if not options.trailEsp then return end
-                local function position(value)
-                    local v = typeof(value) == "Vector3" and value
-                        or typeof(value) == "CFrame" and value.Position or nil
-                    if v and v.X == v.X and v.Y == v.Y and v.Z == v.Z and v.Magnitude < 1e7 then return v end
-                    return nil
-                end
-                local a, b = position(origin), position(hit)
-                if a and b then drawShotTrail(a, b) end
-            end)
-        end)
-        if connected then connection = result end
-    end
-    local config = configData
-    local key = "MM2.Calibration.TrailESP"
-    if config.states[key] == nil then config.states[key] = config.states["MM2.WeaponVisuals.TrailESP"] end
-    if config.values["MM2.Calibration.Trailcolor"] == nil then
-        config.values["MM2.Calibration.Trailcolor"] = config.values["MM2.WeaponVisuals.Trailcolor"]
-    end
-    addToggleOption(state.mm2CalibrationFeature, "TrailESP", false, toggle,
-        "Visualizes replicated GunFired paths/endpoints. Calibration already records shot data; this adds no duplicate recorder.")
-    addColorOption(state.mm2CalibrationFeature, "Trail color", options.color, function(color) options.color = color end)
-    activeCleanup = function() toggle(false) end
-    Module.Initialized = true
-    return Module
-end
-function Module.destroy()
-    if not Module.Initialized then return end
-    Module.Initialized = false
-    activeCleanup()
-end
-return Module
-
-]],
         ["src/games/MM2/Other/CoinsAura.lua"] = [[
 local Module = {
     Name = "MM2 Coins Aura",
@@ -11538,245 +11556,6 @@ function Module.init(runtime: any): any
     activeCleanup = function(): ()
         toggleGunAura(false)
     end
-    Module.Events = featureConnections
-    Module.Initialized = true
-    return Module
-end
-
-function Module.destroy(): ()
-    if not Module.Initialized then
-        return
-    end
-    Module.Initialized = false
-    pcall(activeCleanup)
-    activeCleanup = function(): () end
-    Module.Events = {}
-    Module.Runtime = nil
-end
-
-return Module
-
-]],
-        ["src/games/MM2/Other/TrajectoryCalibration.lua"] = [[
-local Module = {
-    Name = "MM2 Trajectory Calibration",
-    Events = {} :: {[string]: any},
-    Initialized = false,
-    Runtime = nil :: any,
-}
-
-local activeCleanup: () -> () = function(): () end
-
-function Module.init(runtime: any): any
-    if Module.Initialized then
-        return Module
-    end
-    local core: any = state.mm2Core
-    assert(type(core) == "table", "MM2 Trajectory Calibration requires the MM2 core module")
-    Module.Runtime = runtime
-    local trajectoryCalibration: any = core.trajectoryCalibration
-
-    -- v180: the capture card is back in release. What changed is consent: the
-    -- recorder only writes to the executor workspace after the player answers
-    -- the prompt with Yes. Answering No keeps everything in memory and writes
-    -- nothing.
-    local TrajectoryFeature: any = state.mm2CalibrationFeature
-    if not TrajectoryFeature then
-        TrajectoryFeature = createUniversalFeature(
-            "Calibration",
-            "MM2 shot and knife calibration. Nothing is written to your workspace "
-                .. "unless you answer Yes to the calibration prompt.",
-            5,
-            function(): () end,
-            {
-                category = true,
-                categoryName = "Other",
-                parent = MM2Scroll,
-                registry = mm2Features,
-            }
-        )
-        state.mm2CalibrationFeature = TrajectoryFeature
-    end
-
-    -- The predictor keeps at most eight recent samples per mode. Reporting a
-    -- goal of twenty was impossible to reach and did not prove convergence.
-    local LEAD_WINDOW_SIZE: number = 8
-
-    local askedThisSession: boolean = false
-
-    local function consent(): boolean?
-        if type(trajectoryCalibration) ~= "table"
-            or type(trajectoryCalibration.getConsent) ~= "function" then
-            return nil
-        end
-        local ok: boolean, value: any = pcall(trajectoryCalibration.getConsent, trajectoryCalibration)
-        if not ok then
-            return nil
-        end
-        if value == true then
-            return true
-        end
-        if value == false then
-            return false
-        end
-        return nil
-    end
-
-    local function setConsent(value: boolean?): boolean
-        if type(trajectoryCalibration) ~= "table"
-            or type(trajectoryCalibration.setConsent) ~= "function" then
-            return false
-        end
-        local ok: boolean, result: any = pcall(trajectoryCalibration.setConsent, trajectoryCalibration, value)
-        local success: boolean = ok and result == true
-        if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
-            TrajectoryFeature:SetStatus(
-                value == true and (success and "giving calibration" or "saving unavailable")
-                    or (value == false and "off" or nil)
-            )
-        end
-        return success
-    end
-
-    local function enableSaving(): ()
-        if setConsent(true) then
-            notify("Calibration ON: saving to your workspace/Telemetry folder.")
-        else
-            notify("Calibration could not save. Check the console and your executor's file support.")
-        end
-    end
-
-    -- The centred question. No stops saving and tries to remove the current
-    -- file; deletion depends on executor support.
-    local function askConsent(): ()
-        askedThisSession = true
-        local dialog: any = state.confirmDialog
-        if type(dialog) ~= "function" then
-            -- No host dialog (older bundle): stay silent rather than saving
-            -- anything without an answer.
-            setConsent(nil)
-            return
-        end
-        local ok: boolean, failure: any = pcall(dialog, {
-            title = "Give your calibration?",
-            message = "Would you like to give your calibration? MM2 will save your "
-                .. "shot and knife data to a JSON file in your executor workspace so "
-                .. "the aim can be tuned with real numbers. Choose No and nothing at "
-                .. "all is written.",
-            yes = "Yes",
-            no = "No",
-            onYes = function(): ()
-                enableSaving()
-            end,
-            onNo = function(): ()
-                setConsent(false)
-                if TrajectoryFeature and type(TrajectoryFeature.SetStatus) == "function" then
-                    TrajectoryFeature:SetStatus("off")
-                end
-                notify("Calibration OFF: nothing will be saved.")
-            end,
-        })
-        if not ok then
-            warn("[Wurst] calibration prompt failed: " .. tostring(failure))
-        end
-    end
-
-    -- Report the actual recent sample window and applied correction. Sample
-    -- count alone is not proof that a predictor has converged or will hit.
-    local function learningSummary(): string
-        local predictor: any = state and state.mm2Prediction
-        if type(predictor) ~= "table" then
-            return "learning: no data yet"
-        end
-        if type(predictor.exportLeadState) ~= "function" then
-            return "learning: readiness unavailable"
-        end
-        local ok: boolean, buckets: any = pcall(predictor.exportLeadState)
-        if not ok or type(buckets) ~= "table" then
-            return "learning: readiness unavailable"
-        end
-        local parts: {string} = {}
-        for mode: string, entry: any in pairs(buckets) do
-            if type(entry) == "table" then
-                local samples: number = tonumber(entry.samples) or 0
-                local applied: number = tonumber(entry.applied) or 0
-                table.insert(
-                    parts,
-                    string.format(
-                        "%s %d/%d %+d ms",
-                        mode,
-                        samples,
-                        LEAD_WINDOW_SIZE,
-                        math.round(applied * 1000)
-                    )
-                )
-            end
-        end
-        if #parts == 0 then
-            return "learning: no confirmed shots yet"
-        end
-        table.sort(parts)
-        return "learning: " .. table.concat(parts, " · ")
-    end
-
-    addActionOption(TrajectoryFeature, "Calibration status", function(): ()
-        local status: string = "unavailable"
-        if type(trajectoryCalibration) == "table"
-            and type(trajectoryCalibration.status) == "function" then
-            local ok: boolean, value: any = pcall(trajectoryCalibration.status, trajectoryCalibration)
-            status = ok and tostring(value) or "unavailable"
-        end
-        notify(status .. " · " .. learningSummary())
-    end, "Shows what the recorder has measured so far.")
-
-    addActionOption(TrajectoryFeature, "Give calibration", function(): ()
-        enableSaving()
-    end, "Answer Yes again and start saving the current session.")
-
-    addActionOption(TrajectoryFeature, "Stop giving calibration", function(): ()
-        setConsent(false)
-        notify("Calibration OFF: saving stopped. File deletion depends on executor support.")
-    end, "Stop saving and try to delete the current calibration file.")
-
-    addActionOption(TrajectoryFeature, "Ask again", function(): ()
-        setConsent(nil)
-        askConsent()
-    end, "Re-open the calibration question in the middle of the screen.")
-
-    addActionOption(TrajectoryFeature, "Clear MM2 history", function(): ()
-        if type(trajectoryCalibration) == "table"
-            and type(trajectoryCalibration.reset) == "function" then
-            pcall(trajectoryCalibration.reset, trajectoryCalibration)
-        end
-        notify("Trajectory calibration history cleared.")
-    end, "Forget everything measured so far.")
-
-    addInformationOption(
-        TrajectoryFeature,
-        "Records target windows around your shots and throws. MM2-only calibration; "
-            .. "nothing is written to your workspace unless you give your calibration."
-    )
-
-    -- Ask once per session when the question has never been answered. A saved
-    -- answer (Yes or No) is respected: no prompt on every injection.
-    if consent() == nil and not askedThisSession then
-        task.delay(3, function(): ()
-            if Module.Initialized and consent() == nil then
-                askConsent()
-            end
-        end)
-    elseif consent() == true and type(TrajectoryFeature.SetStatus) == "function" then
-        TrajectoryFeature:SetStatus("giving calibration")
-    elseif consent() == false and type(TrajectoryFeature.SetStatus) == "function" then
-        TrajectoryFeature:SetStatus("off")
-    end
-
-    activeCleanup = function(): ()
-        if state.mm2CalibrationFeature == TrajectoryFeature then
-            state.mm2CalibrationFeature = nil
-        end
-    end
-
     Module.Events = featureConnections
     Module.Initialized = true
     return Module
@@ -16798,6 +16577,7 @@ local function createTrajectoryCalibration(): any
         predictionErrorMeanStuds: number?,
     }
     type Controller = {
+        prepare: (self: Controller) -> (),
         start: (self: Controller) -> (),
         save: (self: Controller, reason: string?) -> boolean,
         reset: (self: Controller) -> (),
@@ -16828,6 +16608,7 @@ local function createTrajectoryCalibration(): any
     local playerMouse: Mouse = LocalPlayer:GetMouse()
     local runtime: any = {
         active = false,
+        historyLoaded = false,
         dirty = false,
         revision = 0,
         saveScheduled = false,
@@ -16838,6 +16619,7 @@ local function createTrajectoryCalibration(): any
         shotSequence = 0,
         historyBackup = nil :: string?,
         pendingHistoryBackup = nil :: string?,
+        historyExpectedAbsent = false,
         persistenceBlocked = false,
         rawKnifeActivations = 0,
         unmatchedGunSignals = 0,
@@ -16850,6 +16632,7 @@ local function createTrajectoryCalibration(): any
         missReasons = {} :: {[string]: number},
         sessionKnifeAttempts = 0,
         sessionKnifeConfirmed = 0,
+        sessionKnifeObserved = 0,
         pendingGuns = {} :: {PendingGun},
         lastBlockedAt = 0,
         -- Learned lead buckets read from the previous session, applied as soon
@@ -16857,7 +16640,11 @@ local function createTrajectoryCalibration(): any
         -- is not fixed).
         leadSeeds = nil :: any,
         leadSeedsApplied = false,
-        evictedEvents = 0,
+        evictedEvents = 0, -- no event is deliberately evicted
+        archivedEvents = 0,
+        archiveFiles = {},
+        archiveSequence = 0,
+        archiveInProgress = false,
         pendingKnives = {} :: {PendingKnife},
         tracks = {} :: {[Instance]: KnifeTrack},
         observedTools = setmetatable({}, {__mode = "k"}) :: {[Tool]: boolean},
@@ -16872,6 +16659,7 @@ local function createTrajectoryCalibration(): any
     }
     local controller: Controller
     local saveSnapshot: (reason: string) -> boolean
+    local archiveEvents: () -> boolean
     local compactPending: (queue: {any}, now: number) -> ()
     local finalizeGunCapture: (pending: PendingGun) -> ()
 
@@ -16974,21 +16762,16 @@ local function createTrajectoryCalibration(): any
             return
         end
         local okRead: boolean, raw: any = pcall(environment.readfile, OUTPUT_PATH)
-        if not okRead then
+        if not okRead or type(raw) ~= "string" then
             local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
             runtime.persistenceBlocked = not (okExists and exists == false)
+            runtime.historyExpectedAbsent = not runtime.persistenceBlocked
             return
         end
-        if type(raw) ~= "string" then
-            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
-            runtime.persistenceBlocked = not (okExists and exists == false)
-            return
-        end
-        if #raw == 0 then return end
-        -- Importing the old data is read-only. Making a backup here used to
-        -- write to the workspace before the player answered the consent modal.
-        -- The first authorised save verifies and backs up these exact bytes.
+        -- Importing the old data is read-only. Even an empty existing file is
+        -- protected: the first authorised save verifies and backs up its bytes.
         runtime.pendingHistoryBackup = raw
+        if #raw == 0 then return end
         local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
         if not ok or type(decoded) ~= "table" then return end
         -- Only plausible statistical estimates are portable. Counts such as
@@ -17296,22 +17079,8 @@ local function createTrajectoryCalibration(): any
     local function appendEvent(record: CalibrationEvent): ()
         record.sessionId = runtime.sessionId
         record.buildStamp = runtime.buildStamp
-        if #runtime.events >= MAX_EVENTS then
-            -- A session that spams the knife (158 authored events on
-            -- 2026-10-18) evicted the gun records before their confirmations
-            -- could be matched, so a shot could no longer be scored. The knife
-            -- noise goes first; the gun record carries the settings.
-            local victim: number = 1
-            for index: number = 1, #runtime.events do
-                local candidate: CalibrationEvent = runtime.events[index]
-                if candidate.kind == "knife" and candidate.phase == "authored" then
-                    victim = index
-                    break
-                end
-            end
-            table.remove(runtime.events, victim)
-            runtime.evictedEvents = (runtime.evictedEvents or 0) + 1
-        end
+        -- No destructive eviction: batches are archived after a verified
+        -- snapshot, and stay in memory if archive IO fails.
         table.insert(runtime.events, record)
         runtime.revision += 1
         runtime.dirty = true
@@ -17328,7 +17097,13 @@ local function createTrajectoryCalibration(): any
         task.delay(10, function(): ()
             runtime.saveScheduled = false
             if runtime.active and runtime.dirty then
-                saveSnapshot("autosave")
+                if #runtime.events >= MAX_EVENTS then
+                    if saveSnapshot("before-archive") and archiveEvents() then
+                        saveSnapshot("after-archive")
+                    end
+                else
+                    saveSnapshot("autosave")
+                end
             end
         end)
     end
@@ -17739,9 +17514,8 @@ local function createTrajectoryCalibration(): any
     end
 
     saveSnapshot = function(reason: string): boolean
-        -- v180 consent: without an explicit Yes the recorder keeps its data in
-        -- memory and never touches the workspace, so a player who answers No
-        -- leaves no calibration file behind.
+        -- Without an explicit Yes the recorder is inactive and does not write
+        -- telemetry. A No also preserves files from earlier sessions.
         local consentStates: any = type(configData) == "table" and configData.states or nil
         if not consentStates or consentStates["MM2.Calibration.Consent"] ~= true then
             return false
@@ -17764,16 +17538,27 @@ local function createTrajectoryCalibration(): any
                 warn(trajectoryLogPrefix .. " History changed before consent; it will not be overwritten.")
                 return false
             end
-            local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
-            local okBackup: boolean = pcall(environment.writefile, backup, prior)
-            local okVerify, backedUp = pcall(environment.readfile, backup)
-            if not okBackup or not okVerify or backedUp ~= prior then
+            if not runtime.historyBackup then
+                local backup: string = OUTPUT_PATH .. ".before-" .. runtime.sessionId .. ".json"
+                if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active then return false end
+                local okBackup: boolean = pcall(environment.writefile, backup, prior)
+                local okVerify, backedUp = pcall(environment.readfile, backup)
+                if not okBackup or not okVerify or backedUp ~= prior then
+                    runtime.persistenceBlocked = true
+                    warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+                    return false
+                end
+                runtime.historyBackup = backup
+            end
+        elseif runtime.historyExpectedAbsent then
+            -- A different writer can create a file while the question is open.
+            -- Treat that as a conflict instead of replacing unimported data.
+            local okExists, exists = pcall(function() return environment.isfile(OUTPUT_PATH) end)
+            if not okExists or exists ~= false then
                 runtime.persistenceBlocked = true
-                warn(trajectoryLogPrefix .. " History backup failed; existing file will not be overwritten.")
+                warn(trajectoryLogPrefix .. " History appeared before consent; it will not be overwritten.")
                 return false
             end
-            runtime.historyBackup = backup
-            runtime.pendingHistoryBackup = nil
         end
 
         -- History is loaded once. Re-merging the on-disk totals at each save
@@ -17855,8 +17640,13 @@ local function createTrajectoryCalibration(): any
                 countersScope = "this-session-only",
                 gunConfirmationMeaning = "matched GunFired signal; hitTarget means the ray reached the target, died means the humanoid reached 0 health",
                 evictedEvents = runtime.evictedEvents,
+                archivedEvents = runtime.archivedEvents,
+                archiveFiles = runtime.archiveFiles,
+                eventScope = "events in this snapshot plus the listed verified session archive files",
                 healthMeaning = "client-observed Humanoid.Health; healthDropServerTime is GetServerTimeNow at the drop",
-                knifeConfirmationMeaning = "observed projectile with valid speed; not an impact",
+                knifeConfirmationMeaning = "own linked projectile with valid speed; not an impact",
+                knifeObservedMeaning = "all ThrowingKnife projectiles visible to this client, not all server events",
+                knifeObserved = runtime.sessionKnifeObserved,
                 rawKnifeActivations = runtime.rawKnifeActivations,
                 unmatchedGunSignals = runtime.unmatchedGunSignals,
                 stabAttempts = runtime.sessionStabAttempts,
@@ -17876,6 +17666,7 @@ local function createTrajectoryCalibration(): any
                         scope = "own predicted point vs the torso point at the scoring instant (interpolated from the newest pre-shot sample and the root at confirmation); an estimate, not a server measurement",
                     }
                 end)(),
+                gunByModeScope = "events in the current segment only",
                 gunByMode = (function(): {[string]: any}
                     local modes: {[string]: any} = {}
                     if type(runtime.events) == "table" then
@@ -17931,7 +17722,8 @@ local function createTrajectoryCalibration(): any
             pcall(environment.makefolder, OUTPUT_ROOT)
             pcall(environment.makefolder, OUTPUT_FOLDER)
         end
-        if type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData() then
+        if consentStates["MM2.Calibration.Consent"] ~= true or not runtime.active
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
             return false
         end
         local writeOk: boolean, writeError: any = pcall(
@@ -17944,6 +17736,8 @@ local function createTrajectoryCalibration(): any
             return false
         end
 
+        runtime.pendingHistoryBackup = nil
+        runtime.historyExpectedAbsent = false
         -- A yielding executor write must not clear events recorded meanwhile.
         runtime.dirty = runtime.revision ~= savedRevision
         print(
@@ -17953,6 +17747,71 @@ local function createTrajectoryCalibration(): any
                 .. tostring(#encoded)
                 .. " bytes)"
         )
+        return true
+    end
+
+    archiveEvents = function(): boolean
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not runtime.active or not states or states["MM2.Calibration.Consent"] ~= true
+            or runtime.persistenceBlocked or runtime.archiveInProgress
+            or type(environment.writefile) ~= "function"
+            or type(environment.readfile) ~= "function"
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return false
+        end
+        runtime.archiveInProgress = true
+        local captured: {any} = table.clone(runtime.events)
+        local count: number = #captured
+        local path: string? = nil
+        -- A failed/partial write can leave a file behind. Never overwrite it,
+        -- but try a new name on this or the next save so it cannot permanently
+        -- stall archiving an otherwise recoverable session.
+        for _attempt: number = 1, 64 do
+            runtime.archiveSequence += 1
+            local candidate: string = OUTPUT_FOLDER .. "/MM2_Trajectory_" .. runtime.sessionId
+                .. "_part_" .. tostring(runtime.archiveSequence) .. ".json"
+            local okExists: boolean, exists: any = false, nil
+            if type(environment.isfile) == "function" then
+                okExists, exists = pcall(environment.isfile, candidate)
+            end
+            if not okExists or type(exists) ~= "boolean" then break end
+            if not exists then path = candidate; break end
+        end
+        if not path then
+            runtime.archiveInProgress = false
+            warn(trajectoryLogPrefix .. " Cannot verify a fresh archive path; events remain in memory.")
+            return false
+        end
+        local encodedOk: boolean, encoded: any = pcall(HttpService.JSONEncode, HttpService, {
+            schema = 4, kind = "mm2-trajectory-event-archive", sessionId = runtime.sessionId,
+            buildStamp = runtime.buildStamp, events = captured,
+        })
+        if not encodedOk or type(encoded) ~= "string" then
+            runtime.archiveInProgress = false
+            warn(trajectoryLogPrefix .. " Archive encode failed; events remain in memory.")
+            return false
+        end
+        -- A yielding write can overlap No/unload; do not discard the live
+        -- buffer unless this exact archive is verified and consent still holds.
+        local okWrite: boolean = pcall(environment.writefile, path, encoded)
+        local okRead: boolean, verified: any = pcall(environment.readfile, path)
+        if not okWrite or not okRead or verified ~= encoded
+            or not runtime.active or states["MM2.Calibration.Consent"] ~= true
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            runtime.archiveInProgress = false
+            warn(trajectoryLogPrefix .. " Archive could not be verified; events remain in memory.")
+            return false
+        end
+        local remaining: {any} = {}
+        for index: number = count + 1, #runtime.events do
+            table.insert(remaining, runtime.events[index])
+        end
+        runtime.events = remaining
+        runtime.archivedEvents += count
+        table.insert(runtime.archiveFiles, path)
+        runtime.revision += 1
+        runtime.dirty = true
+        runtime.archiveInProgress = false
         return true
     end
 
@@ -18492,89 +18351,89 @@ local function createTrajectoryCalibration(): any
     local finishKnifeTrack: (projectile: Instance, reason: string) -> ()
     local function stopKnifeSamplerIfIdle(): ()
         if next(runtime.tracks) == nil then
-            disconnectFeatureConnection("MM2TrajectorySampler")
+            disconnectFeatureConnection("MM2KnifeSampler")
         end
     end
 
     finishKnifeTrack = function(projectile: Instance, reason: string): ()
-        local track: KnifeTrack? = runtime.tracks[projectile]
-        if not track then
-            return
-        end
+        local track: any = runtime.tracks[projectile]
+        if not track then return end
         runtime.tracks[projectile] = nil
-        if track.destroyConnection then
-            track.destroyConnection:Disconnect()
-            track.destroyConnection = nil
+        if track.destroyConnection then track.destroyConnection:Disconnect() end
+        local pending: any = track.pending
+        if pending and pending.healthConnection then
+            pending.healthConnection:Disconnect()
+            pending.healthConnection = nil
         end
         local measuredSpeed: number? = median(track.speeds)
-        local resolvedSpeed: number? = track.rawSpeed or measuredSpeed
-        -- v179: close the feedback loop for blades. Until now the captures only
-        -- scored the gun, so `leadCorrection("knife")` was permanently empty and
-        -- the knife lead could never adapt to the connection it runs on.
-        local leadErrorSeconds: number? = knifeLeadErrorSeconds(track)
+        local resolvedSpeed: number? = track.rawSpeed
+        if not resolvedSpeed or resolvedSpeed < 24 or resolvedSpeed > 300 then
+            resolvedSpeed = measuredSpeed
+        end
+        local validSpeed: boolean = resolvedSpeed ~= nil
+            and resolvedSpeed >= 24 and resolvedSpeed <= 300
+        local leadErrorSeconds: number? = track.localOwner and knifeLeadErrorSeconds(track) or nil
         if leadErrorSeconds and type(state.mm2Prediction) == "table"
             and type(state.mm2Prediction.noteLeadError) == "function" then
-            pcall(
-                state.mm2Prediction.noteLeadError,
-                leadErrorSeconds,
-                "knife"
-            )
+            pcall(state.mm2Prediction.noteLeadError, leadErrorSeconds, "knife")
         end
-        if resolvedSpeed and resolvedSpeed >= 24 and resolvedSpeed <= 300 then
-            local analysis: {[string]: any} = analyzeTargetTrajectory(
-                track.targetTrajectory,
-                track.pingMs,
-                "knife",
-                nil
-            )
-            addSample(runtime.knifeSpeed, resolvedSpeed)
+        if track.localOwner and validSpeed then
+            addSample(runtime.knifeSpeed, resolvedSpeed :: number)
             runtime.sessionKnifeConfirmed += 1
-            appendEvent({
-                shotId = track.shotId,
-                phase = "projectile-observed",
-                kind = "knife",
-                serverTime = workspace:GetServerTimeNow(),
-                pingMs = track.pingMs,
-                latencyMs = track.spawnDelayMs,
-                speed = resolvedSpeed,
-                rawSpeed = track.rawSpeed,
-                samples = #track.speeds,
-                reason = reason,
-                targetUserId = track.targetUserId,
-                targetName = track.targetName,
-                targetState = analysis.initialState,
-                targetJumped = analysis.jumped,
-                targetTrajectory = track.targetTrajectory,
-                targetHistory = #track.targetHistory > 0
-                        and track.targetHistory
-                    or nil,
-                observedDisplacement = analysis.displacement,
-                constantVelocityResidual = analysis.constantVelocityResidual,
-                horizontalLeadSeconds = analysis.horizontalLeadSeconds,
-                verticalLeadSeconds = analysis.verticalLeadSeconds,
-                pingBucket = analysis.pingBucket,
-                bestMotionModel = analysis.bestMotionModel,
-                motionModelErrors = analysis.motionModelErrors,
-                evaluationSeconds = analysis.evaluationSeconds,
-                closestApproachStuds = track.closestApproach,
-                closestApproachAtMs = track.closestApproachAt,
-                bodyRadiusStuds = track.bodyRadius,
-                -- v179: the knife's own lead measurement, in the same units and
-                -- sign as the gun's, so a session can be scored without
-                -- reconstructing the geometry offline.
-                leadErrorSeconds = leadErrorSeconds,
-                predictedRoot = track.requestedRoot and vectorArray(track.requestedRoot) or nil,
-                approachRoot = track.approachRoot and vectorArray(track.approachRoot) or nil,
-                approachAtMs = track.approachAt,
-                aimLeadSeconds = track.aimLeadSeconds,
-                -- A blade that passes inside the torso's half-diagonal is a
-                -- touch the client can prove; anything else is a measured
-                -- miss distance the next session can be scored against.
-                passedThroughBody = (track.closestApproach ~= nil
-                    and track.bodyRadius ~= nil
-                    and track.closestApproach <= track.bodyRadius),
-            })
         end
+        local analysis: {[string]: any} = analyzeTargetTrajectory(
+            track.targetTrajectory, track.pingMs, "knife", nil
+        )
+        -- Record even if there is no handle, valid speed, target or impact:
+        -- missing information is not a reason to silently lose the throw.
+        appendEvent({
+            shotId = track.shotId,
+            projectileId = track.projectileId,
+            phase = "projectile-observed",
+            kind = "knife",
+            serverTime = workspace:GetServerTimeNow(),
+            pingMs = track.pingMs,
+            latencyMs = track.spawnDelayMs,
+            speed = validSpeed and resolvedSpeed or nil,
+            rawSpeed = track.rawSpeed,
+            samples = #track.speeds,
+            reason = reason,
+            ownerName = track.ownerName,
+            ownerUserId = track.ownerUserId,
+            localOwner = track.localOwner,
+            source = track.source,
+            direction = track.direction,
+            projectileTrajectory = track.projectileTrajectory,
+            projectileSamplingSeconds = os.clock() - track.startedAt,
+            targetUserId = track.targetUserId,
+            targetName = track.targetName,
+            targetState = analysis.initialState,
+            targetJumped = analysis.jumped,
+            targetTrajectory = track.targetTrajectory,
+            targetHistory = #track.targetHistory > 0 and track.targetHistory or nil,
+            observedDisplacement = analysis.displacement,
+            constantVelocityResidual = analysis.constantVelocityResidual,
+            horizontalLeadSeconds = analysis.horizontalLeadSeconds,
+            verticalLeadSeconds = analysis.verticalLeadSeconds,
+            pingBucket = analysis.pingBucket,
+            bestMotionModel = analysis.bestMotionModel,
+            motionModelErrors = analysis.motionModelErrors,
+            evaluationSeconds = analysis.evaluationSeconds,
+            closestApproachStuds = track.closestApproach,
+            closestApproachAtMs = track.closestApproachAt,
+            bodyRadiusStuds = track.bodyRadius,
+            leadErrorSeconds = leadErrorSeconds,
+            predictedRoot = track.requestedRoot and vectorArray(track.requestedRoot) or nil,
+            approachRoot = track.approachRoot and vectorArray(track.approachRoot) or nil,
+            approachAtMs = track.approachAt,
+            aimLeadSeconds = track.aimLeadSeconds,
+            targetHealthAtAim = pending and pending.targetHealthAtAim or nil,
+            targetHealthAfter = pending and pending.targetHealthAfter or nil,
+            healthEvidenceScope = "client-observed health; not proof this projectile caused a change",
+            passedThroughBody = track.closestApproach ~= nil and track.bodyRadius ~= nil
+                and track.closestApproach <= track.bodyRadius or nil,
+            geometryScope = "client-estimated closest approach, not server-confirmed impact",
+        })
         stopKnifeSamplerIfIdle()
     end
 
@@ -18587,8 +18446,8 @@ local function createTrajectoryCalibration(): any
         ): ()
             local now: number = os.clock()
             local completed: {Instance} = {}
-            for projectile: Instance, track: KnifeTrack in pairs(runtime.tracks) do
-                if not projectile.Parent or now - track.startedAt >= 1.25 then
+            for projectile: Instance, track: any in pairs(runtime.tracks) do
+                if not projectile.Parent or now - track.startedAt >= 5 then
                     table.insert(completed, projectile)
                     continue
                 end
@@ -18606,6 +18465,13 @@ local function createTrajectoryCalibration(): any
                 if position then
                     track.previousPosition = position
                     track.previousAt = now
+                    if now - track.lastProjectileSampleAt >= 1 / 30
+                        and #track.projectileTrajectory < 160 then
+                        table.insert(track.projectileTrajectory, {
+                            dt = now - track.startedAt, position = vectorArray(position),
+                        })
+                        track.lastProjectileSampleAt = now
+                    end
                     if track.targetUserId then
                         local target: Player? = Players:GetPlayerByUserId(
                             track.targetUserId
@@ -18675,92 +18541,127 @@ local function createTrajectoryCalibration(): any
     end
 
     local function resolveKnifeProjectile(projectile: Instance): ()
-        local sessionId = runtime.sessionId
+        if not runtime.active or runtime.tracks[projectile] then return end
+        local sessionId: string = runtime.sessionId
+        local now: number = os.clock()
+        local projectileId: string = nextShotId()
+        local position: Vector3? = projectilePosition(projectile)
+        local rawSpeed: number? = nil
+        local direction: any = nil
+        pcall(function(): ()
+            rawSpeed = tonumber(projectile:GetAttribute("ThrowSpeed"))
+            direction = projectile:GetAttribute("Direction")
+        end)
+        if rawSpeed and not finite(rawSpeed) then rawSpeed = nil end
+        local directionArray: any = nil
+        if typeof(direction) == "Vector3" and finite(direction.X)
+            and finite(direction.Y) and finite(direction.Z) then
+            directionArray = vectorArray(direction)
+        end
+        local track: any = {
+            shotId = projectileId,
+            projectileId = projectileId,
+            startedAt = now,
+            previousAt = now,
+            previousPosition = position,
+            lastProjectileSampleAt = now,
+            projectileTrajectory = position and {{dt = 0, position = vectorArray(position)}} or {},
+            speeds = {},
+            rawSpeed = rawSpeed,
+            direction = directionArray,
+            spawnDelayMs = 0,
+            pingMs = getPingMilliseconds(),
+            targetTrajectory = {},
+            targetHistory = {},
+            lastTrajectorySampleAt = now,
+        }
+        runtime.sessionKnifeObserved += 1
+        runtime.tracks[projectile] = track
+        appendEvent({kind = "knife", phase = "projectile-spawn", shotId = projectileId,
+            projectileId = projectileId, serverTime = workspace:GetServerTimeNow(),
+            pingMs = track.pingMs, origin = position and vectorArray(position) or nil,
+            direction = directionArray, rawSpeed = rawSpeed,
+            evidence = "client-observed ThrowingKnife tag"})
+        track.destroyConnection = projectile.Destroying:Connect(function(): ()
+            finishKnifeTrack(projectile, "destroyed")
+        end)
+        ensureKnifeSampler()
+        -- HandleLink may replicate late. Sampling begins immediately, even for
+        -- another player or a projectile whose link never arrives.
         task.spawn(function(): ()
             local linkedHandle: Instance? = nil
             for _attempt: number = 1, 20 do
-                if not runtime.active or runtime.sessionId ~= sessionId or not projectile.Parent then
-                    return
-                end
-                local handleLink: Instance? = projectile:FindFirstChild(
-                    "HandleLink",
-                    true
-                )
-                if handleLink and handleLink:IsA("ObjectValue") and handleLink.Value then
-                    linkedHandle = handleLink.Value
+                if not runtime.active or runtime.sessionId ~= sessionId
+                    or runtime.tracks[projectile] ~= track or not projectile.Parent then return end
+                local link: Instance? = projectile:FindFirstChild("HandleLink", true)
+                if link and link:IsA("ObjectValue") and link.Value then
+                    linkedHandle = link.Value
                     break
                 end
                 task.wait(0.05)
             end
-            if not linkedHandle then
-                return
-            end
-            local now: number = os.clock()
-            compactPending(runtime.pendingKnives, now)
+            if not linkedHandle or runtime.tracks[projectile] ~= track then return end
+            local owner: Player? = nil
+            local linkedTool: Tool? = nil
+            pcall(function(): ()
+                linkedTool = linkedHandle:FindFirstAncestorOfClass("Tool") :: Tool?
+                local character: Model? = linkedHandle:FindFirstAncestorOfClass("Model") :: Model?
+                if character then owner = Players:GetPlayerFromCharacter(character) end
+            end)
+            track.ownerName = owner and owner.Name or nil
+            track.ownerUserId = owner and owner.UserId or nil
+            track.localOwner = owner == LocalPlayer
+                or (linkedTool ~= nil and runtime.observedTools[linkedTool] == true)
+            compactPending(runtime.pendingKnives, os.clock())
             local selectedIndex: number? = nil
-            for index: number = #runtime.pendingKnives, 1, -1 do
+            local fallbackIndex: number? = nil
+            for index: number = 1, #runtime.pendingKnives do
                 local pending: PendingKnife = runtime.pendingKnives[index]
-                local handle: Instance? = pending.tool:FindFirstChild("Handle")
-                if linkedHandle == handle
-                    or linkedHandle:IsDescendantOf(pending.tool) then
-                    selectedIndex = index
-                    break
+                local tool: Tool? = pending.tool
+                if tool then
+                    local handle: Instance? = tool:FindFirstChild("Handle")
+                    if linkedHandle == handle or linkedHandle:IsDescendantOf(tool) then
+                        if pending.attemptCounted then selectedIndex = index; break end
+                        fallbackIndex = fallbackIndex or index
+                    end
                 end
             end
-            if not selectedIndex or runtime.tracks[projectile] then
-                return
+            selectedIndex = selectedIndex or fallbackIndex
+            if selectedIndex then
+                local pending: any = table.remove(runtime.pendingKnives, selectedIndex)
+                track.pending = pending
+                track.shotId = pending.shotId
+                track.localOwner = true
+                track.ownerName = LocalPlayer.Name
+                track.ownerUserId = LocalPlayer.UserId
+                track.source = pending.source
+                track.spawnDelayMs = math.max(0, (now - pending.activatedAt) * 1000)
+                track.pingMs = pending.pingMs
+                track.targetUserId = pending.targetUserId
+                track.targetName = pending.targetName
+                track.requestedAim = pending.requestedAim
+                track.requestedRoot = pending.requestedRoot
+                track.aimVelocity = pending.aimVelocity
+                track.aimLeadSeconds = pending.aimLeadSeconds
+                track.activatedAt = pending.activatedAt
+                track.targetTrajectory = pending.targetTrajectory
+                track.targetHistory = pending.targetHistory or {}
+                addSample(runtime.knifeSpawnDelay, track.spawnDelayMs)
+                if not pending.attemptCounted then
+                    runtime.sessionKnifeAttempts += 1
+                    emitShot("authoringShot", {shotId = pending.shotId, kind = "knife",
+                        toolName = pending.tool.Name, originPos = pending.origin,
+                        aimPos = pending.requestedAim, targetName = pending.targetName,
+                        eventSource = "observed-projectile"})
+                end
+                emitShot("shotConfirmation", {shotId = pending.shotId, kind = "knife",
+                    evidence = "projectile-observed", targetName = pending.targetName})
             end
-            local pending: PendingKnife = table.remove(
-                runtime.pendingKnives,
-                selectedIndex
-            )
-            local spawnDelayMs: number = math.max(
-                0,
-                (now - pending.activatedAt) * 1000
-            )
-            addSample(runtime.knifeSpawnDelay, spawnDelayMs)
-            local rawSpeed: number? = tonumber(projectile:GetAttribute("ThrowSpeed"))
-            if rawSpeed and (rawSpeed < 24 or rawSpeed > 300) then
-                rawSpeed = nil
-            end
-            if not pending.attemptCounted then
-                runtime.sessionKnifeAttempts += 1
-                emitShot("authoringShot", {shotId = pending.shotId, kind = "knife",
-                    toolName = pending.tool.Name, originPos = pending.origin,
-                    aimPos = pending.requestedAim, targetName = pending.targetName,
-                    eventSource = "observed-projectile"})
-            end
-            emitShot("shotConfirmation", {shotId = pending.shotId, kind = "knife",
-                evidence = "projectile-observed", targetName = pending.targetName})
-            local track: KnifeTrack = {
-                shotId = pending.shotId,
-                startedAt = now,
-                previousAt = now,
-                previousPosition = projectilePosition(projectile),
-                speeds = {},
-                rawSpeed = rawSpeed,
-                spawnDelayMs = spawnDelayMs,
-                pingMs = pending.pingMs,
-                targetUserId = pending.targetUserId,
-                targetName = pending.targetName,
-                requestedAim = pending.requestedAim,
-                requestedRoot = pending.requestedRoot,
-                aimVelocity = pending.aimVelocity,
-                aimLeadSeconds = pending.aimLeadSeconds,
-                activatedAt = pending.activatedAt,
-                approachRoot = nil,
-                approachVelocity = nil,
-                approachAt = nil,
-                targetTrajectory = pending.targetTrajectory,
-                targetHistory = pending.targetHistory or {},
-                lastTrajectorySampleAt = now,
-                destroyConnection = nil,
-            }
-            runtime.tracks[projectile] = track
-            track.destroyConnection = projectile.Destroying:Connect(function(): ()
-                finishKnifeTrack(projectile, "destroyed")
-            end)
-            ensureKnifeSampler()
+            appendEvent({kind = "knife", phase = "projectile-linked", shotId = track.shotId,
+                projectileId = projectileId, serverTime = workspace:GetServerTimeNow(),
+                pingMs = track.pingMs, ownerName = track.ownerName,
+                ownerUserId = track.ownerUserId, localOwner = track.localOwner,
+                targetName = track.targetName, source = track.source})
         end)
     end
 
@@ -18930,6 +18831,22 @@ local function createTrajectoryCalibration(): any
                 )
                 return
             end
+            pcall(function(): ()
+                local signal: any = weaponService.KnifeThrown and weaponService.KnifeThrown.Event
+                if not signal or type(signal.Connect) ~= "function" then return end
+                trackConnection(signal:Connect(function(): ()
+                    if not runtime.active then return end
+                    local knife: Tool? = getPlayerWeapon(LocalPlayer, "Knife", true)
+                    if not knife or knife.Parent ~= LocalPlayer.Character then return end
+                    local aim: Vector3? = getRequestedAim()
+                    controller:noteAuthoredShot({
+                        kind = "knife", tool = knife, toolName = knife.Name,
+                        originPos = toolOrigin(knife), aimPos = aim,
+                        target = findKnifeAnalysisTarget(aim), source = "native-throw-event",
+                        settings = {mode = "Manual", aimScope = "mouse at input; actual redirected aim may differ"},
+                    })
+                end))
+            end)
             local connected: boolean, connection: any = pcall(function(): any
                 return weaponService.GunFired.OnClientEvent:Connect(handleGunFired)
             end)
@@ -18947,7 +18864,18 @@ local function createTrajectoryCalibration(): any
 
     controller = {} :: Controller
 
+    function controller:prepare(): ()
+        if not runtime.historyLoaded then
+            runtime.historyLoaded = true
+            loadSavedHistory() -- read-only; the backup still waits for Yes
+        end
+    end
+
     function controller:start(): ()
+        local states: any = type(configData) == "table" and configData.states or nil
+        if not states or states["MM2.Calibration.Consent"] ~= true then
+            return
+        end
         if runtime.active then
             return
         end
@@ -18959,7 +18887,7 @@ local function createTrajectoryCalibration(): any
         runtime.active = true
         runtime.startedAt = os.clock()
         runtime.startedAtUnix = os.time()
-        loadSavedHistory()
+        self:prepare()
         -- The predictor may load after this adapter: retry briefly instead of
         -- dropping what the previous matches taught it.
         if type(task) == "table" and type(task.spawn) == "function" then
@@ -18982,6 +18910,11 @@ local function createTrajectoryCalibration(): any
                 resolveKnifeProjectile
             )
         )
+        pcall(function(): ()
+            for _, projectile: Instance in ipairs(CollectionService:GetTagged("ThrowingKnife")) do
+                resolveKnifeProjectile(projectile)
+            end
+        end)
         installGunConfirmation()
         print(trajectoryLogPrefix .. " Passive calibration started in the background.")
     end
@@ -18992,6 +18925,9 @@ local function createTrajectoryCalibration(): any
         runtime.knifeSpawnDelay = newStats()
         runtime.motionBuckets = {}
         runtime.events = {}
+        runtime.archivedEvents = 0
+        runtime.archiveFiles = {}
+        runtime.archiveSequence = 0
         runtime.freshGunLatency = {}
         estimatesCache = nil
         estimatesAt = -math.huge
@@ -18999,6 +18935,7 @@ local function createTrajectoryCalibration(): any
         runtime.sessionGunConfirmed = 0
         runtime.sessionKnifeAttempts = 0
         runtime.sessionKnifeConfirmed = 0
+        runtime.sessionKnifeObserved = 0
         runtime.rawKnifeActivations = 0
         runtime.unmatchedGunSignals = 0
         runtime.sessionStabAttempts = 0
@@ -19030,10 +18967,8 @@ local function createTrajectoryCalibration(): any
         return consentValue()
     end
 
-    -- `true` attempts an immediate save, `false` stops every write and tries
-    -- to remove the current file, `nil` leaves the question unanswered.
-    -- Return whether the requested transition/save succeeded so the UI does
-    -- not claim a file was saved when backup or executor IO failed.
+    -- Yes starts observation and attempts a save. No (or unanswered) stops
+    -- observation and writes without deleting any prior telemetry or backups.
     function controller:setConsent(value: boolean?): boolean
         local nextValue: boolean? = nil
         if value == true then
@@ -19044,28 +18979,23 @@ local function createTrajectoryCalibration(): any
         if type(configData) == "table" and configData.states then
             configData.states["MM2.Calibration.Consent"] = nextValue
         end
-        if type(state.queueConfigSave) == "function" then
-            pcall(state.queueConfigSave)
+        if type(host.queueConfigSave) == "function" then
+            pcall(host.queueConfigSave)
         end
         if nextValue == true then
+            self:start()
+            if not runtime.active then return false end
             runtime.dirty = true
-            return saveSnapshot("consent")
+            local saved: boolean = saveSnapshot("consent")
+            if not saved then
+                runtime.dirty = false
+                self:destroy()
+            end
+            return saved
         end
         runtime.saveScheduled = false
         runtime.dirty = false
-        if nextValue == nil then
-            -- Reopening the question is not an answer and must not delete the
-            -- file (nor discard the pending protection backup).
-            return true
-        end
-        runtime.pendingHistoryBackup = nil
-        if runtime.persistenceBlocked then
-            return true
-        end
-        -- A No stops saving and removes the current file when supported.
-        if type(environment.delfile) == "function" then
-            pcall(environment.delfile, OUTPUT_PATH)
-        end
+        if runtime.active then self:destroy() end
         return true
     end
 
@@ -19079,6 +19009,7 @@ local function createTrajectoryCalibration(): any
     end
 
     function controller:reset(): ()
+        if consentValue() ~= true then return end
         clearHistory()
         runtime.dirty = false
         runtime.pendingHistoryBackup = nil
@@ -19189,7 +19120,11 @@ local function createTrajectoryCalibration(): any
             appendEvent({kind = kind, shotId = shotId, phase = "authored",
                 serverTime = workspace:GetServerTimeNow(), clock = now,
                 pingMs = pingMs,
-                settings = info.settings, targetName = info.target and info.target.Name or nil,
+                settings = info.settings, source = info.source or "menu",
+                origin = typeof(info.originPos) == "Vector3" and vectorArray(info.originPos) or nil,
+                endpoint = typeof(info.aimPos) == "Vector3" and vectorArray(info.aimPos) or nil,
+                targetUserId = target and target.UserId or nil,
+                targetName = target and target.Name or nil,
                 targetHistory = #targetHistory > 0 and targetHistory or nil})
         end
         local targetTrajectory: {TrajectoryPoint} = {}
@@ -19238,10 +19173,27 @@ local function createTrajectoryCalibration(): any
                     runtime.sessionGunAttempts += 1
                 else
                     runtime.sessionKnifeAttempts += 1
+                    if info.source == "native-throw-event" then
+                        -- Tool.Activated can precede the game's actual throw
+                        -- signal and also occurs for stabs. Retire its matching
+                        -- tentative record so a later projectile cannot reuse
+                        -- it as a second throw or inherit a stale health watch.
+                        for index: number = #runtime.pendingKnives, 1, -1 do
+                            local pending: any = runtime.pendingKnives[index]
+                            local age: number = now - (pending.activatedAt or now)
+                            if not pending.attemptCounted and pending.tool == authoredTool
+                                and age >= 0 and age <= 0.3 then
+                                if pending.healthConnection then pending.healthConnection:Disconnect() end
+                                table.remove(runtime.pendingKnives, index)
+                                break
+                            end
+                        end
+                    end
                 end
                 beginPendingShot(isGun and "gun" or "knife", {
                     shotId = shotId,
                     attemptCounted = true,
+                    source = info.source or "menu",
                     tool = authoredTool,
                     shotMode = type(info.settings) == "table"
                             and info.settings.mode
@@ -19313,11 +19265,17 @@ local function createTrajectoryCalibration(): any
         if not runtime.active then
             return
         end
-        if runtime.dirty then
-            saveSnapshot("module-destroy")
+        if consentValue() == true then
+            local projectiles: {Instance} = {}
+            for projectile: Instance in pairs(runtime.tracks) do table.insert(projectiles, projectile) end
+            for _, projectile: Instance in ipairs(projectiles) do
+                finishKnifeTrack(projectile, "menu-unload")
+            end
         end
+        if runtime.dirty then saveSnapshot("module-destroy") end
         runtime.active = false
         disconnectFeatureConnection("MM2TrajectorySampler")
+        disconnectFeatureConnection("MM2KnifeSampler")
         if runtime.trajectorySampler then
             runtime.trajectorySampler:Disconnect()
             runtime.trajectorySampler = nil
@@ -19326,14 +19284,22 @@ local function createTrajectoryCalibration(): any
             if track.destroyConnection then
                 track.destroyConnection:Disconnect()
             end
+            if track.pending and track.pending.healthConnection then
+                track.pending.healthConnection:Disconnect()
+            end
             runtime.tracks[projectile] = nil
         end
         for _, connection: RBXScriptConnection in ipairs(runtime.connections) do
             connection:Disconnect()
         end
         table.clear(runtime.connections)
-        table.clear(runtime.pendingGuns)
-        table.clear(runtime.pendingKnives)
+        for _, queue in ipairs({runtime.pendingGuns, runtime.pendingKnives}) do
+            for _, pending in ipairs(queue) do
+                if pending.healthConnection then pending.healthConnection:Disconnect() end
+            end
+            table.clear(queue)
+        end
+        table.clear(runtime.observedTools)
     end
 
     return controller
@@ -19341,7 +19307,57 @@ end
 
 trajectoryCalibration = createTrajectoryCalibration()
 state.mm2TrajectoryCalibration = trajectoryCalibration
-trajectoryCalibration:start()
+-- Read existing history to protect it against conflicting writers, but do not
+-- observe or write anything until the player explicitly agrees.
+trajectoryCalibration:prepare()
+local calibrationPromptLive: boolean = true
+local calibrationStates: any = type(configData) == "table" and configData.states or {}
+local rememberedCalibration: boolean = calibrationStates["MM2.Calibration.DontShowAgain"] == true
+    and type(calibrationStates["MM2.Calibration.Consent"]) == "boolean"
+if rememberedCalibration then
+    if calibrationStates["MM2.Calibration.Consent"] == true then
+        if not trajectoryCalibration:setConsent(true) then
+            notify("Calibration could not save; check the console and executor file support.")
+        end
+    end
+else
+    -- Legacy profiles did not have the checkbox, so their old answer must not
+    -- silently become a remembered choice in this version.
+    calibrationStates["MM2.Calibration.Consent"] = nil
+    task.delay(3, function(): ()
+        if not calibrationPromptLive
+            or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+            return
+        end
+        if type(state.confirmDialog) ~= "function" then return end
+        local function answer(value: boolean, remember: boolean): ()
+            if not calibrationPromptLive
+                or (type(state.ownsRuntimeData) == "function" and not state.ownsRuntimeData()) then
+                return
+            end
+            calibrationStates["MM2.Calibration.DontShowAgain"] = remember == true
+            local saved: boolean = trajectoryCalibration:setConsent(value)
+            if value then
+                if saved then
+                    notify("Calibration ON: saving observed MM2 knife and shot data to Wurst/Telemetry.")
+                else
+                    notify("Calibration could not save; check the console and executor file support.")
+                end
+            else
+                notify("Calibration OFF: no new data will be recorded; previous files are kept.")
+            end
+        end
+        state.confirmDialog({
+            title = "Give your calibration?",
+            message = "Would you like to save the MM2 knives and shots your client observes to your executor workspace for analysis? Previous files are kept if you choose No.",
+            yes = "Yes",
+            no = "No",
+            rememberLabel = "Don't Show Again",
+            onYes = function(remember: boolean): () answer(true, remember) end,
+            onNo = function(remember: boolean): () answer(false, remember) end,
+        })
+    end)
+end
 
 pcall(function(): ()
     if type((game :: any).BindToClose) == "function" then
@@ -19969,6 +19985,7 @@ state.mm2Core = {
 }
 
 cleanupMM2Runtime = function()
+    calibrationPromptLive = false
     unregisterMM2Roles()
     if state.gameRoleProvider == mm2RoleProvider then
         state.gameRoleProvider = nil
@@ -31947,9 +31964,6 @@ function Module.init(context: Runtime): any
     local function restoreFreezeMovements(): ()
         for root: BasePart, original: any in pairs(originalFreezeState) do
             root.Anchored = original.anchored
-            if original.cframe ~= nil and root.CFrame ~= nil then
-                pcall(function(): () root.CFrame = original.cframe end)
-            end
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
@@ -31979,7 +31993,13 @@ function Module.init(context: Runtime): any
         end
         local lockedPosition: any = original.position
         local gravity: boolean = freezeSettings.keepGravity == true
-        root.Anchored = not gravity
+        local lockRotation: boolean = freezeSettings.lockRotation == true
+        -- An anchored root cannot physically turn. When rotation is free, pin
+        -- the position each frame instead, leaving Roblox's AutoRotate usable.
+        root.Anchored = not gravity and lockRotation
+        if not gravity and not lockRotation and lockedPosition ~= nil then
+            root.Position = lockedPosition
+        end
         if root.AssemblyLinearVelocity ~= nil then
             if gravity then
                 local vertical: number = tonumber(root.AssemblyLinearVelocity.Y) or 0
@@ -31991,7 +32011,7 @@ function Module.init(context: Runtime): any
         if freezeSettings.lockRotation and root.AssemblyAngularVelocity ~= nil then
             root.AssemblyAngularVelocity = Vector3.zero
         end
-        if original.look ~= nil and not gravity then
+        if freezeSettings.lockRotation and original.look ~= nil then
             pcall(function(): ()
                 if CFrame ~= nil and root.CFrame ~= nil then
                     root.CFrame = CFrame.lookAt(root.Position, root.Position + original.look)
@@ -32067,11 +32087,11 @@ function Module.init(context: Runtime): any
             elseif root then
                 lockPosition(root)
             end
-        end, nil, "Freeze Movements")
+        end, nil, "Motion Lock")
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements",
+        "Motion Lock",
         "Pin the body where it stands, or keep any animation playing while moving",
         4,
         toggleFreezeMovements,
@@ -47680,42 +47700,12 @@ function Module.init(context: any): any
         end)
     end
 
-    -- Frame intervals and callback elapsed times are separate observations;
-    -- neither the last nor the largest callback proves what caused a spike.
-    host.addActionOption(uiPanel, "Perf report", function(): ()
-        local performance: any = state.performance or {}
-        local report: string = "no report"
-        if type(state.perfReport) == "function" then
-            local ok: boolean, text: any = pcall(state.perfReport)
-            if ok and type(text) == "string" then
-                report = text
-            end
-        end
-        print(report)
-        local peak: string = performance.peakTask
-            and string.format("%s %.2f ms", tostring(performance.peakTask),
-                tonumber(performance.peakTaskMs) or 0)
-            or "n/a"
-        notify(string.format(
-            "FPS %.0f · menu sample %.2f+%.2f ms\nspikes %d · worst %.0f ms\ncallback peak %s (independent)",
-            tonumber(performance.fps) or 0,
-            tonumber(performance.tasksMs) or 0,
-            tonumber(performance.renderMs) or 0,
-            tonumber(performance.spikeCount) or 0,
-            tonumber(performance.worstSpikeMs) or 0,
-            peak
-        ))
-        if type(state.resetPerfReport) == "function" then
-            state.resetPerfReport()
-        end
-        print("[perf] observation reset")
-    end, "Prints sampled FPS, frame intervals and the longest callback separately "
-        .. "to the console, then resets the observation. Callback time can "
-        .. "include waits, may miss detached work, and does not identify the cause of a frame spike.")
-
-    host.addActionOption(uiPanel, "Move dock", function(): ()
-        if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
-    end, "Temporarily show the dock. Drag and release to save its position; Escape cancels. Show dock still controls visibility.")
+    -- Dock placement is a touch affordance; desktop does not need this action.
+    if touchPrimary then
+        host.addActionOption(uiPanel, "Move dock", function(): ()
+            if state.dock and state.dock.BeginMove then state.dock.BeginMove() end
+        end, "Drag and release the dock to save its position.")
+    end
 
     uiRecord.placed = true
     if windows.ReflowWindow then
@@ -49962,6 +49952,33 @@ function Module.init(context: any): WidgetLibrary
 
         callback(currentKey)
         return button :: TextButton
+    end
+
+    -- A card can expose its existing action shortcut as an option without
+    -- creating a second key or a second persistence entry. This remains in
+    -- sync with the Shortcuts settings page and old saved bindings.
+    state.addFeatureShortcutOption = function(feature: any, label: string, hint: string?): any
+        local binding: any = state.shortcutBindings and state.shortcutBindings[feature.configKey]
+        if not binding or state.isMobile then return nil end
+        local option: any = createOptionRow(feature, label, hint)
+        local button: TextButton = (makeButton(option, "", 11) :: any) :: TextButton
+        state.layoutOptionControl(option, button, 0.5)
+        applyKeySlotStyle(button)
+        local previousRefresh: any = binding.refresh
+        binding.refresh = function(): ()
+            if type(previousRefresh) == "function" then previousRefresh() end
+            local key: any = binding.key
+            button.Text = key and key ~= Enum.KeyCode.Unknown
+                and state.keyDisplayName(key.Name) or ""
+            button:SetAttribute("CaptureIdleText", button.Text)
+        end
+        binding.refresh()
+        trackUiConnection(button.MouseButton1Click:Connect(function(): ()
+            beginKeyCapture(button, function(keyCode: Enum.KeyCode): ()
+                binding.assign(keyCode)
+            end)
+        end))
+        return button
     end
 
     local function addTextOption(
@@ -53986,7 +54003,7 @@ local Manifest: Manifest = {
         ["Fast Vault Optimizer"] = "Movement",
         ["Fling"] = "Exploits",
         ["Fly"] = "Exploits",
-        ["Freeze Movements"] = "Utilities",
+        ["Motion Lock"] = "Utilities",
         ["Fullbright"] = "Render",
         ["Ghost"] = "Utilities",
         ["Goalkeeper Assist"] = "Exploits",
@@ -54029,7 +54046,6 @@ local Manifest: Manifest = {
         ["Swim Walk"] = "Exploits",
         ["Teleport"] = "Utilities",
         ["Time Changer"] = "Render",
-        ["Trajectory Calibration"] = "Other",
         ["VD Field of View"] = "Render",
         ["VD Fullbright"] = "Render",
         ["Walk Speed"] = "World",
@@ -54079,7 +54095,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
-        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Movements", category = "Utilities"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Motion Lock", category = "Utilities"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
@@ -54137,8 +54153,6 @@ local Manifest: Manifest = {
             "src/games/MM2/Other/GunAura.lua",
             "src/games/MM2/Other/AutoWin.lua",
             "src/games/MM2/Other/GetAllEmotes.lua",
-            "src/games/MM2/Other/TrajectoryCalibration.lua",
-            "src/games/MM2/Other/CalibrationTrails.lua",
         },
         VD = {
             "src/games/VD/base.lua",

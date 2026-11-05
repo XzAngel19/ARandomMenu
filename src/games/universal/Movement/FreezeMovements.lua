@@ -531,9 +531,6 @@ function Module.init(context: Runtime): any
     local function restoreFreezeMovements(): ()
         for root: BasePart, original: any in pairs(originalFreezeState) do
             root.Anchored = original.anchored
-            if original.cframe ~= nil and root.CFrame ~= nil then
-                pcall(function(): () root.CFrame = original.cframe end)
-            end
         end
         originalFreezeState = setmetatable({}, {__mode = "k"})
     end
@@ -563,7 +560,13 @@ function Module.init(context: Runtime): any
         end
         local lockedPosition: any = original.position
         local gravity: boolean = freezeSettings.keepGravity == true
-        root.Anchored = not gravity
+        local lockRotation: boolean = freezeSettings.lockRotation == true
+        -- An anchored root cannot physically turn. When rotation is free, pin
+        -- the position each frame instead, leaving Roblox's AutoRotate usable.
+        root.Anchored = not gravity and lockRotation
+        if not gravity and not lockRotation and lockedPosition ~= nil then
+            root.Position = lockedPosition
+        end
         if root.AssemblyLinearVelocity ~= nil then
             if gravity then
                 local vertical: number = tonumber(root.AssemblyLinearVelocity.Y) or 0
@@ -575,7 +578,7 @@ function Module.init(context: Runtime): any
         if freezeSettings.lockRotation and root.AssemblyAngularVelocity ~= nil then
             root.AssemblyAngularVelocity = Vector3.zero
         end
-        if original.look ~= nil and not gravity then
+        if freezeSettings.lockRotation and original.look ~= nil then
             pcall(function(): ()
                 if CFrame ~= nil and root.CFrame ~= nil then
                     root.CFrame = CFrame.lookAt(root.Position, root.Position + original.look)
@@ -651,11 +654,11 @@ function Module.init(context: Runtime): any
             elseif root then
                 lockPosition(root)
             end
-        end, nil, "Freeze Movements")
+        end, nil, "Motion Lock")
     end
 
     FreezeFeature = createUniversalFeature(
-        "Freeze Movements",
+        "Motion Lock",
         "Pin the body where it stands, or keep any animation playing while moving",
         4,
         toggleFreezeMovements,

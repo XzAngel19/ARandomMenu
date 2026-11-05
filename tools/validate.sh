@@ -76,9 +76,7 @@ cards="$(grep -E '^[0-9]+ cards total' build/menu_audit.md | cut -d' ' -f1)"
 [ -n "$cards" ] || { cat build/menu_audit.md; exit 1; }
 echo "PASS menu audit: $cards cards, every row dumped from the booted bundle"
 
-# A release boot must build exactly the same cards as a debug boot. Since v180
-# the Calibration card ships for everybody (consent, not debug, decides whether
-# anything is written), so both boots agree and the card has to be present.
+# Release/debug build the same cards; Calibration is a popup, not a card.
 python3 tools/audit_menu.py --release >build/menu_release.md 2>&1 || { cat build/menu_release.md; exit 1; }
 release_cards="$(grep -E '^[0-9]+ cards total' build/menu_release.md | cut -d' ' -f1)"
 [ -n "$release_cards" ] || { cat build/menu_release.md; exit 1; }
@@ -87,9 +85,9 @@ if [ "$release_cards" -ne "$cards" ]; then
     echo "release boot has $release_cards cards, debug boot has $cards" >&2
     exit 1
 fi
-if ! grep -q 'Calibration' build/menu_release.md; then
+if grep -q '^\- \*\*Calibration\*\*' build/menu_release.md; then
     cat build/menu_release.md
-    echo "release boot is missing the consent-gated Calibration card" >&2
+    echo "Calibration must not have a visible card" >&2
     exit 1
 fi
-echo "PASS release menu: $release_cards cards, Calibration ships behind consent"
+echo "PASS release menu: $release_cards cards, Calibration is popup-only"
