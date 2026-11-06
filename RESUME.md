@@ -4,8 +4,10 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v185-20261105-collision-safety-pc`**.
-> Esta sesión trabaja exclusivamente en `arena/9492e6b6-arandommenu`; integró
+> **Estado actual:** build **`v186-20261106-gun-knife-send`**.
+> Esta sesión trabaja exclusivamente en `arena/a4930bca-arandommenu`
+> (sincronizada por fast-forward con el tip v185 de
+> `arena/9492e6b6-arandommenu`); integró
 > v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
@@ -35,6 +37,26 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v186 — Gun: pulsación manual sin muestras; Knife: puertas con nombre (2026-11-06)
+
+Detalle y límites en `docs/FIXES-v186.md`:
+
+- La pulsación manual de Gun Aimbot (`whenReady`, el keybind) recibe el
+  mismo fallback de primera muestra que el clic nativo PC de v185: raíz viva
+  + lead corto, siempre a través de la validación final y WallCheck. Antes
+  la opción `whenReady` no se usaba y la pulsación moría sin paquete cuando
+  el predictor aún no tenía muestras (inicio de ronda, respawn).
+- `throwKnife` devuelve el motivo de cada puerta (equip, origen, objetivo,
+  WallCheck, remote ausente) y el loop lo muestra en el status; ya no deja
+  «Predicted target» fijo cuando el lanzamiento no sale.
+- El redirect de WeaponService (lanzamientos manuales de cuchillo) se
+  reintenta una vez por segundo mientras Knife Throw siga activo: si el
+  módulo aún no existía al activar la tarjeta, la redirección ya no se
+  pierde para toda la sesión.
+- `RUNTIME_BRANCH` por defecto pasa a `arena/a4930bca-arandommenu`.
+- Pendiente en vivo: reportar el texto exacto del status de Knife Throw y
+  si al activar Gun Aimbot aparece el aviso de hook del executor.
 
 ## v185 — Collision Shield, Safe Zone y Gun PC (2026-11-05)
 

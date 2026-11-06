@@ -156,6 +156,8 @@ local lastThrowAttempt = 0
 local tracerPart, targetDotPart = nil, nil
 local hookedWeaponService, origGetMouseTargetCFrame, origGetTargetPosition =
     nil, nil, nil
+-- v186: loop-level WeaponService install retry state.
+local lastRedirectInstallAttempt = -math.huge
 local function destroyTracerVisuals() end
 local function setKnifeStatus() end
 local prediction = nil

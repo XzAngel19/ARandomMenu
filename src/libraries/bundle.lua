@@ -1,5 +1,5 @@
 return {
-    stamp = "v185-20261105-collision-safety-pc",
+    stamp = "v186-20261106-gun-knife-send",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2418,12 +2418,18 @@ function Module.init(runtime: any): any
         -- samples yet on the first frame, fall back immediately to the
         -- target's current root position (+ short velocity lead) so the shot
         -- fires without waiting even a single second.
-        if (useRaw or continuous or nativeRedirect) and not info and target.Character then
+        -- v186: an explicit manual press (the Gun Aimbot keybind) is the same
+        -- kind of user act as the intercepted native click, so it gets the
+        -- same validated first-sample fallback. Without it the press died
+        -- silently whenever the predictor had no fresh sample yet (round
+        -- start, target respawn), while a mouse click still fired: the gun
+        -- appeared to ignore the keybind entirely.
+        if (useRaw or continuous or nativeRedirect or opts.whenReady == true) and not info and target.Character then
             local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
                 local vel: Vector3 = Vector3.zero
                 pcall(function(): ()
-                    vel = targetRoot.AssemblyLinearVelocity
+                    vel = targetRoot.AssemblyLinearVelocity or Vector3.zero
                 end)
                 local fallbackEndpoint: Vector3 = targetRoot.Position + vel * 0.08
                 info = {
@@ -3912,6 +3918,7 @@ function Module.init(runtime: any): any
     local hookedWeaponService: any = nil
     local origGetMouseTargetCFrame: any = nil
     local origGetTargetPosition: any = nil
+    local lastRedirectInstallAttempt: number = -math.huge
 
     local function destroyTracerVisuals(): ()
         if tracerPart then
@@ -4528,32 +4535,39 @@ function Module.init(runtime: any): any
         return false
     end
 
-    local function throwKnife(target: Player?, knife: Tool): boolean
+    local function throwKnife(target: Player?, knife: Tool): (boolean, string?)
         local character: Model? = LocalPlayer and LocalPlayer.Character
         if not character then
-            return false
+            return false, "Character unavailable"
         end
         local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid or humanoid.Health <= 0 or not ensureEquipped(knife, humanoid) then
-            return false
+        if not humanoid or humanoid.Health <= 0 then
+            return false, "Character unavailable"
+        end
+        if not ensureEquipped(knife, humanoid) then
+            return false, "Equipping knife…"
         end
         local originCF: CFrame? = getThrowOriginCFrame(knife)
         if not originCF then
-            return false
+            return false, "No throw origin"
         end
         -- v159: no lane fallback at all. Without a visible target there is
         -- nothing to throw at: a blade is not a homing projectile, and a throw
         -- into an opening only spent the knife.
         if not target or not isValidTarget(target) then
-            return false
+            return false, "No visible target"
         end
         local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
         if not aimPos then
-            return false
+            return false, "Target blocked · WallCheck"
         end
 
         local fired: boolean = false
         local noted: boolean = false
+        -- v186: every early return below now names its gate. The throw used
+        -- to fail silently after the loop had already announced
+        -- "Predicted target", so a knife that never left looked identical
+        -- to one the server had refused.
         local function noteThrowAttempt(): ()
             if noted then return end
             noted = true
@@ -4597,7 +4611,10 @@ function Module.init(runtime: any): any
             end)
         end
 
-        return fired
+        if not fired then
+            return false, "KnifeThrown remote unavailable"
+        end
+        return true, nil
     end
 
     -- Hook ReplicatedStorage.ClientServices.WeaponService so native PC & Mobile
@@ -4804,6 +4821,14 @@ function Module.init(runtime: any): any
         end
 
         local now: number = os.clock()
+        -- v186: WeaponService may not exist yet when the card is switched on
+        -- (lobby, round transition). The install used to run only inside the
+        -- toggle, so in that case the native-throw redirect never arrived
+        -- for the rest of the session. Retry cheaply while enabled.
+        if not hookedWeaponService and now - lastRedirectInstallAttempt >= 1 then
+            lastRedirectInstallAttempt = now
+            installWeaponServiceRedirect()
+        end
         local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
         local wantThrow: boolean = settings.autoThrow
             and now - lastThrowAttempt >= cooldown
@@ -4848,12 +4873,17 @@ function Module.init(runtime: any): any
         end
 
         if wantThrow then
-            if throwKnife(target, knife) then
+            local thrown: boolean, why: string? = throwKnife(target, knife)
+            if thrown then
                 setKnifeStatus("Throw sent · hit unconfirmed")
                 lastThrowAttempt = now
                 -- A throw consumes the aim: the next frame re-solves instead of
                 -- reusing a point measured before the blade left.
                 invalidateAim()
+            elseif why then
+                -- v186: name the gate that kept the blade in hand instead of
+                -- leaving "Predicted target" on the card forever.
+                setKnifeStatus(why)
             end
         end
     end

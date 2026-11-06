@@ -194,17 +194,24 @@ assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
 assert(sends==1 and queues==1,'final revalidation blocks the packet')
 safe=true
 aimEndpoint=nil
-assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==1 and queues==1,'missing prediction cannot send')
+-- v186: an explicit manual press gets the same first-sample fallback the
+-- native click already had (live root + short lead, still through the
+-- final guard); it no longer dies silently with no packet at all.
+assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
+assert(sends==2 and queues==2,'missing prediction falls back for an explicit press')
 aimEndpoint=endpoint
 local stale={gunAim=function() return nil,nil,'stale sample' end}
 local original=prediction.gunAim;prediction.gunAim=stale.gunAim
+assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
+assert(sends==3,'stale sample falls back for an explicit press')
+safe=false
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==1,'stale sample cannot send')
+assert(sends==3,'the first-sample fallback never bypasses the final guard')
+safe=true
 prediction.gunAim=original
 mm2Settings.silentAim=true
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==2 and queues==2 and notes==2,'silent shot dispatches through the same guard')
+assert(sends==4 and queues==4 and notes==4,'silent shot dispatches through the same guard')
 assert(seenMuzzle and seenMuzzle.Z==-10,
  'v106: the guard must see the real muzzle, never the near-target silent origin')
 assert(seenOrigin and seenOrigin.Z==0,
@@ -229,21 +236,21 @@ assert(sends==beforeNative,'WallCheck refusal must never send a second packet')
 safe=true;mm2Settings.silentAim=true
 buildSilentShot=function() return nil,nil,0,0,'Front' end
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==2,'blocked silent geometry cannot send')
+assert(sends==4,'blocked silent geometry cannot send')
 buildSilentShot=function() return CFrame.new(Vector3.zero),CFrame.new(endpoint),2.5,0.5,'Front' end
 state.mm2ShotFeedback.pending={queuedAt=os.clock()}
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==2,'v106: one authored request owns the gun until its echo resolves')
+assert(sends==4,'v106: one authored request owns the gun until its echo resolves')
 assert(lastRejectReason:find('Shot gate'),
  'a held shot explains itself without a separate diagnostic counter')
 assert(state.mm2ShotFeedback.pending~=nil,
  'a held request must not clear or replace the in-flight shot')
 state.mm2ShotFeedback.pending={queuedAt=os.clock()-2}
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==3,'a pending older than the window no longer holds the gun')
+assert(sends==5,'a pending older than the window no longer holds the gun')
 state.mm2ShotFeedback.pending=nil
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==4,'v106: the gun is free again once the request resolves')
+assert(sends==6,'v106: the gun is free again once the request resolves')
 gun.Enabled=false
 assert(not fireGunAtTarget(target,{whenReady=true,quiet=true}), 'manual fire must still respect tool cooldown')
 -- Native script often disables/reloads the Tool before its existing FireServer.
@@ -252,7 +259,7 @@ local pending={queuedAt=os.clock()};state.mm2ShotFeedback.pending=pending
 local queueBefore=queues;frames=nil
 assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,
  nativeOrigin=CFrame.new(Vector3.zero),redirect=function(a,b) frames={a,b} end}))
-assert(frames and sends==4 and state.mm2ShotFeedback.pending==pending and queues==queueBefore,
+assert(frames and sends==6 and state.mm2ShotFeedback.pending==pending and queues==queueBefore,
  'native cooldown and a prior pending record cannot suppress or overwrite the click')
 state.mm2ShotFeedback.pending=nil
 -- Optional feedback and Calibration may fail: neither may invalidate already
@@ -262,7 +269,7 @@ state.mm2ShotFeedback.queue=function() error('feedback unavailable') end
 trajectoryCalibration.noteAuthoredShot=function() error('calibration unavailable') end
 local beforeDeferred=#deferred;frames=nil
 assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,
- redirect=function(a,b) frames={a,b} end}) and frames and sends==4)
+ redirect=function(a,b) frames={a,b} end}) and frames and sends==6)
 assert(#deferred==beforeDeferred+1,'native Calibration work is deferred')
 for _,job in ipairs(deferred) do job() end -- errors inside optional recorder are contained
 state.mm2ShotFeedback.queue=originalQueue
@@ -275,7 +282,7 @@ local getOrigin=getGunOriginCFrame;getGunOriginCFrame=function() return nil end
 prediction.gunAim=function() return nil,nil,'stale sample' end
 local nativeOrigin=CFrame.new(Vector3.new(0,0,-7));frames=nil
 assert(fireGunAtTarget(target,{quiet=true,nativeRedirect=true,nativeOrigin=nativeOrigin,
- redirect=function(a,b) frames={a,b} end}) and frames and sends==4)
+ redirect=function(a,b) frames={a,b} end}) and frames and sends==6)
 assert(seenMuzzle.Z==-7,'native packet origin is used only when muzzle is unavailable')
 safe=false;frames=nil
 assert(not fireGunAtTarget(target,{quiet=true,nativeRedirect=true,nativeOrigin=nativeOrigin,
@@ -286,7 +293,7 @@ gun.Enabled=true
 pass('native cooldown/pending isolation, deferred failing observers and validated first-sample fallback')
 nearPathClear=false
 assert(fireGunAtTarget(target,{whenReady=true,quiet=true}))
-assert(sends==5 and lastAuthored.settings.spawn=='Muzzle'
+assert(sends==7 and lastAuthored.settings.spawn=='Muzzle'
  and lastAuthored.settings.sweep==0,
  'real-muzzle fallback must not be mislabeled as a near-target silent shot')
 nearPathClear=true

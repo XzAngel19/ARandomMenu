@@ -451,12 +451,18 @@ function Module.init(runtime: any): any
         -- samples yet on the first frame, fall back immediately to the
         -- target's current root position (+ short velocity lead) so the shot
         -- fires without waiting even a single second.
-        if (useRaw or continuous or nativeRedirect) and not info and target.Character then
+        -- v186: an explicit manual press (the Gun Aimbot keybind) is the same
+        -- kind of user act as the intercepted native click, so it gets the
+        -- same validated first-sample fallback. Without it the press died
+        -- silently whenever the predictor had no fresh sample yet (round
+        -- start, target respawn), while a mouse click still fired: the gun
+        -- appeared to ignore the keybind entirely.
+        if (useRaw or continuous or nativeRedirect or opts.whenReady == true) and not info and target.Character then
             local targetRoot: BasePart? = target.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
                 local vel: Vector3 = Vector3.zero
                 pcall(function(): ()
-                    vel = targetRoot.AssemblyLinearVelocity
+                    vel = targetRoot.AssemblyLinearVelocity or Vector3.zero
                 end)
                 local fallbackEndpoint: Vector3 = targetRoot.Position + vel * 0.08
                 info = {

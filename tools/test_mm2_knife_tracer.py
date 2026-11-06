@@ -120,6 +120,8 @@ local settings = {enabled = true, autoThrow = false, wallCheck = true, knifeTrac
 local lastThrowAttempt = 0
 local tracerPart, targetDotPart = nil, nil
 local hookedWeaponService, origGetMouseTargetCFrame, origGetTargetPosition = nil, nil, nil
+-- v186: loop-level WeaponService install retry state.
+local lastRedirectInstallAttempt = -math.huge
 local function destroyTracerVisuals()
     if tracerPart then tracerPart:Destroy(); tracerPart = nil end
     if targetDotPart then targetDotPart:Destroy(); targetDotPart = nil end
