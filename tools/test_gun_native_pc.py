@@ -24,6 +24,7 @@ local character={}
 local humanoid={}
 local gun={Parent=character}
 local gunRemote={id='gun'}
+function gunRemote:IsA(c) return c=='RemoteEvent' end
 local knifeRemote={id='knife'}
 function gun:FindFirstChild(name) return name=='Shoot' and gunRemote or nil end
 function humanoid:EquipTool(tool) tool.Parent=character end
@@ -70,6 +71,16 @@ local function getWeaponServiceModule()
  if pauseObserver then coroutine.yield() end
  return {}
 end
+-- v187: the engine entry for a fresh :FireServer call. A resend from inside
+-- the hook re-enters as an executor-originated namecall; the mock must model
+-- that dispatch or the re-entrant trampoline never runs.
+function gunRemote:FireServer(...)
+ local prevMethod, prevExecutor = method, executorCaller
+ method='FireServer'; executorCaller=true
+ local out=table.pack(chain(self,...))
+ method, executorCaller = prevMethod, prevExecutor
+ return table.unpack(out,1,out.n)
+end
 local state={isMobile=false,hookMetamethod=hook,getNamecallMethod=function() return method end,
  checkCaller=function() return executorCaller end,mm2ShotFeedback={hide=function() end}}
 local shootFeatureActive=false
@@ -89,6 +100,9 @@ local ShootFeature={SetStatus=function() error('status UI unavailable') end}
 local keyShots=0
 local function fireGunAtTarget(p,opts)
  assert(p==target)
+ -- v187: the hook no longer pre-checks the weapon, so the solver itself is
+ -- where a streamed-out weapon lookup surfaces (as in production).
+ getPlayerWeapon(LocalPlayer,'Gun',true)
  solved+=1
  if throws then error('aim failure') end
  if blocked then return false end
@@ -143,7 +157,10 @@ executorCaller=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and solved==solvedBefore,'Auto Shoot/Farm/executor packets are not redirected')
 executorCaller=false;args=click(knifeRemote,originalA,originalB)
 assert(args[1]==originalA and solved==solvedBefore,'Knife and unrelated remotes untouched')
-weaponLookupThrows=true;args=click(gunRemote,originalA,originalB)
+weaponLookupThrows=true;args=click(knifeRemote,originalA,originalB)
+assert(args[1]==originalA and args[2]==originalB and solved==solvedBefore,
+ 'v187: unrelated remotes trampoline without a single method call first')
+args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and args[2]==originalB and solved==solvedBefore,
  'streaming/weapon lookup errors cannot swallow the native click')
 weaponLookupThrows=false

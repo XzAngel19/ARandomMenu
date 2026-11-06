@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v186-20261106-gun-knife-send`**.
+> **Estado actual:** build **`v187-20261106-namecall-hook`**.
 > Esta sesión trabaja exclusivamente en `arena/a4930bca-arandommenu`
 > (sincronizada por fast-forward con el tip v185 de
 > `arena/9492e6b6-arandommenu`); integró
@@ -37,6 +37,24 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v187 — El hook __namecall rompía las llamadas nativas (2026-11-06)
+
+Detalle y límites en `docs/FIXES-v187.md`:
+
+- **Causa raíz confirmada en vivo:** el hook PC de Gun Aimbot ejecutaba
+  llamadas a métodos propias (`getPlayerWeapon`, `FindFirstChild`,
+  raycasts) antes de delegar en el trampolín original; eso sobrescribe el
+  método namecall pendiente y la llamada nativa moría dentro del hook
+  («argument #1 expects a string, but Instance was passed» desde
+  KnifeClient; «GetValue (lacking capability Plugin)» desde GunClient).
+  Con Gun Aimbot activo, ni la gun ni el knife accionaban.
+- Ahora, antes del trampolín solo corren comprobaciones planas/C y la
+  comparación contra el remoto `Gun.Shoot` cacheado fuera del hook; tras
+  el solver, los frames se reenvían por el motor (`FireServer` nuevo que
+  reentra y trampolina con el registro intacto), preservando argumentos
+  extra. Pendiente: confirmar en Delta que gun y knife accionan sin los
+  warnings de la captura del 2026-11-06.
 
 ## v186 — Gun: pulsación manual sin muestras; Knife: puertas con nombre (2026-11-06)
 

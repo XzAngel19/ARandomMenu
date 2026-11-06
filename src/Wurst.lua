@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v186-20261106-gun-knife-send"
+local SOURCE_STAMP: string = "v187-20261106-namecall-hook"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0

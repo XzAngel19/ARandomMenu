@@ -1,5 +1,5 @@
 return {
-    stamp = "v186-20261106-gun-knife-send",
+    stamp = "v187-20261106-namecall-hook",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2771,6 +2771,30 @@ function Module.init(runtime: any): any
     local updateAutoShootConnection: (() -> ())? = nil
 
     local observerGeneration: number = 0
+    -- v187: the native hook compares the intercepted remote against this
+    -- cache, resolved OUTSIDE the hook. Resolving it inside the hook (the
+    -- v183-v186 code called getPlayerWeapon/FindFirstChild there) performs
+    -- namecalls of its own, which overwrite the pending namecall method;
+    -- the original trampoline then dispatched the wrong method and the
+    -- native Gun/Knife client calls died inside our hook ("argument #1
+    -- expects a string, but Instance was passed", live session 2026-11-06).
+    local cachedShootRemote: Instance? = nil
+    local lastCacheProbeAt: number = -math.huge
+    local function refreshShootRemoteCache(): ()
+        local remote: Instance? = nil
+        local okGun: boolean, foundGun: any = pcall(getPlayerWeapon, LocalPlayer, "Gun", true)
+        local gun: Tool? = if okGun then foundGun else nil
+        if gun then
+            pcall(function(): ()
+                local found: Instance? = gun:FindFirstChild("Shoot")
+                if found and found:IsA("RemoteEvent") then
+                    remote = found
+                end
+            end)
+        end
+        cachedShootRemote = remote
+    end
+
     local function refreshShootInfrastructure(): ()
         observerGeneration += 1
         local generation: number = observerGeneration
@@ -2787,12 +2811,14 @@ function Module.init(runtime: any): any
             else
                 task.spawn(observe) -- never delay PC click redirection for an observer
             end
+            refreshShootRemoteCache()
             return
         end
         disconnectGunFiredObserver()
         state.mm2ShotFeedback.pending = nil
         state.mm2ShotFeedback.lastAccepted = nil
         state.mm2ShotFeedback.hide()
+        refreshShootRemoteCache()
     end
 
     local shotHookInstalled: boolean = false
@@ -2809,7 +2835,39 @@ function Module.init(runtime: any): any
             return false
         end
         local predecessor: any = nil
+        -- v187: the v183-v186 hook performed its own method calls
+        -- (getPlayerWeapon, FindFirstChild, raycasts) before invoking the
+        -- original namecall trampoline. Every one of those calls overwrites
+        -- the pending namecall method, so the trampoline dispatched
+        -- whatever method ran last instead of FireServer and the native
+        -- call died: live output showed "argument #1 expects a string, but
+        -- Instance was passed" from this hook for KnifeClient calls, plus
+        -- 'GetValue' (lacking capability Plugin) from GunClient -- the
+        -- weapons stopped actuating while Gun Aimbot was on. Two rules now:
+        -- (1) before the trampoline, only plain/C calls run: the method
+        -- check, checkcaller, and a comparison against the Shoot remote
+        -- cached OUTSIDE the hook; anything else trampolines immediately.
+        -- (2) once the solver has run (and clobbered the method register
+        -- beyond repair), modified or original frames are re-sent through
+        -- the engine: a fresh remote:FireServer call re-enters this hook,
+        -- which sees the guard flag and trampolines it while its method
+        -- register is still exactly "FireServer".
+        local resendingNativeShot: boolean = false
+        local function resendThroughEngine(remote: any, ...: any): any
+            resendingNativeShot = true
+            local results: any = table.pack(pcall(function(...: any): any
+                return ((remote :: any) :: RemoteEvent):FireServer(...)
+            end, ...))
+            resendingNativeShot = false
+            if results[1] == true then
+                return table.unpack(results, 2, results.n)
+            end
+            return nil
+        end
         local function redirectNamecall(remote: any, ...: any): any
+            if resendingNativeShot then
+                return predecessor(remote, ...)
+            end
             if not shootFeatureActive or not shootOptionsReady then
                 return predecessor(remote, ...)
             end
@@ -2823,16 +2881,19 @@ function Module.init(runtime: any): any
                 -- packets keep their own settings and never enter this hook.
                 return predecessor(remote, ...)
             end
-            local character: Model? = LocalPlayer and LocalPlayer.Character
-            local okGun: boolean, foundGun: any = pcall(getPlayerWeapon, LocalPlayer, "Gun", true)
-            local gun: Tool? = if okGun then foundGun else nil
-            if not character or not gun or gun.Parent ~= character then
+            if remote ~= cachedShootRemote then
+                -- Not the gun's Shoot remote (or the cache has not caught
+                -- up with a newly acquired gun): trampolines untouched,
+                -- and schedule a cache refresh outside this call.
+                if task and type(task.defer) == "function" then
+                    local now: number = os.clock()
+                    if now - lastCacheProbeAt >= 0.5 then
+                        lastCacheProbeAt = now
+                        task.defer(refreshShootRemoteCache)
+                    end
+                end
                 return predecessor(remote, ...)
             end
-            local okRemote: boolean, shootRemote: any = pcall(function(): any
-                return gun:FindFirstChild("Shoot")
-            end)
-            if not okRemote or remote ~= shootRemote then return predecessor(remote, ...) end
             local arguments: any = table.pack(...)
             if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
                 return predecessor(remote, ...)
@@ -2851,11 +2912,11 @@ function Module.init(runtime: any): any
                 })
             end)
             if shotOrigin and shotEnd then
-                arguments[1], arguments[2] = shotOrigin, shotEnd
                 if ShootFeature then
                     pcall(function(): () ShootFeature:SetStatus("Native click redirected") end)
                 end
-                return predecessor(remote, table.unpack(arguments, 1, arguments.n))
+                return resendThroughEngine(remote, shotOrigin, shotEnd,
+                    table.unpack(arguments, 3, arguments.n))
             end
             if ShootFeature then
                 pcall(function(): ()
@@ -2865,7 +2926,9 @@ function Module.init(runtime: any): any
             end
             -- No target, blocked line, unsupported geometry or an error: keep
             -- the native click intact instead of blocking it or firing twice.
-            return predecessor(remote, ...)
+            -- Re-sent through the engine for the same reason as the redirect:
+            -- the solver's own calls already clobbered the method register.
+            return resendThroughEngine(remote, table.unpack(arguments, 1, arguments.n))
         end
         local callback: any = redirectNamecall
         if type(state.newCClosure) == "function" then
