@@ -124,7 +124,7 @@ local RUNTIME_RAW_BASE: string =
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v195-20261107-branch-align-and-404"
+local SOURCE_STAMP: string = "v196-20261107-chunk-local-register-fix"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"
@@ -143,6 +143,213 @@ local PRODUCT = {
     blurName = "WurstBlur",
     storageFolder = "Wurst",
 }
+
+-- v195: the destruct runtime used to sit at the end of `bootstrap()`. Luau allows
+-- 200 live locals per function and the main chunk is one function, so the five
+-- locals this block declares (`runtimeCleaned`, `runtimeDestructed`,
+-- `runtimeHandoff`, `cleanupStep`, `cleanupRuntime`) landed on top of the 196
+-- already open and pushed the frame to 201. The player's executor then refused
+-- to compile the file at all:
+--     Out of local registers when trying to allocate cleanupRuntime
+-- They now live in their own function frame. Everything they read from
+-- `bootstrap()` arrives as a parameter, the returned closures are handed back
+-- to `bootstrap()` which stores them on `state`, and nothing about the order of
+-- cleanup, the flags or the genv handshake changed.
+local function createRuntimeDestructor(deps: any): any
+    local state = deps.state
+    local MenuBlur = deps.MenuBlur
+    local ScreenGui = deps.ScreenGui
+    local allFeatures = deps.allFeatures
+    local featureConnections = deps.featureConnections
+    local TaskManager = deps.TaskManager
+    local cleanupMM2Runtime = deps.cleanupMM2Runtime
+    local closeConfigSave = deps.closeConfigSave
+    local setMenuCursorUnlocked = deps.setMenuCursorUnlocked
+    local disconnectFeatureConnection = deps.disconnectFeatureConnection
+    local persistenceGenv = deps.persistenceGenv
+    local logPrint: any = deps.logPrint
+    local reportError: any = deps.warn
+
+    local runtimeCleaned: boolean = false
+    local runtimeDestructed: boolean = false
+    local runtimeHandoff: any = nil
+
+    local function cleanupStep(label: string, step: () -> ()): ()
+        local ok: boolean, failure: any = pcall(step)
+        if not ok then
+            reportError("[" .. PRODUCT.name .. "] destruct/" .. label .. ": " .. tostring(failure))
+        end
+    end
+
+    local function cleanupRuntime(): ()
+        if runtimeCleaned then
+            return
+        end
+        runtimeCleaned = true
+    cleanupStep("teleport persistence", function(): ()
+        if state.teleportPersist then
+            state.teleportPersist.Close()
+        end
+    end)
+    cleanupStep("blur", function(): ()
+        if MenuBlur then
+            MenuBlur:Destroy()
+            MenuBlur = nil
+        end
+    end)
+    cleanupStep("cursor", function(): ()
+        setMenuCursorUnlocked(false)
+    end)
+    cleanupStep("session", function(): ()
+        if type(state.destroySessionTracking) == "function" then
+            state.destroySessionTracking()
+        end
+        state.sessionInfo = nil
+    end)
+
+    for _, feature in ipairs(allFeatures) do
+        if feature.enabled then
+            cleanupStep("feature " .. tostring(feature.name), function(): ()
+                feature.onToggle(false)
+            end)
+            feature.enabled = false
+        end
+    end
+
+    cleanupStep("held keybinds", function(): ()
+        for _, binding: any in pairs(state.shortcutBindings) do
+            if binding.hold and binding.pressed and binding.onRelease then
+                binding.pressed = false
+                binding.onRelease()
+            end
+        end
+        table.clear(state.shortcutBindings)
+    end)
+    cleanupStep("feature connections", function(): ()
+        for name in pairs(featureConnections) do
+            disconnectFeatureConnection(name)
+        end
+    end)
+    cleanupStep("tooltips", function(): ()
+        for _, connection: RBXScriptConnection in ipairs(state.tooltipConnections) do
+            connection:Disconnect()
+        end
+        table.clear(state.tooltipConnections)
+    end)
+    cleanupStep("ui connections", function(): ()
+        for _, connection: RBXScriptConnection in ipairs(state.uiConnections) do
+            connection:Disconnect()
+        end
+        table.clear(state.uiConnections)
+    end)
+    cleanupStep("projectile calibration", function(): ()
+        local services: any = state.frameworkEnvironment
+            and state.frameworkEnvironment.services
+        local registry: any = services and services.projectileCalibration
+        local calibration: any = registry and registry.get()
+        if calibration and type(calibration.destroy) == "function" then
+            calibration:destroy()
+        end
+        if registry then
+            registry.set(nil)
+        end
+    end)
+    cleanupStep("task manager", function(): ()
+        TaskManager:Destroy()
+    end)
+    cleanupStep("global input", function(): ()
+        for _, key: string in ipairs({
+            "globalInputChangedConnection",
+            "globalInputEndedConnection",
+            "globalInputBeganConnection",
+            "globalShortcutBeganConnection",
+            "globalShortcutEndedConnection",
+        }) do
+            local connection: any = state[key]
+            if connection then
+                connection:Disconnect()
+                state[key] = nil
+            end
+        end
+    end)
+    cleanupStep("colour picker", function(): ()
+
+        local picker: any = state.colorPicker
+        if not picker then
+            return
+        end
+        if picker.inputChanged then
+            picker.inputChanged:Disconnect()
+        end
+        if picker.inputEnded then
+            picker.inputEnded:Disconnect()
+        end
+    end)
+    cleanupStep("MM2 runtime", cleanupMM2Runtime)
+    for _, key: string in ipairs({
+        "cleanupFrameworkRuntime",
+        "cleanupTRSRuntime",
+        "cleanupVDRuntime",
+        "cleanupBedFightRuntime",
+        "cleanupX2DuelsRuntime",
+    }) do
+        local cleanup: any = state[key]
+        if type(cleanup) == "function" then
+            cleanupStep(key, cleanup)
+        end
+    end
+    cleanupStep("config", closeConfigSave)
+    local genv: any = persistenceGenv()
+    if genv and genv.WURST_RUNTIME == runtimeHandoff then
+        genv.WURST_RUNTIME = nil
+    end
+end
+
+
+    local function destructRuntime(): ()
+        if runtimeDestructed then
+            return
+        end
+        runtimeDestructed = true
+        -- Revoke before any other cleanup can yield. Stop is still useful after
+        -- ordinary GUI teardown has preserved a queued teleport.
+        cleanupStep("session kill switch", function(): ()
+            if state.teleportPersist then
+                state.teleportPersist.Stop()
+            end
+        end)
+        if runtimeCleaned then
+            return
+        end
+        cleanupStep("runtime", cleanupRuntime)
+        cleanupStep("screen gui", function(): ()
+            if ScreenGui.Parent then
+                ScreenGui:Destroy()
+            end
+        end)
+
+        logPrint("[" .. PRODUCT.name .. "] Destruct complete.")
+    end
+
+    local function bindHandoff(): ()
+        runtimeHandoff = {Destruct = destructRuntime}
+        local activeGenv: any = persistenceGenv()
+        if activeGenv then
+            activeGenv.WURST_RUNTIME = runtimeHandoff
+        end
+        ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
+            if not parent then
+                cleanupRuntime()
+            end
+        end)
+    end
+
+    return {
+        cleanupRuntime = cleanupRuntime,
+        destructRuntime = destructRuntime,
+        bindHandoff = bindHandoff,
+    }
+end
 
 local function bootstrap(): ()
 local executorGlobals: any = getfenv()
@@ -7136,177 +7343,25 @@ task.defer(function(): ()
 end)
 end
 
-local runtimeCleaned: boolean = false
-local runtimeDestructed: boolean = false
-local runtimeHandoff: any = nil
 
-local function cleanupStep(label: string, step: () -> ()): ()
-    local ok: boolean, failure: any = pcall(step)
-    if not ok then
-        warn("[" .. PRODUCT.name .. "] destruct/" .. label .. ": " .. tostring(failure))
-    end
-end
-
-local function cleanupRuntime(): ()
-    if runtimeCleaned then
-        return
-    end
-    runtimeCleaned = true
-
-    cleanupStep("teleport persistence", function(): ()
-        if state.teleportPersist then
-            state.teleportPersist.Close()
-        end
-    end)
-    cleanupStep("blur", function(): ()
-        if MenuBlur then
-            MenuBlur:Destroy()
-            MenuBlur = nil
-        end
-    end)
-    cleanupStep("cursor", function(): ()
-        setMenuCursorUnlocked(false)
-    end)
-    cleanupStep("session", function(): ()
-        if type(state.destroySessionTracking) == "function" then
-            state.destroySessionTracking()
-        end
-        state.sessionInfo = nil
-    end)
-
-    for _, feature in ipairs(allFeatures) do
-        if feature.enabled then
-            cleanupStep("feature " .. tostring(feature.name), function(): ()
-                feature.onToggle(false)
-            end)
-            feature.enabled = false
-        end
-    end
-
-    cleanupStep("held keybinds", function(): ()
-        for _, binding: any in pairs(state.shortcutBindings) do
-            if binding.hold and binding.pressed and binding.onRelease then
-                binding.pressed = false
-                binding.onRelease()
-            end
-        end
-        table.clear(state.shortcutBindings)
-    end)
-    cleanupStep("feature connections", function(): ()
-        for name in pairs(featureConnections) do
-            disconnectFeatureConnection(name)
-        end
-    end)
-    cleanupStep("tooltips", function(): ()
-        for _, connection: RBXScriptConnection in ipairs(state.tooltipConnections) do
-            connection:Disconnect()
-        end
-        table.clear(state.tooltipConnections)
-    end)
-    cleanupStep("ui connections", function(): ()
-        for _, connection: RBXScriptConnection in ipairs(state.uiConnections) do
-            connection:Disconnect()
-        end
-        table.clear(state.uiConnections)
-    end)
-    cleanupStep("projectile calibration", function(): ()
-        local services: any = state.frameworkEnvironment
-            and state.frameworkEnvironment.services
-        local registry: any = services and services.projectileCalibration
-        local calibration: any = registry and registry.get()
-        if calibration and type(calibration.destroy) == "function" then
-            calibration:destroy()
-        end
-        if registry then
-            registry.set(nil)
-        end
-    end)
-    cleanupStep("task manager", function(): ()
-        TaskManager:Destroy()
-    end)
-    cleanupStep("global input", function(): ()
-        for _, key: string in ipairs({
-            "globalInputChangedConnection",
-            "globalInputEndedConnection",
-            "globalInputBeganConnection",
-            "globalShortcutBeganConnection",
-            "globalShortcutEndedConnection",
-        }) do
-            local connection: any = state[key]
-            if connection then
-                connection:Disconnect()
-                state[key] = nil
-            end
-        end
-    end)
-    cleanupStep("colour picker", function(): ()
-
-        local picker: any = state.colorPicker
-        if not picker then
-            return
-        end
-        if picker.inputChanged then
-            picker.inputChanged:Disconnect()
-        end
-        if picker.inputEnded then
-            picker.inputEnded:Disconnect()
-        end
-    end)
-    cleanupStep("MM2 runtime", cleanupMM2Runtime)
-    for _, key: string in ipairs({
-        "cleanupFrameworkRuntime",
-        "cleanupTRSRuntime",
-        "cleanupVDRuntime",
-        "cleanupBedFightRuntime",
-        "cleanupX2DuelsRuntime",
-    }) do
-        local cleanup: any = state[key]
-        if type(cleanup) == "function" then
-            cleanupStep(key, cleanup)
-        end
-    end
-    cleanupStep("config", closeConfigSave)
-    local genv: any = persistenceGenv()
-    if genv and genv.WURST_RUNTIME == runtimeHandoff then
-        genv.WURST_RUNTIME = nil
-    end
-end
-
-state.destruct = function(): ()
-    if runtimeDestructed then
-        return
-    end
-    runtimeDestructed = true
-    -- Revoke before any other cleanup can yield. Stop is still useful after
-    -- ordinary GUI teardown has preserved a queued teleport.
-    cleanupStep("session kill switch", function(): ()
-        if state.teleportPersist then
-            state.teleportPersist.Stop()
-        end
-    end)
-    if runtimeCleaned then
-        return
-    end
-    cleanupStep("runtime", cleanupRuntime)
-    cleanupStep("screen gui", function(): ()
-        if ScreenGui.Parent then
-            ScreenGui:Destroy()
-        end
-    end)
-
-    print("[" .. PRODUCT.name .. "] Destruct complete.")
-end
-
-runtimeHandoff = {Destruct = state.destruct}
-local activeGenv: any = persistenceGenv()
-if activeGenv then
-    activeGenv.WURST_RUNTIME = runtimeHandoff
-end
-ScreenGui.AncestryChanged:Connect(function(_: Instance, parent: Instance?): ()
-    if not parent then
-        cleanupRuntime()
-    end
-end)
+local runtime: any = createRuntimeDestructor({
+    state = state,
+    MenuBlur = MenuBlur,
+    ScreenGui = ScreenGui,
+    allFeatures = allFeatures,
+    featureConnections = featureConnections,
+    TaskManager = TaskManager,
+    cleanupMM2Runtime = cleanupMM2Runtime,
+    closeConfigSave = closeConfigSave,
+    setMenuCursorUnlocked = setMenuCursorUnlocked,
+    disconnectFeatureConnection = disconnectFeatureConnection,
+    persistenceGenv = persistenceGenv,
+    logPrint = print,
+    warn = warn,
+})
+state.destruct = runtime.destructRuntime
+state.cleanupRuntime = runtime.cleanupRuntime
+runtime.bindHandoff()
 
 SectionManager.initializeAllAsync()
 task.defer(saveConfigNow)

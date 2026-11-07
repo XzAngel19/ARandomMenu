@@ -1,5 +1,5 @@
 return {
-    stamp = "v195-20261107-branch-align-and-404",
+    stamp = "v196-20261107-chunk-local-register-fix",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}

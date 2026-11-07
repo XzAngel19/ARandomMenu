@@ -105,8 +105,14 @@ check('"HttpGet threw: "' in WURST,
       "a throwing executor is reported instead of swallowed")
 
 # --- the stamp ------------------------------------------------------------
-check('local SOURCE_STAMP: string = "v195-' in WURST, "the v195 stamp ships this build")
-check("0.195" not in WURST, "no hardcoded 0.195 label (it derives from the stamp)")
+# The stamp moves with every release; this suite only pins that the shipped
+# source still carries a v195-or-later stamp (the branch alignment this file
+# guards) and that no label is hardcoded next to it.
+stamp = re.search(r'local SOURCE_STAMP: string = "(v(\d+))-', WURST)
+check(stamp is not None and int(stamp.group(2)) >= 195,
+      f"the shipped stamp is v195 or later (found {stamp.group(0) if stamp else 'none'})")
+check("0." + (stamp.group(2) if stamp else "") not in WURST,
+      "no hardcoded 0.<build> label (it derives from the stamp)")
 
 # --- it compiles ----------------------------------------------------------
 result = subprocess.run(
