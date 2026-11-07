@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v193-20261107-live-server-readout`**,
-> que el menú muestra como **`0.193`** y como **`0.193 Release`**
+> **Estado actual:** build **`v194-20261107-loader-hardening`**,
+> que el menú muestra como **`0.194`** y como **`0.194 Release`**
 > (`SOURCE_STAMP` es la única fuente de las dos etiquetas).
 > Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
 > desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
@@ -45,6 +45,20 @@
   origin/arena/7446e4e3-arandommenu` + recomitear la tanda + push. **No** hacer
   `git rebase` a mano: los conflictos en `bundle.lua`, `Manifest.lua` y el
   harness cuestan más que recomitear.
+
+## v194 — Cargador que dice por qué falla (2026-11-07)
+
+- Síntoma reportado: `:2: attempt to call a nil value` / `Script '', Line 2`.
+  Es el cargador de dos líneas: `loadstring(game:HttpGet(url))()` sobre un texto
+  que no compila; el motivo se descarta porque se llama al `nil` devuelto.
+- El cargador documentado (`README.md` → **Loader**, y `docs/LOADER.md`)
+  reintenta 4 veces con `?t=`/`&a=`, exige `> 100000` bytes y la cabecera
+  `local RUNTIME_COMPATIBILITY_MARKER`, imprime `warn("[Wurst] loader: …")` y
+  compila con nombre de chunk `"@Wurst"`.
+- Se quitaron las dos anotaciones de tipo en variables de bucle que v193
+  introdujo (única sintaxis que un Luau más viejo podría rechazar).
+- `tools/test_v194_loader.py` verifica el cargador y el fichero publicado
+  (UTF-8 sin BOM/NUL, cabecera, tamaño, compila).
 
 ## v193 — Lectura de servidor viva, hops que no fallan, controles de celular ocultos (2026-11-07)
 

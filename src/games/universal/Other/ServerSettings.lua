@@ -406,7 +406,7 @@ function Module.init(context: Runtime): any
         local lastError: string? = nil
         for _, order: string in ipairs(orders) do
             local cursor: string? = nil
-            for _: number = 1, MAX_PAGES do
+            for _ = 1, MAX_PAGES do
                 local page: {any}?, nextCursor: string?, errorText: string? =
                     fetchPage(order, cursor)
                 if not page then

@@ -2,15 +2,76 @@
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
 La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v193`, se muestra como **`0.193`** y **`0.193 Release`**); `main` es
+(build `v194`, se muestra como **`0.194`** y **`0.194 Release`**); `main` es
 independiente.
 
 ## Loader
 
+Copia el bloque **entero** (son las mismas dos instrucciones de siempre, con
+reintento y con el error a la vista). La versión de una línea
+(`loadstring(game:HttpGet(url))()`) falla con `attempt to call a nil value`
+cuando la descarga llega cortada o el ejecutor cachea una respuesta parcial: ahí
+no se ve el motivo. Esta sí lo dice.
+
 ```lua
 getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
-loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/src/Wurst.lua"))()
+
+local base = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+    .. "arena/7446e4e3-arandommenu/src/Wurst.lua"
+local mark = "local RUNTIME_COMPATIBILITY_MARKER"
+
+local function download()
+    local last = "unknown"
+    for attempt = 1, 4 do
+        local ok, source = pcall(function()
+            -- `?t=` + `&a=` evitan la cache del ejecutor y la del CDN.
+            return game:HttpGet(base .. "?t=" .. os.time() .. "&a=" .. attempt)
+        end)
+        if ok and type(source) == "string" then
+            if #source < 100000 then
+                last = "descarga incompleta (" .. #source .. " bytes)"
+            elseif source:sub(1, #mark) ~= mark then
+                last = "la respuesta no es el menu (HTTP " .. #source .. " bytes)"
+            else
+                local chunk, err = loadstring(source, "@Wurst")
+                if chunk then
+                    return chunk
+                end
+                last = "error de compilacion: " .. tostring(err)
+            end
+        else
+            last = "HttpGet fallo: " .. tostring(source)
+        end
+        task.wait(1)
+    end
+    return nil, last
+end
+
+local chunk, err = download()
+if not chunk then
+    warn("[Wurst] loader: " .. tostring(err))
+    return
+end
+chunk()
 ```
+
+Si vuelve a fallar, manda la línea `[Wurst] loader: …` de la consola: dice
+exactamente si fue red, cache o compilación. Detalle en `docs/LOADER.md`.
+
+## Cambios de v194
+
+- **Cargador a prueba de fallos.** El error `attempt to call a nil value` en
+  `Script '', Line 2` viene del cargador de una línea: `loadstring` recibe un
+  texto que no compila (descarga cortada, cache del ejecutor/CDN o sintaxis) y
+  llamar al `nil` que devuelve es justo ese mensaje, sin motivo. El cargador de
+  arriba reintenta 4 veces con `?t=`/`&a=` (rompe las dos caches), comprueba
+  tamaño y cabecera antes de compilar, imprime el motivo y nombra el chunk
+  `@Wurst` para que un error del menú no se confunda con uno del cargador.
+- **Sin anotaciones de tipo en variables de bucle** (`for name in pairs(...)`,
+  `for i = 1, n do`): si el Luau del ejecutor es más viejo que el del repo, esa
+  era la única sintaxis de v193 que podía rechazar.
+- Detalle en `docs/LOADER.md`; la verificación vive en
+  `tools/test_v194_loader.py` (UTF-8 sin BOM/NUL, cabecera, tamaño, compila).
 
 ## Cambios de v193
 

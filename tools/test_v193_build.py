@@ -40,7 +40,8 @@ def check(condition: bool, message: str) -> None:
 
 
 # --- 1. one build number, derived -----------------------------------------
-check('local SOURCE_STAMP: string = "v193-' in WURST, "the v193 stamp ships this build")
+check('local SOURCE_STAMP: string = "v1' in WURST, "the stamp ships this build")
+check('local SOURCE_STAMP: string = "v19' in WURST, "the stamp is a v19x build")
 check('local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")' in WURST,
       "the build number is parsed from SOURCE_STAMP")
 check('local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"' in WURST,
