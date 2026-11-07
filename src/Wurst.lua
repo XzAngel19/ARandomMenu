@@ -114,7 +114,15 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v191-20261107-server-settings-fling-hold"
+-- v192: the build number shown in the menu has ONE source, this stamp. "v192"
+-- renders as "0.192" in the window titles and as "0.192 Release" next to the
+-- product name, so bumping the stamp moves every label at once -- the player
+-- asked for "0.191" (no "Version" word) tied to the product line that used to
+-- carry a different number, and for the two to never drift apart again.
+local SOURCE_STAMP: string = "v192-20261107-server-hop-overlay"
+
+local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
+local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -122,7 +130,8 @@ local PENDING_FINGERPRINT: boolean = false
 
 local PRODUCT = {
     name = "Wurst",
-    version = "0.823 Release",
+    -- Derived, never hardcoded: "0.192 Release" for the stamp above.
+    version = BUILD_LABEL .. " Release",
 
     logPrefix = "Wurst",
     guiName = "Wurst",
@@ -642,6 +651,55 @@ local TEXT_SCALE_MINIMUM: number = 0.8
 local TEXT_SCALE_MAXIMUM: number = 1.2
 local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
     and not UserInputService.KeyboardEnabled
+
+-- v192: a Windows touchscreen laptop reports TouchEnabled = true, so Roblox
+-- spawns its phone controls (PlayerGui.TouchGui) and games switch their own HUD
+-- to the mobile layout. A machine with a keyboard AND a mouse is a desktop, so:
+--
+--   1. Roblox's TouchGui gets Enabled = false (and again whenever it returns).
+--   2. A game that stores its input mode in the `Device` attribute of PlayerGui
+--      (Murder Mystery 2 does: "PC" / "Phone" / "Tablet" / "Gamepad", read by
+--      every one of its GUIs) is put back on "PC" when it says Phone/Tablet.
+--
+-- Nothing here writes TouchEnabled (a client cannot), nothing changes the input
+-- scheme and no keybind is touched: mouse and keyboard keep working, which is
+-- the point. On a device with no keyboard or no mouse both steps are skipped.
+local function suppressTouchControls(): ()
+    if not (UserInputService.TouchEnabled
+        and UserInputService.KeyboardEnabled
+        and UserInputService.MouseEnabled) then
+        return
+    end
+    local ok: boolean, touchGui: any = pcall(function(): any
+        return PlayerGui:FindFirstChild("TouchGui")
+    end)
+    if ok and touchGui and touchGui:IsA("ScreenGui") and touchGui.Enabled then
+        pcall(function(): ()
+            touchGui.Enabled = false
+        end)
+    end
+    local deviceOk: boolean, device: any = pcall(function(): any
+        return PlayerGui:GetAttribute("Device")
+    end)
+    if deviceOk and (device == "Phone" or device == "Tablet") then
+        pcall(function(): ()
+            PlayerGui:SetAttribute("Device", "PC")
+        end)
+    end
+end
+pcall(function(): ()
+    suppressTouchControls()
+    PlayerGui.ChildAdded:Connect(function(child: Instance): ()
+        if child.Name == "TouchGui" then
+            task.defer(suppressTouchControls)
+        end
+    end)
+    PlayerGui.AttributeChanged:Connect(function(name: string): ()
+        if name == "Device" then
+            task.defer(suppressTouchControls)
+        end
+    end)
+end)
 
 local configData: any = {
     version = 1,
@@ -5808,6 +5866,8 @@ local function createGameModuleEnvironment(
         queueConfigSave = queueConfigSave,
         flushConfigSave = flushConfigSave,
         create = create,
+        BUILD_LABEL = BUILD_LABEL,
+        suppressTouchControls = suppressTouchControls,
         makeTextLabel = makeTextLabel,
         makeButton = makeButton,
         makeTextBox = makeTextBox,

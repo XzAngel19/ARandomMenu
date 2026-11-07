@@ -1914,18 +1914,19 @@ function Module.init(context: any): any
     end
 
     local screen: Vector2 = viewport()
-    -- Small build watermark on the window the user opens first: the
-    -- short stamp ("v95") so a screenshot alone says which build it
-    -- is, without opening anything.
-    -- v191: the build is shown the way the player asked for it, in the
-    -- "Version 0.191" form rather than the internal "v191" stamp.
-    local buildNumber: string? = string.match(
-        tostring(SOURCE_STAMP or ""),
-        "^v(%d+)"
-    )
-    local versionTag: string = if buildNumber
-        then "Version 0." .. buildNumber
-        else tostring(SOURCE_STAMP or "")
+    -- Small build watermark on the window the user opens first: the build
+    -- number alone so a screenshot says which build it is.
+    -- v192: the player asked for "0.191", not "Version 0.191", and for that
+    -- number to be the SAME one the product line prints as "0.191 Release".
+    -- Both now come from host.BUILD_LABEL, i.e. from SOURCE_STAMP: one stamp,
+    -- every label.
+    local versionTag: string = tostring(host.BUILD_LABEL or (function(): string
+        local buildNumber: string? = string.match(
+            tostring(SOURCE_STAMP or ""),
+            "^v(%d+)"
+        )
+        return if buildNumber then "0." .. buildNumber else "0.0"
+    end)())
     uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,

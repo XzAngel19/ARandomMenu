@@ -1351,11 +1351,11 @@ do
     local disguise = ex.state.framework:GetModule("Disguise")
     assert(disguise and disguise.Category == "World", "Disguise must actually load in World")
     disguise.Options.Mode.Metadata.callback("Animation")
-    assert(not disguise.Options["Use target movement animations"].Visible
+    assert(not disguise.Options["Use target movement animations if able"].Visible
         and not disguise.Options["Show target emotes"].Visible,
         "Animation always applies movement + emotes, so it has no controls for them")
     disguise.Options.Mode.Metadata.callback("Character")
-    assert(disguise.Options["Use target movement animations"].Visible
+    assert(disguise.Options["Use target movement animations if able"].Visible
         and disguise.Options["Show target emotes"].Visible,
         "Character exposes the two independent checks")
     end)

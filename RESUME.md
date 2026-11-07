@@ -4,8 +4,9 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v191-20261107-server-settings-fling-hold`**,
-> que el menú muestra como **`Version 0.191`**.
+> **Estado actual:** build **`v192-20261107-server-hop-overlay`**,
+> que el menú muestra como **`0.192`** y como **`0.192 Release`**
+> (`SOURCE_STAMP` es la única fuente de las dos etiquetas).
 > Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
 > desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
 > viene de v187 `70bbfc4` en `arena/a4930bca-arandommenu`).
@@ -36,8 +37,58 @@
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
-  "UI Settings · Version 0.NNN" en el menú es como el usuario verifica la
-  versión (v191 cambió el formato: antes decía "vNNN").
+  "UI Settings · 0.NNN" en el menú es como el usuario verifica la versión
+  (v192 quitó la palabra "Version" y unificó esa etiqueta con la de producto,
+  "0.NNN Release"; antes esa línea seguía diciendo 0.823).
+- **Si el push falla porque el remoto avanzó:** `git fetch origin
+  arena/7446e4e3-arandommenu` y luego `git reset --soft
+  origin/arena/7446e4e3-arandommenu` + recomitear la tanda + push. **No** hacer
+  `git rebase` a mano: los conflictos en `bundle.lua`, `Manifest.lua` y el
+  harness cuestan más que recomitear.
+
+## v192 — Fling arreglado, hops con hueco, overlay de servidor, versión única (2026-11-07)
+
+Detalle completo en `docs/FIXES-v192.md`.
+
+- **Fling sin targets (causa raíz):** v191 usaba `player.Parent ~= playerService`
+  como filtro, y `playerService` es el `Players` **clonado** por `cloneref`; un
+  clon nunca es igual a la instancia real, así que el filtro rechazaba a todos.
+  Ahora `isLivePlayer` pregunta `ClassName == "Player"` y `Parent ~= nil`. El
+  test `tools/test_mm2_fling_card.py` reproduce el cloneref a propósito.
+- **Roles de MM2:** se leyeron del place real; vienen de
+  `ReplicatedStorage.Remotes.Gameplay.GetCurrentPlayerData` (RemoteFunction) y
+  `PlayerDataChanged` (RemoteEvent) como
+  `{[nombre o UserId] = {Role=…, Dead=…}}`. `base.lua` ahora resuelve también
+  claves numéricas (UserId) con `GetPlayerByUserId`.
+- **`Rejoin Server` eliminado** de Server Settings.
+- **Hops reales:** `excludeFullServers=true` y candidato sólo si
+  `playing < maxPlayers`; `smallest` salta los vacíos; `largest` = el más lleno
+  con hueco (11/12 en un place de 12); `random` mezcla `Asc` + `Desc`. El aviso
+  dice el recuento real.
+- **Overlay de `Show server info`** (`WurstServerInfo`, arrastrable, con cierre):
+  Job ID, `n/maxPlayers`, nombres, **uptime** (`workspace.DistributedGameTime`),
+  hora del servidor, place + `PlaceVersion`, tu usuario, build y fase de ronda.
+- **Controles de celular:** MM2 decide su HUD táctil por
+  `GetLastInputType()==Touch` / `TouchEnabled` y lo guarda en
+  `PlayerGui:GetAttribute("Device")`. Nuevo `suppressTouchControls()` en
+  `src/Wurst.lua` (sólo con teclado **y** ratón) oculta `PlayerGui.TouchGui` y
+  devuelve ese atributo a `PC`. No escribe `TouchEnabled`, ni el icono del ratón,
+  ni `MouseBehavior`. El Disguise lo llama tras cada aplicación.
+- **Versión única:** `BUILD_LABEL = "0." .. N` desde `SOURCE_STAMP`;
+  `PRODUCT.version = BUILD_LABEL .. " Release"`; el título dice `0.192`. Ya no
+  existe `0.823` escrito a mano en `src/`.
+- **Disguise:** `Use target movement animations if able` (renombrado visible; el
+  ajuste cae una vez a su valor por defecto, que es el mismo) y reinicio de
+  `restoring` / `emotesAppliedToHumanoid` / `animationOverrideApplied` +
+  `cloned`/`disguisedItems` en `CharacterAdded`, que antes se filtraban entre
+  cuerpos y dejaban el disfraz a medias.
+- **Skills:** `docs/skills/agent-run-efficiency.md` (cerrar una tanda entera en
+  un run) y `docs/skills/roblox-menu-change.md` (cambiar tarjetas sin romper
+  guardado, cloneref ni controles).
+- **Suites nuevas/actualizadas:** `tools/test_v192_build.py` (reglas de fuente),
+  `tools/test_server_settings.py` reescrito (overlay + hueco real, sin rejoin),
+  `test_mm2_fling_card.py` (cloneref), y los tests de Disguise con el nombre
+  nuevo.
 
 ## v191 — Doce ajustes: Opacity sólo-fondo, Fling completo, Hold Mouse y Server Settings (2026-11-07)
 

@@ -338,6 +338,16 @@ local function playerFromRoundKey(key: any, data: any): Player?
         return key
     end
 
+    -- v192: the payload is normally keyed by name, but a numeric key is a
+    -- UserId. Without this branch a UserId-keyed table produced no role for
+    -- anybody, which is how the Fling roster ended up label-less.
+    if type(key) == "number" then
+        local resolved = Players:GetPlayerByUserId(key)
+        if resolved then
+            return resolved
+        end
+    end
+
     local player: Player? = nil
     local namedPlayer: Instance? = Players:FindFirstChild(tostring(key))
     if namedPlayer and namedPlayer:IsA("Player") then

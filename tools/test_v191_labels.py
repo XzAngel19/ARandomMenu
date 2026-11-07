@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""v191 labels and keys, without booting the UI.
+"""v191/v192 labels and keys, without booting the UI.
 
 Every rename in this build must be a VISIBLE-name change only: the config key,
 the saved state and the keybind stay where they were, so nothing the player
-already configured is lost. The version label must read "Version 0.NNN".
+already configured is lost.
+
+v192 replaced the "Version 0.NNN" watermark with the bare "0.NNN" that the
+product line prints as "0.NNN Release"; both come from SOURCE_STAMP, so this
+file only checks that the label is DERIVED and that nothing hardcodes a build
+number any more.
 """
 from pathlib import Path
 
@@ -18,8 +23,8 @@ MANIFEST = (ROOT / "src/libraries/Manifest.lua").read_text(encoding="utf-8")
 WURST = (ROOT / "src/Wurst.lua").read_text(encoding="utf-8")
 
 # --- version label ---------------------------------------------------------
-assert 'local buildNumber: string? = string.match(' in SETTINGS, "the build number is parsed from SOURCE_STAMP"
-assert '"Version 0." .. buildNumber' in SETTINGS, 'the watermark reads "Version 0.NNN"'
+assert 'host.BUILD_LABEL' in SETTINGS, "v192: the watermark reads the derived build label"
+assert '"Version 0." ' not in SETTINGS, 'v192: the word "Version" is gone from the watermark'
 assert 'uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag' in SETTINGS
 
 # --- palette row rename, saved key preserved -------------------------------
@@ -50,6 +55,6 @@ assert '"Air Swim", category = "Exploits"' in MANIFEST
 assert '"[Arrows]"' not in MANIFEST and '["Swim"]' not in MANIFEST
 
 # --- the stamp that ships this build ---------------------------------------
-assert 'local SOURCE_STAMP: string = "v191-' in WURST
+assert 'local SOURCE_STAMP: string = "v19' in WURST
 
-print("PASS v191 labels: Version 0.NNN, Buttons row keeps its key, pin on the arrows token, renamed cards keep their keys")
+print("PASS v191 labels: derived build label, Buttons row keeps its key, pin on the arrows token, renamed cards keep their keys")

@@ -179,7 +179,7 @@ assert '{"Character", "Animation"}' in SOURCE
 assert 'without hiding it' in SOURCE
 
 # Both Character toggles are gated to Character only.
-movement_toggle = SOURCE.split('Name = "Use target movement animations"', 1)[1]
+movement_toggle = SOURCE.split('Name = "Use target movement animations if able"', 1)[1]
 assert 'Values = {"Character"}' in movement_toggle.split('Tooltip', 1)[0]
 emotes_toggle = SOURCE.split('Name = "Show target emotes"', 1)[1]
 assert 'Values = {"Character"}' in emotes_toggle.split('Tooltip', 1)[0]

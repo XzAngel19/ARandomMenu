@@ -130,8 +130,8 @@ setTargetEmotesEnabled(true)
 assert(table.concat(calls,",")=="anim+,emote-,anim-,emote+")
 pass("both toggles are independent in either order")
 
-host.configData.states["Universal.Disguise.Usetargetmovementanimations"]=false
-assert(savedToggle("Use target movement animations",true)==false,
+host.configData.states["Universal.Disguise.Usetargetmovementanimationsifable"]=false
+assert(savedToggle("Use target movement animations if able",true)==false,
     "a saved OFF check must win over the default")
 host.configData.states["Universal.Disguise.Showtargetemotes"]=true
 assert(savedToggle("Show target emotes",false)==true)

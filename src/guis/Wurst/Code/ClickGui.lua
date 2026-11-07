@@ -119,8 +119,12 @@ function Module.init(context: any): any
         connections = {} :: {RBXScriptConnection},
     }
 
+    -- v192: no hardcoded build number anywhere. The chip prints whatever the
+    -- product line carries, which is derived from SOURCE_STAMP, so the header
+    -- and the UI Settings window can never disagree.
     local productVersion: string = tostring(
-        (host.PRODUCT and host.PRODUCT.version) or "0.823 Release"
+        (host.PRODUCT and host.PRODUCT.version)
+            or ((host.BUILD_LABEL or "0.0") .. " Release")
     )
     local LOGO_CHIP_WIDTH: number = 142 + 10 + (8 + #productVersion * 15) + 4
     local LOGO_CHIP_HEIGHT: number = 44

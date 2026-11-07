@@ -2,7 +2,8 @@
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
 La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v191`, se muestra como **Version 0.191**); `main` es independiente.
+(build `v192`, se muestra como **`0.192`** y **`0.192 Release`**); `main` es
+independiente.
 
 ## Loader
 
@@ -10,6 +11,36 @@ La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
 getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
 loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/src/Wurst.lua"))()
 ```
+
+## Cambios de v192
+
+- **El Fling vuelve a ver a todo el mundo.** v191 comparaba `player.Parent` con
+  el `Players` **clonado** (`cloneref`), y un clon nunca es igual al original:
+  el guardia fallaba para todos y la lista salía vacía. Ahora el guardia
+  pregunta a la instancia (`ClassName == "Player"`). La detección de roles se
+  revisó contra el place real de MM2 (`Remotes.Gameplay.GetCurrentPlayerData` /
+  `PlayerDataChanged`) y entiende claves por UserId.
+- **`Rejoin Server` eliminado** de Server Settings.
+- **Hops con lógica real:** sólo se aceptan servidores con **hueco libre**
+  (`playing < maxPlayers`, `excludeFullServers=true`). `smallest` ignora los
+  vacíos (0/12 no es una partida) y `largest` es el más lleno al que se puede
+  entrar — **11/12** en un place de 12. `random` mezcla las dos páginas de la
+  lista.
+- **`Show server info` abre una overlay** con Job ID, jugadores, lista de
+  nombres, **uptime del servidor** (`workspace.DistributedGameTime`), hora del
+  servidor, place y versión, tu usuario, el build y la fase de ronda de MM2.
+- **El menú no deja al jugador en modo móvil:** en una máquina con teclado y
+  ratón se oculta el `TouchGui` de Roblox y se devuelve a `PC` el atributo
+  `Device` de `PlayerGui` que usa MM2 para su HUD táctil. Nunca se escribe
+  `TouchEnabled`, ni el icono del ratón, ni el esquema de entrada.
+- **Una sola versión:** `SOURCE_STAMP` → `0.192` en los títulos y
+  `0.192 Release` en la línea de producto. Ya no queda ningún `0.823` escrito a
+  mano.
+- **Disguise:** la opción se llama **`Use target movement animations if able`**,
+  pide el arreglo de controles tras cada aplicación y reinicia sus banderas por
+  cuerpo al reaparecer (antes sobrevivían y el disfraz salía a medias).
+- **Skills nuevas** en `docs/skills/`: `agent-run-efficiency.md` y
+  `roblox-menu-change.md`.
 
 ## Cambios de v191
 

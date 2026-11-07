@@ -127,11 +127,33 @@ function Module.init(runtime: any): any
         return root
     end
 
+    -- v192: `Players` above is a CLONED reference on executors that expose
+    -- `cloneref`, so `player.Parent == Players` is false for every real player
+    -- (a clone never compares equal to the original instance). v191 used that
+    -- comparison as its "is this still a player" guard and the roster came out
+    -- empty: the card could not see a single target. The guard now asks the
+    -- instance what it is instead of which table it belongs to.
+    local function isLivePlayer(player: any): boolean
+        if not player or player == localPlayer then
+            return false
+        end
+        local classOk: boolean, className: any = pcall(function(): any
+            return player.ClassName
+        end)
+        if not classOk or className ~= "Player" then
+            return false
+        end
+        local parentOk: boolean, parent: any = pcall(function(): any
+            return player.Parent
+        end)
+        return parentOk and parent ~= nil
+    end
+
     -- A target is only ever a living, unprotected other player whose root is
     -- still in the world: a stale name from the previous round must never
     -- become a fling target.
     local function canFling(player: any): boolean
-        if not player or player == localPlayer or player.Parent ~= playerService then
+        if not isLivePlayer(player) then
             return false
         end
         if protectedTargets and type(protectedTargets.isProtected) == "function" then

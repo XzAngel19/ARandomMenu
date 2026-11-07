@@ -514,7 +514,7 @@ function Module.init(context: Runtime): any
     end
 
 
-    -- Used when "Use target movement animations" is turned off: restore only
+    -- Used when "Use target movement animations if able" is turned off: restore only
     -- the Animate slots, leaving the current appearance/emotes untouched.
     local function restoreMovementAnimationsOnly(
         character: Model,
@@ -2354,6 +2354,18 @@ function Module.init(context: Runtime): any
         end
 
         local selectedMode: string = settings.mode
+        -- v192: applying a disguise must never leave the player on the phone
+        -- input scheme. A touchscreen laptop reports TouchEnabled = true, and
+        -- the game answers to it by showing its touch HUD; the guard below only
+        -- hides Roblox's TouchGui and puts a game that mirrors the setting in a
+        -- PlayerGui attribute back on "PC". The input scheme, the keybinds and
+        -- the mouse icon are not touched.
+        local repairControls: any = host.suppressTouchControls
+        if type(repairControls) == "function" then
+            task.delay(0.6, function(): ()
+                pcall(repairControls)
+            end)
+        end
         -- A new application invalidates the previous target's cache. The fetch
         -- that follows repopulates it before anything is applied.
         targetCache = nil
@@ -2518,6 +2530,16 @@ function Module.init(context: Runtime): any
                     generation += 1
                     stopAppearanceFilter()
                     destroySnapshot()
+                    -- v192: the flags that describe the OLD body are reset here.
+                    -- They used to survive the respawn, so the next apply could
+                    -- skip the emote/animation write (it believed the previous
+                    -- character still carried it) and the disguise came out
+                    -- half applied -- one of the "many problems" reported.
+                    restoring = false
+                    emotesAppliedToHumanoid = false
+                    animationOverrideApplied = false
+                    table.clear(cloned)
+                    table.clear(disguisedItems)
                     task.wait(0.5)
                     if card.Enabled then
                         applyDisguise()
@@ -2696,7 +2718,10 @@ function Module.init(context: Runtime): any
     end
 
     card:CreateToggle({
-        Name = "Use target movement animations",
+        -- v192: the player asked for the exact wording. It is also honest: a
+        -- clip the target's rig cannot play falls back to your own set, so the
+        -- option is best-effort, never a promise.
+        Name = "Use target movement animations if able",
         -- Character only: Animation mode always applies them and has no control.
         Show = {Option = "Mode", Values = {"Character"}},
         Default = settings.useTargetMovementAnimations,

@@ -46,7 +46,12 @@ local function notify(message) table.insert(notifications, message) end
 
 local function node(name) return { Name = name } end
 
-local Players = { GetPlayers = function() return {} end }
+-- v192: the module reads the `Players` global, which is a CLONED reference on
+-- executors that expose cloneref, while each Player instance reports the REAL
+-- service as its Parent. The two tables are never equal, which is precisely the
+-- v191 bug that emptied the roster; this mock keeps them apart on purpose.
+local realPlayers = { ClassName = "Players", clone = false }
+local Players = { ClassName = "Players", clone = true, GetPlayers = function() return {} end }
 local function newPlayer(name, state)
     local humanoid = { Health = state.alive and 100 or 0 }
     local root = { Parent = true, Name = "HumanoidRootPart" }
@@ -62,7 +67,8 @@ local function newPlayer(name, state)
     local tools = state.tools or {}
     return {
         Name = name,
-        Parent = Players,
+        ClassName = "Player",
+        Parent = realPlayers,
         Character = character,
         humanoid = humanoid,
         tools = tools,
@@ -251,6 +257,8 @@ assert(list.single == true, "one target at a time")
 assert(type(list.items) == "function", "targets are resolved live")
 assert(list.emptyText == "No other players", "empty list copy")
 
+assert(realPlayers ~= Players,
+    "the mock reproduces cloneref: the clone is never equal to the real service")
 local labels = list.items()
 eq = function(actual, expected, message)
     if actual ~= expected then
@@ -258,7 +266,9 @@ eq = function(actual, expected, message)
     end
 end
 
-eq(#labels, 3, "living, unprotected players only")
+-- v191 compared player.Parent with the CLONED Players table and every player
+-- failed that test, so this same call returned an empty list in the live game.
+eq(#labels, 3, "living, unprotected players only, even with a cloned Players")
 assert(string.find(labels[1], "Murd", 1, true), "murderer first: " .. tostring(labels[1]))
 assert(string.find(labels[1], "Murderer", 1, true), "murderer is labelled by role")
 assert(string.find(labels[2], "Sheriff", 1, true), "sheriff second: " .. tostring(labels[2]))

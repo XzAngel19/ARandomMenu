@@ -12,7 +12,7 @@ SOURCE = (ROOT / "src/games/universal/Other/Disguise.lua").read_text()
 ui = section(
     SOURCE,
     '    card:CreateToggle({\n        Name = "Show Advanced",',
-    '    card:CreateToggle({\n        Name = "Use target movement animations",',
+    '    card:CreateToggle({\n        -- v192: the player asked for the exact wording.',
 )
 
 script = PRELUDE + r'''
