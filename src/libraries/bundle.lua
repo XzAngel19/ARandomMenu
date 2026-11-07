@@ -2931,26 +2931,27 @@ function Module.init(runtime: any): any
             if not shootFeatureActive or not shootOptionsReady then
                 return predecessor(remote, ...)
             end
+            if remote ~= cachedShootRemote then
+                -- Identity comes FIRST: every unrelated namecall in the game
+                -- (knife, chat, GUIs) leaves through one comparison, with no
+                -- call of our own in between. The cache is refreshed outside
+                -- this call when the gun was equipped after the last probe.
+                local now: number = os.clock()
+                if now - lastCacheProbeAt >= 0.5 then
+                    lastCacheProbeAt = now
+                    task.defer(refreshShootRemoteCache)
+                end
+                return predecessor(remote, ...)
+            end
             local okMethod: boolean, method: any = pcall(getMethod)
             if not okMethod or method ~= "FireServer" then
                 return predecessor(remote, ...)
             end
             local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
             if not okCaller or fromExecutor ~= false then
-                -- Auto Shoot, Auto Farm, Knife, the overlay and our own
-                -- deferred re-fire arrive with the executor identity: they
-                -- keep their own settings and never enter this hook.
-                return predecessor(remote, ...)
-            end
-            if remote ~= cachedShootRemote then
-                -- Not the gun's Shoot remote (or the cache has not caught up
-                -- with a newly acquired gun): trampoline untouched, and the
-                -- cache is refreshed outside this call.
-                local now: number = os.clock()
-                if now - lastCacheProbeAt >= 0.5 then
-                    lastCacheProbeAt = now
-                    task.defer(refreshShootRemoteCache)
-                end
+                -- Auto Shoot, Auto Farm, the overlay and our own deferred
+                -- re-fire arrive with the executor identity: they keep their
+                -- own settings and never enter this hook.
                 return predecessor(remote, ...)
             end
             local arguments: any = table.pack(...)
