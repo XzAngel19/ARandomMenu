@@ -1,14 +1,14 @@
 # Wurst
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
-La versión de esta sesión está en la rama `arena/979b8402-arandommenu`; `main`
+La versión de esta sesión está en la rama `arena/05c45e27-arandommenu`; `main`
 es independiente.
 
 ## Loader
 
 ```lua
-getgenv().WURST_BRANCH = "arena/979b8402-arandommenu"
-loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/979b8402-arandommenu/src/Wurst.lua"))()
+getgenv().WURST_BRANCH = "arena/05c45e27-arandommenu"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/05c45e27-arandommenu/src/Wurst.lua"))()
 ```
 
 ## Cambios de v179

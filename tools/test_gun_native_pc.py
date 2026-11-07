@@ -35,7 +35,8 @@ local function getPlayerWeapon(_,name)
  if name=='Gun' then return gun end
 end
 local function getCharacterParts() return character,humanoid end
-local function getSelectedShootTarget() return target end
+local targetMissing=false
+local function getSelectedShootTarget() if targetMissing then return nil end return target end
 local waits=0
 local RunService={Heartbeat={Wait=function() waits+=1 end}}
 local notifications={}
@@ -146,7 +147,16 @@ assert(args[1].id=='Silent(CFrame)-origin' and args[2].id=='Silent(CFrame)-end',
 assert(camera.CFrame.id=='camera','no aim lock or camera rotation')
 blocked=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and args[2]==originalB,'WallCheck failure passes the original click')
-blocked=false;throws=true;args=click(gunRemote,originalA,originalB)
+-- v188: the case the player reported. With no murderer resolvable (not in
+-- view, already dead, or filtered) the click still fires and travels EXACTLY
+-- as the game authored it: no Silent/CFrame redirect, no second packet.
+blocked=false;targetMissing=true;solvedBefore=solved
+args=click(gunRemote,originalA,originalB,'tail')
+assert(args[1]==originalA and args[2]==originalB and args[3]=='tail',
+ 'no target: the native click keeps both frames and its extra arguments')
+assert(solved==solvedBefore,'no target: the solver rejects before redirecting')
+targetMissing=false
+throws=true;args=click(gunRemote,originalA,originalB)
 assert(args[1]==originalA and args[2]==originalB,'failed solver preserves native click')
 throws=false;throwsAfterFrames=true;args=click(gunRemote,originalA,originalB)
 assert(args[1].id=='Silent(CFrame)-origin' and args[2].id=='Silent(CFrame)-end',

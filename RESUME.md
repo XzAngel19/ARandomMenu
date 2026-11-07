@@ -4,11 +4,10 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v187-20261106-namecall-hook`**.
-> Esta sesión trabaja exclusivamente en `arena/a4930bca-arandommenu`
-> (sincronizada por fast-forward con el tip v185 de
-> `arena/9492e6b6-arandommenu`); integró
-> v181 (`608c937`) mediante el merge `16914e0`, conservando la historia de v178.
+> **Estado actual:** build **`v188-20261107-ghost-and-native-click`**.
+> Esta sesión trabaja exclusivamente en `arena/05c45e27-arandommenu`
+> (fast-forward desde el tip v187 `70bbfc4` de
+> `arena/a4930bca-arandommenu`, que conserva la historia de v178-v187).
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 >
@@ -37,6 +36,30 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v188 — Ghost reparado y clic nativo verificado (2026-11-07)
+
+Detalle y límites en `docs/FIXES-v188.md`:
+
+- **Pistola / pendiente de v187:** el hook solo intercepta `FireServer` del
+  motor sobre el remoto cacheado `Gun.Shoot`. Con objetivo resoluble pasa por
+  `safeToSend` (`validateGunShot` + `isWeaponPathClear`); con WallCheck tapado
+  o sin objetivo (muerto, invisible, filtrado, rol desconocido) **reenvía el
+  clic original intacto** con sus argumentos extra. Ese «aún puedes disparar
+  pero sin Silent/CFrame» es el contrato correcto, no un fallo. Regresión nueva
+  en `tools/test_gun_native_pc.py` para el caso sin objetivo. Daño/aceptación
+  del servidor siguen sin probarse en Roblox/Delta.
+- **Ghost** (`src/games/universal/Blatant/Invisible.lua`): `Void depth` pasa a
+  **mínimo 1** por defecto (rango 1–350) con migración única desde 120; un valor
+  elegido por el jugador se conserva. Sin `Highlight` azul por defecto (`Outline`
+  OFF, occluded); el clon destruye también Highlights/GUIs heredados y lleva
+  `WurstDisguise` para no salir como bot en NPC ESP/Entity. Nuevos
+  `Ghost WalkSpeed` y `Sprint multiplier`. Fly usa `services.movementInput`
+  (stick móvil y binds) y `AssemblyLinearVelocity` sin teletransportar el clon.
+  `Void guard` acotado solo al caminar (ver nota del jugador: profundidad 50 en
+  adelante «no servía»; el default bajo arregla eso).
+- Límite: el guard es local y acotado, no física del servidor; el cuerpo real
+  sigue donde el servidor cree que está.
 
 ## v187 — El hook __namecall rompía las llamadas nativas (2026-11-06)
 

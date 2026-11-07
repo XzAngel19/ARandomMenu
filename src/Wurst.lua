@@ -89,7 +89,7 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/a4930bca-arandommenu"
+local RUNTIME_BRANCH: string = "arena/05c45e27-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v187-20261106-namecall-hook"
+local SOURCE_STAMP: string = "v188-20261107-ghost-and-native-click"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
