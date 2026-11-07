@@ -89,7 +89,12 @@ local function computeLayoutMetrics(
     }
 end
 
-local RUNTIME_BRANCH: string = "arena/05c45e27-arandommenu"
+-- v195: the branch this session publishes to. It used to point at an older
+-- session branch, and the loader in the README pointed at yet another one: a
+-- player following the docs asked GitHub for a branch that had never been
+-- pushed, got "404: Not Found" back, and `loadstring` turned that into
+-- `:2: attempt to call a nil value` with no cause. One branch, one default.
+local RUNTIME_BRANCH: string = "arena/e21ba23f-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -119,7 +124,7 @@ local RUNTIME_RAW_BASE: string =
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v194-20261107-loader-hardening"
+local SOURCE_STAMP: string = "v195-20261107-branch-align-and-404"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"
@@ -6317,6 +6322,33 @@ state.sourceLooksValid = function(source: any, minimum: number): boolean
         and string.find(head, "<html", 1, true) == nil
 end
 
+-- v195: a failed download used to be reported as whatever body came back, so a
+-- wrong branch surfaced as `Bundle: 404: Not Found` (or as nothing at all when
+-- the executor threw). The branch is the most common cause -- a branch that was
+-- never pushed returns the same text as a missing file -- so the message names
+-- it explicitly and the reason is short enough to fit in one console line.
+state.describeHttpFailure = function(body: any): string
+    local text: string = ""
+    if type(body) == "string" then
+        text = string.sub(body, 1, 512)
+    else
+        text = tostring(body)
+    end
+    local lowered: string = string.lower(text)
+    local cause: string
+    if string.find(lowered, "404: not found", 1, true) then
+        cause = "HTTP 404"
+    elseif string.find(lowered, "<!doctype html", 1, true)
+        or string.find(lowered, "<html", 1, true) then
+        cause = "HTML answer, not Lua"
+    elseif #text < 32 then
+        cause = "empty answer (" .. tostring(#text) .. " bytes)"
+    else
+        cause = string.sub(string.gsub(text, "%s+", " "), 1, 160)
+    end
+    return cause .. " · branch " .. RUNTIME_BRANCH
+end
+
 state.httpGetPath = function(path: string): (string?, string?)
     local url: string = REPOSITORY_RAW_BASE .. path .. "?v=" .. SOURCE_STAMP
     local ok: boolean, body: any = pcall(function(): string
@@ -6325,7 +6357,10 @@ state.httpGetPath = function(path: string): (string?, string?)
     if ok and state.sourceLooksValid(body, 32) then
         return body :: string, nil
     end
-    return nil, tostring(body)
+    if not ok then
+        return nil, "HttpGet threw: " .. tostring(body) .. " · branch " .. RUNTIME_BRANCH
+    end
+    return nil, state.describeHttpFailure(body)
 end
 
 state.fetchRepositorySource = function(path: string): (string?, string?)

@@ -4,12 +4,16 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v194-20261107-loader-hardening`**,
-> que el menú muestra como **`0.194`** y como **`0.194 Release`**
+> **Estado actual:** build **`v195-20261107-branch-align-and-404`**,
+> que el menú muestra como **`0.195`** y como **`0.195 Release`**
 > (`SOURCE_STAMP` es la única fuente de las dos etiquetas).
-> Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
-> desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
-> viene de v187 `70bbfc4` en `arena/a4930bca-arandommenu`).
+> Esta sesión trabaja exclusivamente en **`arena/e21ba23f-arandommenu`**, creada
+> desde el tip v194 `9b13ca1` de `arena/7446e4e3-arandommenu` (que a su vez
+> viene de v189 `9b06cca` en `arena/05c45e27-arandommenu`).
+> **La rama de la sesión es también el default del código**: `RUNTIME_BRANCH`,
+> el loader del `README.md` y los ejemplos de `docs/LOADER.md` dicen lo mismo.
+> Si esta rama no está empujada, cargar el menú devuelve
+> `:2: attempt to call a nil value` — ver v195.
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 >
@@ -24,7 +28,7 @@
 - Menú "Wurst" para Roblox, foco principal **MM2** (place id `142823291`).
   También hay módulos universales y de otros juegos (BedFight, TRS, VD y
   X2Duels/MVS).
-- El loader carga el **bundle** de `arena/9492e6b6-arandommenu` por defecto
+- El loader carga el **bundle** de `arena/e21ba23f-arandommenu` por defecto
   (`RUNTIME_BRANCH` en `src/Wurst.lua`). `getgenv().WURST_BRANCH = "<rama>"`
   antes de cargarlo puede cambiar ese origen; quitar overrides de sesiones
   anteriores si se desea probar esta rama.
@@ -34,8 +38,10 @@
   3. `python3 tools/build_bundle.py --stamp <el mismo stamp>`
   4. `bash tools/validate.sh` — debe terminar VERDE: fuentes compiladas, suites,
      auditorías, boot `failures=0` y menús de depuración/release coherentes.
-  5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
-     sin reescribir historia, sin trabajar en otra rama.
+  5. Commit + push **normales** a `arena/e21ba23f-arandommenu`. Sin force-push,
+     sin reescribir historia, sin trabajar en otra rama. **La rama tiene que
+     existir en el remoto antes de publicar el loader**: si no, el jugador
+     recibe un 404 y el síntoma es `:2: attempt to call a nil value`.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · 0.NNN" en el menú es como el usuario verifica la versión
   (v192 quitó la palabra "Version" y unificó esa etiqueta con la de producto,
@@ -45,6 +51,41 @@
   origin/arena/7446e4e3-arandommenu` + recomitear la tanda + push. **No** hacer
   `git rebase` a mano: los conflictos en `bundle.lua`, `Manifest.lua` y el
   harness cuestan más que recomitear.
+
+## v195 — La rama que no existía, y un 404 que se explica (2026-11-07)
+
+- **Síntoma:** `:2: attempt to call a nil value` / `Stack Begin` /
+  `Script '', Line 2` / `Stack End`. **No era un fallo del menú.** El fichero
+  `src/Wurst.lua` de la rama era correcto: 254 853 bytes, sha `30255a4`, idéntico
+  al local.
+- **Causa raíz:** tres ramas distintas en juego. El loader del `README.md` pedía
+  `arena/7446e4e3-arandommenu`; `RUNTIME_BRANCH` dentro de `Wurst.lua` pedía
+  `arena/05c45e27-arandommenu`; y la rama de esta sesión,
+  `arena/e21ba23f-arandommenu`, **no se había empujado nunca**
+  (`git ls-remote --heads origin` la daba por ausente, así que
+  `refs/heads/arena/e21ba23f-arandommenu/src/Wurst.lua` respondía
+  `404: Not Found`). Un 404 es texto plano de 14 bytes, `loadstring` devuelve
+  `nil` sobre él y `nil()` es exactamente el mensaje del jugador. El error
+  culpaba al cargador cuando el problema era de publicación.
+- **Arreglo de publicación:** se empujó la rama (`git push -u origin
+  arena/e21ba23f-arandommenu`) y se verificó con la API de GitHub que sirve el
+  fichero completo.
+- **Una sola rama en el código y en la documentación:** `RUNTIME_BRANCH` pasa a
+  `arena/e21ba23f-arandommenu`; el loader del `README.md` y los ejemplos de
+  `docs/LOADER.md`, también. Los assets y el bundle usan el mismo
+  `REPOSITORY_RAW_BASE`, así que un cambio basta para los tres.
+- **El fallo de descarga dice la causa:** nuevo `state.describeHttpFailure` en
+  `Wurst.lua`. Un bundle que no baja ya no se reporta como el cuerpo crudo
+  (`Bundle: 404: Not Found`) sino como `HTTP 404 · branch <rama>`,
+  `HTML answer, not Lua`, `empty answer (N bytes)` o `HttpGet threw: …`,
+  recortado a una línea. Nombra **siempre** la rama.
+- **Suites:** `tools/test_v195_loader.py` (nuevo) fija que las instrucciones de
+  carga del README y de `docs/LOADER.md` coincidan con `RUNTIME_BRANCH` y que el
+  error nombre causa y rama. `tools/test_v194_loader.py` dejó de exigir el stamp
+  literal `v194-` (ahora exige `v194` o posterior) porque esa regla no tenía que
+  ver con el cargador y frenaba cada build nuevo.
+- `bash tools/validate.sh` verde: 81 fuentes en el bundle, 134 suites, boot
+  `failures=0`, 48 tarjetas.
 
 ## v194 — Cargador que dice por qué falla (2026-11-07)
 
@@ -2258,6 +2299,6 @@ históricas y deben contrastarse con el código actual:
   el comportamiento y `validate.sh` verde antes de pushear.
 
 ---
-*Última actualización: 2026-11-05 · v185. Los resultados reales, el rendimiento
+*Última actualización: 2026-11-07 · v195. Los resultados reales, el rendimiento
 visual y la aceptación del servidor siguen sin verificar. Al publicar una versión
 nueva, actualiza la línea de estado superior y las secciones que cambien.*

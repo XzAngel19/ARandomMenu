@@ -1,5 +1,5 @@
 return {
-    stamp = "v194-20261107-loader-hardening",
+    stamp = "v195-20261107-branch-align-and-404",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}

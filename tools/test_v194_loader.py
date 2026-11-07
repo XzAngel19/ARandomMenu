@@ -23,6 +23,7 @@ accepts. It cannot check the player's network or the executor's Luau version --
 for those, the `warn` line exists.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -66,7 +67,13 @@ check(len(WURST) > 100000, "the file is bigger than the loader's minimum")
 check(len(WURST) < 1000000, "the file stayed inside one HttpGet")
 
 # --- the build ------------------------------------------------------------
-check('local SOURCE_STAMP: string = "v194-' in text, "the v194 stamp ships this build")
+# v195 moved the stamp past v194 (the loader itself is unchanged). Pinning the
+# exact number here made every later build fail on a rule that has nothing to do
+# with this suite; what v194 has to keep is a parseable stamp, so the build
+# labels keep deriving from it (test_v193_build.py owns that rule).
+build_stamp = re.search(r'local SOURCE_STAMP: string = "(v(\d+)-[^"]+)"', text)
+check(build_stamp is not None, "the source declares a vNNN-… stamp")
+check(int(build_stamp.group(2)) >= 194, "the published build is v194 or newer")
 check("wartung" not in README, "no leftover placeholder name in the loader")
 
 # --- it really compiles ----------------------------------------------------

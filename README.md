@@ -1,8 +1,8 @@
 # Wurst
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
-La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v194`, se muestra como **`0.194`** y **`0.194 Release`**); `main` es
+La versión de esta sesión está en la rama `arena/e21ba23f-arandommenu`
+(build `v195`, se muestra como **`0.195`** y **`0.195 Release`**); `main` es
 independiente.
 
 ## Loader
@@ -14,10 +14,10 @@ cuando la descarga llega cortada o el ejecutor cachea una respuesta parcial: ah�
 no se ve el motivo. Esta sí lo dice.
 
 ```lua
-getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
+getgenv().WURST_BRANCH = "arena/e21ba23f-arandommenu"
 
 local base = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
-    .. "arena/7446e4e3-arandommenu/src/Wurst.lua"
+    .. "arena/e21ba23f-arandommenu/src/Wurst.lua"
 local mark = "local RUNTIME_COMPATIBILITY_MARKER"
 
 local function download()
@@ -57,6 +57,24 @@ chunk()
 
 Si vuelve a fallar, manda la línea `[Wurst] loader: …` de la consola: dice
 exactamente si fue red, cache o compilación. Detalle en `docs/LOADER.md`.
+
+## Cambios de v195
+
+- **La rama, arreglada y unificada.** El error `:2: attempt to call a nil value`
+  (`Script '', Line 2`) no venía del menú: la URL del cargador pedía
+  `arena/7446e4e3-arandommenu`, el `RUNTIME_BRANCH` de dentro pedía
+  `arena/05c45e27-arandommenu` y la rama de esta sesión
+  (`arena/e21ba23f-arandommenu`) no existía en GitHub. Un 404 es texto plano de
+  14 bytes, `loadstring` devuelve `nil` y llamarlo da justo ese mensaje. Ahora
+  **el loader del README, `RUNTIME_BRANCH`, los assets y el bundle** usan la
+  misma rama, y la rama ya está empujada.
+- **El fallo de descarga dice la causa.** Antes un 404 salía como
+  `Bundle: 404: Not Found` (o como nada si el ejecutor lanzaba). Ahora el
+  mensaje es `HTTP 404 · branch <rama>`, `HTML answer, not Lua`,
+  `empty answer (N bytes)` o `HttpGet threw: …`, recortado a una línea, y el
+  log de arranque nombra siempre la rama.
+- `tools/test_v195_loader.py` fija que no vuelva a haber dos ramas distintas en
+  la documentación y que el mensaje de error nombre la causa y la rama.
 
 ## Cambios de v194
 
