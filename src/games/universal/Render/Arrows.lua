@@ -6,8 +6,13 @@ export type Runtime = {
     services: any,
 }
 
+-- v191: renamed from "Arrows" (the player asked for another name). Only the
+-- visible label changed: the ConfigKey, the keybind and the saved state stay
+-- "Universal.Arrows", so nothing has to be reconfigured. Its palette row in
+-- Settings ("Buttons") now paints the window buttons too, the Pin chip
+-- included.
 local Module = {
-    Name = "Arrows",
+    Name = "Player Pointers",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -45,7 +50,7 @@ function Module.init(context: Runtime): any
     end
 
     card = framework.Categories.Visuals:CreateModule({
-        Name = "Arrows",
+        Name = "Player Pointers",
         Category = "Render",
         ConfigKey = "Universal.Arrows",
         Order = 3,

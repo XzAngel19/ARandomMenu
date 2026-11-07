@@ -40,6 +40,9 @@ function Module.init(runtime: any): any
         yourRole = true,
         roundEvents = true,
         murderDefeated = true,
+        sheriffDown = true,
+        closeRadius = 30,
+        closeCooldown = 8,
     }
     local enabled: boolean = false
     local phase: string = type(core.getRoundPhase) == "function" and core.getRoundPhase() or "unknown"
@@ -48,7 +51,9 @@ function Module.init(runtime: any): any
     local sheriffSeen: boolean = false
     local lastLocalRole: string? = nil
     local lastMurderer: Player? = nil
+    local lastSheriff: Player? = nil
     local defeatNotified: boolean = false
+    local sheriffNotified: boolean = false
     local nearMurderer: boolean = false
     local lastCloseAt: number = -math.huge
     local gunWasDropped: boolean = false
@@ -62,7 +67,9 @@ function Module.init(runtime: any): any
         sheriffSeen = false
         lastLocalRole = nil
         lastMurderer = nil
+        lastSheriff = nil
         defeatNotified = false
+        sheriffNotified = false
         nearMurderer = false
         lastCloseAt = -math.huge
         gunWasDropped = false
@@ -133,12 +140,12 @@ function Module.init(runtime: any): any
                 -- the drop appears. It is not evidence they picked it back up.
                 gunDropPreviousHolder = lastGunHolder or holder
                 local distance: number? = gunDistance(drop)
-                notify("Gun dropped" .. (distance and (" · " .. tostring(math.round(distance)) .. " studs away") or ""))
+                notify("Gun dropped" .. (distance and (" · " .. tostring(math.round(distance)) .. " studs away") or ""), "danger")
             end
             gunWasDropped = true
             gunLastSeenAt = now
         elseif gunWasDropped and holder and holder ~= gunDropPreviousHolder then
-            notify("Gun picked up by " .. holder.Name)
+            notify("Gun picked up by " .. holder.Name, "good")
             gunWasDropped = false
             gunDropPreviousHolder = nil
         elseif gunWasDropped and now - gunLastSeenAt >= 2 then
@@ -164,6 +171,22 @@ function Module.init(runtime: any): any
         return humanoid ~= nil and humanoid.Health <= 0
     end
 
+    -- v191: the "murderer close" alert says WHERE as well as how far. Roblox's
+    -- own compass is +Z = north and -X = west, so a plain world-space bearing
+    -- is enough to say "NE" without a camera dependency (and it stays correct
+    -- while the camera spins).
+    local COMPASS: {string} = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+    local function compassOf(x: number?, z: number?): string
+        local flatX: number = tonumber(x) or 0
+        local flatZ: number = tonumber(z) or 0
+        if math.abs(flatX) + math.abs(flatZ) < 1e-3 then
+            return "here"
+        end
+        local angle: number = math.deg(math.atan2(flatX, flatZ))
+        local index: number = math.floor(((angle + 360 + 22.5) % 360) / 45) + 1
+        return COMPASS[index]
+    end
+
     local function updateProximity(murderer: Player?): ()
         if not settings.murderClose or not murderer or murderer == LocalPlayer
             or not isAlive(LocalPlayer) or not isAlive(murderer) then
@@ -173,13 +196,24 @@ function Module.init(runtime: any): any
         local localRoot: BasePart? = rootOf(LocalPlayer)
         local murderRoot: BasePart? = rootOf(murderer)
         if not localRoot or not murderRoot then nearMurderer = false; return end
-        local distance: number = (murderRoot.Position - localRoot.Position).Magnitude
+        local delta: Vector3 = murderRoot.Position - localRoot.Position
+        local distance: number = delta.Magnitude
+        local radius: number = math.clamp(tonumber(settings.closeRadius) or 30, 10, 120)
+        local cooldown: number = math.clamp(tonumber(settings.closeCooldown) or 8, 2, 30)
         local now: number = os.clock()
-        if distance <= 30 and not nearMurderer and now - lastCloseAt >= 8 then
+        -- Still-close re-warns after the cooldown (the v190 behaviour the
+        -- suite pins); leaving the radius re-arms it immediately.
+        if distance <= radius and now - lastCloseAt >= cooldown then
             nearMurderer = true
             lastCloseAt = now
-            notify("Murderer close: " .. murderer.Name .. " · " .. tostring(math.round(distance)) .. " studs")
-        elseif distance > 38 then
+            notify(
+                "Murderer close: " .. murderer.Name
+                    .. " · " .. tostring(math.round(distance)) .. " studs"
+                    .. " " .. compassOf(delta.X, delta.Z)
+                    .. (distance <= radius * 0.4 and " · VERY close" or ""),
+                "danger"
+            )
+        elseif distance > radius * 1.25 then
             nearMurderer = false
         end
     end
@@ -189,6 +223,7 @@ function Module.init(runtime: any): any
         local murderer: Player? = type(core.findMurderer) == "function" and core.findMurderer() or nil
         local sheriff: Player? = type(core.findSheriff) == "function" and core.findSheriff() or nil
         if murderer then lastMurderer = murderer end
+        if sheriff then lastSheriff = sheriff end
         showRoles(murderer, sheriff)
         if settings.yourRole and type(core.getPlayerRole) == "function" then
             local myRole: any = core.getPlayerRole(LocalPlayer)
@@ -202,7 +237,14 @@ function Module.init(runtime: any): any
         updateProximity(murderer)
         if settings.murderDefeated and not defeatNotified and confirmedDead(lastMurderer) then
             defeatNotified = true
-            notify("Murderer defeated: " .. (lastMurderer :: Player).Name)
+            notify("Murderer defeated: " .. (lastMurderer :: Player).Name, "good")
+        end
+        -- v191: the sheriff (or the hero who picked the gun up) is worth its
+        -- own alert: their death is when the gun hits the floor.
+        if settings.sheriffDown and not sheriffNotified and lastSheriff ~= nil
+            and lastSheriff ~= LocalPlayer and confirmedDead(lastSheriff) then
+            sheriffNotified = true
+            notify("Sheriff down: " .. (lastSheriff :: Player).Name .. " · the gun is loose", "danger")
         end
     end
 
@@ -285,7 +327,20 @@ function Module.init(runtime: any): any
     addToggleOption(feature, "Murder Close", true, function(value: boolean): ()
         settings.murderClose = value
         if enabled and value then trySample() end
-    end, "Warns when the living Murderer is within 30 studs; includes a cooldown.")
+    end, "Warns when the living Murderer gets close, with the distance and the compass side. Off = no proximity alerts.")
+    addNumberOption(feature, "Close radius", 30, 10, 120, function(value: number): ()
+        settings.closeRadius = math.clamp(tonumber(value) or 30, 10, 120)
+        nearMurderer = false
+        lastCloseAt = -math.huge
+        if enabled and settings.murderClose then trySample() end
+    end, "Studs at which the Murder Close warning fires. The alert repeats when you get closer or after the cooldown.", 10, true)
+    addNumberOption(feature, "Close cooldown", 8, 2, 30, function(value: number): ()
+        settings.closeCooldown = math.clamp(tonumber(value) or 8, 2, 30)
+    end, "Minimum seconds between two Murder Close warnings.", 1, true)
+    addToggleOption(feature, "Sheriff Down", true, function(value: boolean): ()
+        settings.sheriffDown = value
+        if enabled and value then trySample() end
+    end, "Announces the known Sheriff/Hero death: that is when the gun is loose.")
     addToggleOption(feature, "Your Role", true, function(value: boolean): ()
         settings.yourRole = value
         if enabled and value then trySample() end

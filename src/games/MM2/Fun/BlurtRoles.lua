@@ -178,16 +178,33 @@ function Module.init(runtime: any): any
         end, nil, "MM2 Blurt Roles")
     end
 
+    -- v191: the card itself is the button. It used to be a toggle with a
+    -- separate "Blurt now" row, which meant two clicks (and a wait for the
+    -- delay) to say the roles once. Clicking the card now blurts IMMEDIATELY,
+    -- and the automatic path moved into the "Auto blurt" option, where the
+    -- Delay/Repeat rows still belong.
     local BlurtFeature = createUniversalFeature(
         "Blurt Roles",
-        "Announces the murderer and sheriff in the public chat once per round",
+        "Types the murderer and sheriff in the public chat. Click the card to blurt right now.",
         3,
-        toggleBlurtRoles,
+        function(): ()
+            blurtRoles(true)
+        end,
         {
             categoryName = "World",
             parent = MM2Scroll,
             registry = mm2Features,
+            kind = "action",
         }
+    )
+    addToggleOption(
+        BlurtFeature,
+        "Auto blurt",
+        false,
+        function(value: boolean): ()
+            toggleBlurtRoles(value)
+        end,
+        "Blurt automatically once per round, after the Delay below. Off by default: the card alone is an instant, one-shot blurt."
     )
     addNumberOption(
         BlurtFeature,
@@ -220,9 +237,6 @@ function Module.init(runtime: any): any
         "Announces the roles SWAPPED (and without the Wurst tag) so the chat "
             .. "lies about who the murderer and sheriff are."
     )
-    addActionOption(BlurtFeature, "Blurt now", function(): ()
-        blurtRoles(true)
-    end)
     addInformationOption(
         BlurtFeature,
         "This types in the real public chat: everyone reads it and you will be"

@@ -985,9 +985,9 @@ do
     assert(ex.state.moduleSearch.Resolve("Knife Stab").status == "success", "Knife Stab must be searchable")
     assert(ex.state.moduleSearch.Resolve("Aim Assist").entry.displayName == "Aimbot", "old Aimbot search alias must work")
     local expected = {
-      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Proximity Prompts", "Walk Fling"},
-      Utilities = {"Auto Shoot", "Teleport", "Freeze Animations", "Invisibility", "Anti Fling"},
+      Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Player Pointers", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
+      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Wall Crawling", "Speed Hack", "Jump Hack", "Proximity Prompts", "Walk Fling"},
+      Utilities = {"Auto Shoot", "Teleport", "Freeze Animations", "Invisibility", "Anti Fling", "Server Settings"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -1121,14 +1121,25 @@ do
       "v190 restores Fling as an MM2 card (configKey MM2.Fling)")
     -- The card is built with the card factory, so its rows live in the widget
     -- registries instead of the framework Options table.
-    local flingRows = ex.state.listControls and ex.state.listControls["MM2.Fling.Targetplayer"]
-    assert(flingRows, "the Fling card exposes a live Target player list")
+    -- v191: the roster is "Fling target" and the role buttons are back.
+    local flingRows = ex.state.listControls and ex.state.listControls["MM2.Fling.Flingtarget"]
+    assert(flingRows, "the Fling card exposes a live Fling target list")
+    local flingOptions = mm2Fling.options
+    for _, rowName in ipairs({"Fling Murderer", "Fling Sheriff", "Fling All Innocents", "Fling",
+        "Auto Fling Selected Target"}) do
+      assert(flingOptions:FindFirstChild("Option_" .. rowName:gsub("%W", "")),
+        "the Fling card is missing " .. rowName)
+    end
     local flingValues = ex.state.valueControls or {}
     assert(flingValues["MM2.Fling.Power"] and flingValues["MM2.Fling.Retries"],
       "the Fling card exposes Power and Retries")
     assert(ex.state.mm2PerformFling ~= nil, "the Fling engine stays exported for Auto Farm/Auto Win")
     assert(not findFeature("Ghost") and not findFeature("Motion Lock"),
       "v190 renames Ghost and Motion Lock")
+    assert(not findFeature("Arrows") and findFeature("Player Pointers"),
+      "v191 renames Arrows to Player Pointers")
+    assert(not findFeature("Swim") and findFeature("Air Swim"),
+      "v191 renames Swim to Air Swim")
     assert(findFeature("Invisibility") and findFeature("Freeze Animations"),
       "v190 exposes Invisibility and Freeze Animations")
     assert(type(ex.state.mm2PerformFling) == "function", "MM2 Farm/Win fling export missing")
@@ -1333,7 +1344,7 @@ do
     tp.Options.Destination.Metadata.callback("MM2")
     assert(tp.Options["Auto Get Gun"].Visible and not tp.Options.Movement.Visible)
 
-    local spider = findFeature("Spider")
+    local spider = findFeature("Wall Crawling")
     assert(not spider.options:FindFirstChild("Option_CeilingWalk"))
     assert(spider.options:FindFirstChild("Option_Climbstate").Visible)
     assert(not spider.options:FindFirstChild("Option_Impulseinterval").Visible)
@@ -1372,6 +1383,50 @@ do
   else
     print("[HARNESS] allFeatures not exposed - toggle probe skipped")
   end
+end
+
+-- v191: Opacity is a BACKGROUND-only slider, and the Pin chip is painted by
+-- the same "arrows" token the expand chevrons use.
+do
+  local ex = GENV.__expose
+  local windows = ex and ex.state and ex.state.windows
+  assert(windows and type(windows.list) == "table" and #windows.list > 0,
+    "the window manager must be reachable for the opacity check")
+  local target = nil
+  for _, window in ipairs(windows.list) do
+    local root = window.root
+    if root and root.FindFirstChild and root.GetAttribute
+      and root:FindFirstChild("Header")
+      and root:GetAttribute("WurstPanelSurface") == true then
+      target = window
+      break
+    end
+  end
+  assert(target, "no chromed window carries the v191 panel-surface flag")
+  local root = target.root
+  assert(root:IsA("CanvasGroup"), "menu windows are CanvasGroups")
+  windows.SetOpacity(0.4)
+  assert(root.GroupTransparency == 0,
+    "v191: Opacity must never fade the whole window (text included)")
+  assert(math.abs(root.BackgroundTransparency - 0.6) < 1e-6,
+    "v191: Opacity drives the panel background transparency")
+  local header = assert(root:FindFirstChild("Header"), "the window header must exist")
+  local label = header:FindFirstChild("Title")
+  if label and label:IsA("TextLabel") then
+    assert(label.TextTransparency == 0, "the title must stay fully opaque")
+  end
+  local pin = header:FindFirstChild("pin")
+  assert(pin, "the pinned window exposes its pin chip by name")
+  local tint = pin:FindFirstChild("PinTint")
+  assert(tint, "v191: the pin chip carries an arrows-coloured tint")
+  local arrowsColour = ex.Theme.arrows
+  assert(tint.BackgroundColor3 == arrowsColour,
+    "the pin tint is painted by the arrows token")
+  local icon = pin:FindFirstChild("PixelIcon")
+  assert(icon and icon:GetAttribute("PixelToken") == "arrows",
+    "the pin icon is bound to the arrows token")
+  windows.SetOpacity(0.85)
+  print("[HARNESS] OPACITY-BACKGROUND-ONLY + ARROWS-THEMED PIN VERIFIED")
 end
 
 do

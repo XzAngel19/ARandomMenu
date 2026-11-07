@@ -611,7 +611,12 @@ function Module.init(context: any): any
             ZIndex = BASE_Z,
         })
         if not bare then
-            root.GroupTransparency = 1 - (manager.opacity or 0.85)
+            -- v191: the panel surface is what Opacity fades (see SetOpacity).
+            -- The group itself stays opaque so labels, icons and strokes keep
+            -- full contrast at every slider position.
+            root.GroupTransparency = 0
+            root.BackgroundTransparency = 1 - (manager.opacity or 0.85)
+            root:SetAttribute("WurstPanelSurface", true)
         end
         bind(root, "BackgroundColor3", "background")
 
@@ -698,6 +703,9 @@ function Module.init(context: any): any
                     Parent = bar,
                     Active = true,
                     AutoButtonColor = false,
+                    -- v191: a name per kind ("pin", "up", "cross") so the
+                    -- offline suite can find the exact chip it asserts on.
+                    Name = kind,
                     BackgroundColor3 = Theme.surface,
                     BackgroundTransparency = 0.72,
                     BorderSizePixel = 0,
@@ -734,12 +742,25 @@ function Module.init(context: any): any
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Theme.enabled, "enabled")
+                -- v191: the pin chip is themed by the SAME token the expand
+                -- chevrons use ("arrows", labelled "Buttons" in Settings), so
+                -- one palette row colours every small window button. Pinned is
+                -- shown by an arrows-coloured tint behind the icon instead of
+                -- by overwriting the button's own theme-bound background.
+                local pin: TextButton = chromeButton("pin", Theme.arrows, "arrows")
+                local pinTint: Frame = (create("Frame", {
+                    Parent = pin,
+                    Name = "PinTint",
+                    BackgroundColor3 = Theme.arrows,
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    Size = UDim2.fromScale(1, 1),
+                    ZIndex = pin.ZIndex,
+                }) :: any) :: Frame
+                bind(pinTint, "BackgroundColor3", "arrows")
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
-                    pin.BackgroundColor3 = window.pinned
-                        and Theme.enabled
-                        or Theme.surface
+                    pin.BackgroundTransparency = window.pinned and 0.35 or 0.72
+                    pinTint.BackgroundTransparency = window.pinned and 0.55 or 1
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -1257,6 +1278,12 @@ function Module.init(context: any): any
     -- Kept as a public value for callers which display the selected alpha.
     manager.bodyTransparency = 1 - manager.opacity
 
+    -- v191: Opacity means "how see-through the BACKGROUND is", not "fade the
+    -- whole window". v190 and earlier drove root.GroupTransparency, which
+    -- alpha-blended the panel together with its title, labels and icons: the
+    -- lower the slider, the harder the text was to read. The panel surface is
+    -- now the only thing that gets transparent (root.BackgroundTransparency),
+    -- so text and controls stay fully opaque at every setting.
     function manager.SetOpacity(alpha: number): ()
         local wanted: number = tonumber(alpha) or 0.85
         if wanted ~= wanted then wanted = 0.85 end
@@ -1265,8 +1292,19 @@ function Module.init(context: any): any
         manager.bodyTransparency = 1 - wanted
         for _, window: any in ipairs(manager.list) do
             local root: any = window.root
-            if root and root:IsA("CanvasGroup") then
-                root.GroupTransparency = 1 - wanted
+            -- Not every record in this list is a full GuiObject (a bare
+            -- overlay may be a plain table while it is being built), so the
+            -- surface test is defensive: never assume the methods exist.
+            if root and type(root.IsA) == "function" then
+                if root:IsA("CanvasGroup") then
+                    -- Content is never faded: the group stays fully opaque.
+                    root.GroupTransparency = 0
+                end
+                local surface: boolean = type(root.GetAttribute) == "function"
+                    and root:GetAttribute("WurstPanelSurface") == true
+                if surface then
+                    root.BackgroundTransparency = 1 - wanted
+                end
             end
         end
     end

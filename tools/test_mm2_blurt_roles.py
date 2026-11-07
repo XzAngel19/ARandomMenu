@@ -56,9 +56,17 @@ end
 local TaskManager={Connect=function(_,fn) return {fn=fn,Disconnect=function(self) self.disconnected=true end} end}
 local feature,actions,options=nil,{},{}
 local MM2Scroll,mm2Features={},{}
+-- v191: the card is an ACTION (click = blurt instantly), and the automatic
+-- path lives in the "Auto blurt" option.
 local function createUniversalFeature(_,_,_,toggle)
-    feature={enabled=false};function feature:Toggle(value) self.enabled=value;toggle(value) end
+    feature={enabled=false}
+    function feature:Toggle(value) self.enabled=value;toggle(value) end
+    function feature:Run() toggle() end
     return feature
+end
+local function autoBlurt(value)
+    assert(options['Auto blurt'], 'the automatic path is an option, not the card')
+    options['Auto blurt'](value)
 end
 local function addToggleOption(_,name,_,fn) options[name]=fn end
 local function addNumberOption(_,name,_,_,_,fn) options[name]=fn end
@@ -69,21 +77,21 @@ local function notify(text) table.insert(notices,text) end
 '''+ '\nlocal Module=(function()\n'+SOURCE+'\nend)()\n'+r'''
 Module.init({});assert(callback and not next(jobs))
 callback(true);assert(#jobs==0, 'public blurt is off at injection')
-feature:Toggle(true);callback(true);assert(#jobs==1)
-advance(1);feature:Toggle(false)
-advance(2);feature:Toggle(true);callback(true)
+autoBlurt(true);callback(true);assert(#jobs==1)
+advance(1);autoBlurt(false)
+advance(2);autoBlurt(true);callback(true)
 advance(10.1);assert(#sent==0, 'an OFF/ON must cancel the previous pending public message')
 advance(12);assert(#sent==1 and sent[1].time==12 and sent[1].message:find('Murderer',1,true), 'new session keeps full delay')
 active=false;callback(false);active=true;advance(13);callback(true)
 active=false;advance(14);callback(false);active=true;callback(true)
 advance(23.1);assert(#sent==1, 'a previous round must not blurt the next round early')
 advance(24);assert(#sent==2 and sent[2].time==24, 'new round receives its own delay')
-active=false;actions['Blurt now']();assert(#sent==2, 'manual action requires known live roles')
-active=true;advance(25);actions['Blurt now']();assert(#sent==3 and sent[3].kind=='text')
-failText=true;actions['Blurt now']();assert(#sent==4 and sent[4].kind=='legacy', 'legacy chat fallback remains')
+active=false;feature:Run();assert(#sent==2, 'manual action requires known live roles')
+active=true;advance(25);feature:Run();assert(#sent==3 and sent[3].kind=='text')
+failText=true;feature:Run();assert(#sent==4 and sent[4].kind=='legacy', 'legacy chat fallback remains')
 Module.destroy();assert(unsubscribed and not featureConnections.MM2BlurtRoles)
 advance(100);assert(#sent==4, 'no delayed messages after unload')
-print('PASS MM2 Blurt Roles: OFF/ON and round cancellation, full delay, manual action, chat fallback, cleanup')
+print('PASS MM2 Blurt Roles: instant card click, auto-blurt option, OFF/ON and round cancellation, full delay, chat fallback, cleanup')
 '''
 with tempfile.TemporaryDirectory(prefix='mm2-blurt-') as tmp:
     path=Path(tmp)/'test.luau';path.write_text(script)

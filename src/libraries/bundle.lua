@@ -1,5 +1,5 @@
 return {
-    stamp = "v190-20261107-gun-ping-names",
+    stamp = "v191-20261107-server-settings-fling-hold",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -1457,6 +1457,10 @@ function Module.init(runtime: any): any
     local knifeSettings: any = {
         aura = false,
         auraRange = 14,
+        -- v191 "Hold Mouse": the automatic swing loop is off and the knife
+        -- strikes when the player clicks (or taps), at the SAME reach the aura
+        -- uses.
+        holdMouse = false,
     }
     state.mm2KnifeRuntime = {
         masterEnabled = false,
@@ -1531,8 +1535,14 @@ function Module.init(runtime: any): any
     end
 
     local knifeControllerGeneration: number = 0
-    local function processKnifeAura(): ()
-        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
+    local function processKnifeAura(manual: boolean?): ()
+        -- In Hold Mouse mode nothing swings on its own: only the click path
+        -- calls this with `manual`. The manual swing is throttled by the knife's
+        -- own cooldown instead of the slower aura interval, so every click that
+        -- the tool accepts actually lands.
+        if knifeSettings.holdMouse and manual ~= true then return end
+        local swingInterval: number = if manual == true then 0.3 else 0.86
+        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < swingInterval then return end
         local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife(true)
         if not knife or not localRoot then
             return
@@ -1550,7 +1560,7 @@ function Module.init(runtime: any): any
             or not targetRoot
             or (targetRoot.Position - localRoot.Position).Magnitude
                 > currentRange
-            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
+            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < swingInterval then
             return
         end
 
@@ -1609,11 +1619,63 @@ function Module.init(runtime: any): any
         end)
     end
 
+    -- The click/tap path for Hold Mouse. It is a real input listener (not a
+    -- tool hook) because the whole point is to reach targets outside the
+    -- handle's natural touch range: the player clicks, this picks the closest
+    -- living target inside "Aura Range" and sends the same HandleTouched contact
+    -- the automatic aura sends.
+    local holdConnection: RBXScriptConnection? = nil
+    local function stopHoldMouse(): ()
+        if holdConnection then
+            pcall(function(): ()
+                (holdConnection :: RBXScriptConnection):Disconnect()
+            end)
+            holdConnection = nil
+        end
+    end
+    local function refreshHoldMouse(): ()
+        stopHoldMouse()
+        if not knifeSettings.holdMouse or not knifeSettings.aura
+            or not state.mm2KnifeRuntime.masterEnabled then
+            return
+        end
+        local inputService: any = UserInputService
+        if not inputService or not inputService.InputBegan then
+            return
+        end
+        holdConnection = inputService.InputBegan:Connect(function(
+            input: any,
+            gameProcessed: boolean
+        ): ()
+            if gameProcessed then
+                return
+            end
+            local kind: any = input.UserInputType
+            local clicked: boolean = kind == Enum.UserInputType.MouseButton1
+            local touched: boolean = kind == Enum.UserInputType.Touch
+            if not clicked and not touched then
+                return
+            end
+            if inputService:GetFocusedTextBox() ~= nil then
+                return
+            end
+            local menu: any = services and services.menu or nil
+            if menu and type(menu.isCapturingInput) == "function" then
+                local ok: boolean, capturing: any = pcall(menu.isCapturingInput)
+                if ok and capturing == true then
+                    return
+                end
+            end
+            processKnifeAura(true)
+        end)
+    end
+
     local function refreshKnifeController(): ()
         knifeControllerGeneration += 1
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")
+        refreshHoldMouse()
         if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled then
             return
         end
@@ -1831,7 +1893,7 @@ function Module.init(runtime: any): any
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife (or click with Hold Mouse). Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
     if type(KnifeFeature.SetName) == "function" then
         KnifeFeature:SetName("Knife Stab")
@@ -1845,6 +1907,7 @@ function Module.init(runtime: any): any
     aura.OptionFilter = function(name: string): boolean
         return name == "Knife Aura"
             or name == "Aura Range"
+            or name == "Hold Mouse"
             or name == "Kill All"
             or name == "Kill Player"
     end
@@ -1857,6 +1920,21 @@ function Module.init(runtime: any): any
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
+    -- v191: the automatic swing loop can be replaced by the player's own click
+    -- / tap. The reach is the same one "Aura Range" sets, so a click lands a
+    -- stab on anything the aura could have reached on its own.
+    aura:CreateToggle({
+        Name = "Hold Mouse",
+        Default = false,
+        Show = {Option = "Knife Aura", Values = {true}},
+        Tooltip = "No automatic stabs: the knife strikes where you click (or tap), "
+            .. "with the same reach as Aura Range.",
+        Function = function(value: boolean): ()
+            knifeSettings.holdMouse = value
+            state.mm2KnifeRuntime.lastAuraSwing = -math.huge
+            refreshKnifeController()
+        end,
+    })
     aura:CreateButton({
         Name = "Kill All",
         Function = killAllPlayersAction,
@@ -1919,6 +1997,7 @@ function Module.init(runtime: any): any
     end
 
     activeCleanup = function(): ()
+        stopHoldMouse()
         if aura.Enabled then aura:Toggle(false) end
         if KnifeFeature.enabled then
             KnifeFeature.enabled = false
@@ -1940,6 +2019,7 @@ function Module.init(runtime: any): any
         aura.OptionFilter = function(name: string): boolean
             return name ~= "Knife Aura"
                 and name ~= "Aura Range"
+                and name ~= "Hold Mouse"
                 and name ~= "Kill All"
                 and name ~= "Kill Player"
         end
@@ -5281,16 +5361,33 @@ function Module.init(runtime: any): any
         end, nil, "MM2 Blurt Roles")
     end
 
+    -- v191: the card itself is the button. It used to be a toggle with a
+    -- separate "Blurt now" row, which meant two clicks (and a wait for the
+    -- delay) to say the roles once. Clicking the card now blurts IMMEDIATELY,
+    -- and the automatic path moved into the "Auto blurt" option, where the
+    -- Delay/Repeat rows still belong.
     local BlurtFeature = createUniversalFeature(
         "Blurt Roles",
-        "Announces the murderer and sheriff in the public chat once per round",
+        "Types the murderer and sheriff in the public chat. Click the card to blurt right now.",
         3,
-        toggleBlurtRoles,
+        function(): ()
+            blurtRoles(true)
+        end,
         {
             categoryName = "World",
             parent = MM2Scroll,
             registry = mm2Features,
+            kind = "action",
         }
+    )
+    addToggleOption(
+        BlurtFeature,
+        "Auto blurt",
+        false,
+        function(value: boolean): ()
+            toggleBlurtRoles(value)
+        end,
+        "Blurt automatically once per round, after the Delay below. Off by default: the card alone is an instant, one-shot blurt."
     )
     addNumberOption(
         BlurtFeature,
@@ -5323,9 +5420,6 @@ function Module.init(runtime: any): any
         "Announces the roles SWAPPED (and without the Wurst tag) so the chat "
             .. "lies about who the murderer and sheriff are."
     )
-    addActionOption(BlurtFeature, "Blurt now", function(): ()
-        blurtRoles(true)
-    end)
     addInformationOption(
         BlurtFeature,
         "This types in the real public chat: everyone reads it and you will be"
@@ -11067,21 +11161,26 @@ return Module
 
 ]],
         ["src/games/MM2/Other/Fling.lua"] = [[
--- v190: the MM2 Fling card comes back as its own card.
+-- v191: the MM2 Fling card, rebuilt around the FULL historical card instead of
+-- the single-target one v190 shipped.
 --
--- History: v183 removed the universal `Fling` card at the player's request
--- ("borren el Fling universal"), and the removal also took the MM2 card with
--- it -- the engine stayed (`FlingEngine.lua`) but only Auto Farm and Auto Win
--- could reach it. This module is that card again, MM2 only: pick a player from
--- the list and the SkidFling engine throws them.
+-- History: the old menu had its own Fling (src/games/MM2/Blatant/Fling.lua plus
+-- src/libraries/Fling.lua) with role buttons -- "Fling Murderer", "Fling
+-- Sheriff", "Fling All Innocents", a live roster labelled by role and an auto
+-- fling -- and a different physics engine. v183 removed the universal card and
+-- the engine stayed; v190 brought back a minimal "pick a player" card on top of
+-- `FlingEngine.lua`. The player asked for the old role buttons back, so this
+-- card is that one again, but it keeps running on the CURRENT engine
+-- (`state.mm2PerformFling`), which is the one that knows about `flingBoost`,
+-- the EpixVel pin and retries. Both engines are never mixed.
 --
--- The card never flings on its own: no saved selection starts a fling at
--- injection, and the list is the only trigger. Power and Retries travel with
--- each call, so Auto Farm/Auto Win keep the documented engine defaults.
+-- Power is at the maximum the engine accepts (12, i.e. four times YARHM's
+-- 9e7/9e8 pose velocity) and retries at the maximum (3), so a single call
+-- throws as hard and as reliably as the engine can: that was the second half of
+-- the request ("el poder sea el máximo y lo más eficaz posible").
 --
--- Anti Fling cancels the fling's own contact (its whole job is to prevent
--- contact with a flinging body), so both this card and Walk Fling warn and
--- refuse while it is on -- MM2 only, as the player asked.
+-- Anti Fling cancels the contact a fling needs, so every path here refuses with
+-- a notice while it is ON (MM2 only, as the player asked).
 local Module = {
     Name = "MM2 Fling",
     Events = {} :: {[string]: any},
@@ -11090,6 +11189,17 @@ local Module = {
 }
 
 local activeCleanup: () -> () = function(): () end
+
+-- The engine clamps Power to 1..12 and Retries to 0..3. The card's default is
+-- the top of both ranges.
+local MAX_POWER: number = 12
+local MAX_RETRIES: number = 3
+local FLING_DURATION: number = 3
+local AUTO_FLING_INTERVAL: number = 0.35
+
+local ROLE_ORDER: {[string]: number} = {
+    Murderer = 1, Sheriff = 2, Hero = 3, Innocent = 4, Dead = 5,
+}
 
 function Module.init(runtime: any): any
     if Module.Initialized then
@@ -11101,18 +11211,49 @@ function Module.init(runtime: any): any
 
     local localPlayer: any = LocalPlayer
     local playerService: any = Players
+    local gameBridge: any = services and services.gameBridge or nil
+    local protectedTargets: any = services and services.protectedTargets or nil
+    local TaskManager: any = TaskManager
+    local featureConnections: any = featureConnections
+    local disconnectFeatureConnection: any = disconnectFeatureConnection
+
+    local findMurderer: any = core.findMurderer
+    local findSheriff: any = core.findSheriff
+    local getPlayerRole: any = core.getPlayerRole
+    local getPlayerWeapon: any = core.getPlayerWeapon
+    local isPlayerAlive: any = core.isPlayerAlive
 
     local settings = {
-        power = 6,
-        retries = 2,
+        power = MAX_POWER,
+        retries = MAX_RETRIES,
+        autoFling = false,
+        autoFlingTarget = nil :: any,
     }
     local FlingFeature: any = nil
-    -- The list publishes its stored selection once, while it is being built.
-    -- Acting on that first call would fling a player at injection.
+    -- The list publishes its stored selection once while it is being built;
+    -- acting on that first call would fling a player at injection.
     local listReady: boolean = false
+    local selectedPlayer: any = nil
+    local selectedLabel: string = ""
+    local allInnocentsSequence: number = 0
+    local autoElapsed: number = 0
 
     local function antiFlingOn(): boolean
         return state.antiFlingActive == true
+    end
+
+    local function setStatus(text: string?): ()
+        if FlingFeature and type(FlingFeature.SetStatus) == "function" then
+            pcall(function(): ()
+                FlingFeature:SetStatus(text)
+            end)
+        end
+    end
+
+    local function notifyUser(text: string): ()
+        if type(notify) == "function" then
+            pcall(notify, text)
+        end
     end
 
     local function roster(): {any}
@@ -11137,63 +11278,225 @@ function Module.init(runtime: any): any
         return character, humanoid
     end
 
-    local function canFling(player: any): boolean
-        if not player or player == localPlayer then
-            return false
-        end
-        local character: any = livingCharacter(player)
-        return character ~= nil
-    end
-
-    local function playerNames(): {string}
-        local names: {string} = {}
-        for _, player: any in ipairs(roster()) do
-            if canFling(player) then
-                table.insert(names, tostring(player.Name))
-            end
-        end
-        table.sort(names)
-        return names
-    end
-
-    local function findPlayer(name: string?): any?
-        if not name or name == "" then
+    local function rootOf(player: any): any?
+        local character: any = player and player.Character
+        if not character then
             return nil
         end
+        local root: any = character:FindFirstChild("HumanoidRootPart")
+        if not root or root.Parent == nil then
+            return nil
+        end
+        return root
+    end
+
+    -- A target is only ever a living, unprotected other player whose root is
+    -- still in the world: a stale name from the previous round must never
+    -- become a fling target.
+    local function canFling(player: any): boolean
+        if not player or player == localPlayer or player.Parent ~= playerService then
+            return false
+        end
+        if protectedTargets and type(protectedTargets.isProtected) == "function" then
+            local ok: boolean, protected: any = pcall(protectedTargets.isProtected, player)
+            if ok and protected == true then
+                return false
+            end
+        end
+        if type(isPlayerAlive) == "function" then
+            local ok: boolean, alive: any = pcall(isPlayerAlive, player)
+            if ok and alive == false then
+                return false
+            end
+        end
+        local character: any = livingCharacter(player)
+        return character ~= nil and rootOf(player) ~= nil
+    end
+
+    local function hasWeapon(player: any, toolName: string): boolean
+        if type(getPlayerWeapon) ~= "function" then
+            return false
+        end
+        local ok: boolean, weapon: any = pcall(getPlayerWeapon, player, toolName, false)
+        return ok and weapon ~= nil
+    end
+
+    -- One source of truth for "who is what": the round data first, then the
+    -- tool the server actually replicates (the murderer carries the knife, the
+    -- sheriff/hero carries the gun), then a dead humanoid. The old card guessed
+    -- in three places and none of them used the held tool, which is why its
+    -- Murderer button often answered "nobody found".
+    local function roleOf(player: any): string?
+        if not player then
+            return nil
+        end
+        local role: any = nil
+        if type(getPlayerRole) == "function" then
+            local ok: boolean, value: any = pcall(getPlayerRole, player)
+            if ok then
+                role = value
+            end
+        end
+        if not role and gameBridge and type(gameBridge.playerRole) == "function" then
+            local ok: boolean, value: any = pcall(gameBridge.playerRole, player)
+            if ok then
+                role = value
+            end
+        end
+        if role == "Murderer" or role == "Sheriff" or role == "Hero"
+            or role == "Innocent" or role == "Dead" then
+            return role
+        end
+        if hasWeapon(player, "Knife") then
+            return "Murderer"
+        end
+        if hasWeapon(player, "Gun") then
+            return "Sheriff"
+        end
+        if role == nil then
+            local character: any = player.Character
+            local humanoid: any = character and character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                return "Dead"
+            end
+        end
+        return role
+    end
+
+    local function rolesPublished(): boolean
+        if type(core.hasActiveRoundRoles) == "function" then
+            local ok: boolean, published: any = pcall(core.hasActiveRoundRoles)
+            if ok and published == true then
+                return true
+            end
+        end
         for _, player: any in ipairs(roster()) do
-            if tostring(player.Name) == name then
+            if player ~= localPlayer and roleOf(player) ~= nil then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function refreshRoles(): ()
+        if type(state.clearRoleMemo) == "function" then
+            pcall(state.clearRoleMemo)
+        end
+        if type(core.requestRoleRefresh) == "function" then
+            pcall(core.requestRoleRefresh, false)
+        end
+    end
+
+    local function rosterEntries(withRefresh: boolean?): {{player: any, label: string}}
+        if withRefresh ~= false then
+            refreshRoles()
+        end
+        local entries: {{player: any, label: string}} = {}
+        for _, player: any in ipairs(roster()) do
+            if player ~= localPlayer and canFling(player) then
+                local role: string? = roleOf(player)
+                table.insert(entries, {
+                    player = player,
+                    label = tostring(player.Name) .. (role and (" [" .. role .. "]") or ""),
+                })
+            end
+        end
+        table.sort(entries, function(left: any, right: any): boolean
+            local leftRole: number = ROLE_ORDER[
+                (string.match(left.label, "%[(%a+)%]") or "")
+            ] or 9
+            local rightRole: number = ROLE_ORDER[
+                (string.match(right.label, "%[(%a+)%]") or "")
+            ] or 9
+            if leftRole ~= rightRole then
+                return leftRole < rightRole
+            end
+            return string.lower(left.label) < string.lower(right.label)
+        end)
+        return entries
+    end
+
+    local function resolveMurdererTarget(): any?
+        refreshRoles()
+        for _, player: any in ipairs(roster()) do
+            if player ~= localPlayer and canFling(player)
+                and not hasWeapon(player, "Gun") and hasWeapon(player, "Knife") then
+                return player
+            end
+        end
+        if type(findMurderer) == "function" then
+            local ok: boolean, target: any = pcall(findMurderer)
+            if ok and target and canFling(target) and roleOf(target) ~= "Dead" then
+                return target
+            end
+        end
+        for _, player: any in ipairs(roster()) do
+            if player ~= localPlayer and canFling(player) and roleOf(player) == "Murderer" then
                 return player
             end
         end
         return nil
     end
 
-    local function setStatus(text: string?): ()
-        if FlingFeature and type(FlingFeature.SetStatus) == "function" then
-            pcall(function(): ()
-                FlingFeature:SetStatus(text)
-            end)
+    local function resolveSheriffTarget(): any?
+        refreshRoles()
+        for _, player: any in ipairs(roster()) do
+            if player ~= localPlayer and canFling(player)
+                and not hasWeapon(player, "Knife") and hasWeapon(player, "Gun") then
+                return player
+            end
         end
+        if type(findSheriff) == "function" then
+            local ok: boolean, target: any = pcall(findSheriff)
+            if ok and target and canFling(target) then
+                local role: string? = roleOf(target)
+                if role ~= "Murderer" and role ~= "Dead" then
+                    return target
+                end
+            end
+        end
+        for _, player: any in ipairs(roster()) do
+            if player ~= localPlayer and canFling(player) then
+                local role: string? = roleOf(player)
+                if role == "Sheriff" or role == "Hero" then
+                    return player
+                end
+            end
+        end
+        return nil
     end
 
-    local function flingPlayer(name: string?): boolean
-        if not name or name == "" then
-            setStatus("Pick a target")
-            return false
+    -- What the card is showing, readable by the offline suite: the labels it
+    -- publishes and the player the current selection resolves to.
+    state.mm2FlingRoster = function(): {any}
+        local snapshot: {any} = {}
+        for _, entry: any in ipairs(rosterEntries(false)) do
+            table.insert(snapshot, {
+                name = tostring(entry.player.Name),
+                label = entry.label,
+            })
         end
+        return snapshot
+    end
+    state.mm2FlingSelection = function(): string?
+        return if selectedPlayer then tostring(selectedPlayer.Name) else nil
+    end
+
+    local function performFling(target: any, options: {[string]: any}?): boolean
         if antiFlingOn() then
-            -- The player asked for this notice: with Anti Fling on the shield
-            -- blocks the contact the fling needs, so the fling would just look
-            -- broken and blame the engine.
-            if type(notify) == "function" then
-                notify("Anti Fling is ON: turn it off before flinging someone.")
+            -- Turning Anti Fling off is the documented answer; without this
+            -- notice the fling just looks broken and blames the engine.
+            if not (type(options) == "table" and options.silent == true) then
+                notifyUser("Anti Fling is ON: turn it off before flinging someone.")
             end
             setStatus("Anti Fling is ON")
             return false
         end
-        local target: any = findPlayer(name)
-        if not target then
-            setStatus("Player left")
+        if not canFling(target) then
+            if not (type(options) == "table" and options.silent == true) then
+                notifyUser("No living, valid fling target is available.")
+                setStatus("No target")
+            end
             return false
         end
         local perform: any = state.mm2PerformFling
@@ -11201,23 +11504,119 @@ function Module.init(runtime: any): any
             setStatus("Fling engine unavailable")
             return false
         end
-        setStatus("Flinging " .. tostring(name))
+        local call: {[string]: any} = {
+            power = settings.power,
+            retries = settings.retries,
+            duration = FLING_DURATION,
+        }
+        if type(options) == "table" then
+            for key: string, value: any in pairs(options) do
+                call[key] = value
+            end
+        end
+        if call.power == nil then call.power = settings.power end
+        if call.retries == nil then call.retries = settings.retries end
+        setStatus("Flinging " .. tostring(target.Name))
         local started: boolean = false
-        pcall(function(): ()
-            started = perform(target, {
-                power = settings.power,
-                retries = settings.retries,
-            })
-        end)
+        local ok: boolean, result: any = pcall(perform, target, call)
+        if ok then
+            started = result == true
+        end
         if not started then
             setStatus("Fling busy or refused")
         end
         return started
     end
 
+    local function flingSelected(label: string?): boolean
+        local target: any = nil
+        if label and label ~= "" then
+            for _, entry: any in ipairs(rosterEntries(false)) do
+                if entry.label == label then
+                    target = entry.player
+                    break
+                end
+            end
+        end
+        if not target then
+            target = if canFling(selectedPlayer) then selectedPlayer else nil
+        end
+        if not target then
+            setStatus("Pick a target")
+            if label and label ~= "" then
+                notifyUser("That player is not a living fling target any more.")
+            end
+            return false
+        end
+        return performFling(target)
+    end
+
+    local function flingAllInnocents(): ()
+        if antiFlingOn() then
+            notifyUser("Anti Fling is ON: turn it off before flinging someone.")
+            setStatus("Anti Fling is ON")
+            return
+        end
+        allInnocentsSequence += 1
+        local sequence: number = allInnocentsSequence
+        refreshRoles()
+        task.spawn(function(): ()
+            local flung: number = 0
+            for _, player: any in ipairs(roster()) do
+                if sequence ~= allInnocentsSequence then
+                    break
+                end
+                if canFling(player) and roleOf(player) == "Innocent" then
+                    if performFling(player, {
+                        blocking = true,
+                        silent = true,
+                        duration = FLING_DURATION,
+                    }) then
+                        flung += 1
+                    end
+                    task.wait(0.05)
+                end
+            end
+            if sequence == allInnocentsSequence then
+                setStatus(flung > 0 and ("Flung " .. tostring(flung)) or nil)
+            end
+        end)
+    end
+
+    local function stopAutoFling(): ()
+        settings.autoFling = false
+        settings.autoFlingTarget = nil
+        autoElapsed = 0
+        disconnectFeatureConnection("MM2FlingAuto")
+    end
+
+    local function startAutoFling(): ()
+        disconnectFeatureConnection("MM2FlingAuto")
+        autoElapsed = 0
+        featureConnections.MM2FlingAuto =
+            TaskManager:Connect(function(deltaTime: number): ()
+                autoElapsed += math.max(0, deltaTime)
+                if autoElapsed < AUTO_FLING_INTERVAL then
+                    return
+                end
+                autoElapsed = 0
+                if not settings.autoFling or antiFlingOn() then
+                    return
+                end
+                local target: any = settings.autoFlingTarget
+                if not canFling(target) then
+                    target = if canFling(selectedPlayer) then selectedPlayer else nil
+                end
+                if not target then
+                    return
+                end
+                performFling(target, {silent = true, duration = FLING_DURATION})
+            end, nil, "MM2 Fling Auto")
+    end
+
     FlingFeature = createUniversalFeature(
         "Fling",
-        "Flings the player you pick with the MM2 SkidFling engine. Turn Anti Fling off first.",
+        "MM2 only: throws the murderer, the sheriff, every innocent or the player you pick, at maximum power.",
         9,
         function(): () end,
         {
@@ -11229,68 +11628,151 @@ function Module.init(runtime: any): any
         }
     )
 
+    -- The role buttons are the point of this card: one click, one role.
+    if type(addActionOption) == "function" then
+        addActionOption(FlingFeature, "Fling Murderer", function(): ()
+            local target: any = resolveMurdererTarget()
+            if target then
+                performFling(target)
+            else
+                notifyUser(if rolesPublished()
+                    then "No living murderer was found in this round."
+                    else "MM2 has not published the roles yet. Wait for the round to start.")
+            end
+        end)
+        addActionOption(FlingFeature, "Fling Sheriff", function(): ()
+            local target: any = resolveSheriffTarget()
+            if target then
+                performFling(target)
+            else
+                notifyUser(if rolesPublished()
+                    then "No living sheriff or hero was found in this round."
+                    else "MM2 has not published the roles yet. Wait for the round to start.")
+            end
+        end)
+        addActionOption(FlingFeature, "Fling All Innocents", function(): ()
+            flingAllInnocents()
+        end)
+    end
+
+    -- The roster is a live list of the players in this round, already labelled
+    -- with their role, sorted murderer first.
     local listHandle: any = nil
     if type(addListOption) == "function" then
-        listHandle = addListOption(FlingFeature, "Target player", {
-            items = playerNames,
+        listHandle = addListOption(FlingFeature, "Fling target", {
+            items = function(): {string}
+                local labels: {string} = {}
+                for _, entry: any in ipairs(rosterEntries()) do
+                    table.insert(labels, entry.label)
+                end
+                return labels
+            end,
             single = true,
             default = {},
             emptyText = "No other players",
-            hint = "Pick a player to fling right now. Anti Fling must be OFF: it cancels the contact the fling needs.",
+            hint = "Living players, ordered by role. Anti Fling must be OFF: it cancels the contact a fling needs.",
             onChanged = function(_selected: any, names: {string}): ()
+                local label: string = names and names[1] or ""
+                if label == "" then
+                    -- The row is cleared right after a pick so the same player
+                    -- can be chosen again; that empty publish must not forget
+                    -- the target, or "Fling" would have nothing to repeat.
+                    return
+                end
+                selectedLabel = label
+                selectedPlayer = nil
+                for _, entry: any in ipairs(rosterEntries(false)) do
+                    if entry.label == label then
+                        selectedPlayer = entry.player
+                        settings.autoFlingTarget = entry.player
+                        break
+                    end
+                end
                 if not listReady then
+                    -- The stored selection is published while the card is being
+                    -- built: remember it, but never fling on injection.
                     return
                 end
-                local chosen: string? = names and names[1]
-                if not chosen or chosen == "" then
-                    return
+                if selectedPlayer then
+                    local target: any = selectedPlayer
+                    -- Clear the row so the same player can be picked again; the
+                    -- empty publish that follows is ignored above.
+                    local key: string = tostring(FlingFeature.configKey or "MM2.Fling")
+                        .. ".Flingtarget"
+                    local controls: any = state.listControls and state.listControls[key]
+                    if controls then
+                        listReady = false
+                        pcall(function(): ()
+                            controls.set(label, false)
+                        end)
+                        listReady = true
+                    end
+                    performFling(target)
                 end
-                -- Clear the row so the same player can be picked again; the
-                -- empty publish that follows is ignored above.
-                local key: string = tostring(FlingFeature.configKey or "MM2.Fling")
-                    .. ".Targetplayer"
-                local controls: any = state.listControls and state.listControls[key]
-                if controls then
-                    listReady = false
-                    pcall(function(): ()
-                        controls.set(chosen, false)
-                    end)
-                    listReady = true
-                end
-                flingPlayer(chosen)
             end,
         })
         listReady = true
     end
 
+    if type(addActionOption) == "function" then
+        addActionOption(FlingFeature, "Fling", function(): ()
+            flingSelected(selectedLabel)
+        end)
+    end
+    if type(addToggleOption) == "function" then
+        addToggleOption(FlingFeature, "Auto Fling Selected Target", false,
+            function(value: boolean): ()
+                settings.autoFling = value == true
+                if settings.autoFling then
+                    if not canFling(selectedPlayer) then
+                        settings.autoFling = false
+                        notifyUser("Pick a living player in \"Fling target\" first.")
+                        if state.setToggleChecked then
+                            pcall(state.setToggleChecked,
+                                tostring(FlingFeature.configKey or "MM2.Fling")
+                                    .. ".AutoFlingSelectedTarget", false)
+                        end
+                        return
+                    end
+                    settings.autoFlingTarget = selectedPlayer
+                    startAutoFling()
+                else
+                    stopAutoFling()
+                end
+            end)
+    end
+
     if type(addNumberOption) == "function" then
-        addNumberOption(FlingFeature, "Power", settings.power, 1, 10,
+        addNumberOption(FlingFeature, "Power", settings.power, 1, MAX_POWER,
             function(value: number): ()
-                settings.power = math.clamp(tonumber(value) or 6, 1, 10)
+                settings.power = math.clamp(math.floor(tonumber(value) or MAX_POWER), 1, MAX_POWER)
             end,
-            "YARHM's exact numbers are Power 3. Higher values scale both the pose velocity and the pin, which is what lands a fling on a laggy or fast-moving target.",
+            "Fling strength. 12 is the maximum the engine accepts: four times YARHM's 9e7/9e8 pose velocity, which is what carries a fling through a laggy or fast server.",
             1)
-        addNumberOption(FlingFeature, "Retries", settings.retries, 0, 3,
+        addNumberOption(FlingFeature, "Retries", settings.retries, 0, MAX_RETRIES,
             function(value: number): ()
-                settings.retries = math.clamp(math.floor(tonumber(value) or 0), 0, 3)
+                settings.retries = math.clamp(math.floor(tonumber(value) or MAX_RETRIES), 0, MAX_RETRIES)
             end,
-            "Extra half-length passes that swap the contact part, for a server that misses the first contact.",
-            2)
+            "Extra passes that swap the contact part when the server misses the first one. 3 is the maximum.",
+            1)
     end
     if type(addInformationOption) == "function" then
         addInformationOption(
             FlingFeature,
-            "MM2 only. While Anti Fling is ON the fling is refused with a notice: "
-                .. "its collision shield stops the contact the fling needs."
+            "MM2 only. Every button refuses while Anti Fling is ON: its collision "
+                .. "shield cancels the contact a fling needs."
         )
     end
 
-    state.mm2FlingFeature = FlingFeature
-    state.mm2FlingSettings = settings
     activeCleanup = function(): ()
+        allInnocentsSequence += 1
+        stopAutoFling()
         state.mm2FlingFeature = nil
         state.mm2FlingSettings = nil
     end
+    state.mm2FlingFeature = FlingFeature
+    state.mm2FlingSettings = settings
+    Module.Events = featureConnections
     Module.Initialized = true
     return Module
 end
@@ -13025,6 +13507,9 @@ function Module.init(runtime: any): any
         yourRole = true,
         roundEvents = true,
         murderDefeated = true,
+        sheriffDown = true,
+        closeRadius = 30,
+        closeCooldown = 8,
     }
     local enabled: boolean = false
     local phase: string = type(core.getRoundPhase) == "function" and core.getRoundPhase() or "unknown"
@@ -13033,7 +13518,9 @@ function Module.init(runtime: any): any
     local sheriffSeen: boolean = false
     local lastLocalRole: string? = nil
     local lastMurderer: Player? = nil
+    local lastSheriff: Player? = nil
     local defeatNotified: boolean = false
+    local sheriffNotified: boolean = false
     local nearMurderer: boolean = false
     local lastCloseAt: number = -math.huge
     local gunWasDropped: boolean = false
@@ -13047,7 +13534,9 @@ function Module.init(runtime: any): any
         sheriffSeen = false
         lastLocalRole = nil
         lastMurderer = nil
+        lastSheriff = nil
         defeatNotified = false
+        sheriffNotified = false
         nearMurderer = false
         lastCloseAt = -math.huge
         gunWasDropped = false
@@ -13118,12 +13607,12 @@ function Module.init(runtime: any): any
                 -- the drop appears. It is not evidence they picked it back up.
                 gunDropPreviousHolder = lastGunHolder or holder
                 local distance: number? = gunDistance(drop)
-                notify("Gun dropped" .. (distance and (" · " .. tostring(math.round(distance)) .. " studs away") or ""))
+                notify("Gun dropped" .. (distance and (" · " .. tostring(math.round(distance)) .. " studs away") or ""), "danger")
             end
             gunWasDropped = true
             gunLastSeenAt = now
         elseif gunWasDropped and holder and holder ~= gunDropPreviousHolder then
-            notify("Gun picked up by " .. holder.Name)
+            notify("Gun picked up by " .. holder.Name, "good")
             gunWasDropped = false
             gunDropPreviousHolder = nil
         elseif gunWasDropped and now - gunLastSeenAt >= 2 then
@@ -13149,6 +13638,22 @@ function Module.init(runtime: any): any
         return humanoid ~= nil and humanoid.Health <= 0
     end
 
+    -- v191: the "murderer close" alert says WHERE as well as how far. Roblox's
+    -- own compass is +Z = north and -X = west, so a plain world-space bearing
+    -- is enough to say "NE" without a camera dependency (and it stays correct
+    -- while the camera spins).
+    local COMPASS: {string} = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+    local function compassOf(x: number?, z: number?): string
+        local flatX: number = tonumber(x) or 0
+        local flatZ: number = tonumber(z) or 0
+        if math.abs(flatX) + math.abs(flatZ) < 1e-3 then
+            return "here"
+        end
+        local angle: number = math.deg(math.atan2(flatX, flatZ))
+        local index: number = math.floor(((angle + 360 + 22.5) % 360) / 45) + 1
+        return COMPASS[index]
+    end
+
     local function updateProximity(murderer: Player?): ()
         if not settings.murderClose or not murderer or murderer == LocalPlayer
             or not isAlive(LocalPlayer) or not isAlive(murderer) then
@@ -13158,13 +13663,24 @@ function Module.init(runtime: any): any
         local localRoot: BasePart? = rootOf(LocalPlayer)
         local murderRoot: BasePart? = rootOf(murderer)
         if not localRoot or not murderRoot then nearMurderer = false; return end
-        local distance: number = (murderRoot.Position - localRoot.Position).Magnitude
+        local delta: Vector3 = murderRoot.Position - localRoot.Position
+        local distance: number = delta.Magnitude
+        local radius: number = math.clamp(tonumber(settings.closeRadius) or 30, 10, 120)
+        local cooldown: number = math.clamp(tonumber(settings.closeCooldown) or 8, 2, 30)
         local now: number = os.clock()
-        if distance <= 30 and not nearMurderer and now - lastCloseAt >= 8 then
+        -- Still-close re-warns after the cooldown (the v190 behaviour the
+        -- suite pins); leaving the radius re-arms it immediately.
+        if distance <= radius and now - lastCloseAt >= cooldown then
             nearMurderer = true
             lastCloseAt = now
-            notify("Murderer close: " .. murderer.Name .. " · " .. tostring(math.round(distance)) .. " studs")
-        elseif distance > 38 then
+            notify(
+                "Murderer close: " .. murderer.Name
+                    .. " · " .. tostring(math.round(distance)) .. " studs"
+                    .. " " .. compassOf(delta.X, delta.Z)
+                    .. (distance <= radius * 0.4 and " · VERY close" or ""),
+                "danger"
+            )
+        elseif distance > radius * 1.25 then
             nearMurderer = false
         end
     end
@@ -13174,6 +13690,7 @@ function Module.init(runtime: any): any
         local murderer: Player? = type(core.findMurderer) == "function" and core.findMurderer() or nil
         local sheriff: Player? = type(core.findSheriff) == "function" and core.findSheriff() or nil
         if murderer then lastMurderer = murderer end
+        if sheriff then lastSheriff = sheriff end
         showRoles(murderer, sheriff)
         if settings.yourRole and type(core.getPlayerRole) == "function" then
             local myRole: any = core.getPlayerRole(LocalPlayer)
@@ -13187,7 +13704,14 @@ function Module.init(runtime: any): any
         updateProximity(murderer)
         if settings.murderDefeated and not defeatNotified and confirmedDead(lastMurderer) then
             defeatNotified = true
-            notify("Murderer defeated: " .. (lastMurderer :: Player).Name)
+            notify("Murderer defeated: " .. (lastMurderer :: Player).Name, "good")
+        end
+        -- v191: the sheriff (or the hero who picked the gun up) is worth its
+        -- own alert: their death is when the gun hits the floor.
+        if settings.sheriffDown and not sheriffNotified and lastSheriff ~= nil
+            and lastSheriff ~= LocalPlayer and confirmedDead(lastSheriff) then
+            sheriffNotified = true
+            notify("Sheriff down: " .. (lastSheriff :: Player).Name .. " · the gun is loose", "danger")
         end
     end
 
@@ -13270,7 +13794,20 @@ function Module.init(runtime: any): any
     addToggleOption(feature, "Murder Close", true, function(value: boolean): ()
         settings.murderClose = value
         if enabled and value then trySample() end
-    end, "Warns when the living Murderer is within 30 studs; includes a cooldown.")
+    end, "Warns when the living Murderer gets close, with the distance and the compass side. Off = no proximity alerts.")
+    addNumberOption(feature, "Close radius", 30, 10, 120, function(value: number): ()
+        settings.closeRadius = math.clamp(tonumber(value) or 30, 10, 120)
+        nearMurderer = false
+        lastCloseAt = -math.huge
+        if enabled and settings.murderClose then trySample() end
+    end, "Studs at which the Murder Close warning fires. The alert repeats when you get closer or after the cooldown.", 10, true)
+    addNumberOption(feature, "Close cooldown", 8, 2, 30, function(value: number): ()
+        settings.closeCooldown = math.clamp(tonumber(value) or 8, 2, 30)
+    end, "Minimum seconds between two Murder Close warnings.", 1, true)
+    addToggleOption(feature, "Sheriff Down", true, function(value: boolean): ()
+        settings.sheriffDown = value
+        if enabled and value then trySample() end
+    end, "Announces the known Sheriff/Hero death: that is when the gun is loose.")
     addToggleOption(feature, "Your Role", true, function(value: boolean): ()
         settings.yourRole = value
         if enabled and value then trySample() end
@@ -29739,8 +30276,10 @@ export type Runtime = {
     host: any,
 }
 
+-- v191: renamed "Spider" -> "Wall Crawling" (visible name only; the
+-- ConfigKey/state/keybind stay "Universal.Spider").
 local Module = {
-    Name = "Spider",
+    Name = "Wall Crawling",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -29891,11 +30430,13 @@ function Module.init(context: Runtime): any
     end
 
     SpiderFeature = createUniversalFeature(
-        "Spider",
+        "Wall Crawling",
         "Climb a wall while moving toward it",
         20,
         toggleSpider,
-        {categoryName = "Exploits"}
+        -- The visible name changed in v191; the config key must not, or the
+        -- saved toggle and the player's keybind would be orphaned.
+        {categoryName = "Exploits", configKey = "Universal.Spider"}
     )
     local modeRows: {[string]: any} = {}
     local function refreshModeRows(): ()
@@ -29972,7 +30513,9 @@ return Module
         ["src/games/universal/Blatant/Swim.lua"] = [[
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Swim", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+-- v191: renamed "Swim" -> "Air Swim" (visible name only; ConfigKey, state and
+-- keybind stay "Universal.Swim").
+local Module = {Name = "Air Swim", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -29992,7 +30535,7 @@ function Module.init(context: Runtime): any
     end
 
     swim = framework.Categories.Exploits:CreateModule({
-        Name = "Swim",
+        Name = "Air Swim",
         Category = "Exploits",
         ConfigKey = "Universal.Swim",
         Order = 3,
@@ -35162,6 +35705,92 @@ function Module.init(context: Runtime): any
         end
     local invalidClipNotified: boolean = false
 
+    -- v191: the engine's Animate script asks for each clip the first time it
+    -- plays it. Writing ids whose asset is not downloaded yet makes that script
+    -- print "Failed to load animation with sanitized ID ..." and give up until
+    -- the character respawns -- exactly the "failed to load, restart the
+    -- character to see it" report. Downloading the ids first gives the script a
+    -- cached asset, so its very first load succeeds at injection. Failure is
+    -- silent and cached: an id that cannot be preloaded must never turn into a
+    -- notice or a repeat download attempt.
+    local preloadedClipIds: {[string]: boolean} = {}
+    local function preloadAnimations(ids: {string}): ()
+        local pending: {string} = {}
+        for _, id: string in ipairs(ids) do
+            if not preloadedClipIds[id] then
+                preloadedClipIds[id] = true
+                table.insert(pending, id)
+            end
+        end
+        if #pending == 0 then
+            return
+        end
+        pcall(function(): ()
+            local provider: any = (host :: any).ContentProvider
+                or game:GetService("ContentProvider")
+            if not provider or type(provider.PreloadAsync) ~= "function" then
+                return
+            end
+            local probes: {Instance} = {}
+            for _, id: string in ipairs(pending) do
+                local ok: boolean, probe: any = pcall(function(): any
+                    local animation: any = Instance.new("Animation")
+                    animation.AnimationId = id
+                    return animation
+                end)
+                if ok and probe then
+                    table.insert(probes, probe)
+                end
+            end
+            if #probes > 0 then
+                pcall(function(): ()
+                    provider:PreloadAsync(probes)
+                end)
+                for _, probe: Instance in ipairs(probes) do
+                    pcall(function(): ()
+                        probe:Destroy()
+                    end)
+                end
+            end
+        end)
+    end
+
+    -- The rig is not always finished when the module applies at injection: an
+    -- `Animate` script that has not replicated yet used to make this return 0
+    -- ("that avatar did not expose movement animations") with nothing to retry
+    -- it. Wait for the script instead of giving up on the first frame.
+    local function awaitAnimateScript(character: Model): Instance?
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if animate then
+            return animate
+        end
+        -- Frames, not fixed sleeps: the copy helpers never block for a wall
+        -- clock time, and a rig that never exposes the script stops the wait
+        -- instead of hanging it.
+        local runService: any = (host :: any).RunService
+        if not runService then
+            pcall(function(): ()
+                runService = game:GetService("RunService")
+            end)
+        end
+        if not runService then
+            return nil
+        end
+        for _ = 1, 240 do
+            local stepped: boolean = pcall(function(): ()
+                runService.Heartbeat:Wait()
+            end)
+            if not stepped or character.Parent == nil then
+                return nil
+            end
+            animate = character:FindFirstChild("Animate")
+            if animate then
+                return animate
+            end
+        end
+        return nil
+    end
+
     -- What every caller uses: the target's clips are resolved against the rig
     -- and written into the Animate slots. The result is verified by
     -- settleMovementAnimations right after, which owns every wait and every
@@ -35172,7 +35801,7 @@ function Module.init(context: Runtime): any
         slots: {[string]: any},
         targetRig: string?
     ): number
-        local animate: Instance? = character:FindFirstChild("Animate")
+        local animate: Instance? = awaitAnimateScript(character)
         if not animate then
             return 0
         end
@@ -35210,6 +35839,19 @@ function Module.init(context: Runtime): any
         -- slots cannot be written: it reports success without changing
         -- what the script plays here, which is exactly the reported
         -- "I pick Mage and Ninja keeps playing" desync.
+        -- Cache every clip first (see preloadAnimations): this is what stops
+        -- the engine's "Failed to load animation" at injection.
+        local clipIds: {string} = {}
+        for _, value: any in pairs(resolved) do
+            local list: {any} = if type(value) == "table" then value else {value}
+            for _, entry: any in ipairs(list) do
+                local id: string? = animationIdFromValue(entry)
+                if id then
+                    table.insert(clipIds, id)
+                end
+            end
+        end
+        preloadAnimations(clipIds)
         local changedCount: number = writeAnimationSlots(animate, resolved)
         if changedCount == 0 then
             changedCount = applySlotsViaDescription(humanoid, resolved)
@@ -35524,6 +36166,43 @@ function Module.init(context: Runtime): any
     local mirrorAllowed: boolean = false
     local lastResolvedSlots: {[string]: any}? = nil
 
+    -- v191: a restart is not a retry. The classic Animate script gives up on the
+    -- first clip it cannot load and never asks again, so one failed attempt at
+    -- injection left the avatar in its rest pose until the player respawned the
+    -- character. Now the script is restarted (the clips are already in the
+    -- engine's cache thanks to preloadAnimations) and, if it still has no track,
+    -- the ids are written back once more. Nothing is reverted here: the caller
+    -- keeps deciding whether the rig's own set comes back.
+    local function retryAnimateScript(
+        character: Model,
+        humanoid: Humanoid,
+        attempts: number
+    ): boolean
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return false
+        end
+        for attempt: number = 1, attempts do
+            restartAnimateScript(animate)
+            task.wait(0.2 + attempt * 0.15)
+            if character.Parent == nil then
+                return false
+            end
+            local tracks: number = #playingAnimationTracks(humanoid)
+            if tracks > 0
+                and (poseMoves(humanoid, 0.25) ~= false
+                    or poseDriven(humanoid)) then
+                return true
+            end
+            -- No track at all means the script stopped before it even asked for
+            -- a clip: hand it the same ids again before the next restart.
+            if tracks == 0 and attempt == 1 and lastResolvedSlots then
+                writeAnimationSlots(animate, lastResolvedSlots)
+            end
+        end
+        return false
+    end
+
     local function settleMovementAnimations(
         character: Model,
         humanoid: Humanoid
@@ -35549,6 +36228,12 @@ function Module.init(context: Runtime): any
             if poseDriven(humanoid) then
                 return true
             end
+        end
+        -- v191: the pose is frozen and the script may simply have given up on
+        -- its first load (the "failed to load" report). Retry it before
+        -- declaring the target's clips unusable.
+        if retryAnimateScript(character, humanoid, 3) then
+            return true
         end
         -- Description retry, the offline-capable route: the ids came
         -- from the target's HumanoidDescription (they are not in this
@@ -37708,6 +38393,375 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Other/ServerSettings.lua"] = [[
+-- v191: "Server Settings" (Utilities), new card.
+--
+-- What it does, and what it deliberately does NOT do:
+--   * It reads the server the player is actually in (Job ID, player count,
+--     player limit) and shows it on the card, refreshed on a timer.
+--   * It copies the Job ID, rejoins the current instance, and can hop to the
+--     smallest / largest / a random public server of the same place.
+--   * It sets no server-side property. A Roblox client cannot change another
+--     server's settings; a card that claimed to would be lying. Everything here
+--     is local: the info readout and the TeleportService calls.
+--
+-- Server hopping uses the public servers endpoint the Roblox web app itself
+-- uses. Executors route `game:HttpGet` through their own queue, so the request
+-- is made from the executor, never from the game's own HTTP identity.
+export type Runtime = {
+    framework: any,
+    entity: any,
+    host: any,
+    services: any,
+}
+
+local Module = {
+    Name = "ServerSettings",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+
+-- One hop per couple of seconds at most: the public endpoint rate-limits hard
+-- and a hop already interrupts the session, so stacked calls are worthless.
+local HOP_COOLDOWN: number = 3
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local LocalPlayer: any = host.LocalPlayer
+    local createUniversalFeature: any = host.createUniversalFeature
+    local addActionOption: any = host.addActionOption
+    local addToggleOption: any = host.addToggleOption
+    local addNumberOption: any = host.addNumberOption
+    local addInformationOption: any = host.addInformationOption
+    local notify: any = host.notify
+    local cloneReference: any = host.cloneReference
+    local services: any = context.services or {}
+
+    local players: any = host.Players or game:GetService("Players")
+    local httpService: any = cloneReference
+        and cloneReference(game:GetService("HttpService"))
+        or game:GetService("HttpService")
+    local teleportService: any = cloneReference
+        and cloneReference(game:GetService("TeleportService"))
+        or game:GetService("TeleportService")
+
+    -- The info readout only ticks while the card is ON, so an idle menu does no
+    -- per-frame work.
+    local tick: any = if host.TaskManager and host.TaskManager.Connect
+        then host.TaskManager
+        else nil
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+
+    local settings = {
+        showInfo = true,
+        refreshSeconds = 3,
+    }
+    local lastHopAt: number = -math.huge
+    local elapsed: number = 0
+    local hopping: boolean = false
+
+    local function say(message: string, kind: string?): ()
+        if type(notify) == "function" then
+            pcall(notify, message, kind)
+        end
+    end
+
+    local function jobId(): string
+        local ok: boolean, value: any = pcall(function(): any
+            return game.JobId
+        end)
+        if not ok or type(value) ~= "string" or value == "" then
+            return ""
+        end
+        return value
+    end
+
+    local function playerCount(): number
+        local ok: boolean, list: any = pcall(function(): any
+            return players:GetPlayers()
+        end)
+        if not ok or type(list) ~= "table" then
+            return 0
+        end
+        return #list
+    end
+
+    local function maxPlayers(): number
+        local ok: boolean, value: any = pcall(function(): any
+            return players.MaxPlayers
+        end)
+        if ok and type(value) == "number" then
+            return value
+        end
+        return 0
+    end
+
+    local function infoText(): string
+        local id: string = jobId()
+        local shortId: string = if #id > 8 then string.sub(id, 1, 8) else id
+        local count: number = playerCount()
+        local limit: number = maxPlayers()
+        return string.format(
+            "%s · %d/%d",
+            shortId ~= "" and shortId or "private server",
+            count,
+            limit > 0 and limit or count
+        )
+    end
+
+    local function refreshStatus(): ()
+        if activeCard and type(activeCard.SetStatus) == "function" then
+            if settings.showInfo then
+                pcall(function(): ()
+                    activeCard:SetStatus(infoText())
+                end)
+            else
+                pcall(function(): ()
+                    activeCard:SetStatus(nil)
+                end)
+            end
+        end
+    end
+
+    local function copyJobId(): ()
+        local id: string = jobId()
+        if id == "" then
+            say("This server has no Job ID to copy.")
+            return
+        end
+        -- Executors expose `setclipboard` as a global; a plain Roblox client
+        -- does not, so the message still carries the id when copying fails.
+        local clipboard: any = setclipboard
+        local copied: boolean = false
+        if type(clipboard) == "function" then
+            copied = pcall(clipboard, id)
+        end
+        if copied then
+            say("Job ID copied: " .. id, "good")
+        else
+            say("Job ID: " .. id)
+        end
+    end
+
+    local function rejoin(): ()
+        local id: string = jobId()
+        if id == "" then
+            say("This server has no Job ID; rejoining the place instead.")
+        end
+        local ok: boolean = false
+        if id ~= "" then
+            ok = pcall(function(): ()
+                teleportService:TeleportToPlaceInstance(game.PlaceId, id, LocalPlayer)
+            end)
+        end
+        if not ok then
+            ok = pcall(function(): ()
+                teleportService:Teleport(game.PlaceId, LocalPlayer)
+            end)
+        end
+        if not ok then
+            say("Rejoin failed: TeleportService refused the request.", "danger")
+        end
+    end
+
+    -- The public server list, as the Roblox web app reads it.
+    local function fetchServers(): ({any}?, string?)
+        local endpoint: string = string.format(
+            "https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100",
+            game.PlaceId
+        )
+        local ok: boolean, body: any = pcall(function(): any
+            return (game :: any):HttpGet(endpoint)
+        end)
+        if not ok or type(body) ~= "string" or body == "" then
+            return nil, "the server list request failed (executor HTTP is blocked?)"
+        end
+        local decodeOk: boolean, decoded: any = pcall(function(): any
+            return httpService:JSONDecode(body)
+        end)
+        if not decodeOk or type(decoded) ~= "table"
+            or type(decoded.data) ~= "table" then
+            return nil, "the server list answer could not be read"
+        end
+        return decoded.data, nil
+    end
+
+    local function hop(mode: string): ()
+        if hopping then
+            return
+        end
+        if os.clock() - lastHopAt < HOP_COOLDOWN then
+            say("Slow down: wait a moment before hopping again.")
+            return
+        end
+        hopping = true
+        task.spawn(function(): ()
+            local ok: boolean, failure: any = pcall(function(): ()
+                local servers: {any}?, errorText: string? = fetchServers()
+                if not servers then
+                    say("Server hop: " .. tostring(errorText), "danger")
+                    return
+                end
+                local here: string = jobId()
+                local chosen: any = nil
+                local chosenPlayers: number = mode == "largest" and -1 or math.huge
+                local candidates: {any} = {}
+                for _, entry: any in ipairs(servers) do
+                    local instanceId: any = entry and entry.id
+                    if type(instanceId) == "string" and instanceId ~= here
+                        and (entry.playing == nil or tonumber(entry.playing) ~= nil) then
+                        table.insert(candidates, entry)
+                    end
+                end
+                if #candidates == 0 then
+                    say("Server hop: no other public server is listed right now.", "danger")
+                    return
+                end
+                if mode == "random" then
+                    chosen = candidates[math.random(1, #candidates)]
+                else
+                    for _, entry: any in ipairs(candidates) do
+                        local playing: number = tonumber(entry.playing) or 0
+                        local better: boolean = mode == "largest"
+                            and playing > chosenPlayers
+                            or (mode ~= "largest" and playing < chosenPlayers)
+                        if better then
+                            chosen = entry
+                            chosenPlayers = playing
+                        end
+                    end
+                end
+                if not chosen then
+                    say("Server hop: no usable server was found.", "danger")
+                    return
+                end
+                lastHopAt = os.clock()
+                say(
+                    string.format(
+                        "Hopping to a server with %d players…",
+                        tonumber(chosen.playing) or 0
+                    )
+                )
+                local teleported: boolean = pcall(function(): ()
+                    teleportService:TeleportToPlaceInstance(
+                        game.PlaceId,
+                        chosen.id,
+                        LocalPlayer
+                    )
+                end)
+                if not teleported then
+                    say("Server hop was refused by TeleportService.", "danger")
+                end
+            end)
+            hopping = false
+            if not ok then
+                say("Server hop failed: " .. tostring(failure), "danger")
+            end
+        end)
+    end
+
+    local card: any = nil
+    local function restartTick(): ()
+        if type(disconnectFeatureConnection) == "function" then
+            disconnectFeatureConnection("ServerSettingsTick")
+        end
+        if not card or card.enabled ~= true then
+            return
+        end
+        if not (tick and featureConnections) then
+            return
+        end
+        elapsed = 0
+        featureConnections.ServerSettingsTick = tick:Connect(
+            function(deltaTime: number): ()
+                elapsed += math.max(0, deltaTime)
+                if elapsed < settings.refreshSeconds then
+                    return
+                end
+                elapsed = 0
+                refreshStatus()
+            end,
+            nil,
+            "Server Settings"
+        )
+    end
+
+    card = createUniversalFeature(
+        "Server Settings",
+        "Reads the server you are in and hops to another public one; nothing here writes to the server.",
+        8,
+        function(enabled: boolean): ()
+            if not enabled then
+                if type(disconnectFeatureConnection) == "function" then
+                    disconnectFeatureConnection("ServerSettingsTick")
+                end
+                if card and type(card.SetStatus) == "function" then
+                    pcall(function(): ()
+                        card:SetStatus(nil)
+                    end)
+                end
+                return
+            end
+            refreshStatus()
+            restartTick()
+        end,
+        {categoryName = "Utilities"}
+    )
+    activeCard = card
+
+    addActionOption(card, "Copy Job ID", copyJobId)
+    addActionOption(card, "Rejoin Server", rejoin)
+    addActionOption(card, "Hop: smallest server", function(): ()
+        hop("smallest")
+    end)
+    addActionOption(card, "Hop: largest server", function(): ()
+        hop("largest")
+    end)
+    addActionOption(card, "Hop: random server", function(): ()
+        hop("random")
+    end)
+    addToggleOption(card, "Show server info", true, function(value: boolean): ()
+        settings.showInfo = value
+        refreshStatus()
+    end, "Shows the Job ID and the player count on the card itself.")
+    addNumberOption(card, "Refresh every", 3, 1, 15, function(value: number): ()
+        settings.refreshSeconds = math.clamp(tonumber(value) or 3, 1, 15)
+        elapsed = 0
+    end, "Seconds between two server info reads. Only runs while the card is ON.", 1, true)
+    addInformationOption(
+        card,
+        "A Roblox client cannot change another server's settings. This card "
+            .. "shows YOUR server and moves you between public ones."
+    )
+
+    -- The info readout only ticks while the card is ON, so an idle menu does no
+    -- per-frame work. A card restored as ON at boot starts its tick here.
+    restartTick()
+
+    activeCard = card
+    state.serverSettingsCard = card
+    state.serverSettings = settings
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    state.serverSettingsCard = nil
+    state.serverSettings = nil
+    activeCard = nil
+end
+
+return Module
+
+]],
         ["src/games/universal/Render/Arrows.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -37717,8 +38771,13 @@ export type Runtime = {
     services: any,
 }
 
+-- v191: renamed from "Arrows" (the player asked for another name). Only the
+-- visible label changed: the ConfigKey, the keybind and the saved state stay
+-- "Universal.Arrows", so nothing has to be reconfigured. Its palette row in
+-- Settings ("Buttons") now paints the window buttons too, the Pin chip
+-- included.
 local Module = {
-    Name = "Arrows",
+    Name = "Player Pointers",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -37756,7 +38815,7 @@ function Module.init(context: Runtime): any
     end
 
     card = framework.Categories.Visuals:CreateModule({
-        Name = "Arrows",
+        Name = "Player Pointers",
         Category = "Render",
         ConfigKey = "Universal.Arrows",
         Order = 3,
@@ -48526,10 +49585,15 @@ function Module.init(context: any): any
     -- Small build watermark on the window the user opens first: the
     -- short stamp ("v95") so a screenshot alone says which build it
     -- is, without opening anything.
-    local versionTag: string = string.match(
+    -- v191: the build is shown the way the player asked for it, in the
+    -- "Version 0.191" form rather than the internal "v191" stamp.
+    local buildNumber: string? = string.match(
         tostring(SOURCE_STAMP or ""),
-        "^v%d+"
-    ) or tostring(SOURCE_STAMP or "")
+        "^v(%d+)"
+    )
+    local versionTag: string = if buildNumber
+        then "Version 0." .. buildNumber
+        else tostring(SOURCE_STAMP or "")
     uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
@@ -48604,7 +49668,11 @@ function Module.init(context: any): any
         {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
         {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
         {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
-        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
+        -- v191: this row is the "Arrows" token, but it now also paints the
+        -- window buttons (the Pin chip uses it too), so it is labelled
+        -- "Buttons". `key` keeps the v26 config key so a saved colour
+        -- is not lost by the rename.
+        {label = "Buttons", key = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
     }
     -- Re-apply the saved palette when the page builds: the theme starts
     -- from the preset on every execution, so without this the chosen
@@ -48614,7 +49682,8 @@ function Module.init(context: any): any
         for _, row: any in ipairs(PALETTE_ROWS) do
             local saved: Color3? = colorFromConfig(
                 configData.values[
-                    uiPanel.configKey .. "." .. row.label:gsub("%W", "")
+                    uiPanel.configKey .. "."
+                        .. (row.key or row.label):gsub("%W", "")
                 ],
                 nil
             )
@@ -48649,7 +49718,8 @@ function Module.init(context: any): any
                             ThemeEngine.Set(token, color)
                         end
                     end
-                end
+                end,
+                row.key
             )
             if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
                 uiPaletteRows[labelText] = swatch.Parent :: Frame
@@ -48663,10 +49733,10 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 1, function(value: number): ()
         local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 1)
         uiSettingsValues["Opacity"] = wanted
-        -- Composite each complete menu panel once. Individual rows, hover
-        -- styles, text and icons keep their normal relative contrast.
+        -- v191: background only. windows.SetOpacity fades the panel surface;
+        -- the title, labels, icons and controls stay at full opacity.
         windows.SetOpacity(wanted)
-    end, "Controls the opacity of each complete menu window.", 0.01, true)
+    end, "How see-through the menu BACKGROUND is. Text and controls stay fully readable at any value.", 0.01, true)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
     if state.featureTooltip then
@@ -51392,8 +52462,11 @@ function Module.init(context: any): WidgetLibrary
 
     state.colorPicker = colorPicker
 
-    local function addColorOption(feature, labelText, defaultColor, callback, hintText)
-        local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
+    -- `keyText` (v191) keeps the SAVED config key stable when a row is
+    -- renamed: "Arrows" became "Buttons" and the stored colour must survive.
+    local function addColorOption(feature, labelText, defaultColor, callback, hintText, keyText)
+        local optionKey = feature.configKey .. "."
+            .. (keyText or labelText):gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
         -- A nil here (missing saved value AND missing default token) used to
         -- crash hexOf below and take the whole Settings page down with it.
@@ -52353,7 +53426,12 @@ function Module.init(context: any): any
             ZIndex = BASE_Z,
         })
         if not bare then
-            root.GroupTransparency = 1 - (manager.opacity or 0.85)
+            -- v191: the panel surface is what Opacity fades (see SetOpacity).
+            -- The group itself stays opaque so labels, icons and strokes keep
+            -- full contrast at every slider position.
+            root.GroupTransparency = 0
+            root.BackgroundTransparency = 1 - (manager.opacity or 0.85)
+            root:SetAttribute("WurstPanelSurface", true)
         end
         bind(root, "BackgroundColor3", "background")
 
@@ -52440,6 +53518,9 @@ function Module.init(context: any): any
                     Parent = bar,
                     Active = true,
                     AutoButtonColor = false,
+                    -- v191: a name per kind ("pin", "up", "cross") so the
+                    -- offline suite can find the exact chip it asserts on.
+                    Name = kind,
                     BackgroundColor3 = Theme.surface,
                     BackgroundTransparency = 0.72,
                     BorderSizePixel = 0,
@@ -52476,12 +53557,25 @@ function Module.init(context: any): any
             end
             if definition.pinnable ~= false then
 
-                local pin: TextButton = chromeButton("pin", Theme.enabled, "enabled")
+                -- v191: the pin chip is themed by the SAME token the expand
+                -- chevrons use ("arrows", labelled "Buttons" in Settings), so
+                -- one palette row colours every small window button. Pinned is
+                -- shown by an arrows-coloured tint behind the icon instead of
+                -- by overwriting the button's own theme-bound background.
+                local pin: TextButton = chromeButton("pin", Theme.arrows, "arrows")
+                local pinTint: Frame = (create("Frame", {
+                    Parent = pin,
+                    Name = "PinTint",
+                    BackgroundColor3 = Theme.arrows,
+                    BackgroundTransparency = 1,
+                    BorderSizePixel = 0,
+                    Size = UDim2.fromScale(1, 1),
+                    ZIndex = pin.ZIndex,
+                }) :: any) :: Frame
+                bind(pinTint, "BackgroundColor3", "arrows")
                 local function paintPin(): ()
-                    pin.BackgroundTransparency = window.pinned and 0.2 or 0.72
-                    pin.BackgroundColor3 = window.pinned
-                        and Theme.enabled
-                        or Theme.surface
+                    pin.BackgroundTransparency = window.pinned and 0.35 or 0.72
+                    pinTint.BackgroundTransparency = window.pinned and 0.55 or 1
                 end
                 table.insert(paintChrome, paintPin)
                 table.insert(chromeConnections, pin.MouseButton1Click:Connect(function(): ()
@@ -52999,6 +54093,12 @@ function Module.init(context: any): any
     -- Kept as a public value for callers which display the selected alpha.
     manager.bodyTransparency = 1 - manager.opacity
 
+    -- v191: Opacity means "how see-through the BACKGROUND is", not "fade the
+    -- whole window". v190 and earlier drove root.GroupTransparency, which
+    -- alpha-blended the panel together with its title, labels and icons: the
+    -- lower the slider, the harder the text was to read. The panel surface is
+    -- now the only thing that gets transparent (root.BackgroundTransparency),
+    -- so text and controls stay fully opaque at every setting.
     function manager.SetOpacity(alpha: number): ()
         local wanted: number = tonumber(alpha) or 0.85
         if wanted ~= wanted then wanted = 0.85 end
@@ -53007,8 +54107,19 @@ function Module.init(context: any): any
         manager.bodyTransparency = 1 - wanted
         for _, window: any in ipairs(manager.list) do
             local root: any = window.root
-            if root and root:IsA("CanvasGroup") then
-                root.GroupTransparency = 1 - wanted
+            -- Not every record in this list is a full GuiObject (a bare
+            -- overlay may be a plain table while it is being built), so the
+            -- surface test is defensive: never assume the methods exist.
+            if root and type(root.IsA) == "function" then
+                if root:IsA("CanvasGroup") then
+                    -- Content is never faded: the group stays fully opaque.
+                    root.GroupTransparency = 0
+                end
+                local surface: boolean = type(root.GetAttribute) == "function"
+                    and root:GetAttribute("WurstPanelSurface") == true
+                if surface then
+                    root.BackgroundTransparency = 1 - wanted
+                end
             end
         end
     end
@@ -55039,7 +56150,7 @@ local Manifest: Manifest = {
         ["Aimbot"] = "Exploits",
         ["Anti AFK"] = "World",
         ["Anti Fling"] = "Utilities",
-        ["Anti Void"] = "Utilities", -- BedFight-specific; the universal module was removed
+        ["Anti Void"] = "Utilities",
         ["Anti-AFK"] = "Other",
         ["Anti-Fling"] = "Movement",
         ["AntiAFK"] = "Other",
@@ -55061,17 +56172,15 @@ local Manifest: Manifest = {
         ["Disguise"] = "World",
         ["FOV"] = "Render",
         ["Fast Vault Optimizer"] = "Movement",
+        ["Fling"] = "Exploits",
         ["Fly"] = "Exploits",
         ["Freeze Animations"] = "Utilities",
-        ["Notifications"] = "Utilities",
-        ["Fling"] = "Exploits",
         ["Fullbright"] = "Render",
-        ["Invisibility"] = "Utilities",
         ["Goalkeeper Assist"] = "Exploits",
         ["Gravity"] = "World",
         ["Gun Aimbot"] = "Exploits",
         ["Improve FPS"] = "World",
-        ["Proximity Prompts"] = "Exploits",
+        ["Invisibility"] = "Utilities",
         ["Invisible"] = "Exploits",
         ["Jump Hack"] = "Exploits",
         ["KillAura"] = "Exploits",
@@ -55086,10 +56195,12 @@ local Manifest: Manifest = {
         ["Locker & Hideout Detector"] = "Render",
         ["Noclip"] = "Exploits",
         ["Noclip (Vaults & Pallets)"] = "Exploits",
+        ["Notifications"] = "Utilities",
         ["Optimize Blind / Flash Protection"] = "Movement",
         ["Pass Assist"] = "Exploits",
         ["Player ESP"] = "Render",
         ["Power Shot"] = "Exploits",
+        ["Proximity Prompts"] = "Exploits",
         ["Quick Actions"] = "Other",
         ["Rejoin Server"] = "Other",
         ["Remote Logger"] = "Other",
@@ -55098,7 +56209,8 @@ local Manifest: Manifest = {
         ["Server Aura"] = "Exploits",
         ["Server Miner"] = "Other",
         ["Server Scaffold"] = "Movement",
-                ["Shoot Assist"] = "Exploits",
+        ["Server Settings"] = "Utilities",
+        ["Shoot Assist"] = "Exploits",
         ["Silent Aim"] = "Exploits",
         ["Silent Steps / Anti-Sound"] = "Movement",
         ["SilentAIM"] = "Exploits",
@@ -55144,10 +56256,10 @@ local Manifest: Manifest = {
     modules = {
         -- <arandommenu:modules> managed by tools/card.py
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aimbot", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Swim.lua", name = "Air Swim", category = "Exploits"},
         {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
-        {path = "src/games/universal/Render/Arrows.lua", name = "Arrows", category = "Render"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
         {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
@@ -55155,12 +56267,11 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
         {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Animations", category = "Utilities"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
-        {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisibility", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
         {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
         {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
         {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
-        {path = "src/games/universal/Other/ProximityPrompts.lua", name = "Proximity Prompts", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisibility", category = "Utilities"},
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
         {path = "src/games/universal/Movement/Jump.lua", name = "Jump Hack", category = "Exploits"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Exploits"},
@@ -55168,14 +56279,16 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
         {path = "src/games/universal/Blatant/Noclip.lua", name = "Noclip", category = "Exploits"},
         {path = "src/games/universal/Render/NPCESP.lua", name = "NPCESP", category = "Render"},
+        {path = "src/games/universal/Render/Arrows.lua", name = "Player Pointers", category = "Render"},
         {path = "src/games/universal/Render/PlayerESP.lua", name = "PlayerESP", category = "Render"},
+        {path = "src/games/universal/Other/ProximityPrompts.lua", name = "Proximity Prompts", category = "Exploits"},
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
+        {path = "src/games/universal/Other/ServerSettings.lua", name = "Server Settings", category = "Utilities"},
         {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
         {path = "src/games/universal/Movement/Speed.lua", name = "Speed Hack", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Spider.lua", name = "Spider", category = "Exploits"},
-        {path = "src/games/universal/Blatant/Swim.lua", name = "Swim", category = "Exploits"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
         {path = "src/games/universal/Blatant/WalkFling.lua", name = "Walk Fling", category = "Exploits"},
+        {path = "src/games/universal/Blatant/Spider.lua", name = "Wall Crawling", category = "Exploits"},
         {path = "src/games/universal/Render/XRay.lua", name = "X-Ray", category = "Render"},
         {path = "src/games/universal/Render/ZoomUnlocker.lua", name = "Zoom", category = "Render"},
         -- </arandommenu:modules>

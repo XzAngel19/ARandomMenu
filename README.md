@@ -2,7 +2,7 @@
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
 La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v190`); `main` es independiente.
+(build `v191`, se muestra como **Version 0.191**); `main` es independiente.
 
 ## Loader
 
@@ -10,6 +10,43 @@ La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
 getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
 loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/src/Wurst.lua"))()
 ```
+
+## Cambios de v191
+
+- **Etiqueta de versión:** el menú ya no muestra `v191`, sino
+  **`Version 0.191`** (derivada del `SOURCE_STAMP`), en la ventana de ajustes.
+- **`Arrows` pasa a llamarse `Player Pointers`.** Sólo el nombre visible: el
+  `ConfigKey` (`Universal.Arrows`), el estado guardado y el keybind siguen
+  iguales.
+- **El botón de Pin usa el color de las flechas.** La fila de paleta
+  `Arrows` ahora se llama **`Buttons`** (conservando su clave guardada) y pinta
+  los chevrones *y* el botón de Pin: al fijar una ventana, el chip se tiñe con
+  ese color.
+- **`Opacity` ya no apaga todo el menú:** sólo afecta al **fondo** de la
+  ventana. Títulos, textos, iconos y controles quedan siempre a opacidad
+  completa.
+- **Fling de MM2 completo otra vez:** `Fling Murderer`, `Fling Sheriff`,
+  `Fling All Innocents`, lista de objetivos con su rol y `Auto Fling Selected
+  Target`, sobre el motor actual (`FlingEngine`). **Power y Retries vienen al
+  máximo** (12 / 3) de fábrica.
+- **Disguise carga al inyectar:** los clips se precargan antes de escribir los
+  slots, se espera al script `Animate` si aún no replicó y, si la pose queda
+  congelada, se reintenta el script antes de devolver tus animaciones.
+- **Blurt Roles es un botón:** al pulsar la tarjeta se dicen los roles al
+  instante. `Blurt Now` desapareció y el envío automático pasó a la opción
+  `Auto blurt`.
+- **`Spider` → `Wall Crawling`** y **`Swim` → `Air Swim`** (sólo el nombre
+  visible; `Universal.Spider` y `Universal.Swim` se conservan).
+- **Notifications mejorado:** radio y enfriamiento configurables del aviso de
+  Murderer cercano, dirección (N/NE/E…) en el mensaje, aviso de **Sheriff
+  caído** y toasts con color por tipo, duración según el texto y pila limitada
+  a 5.
+- **Knife Stab: nueva opción `Hold Mouse`.** Apaga el kill aura automático y
+  ataca al hacer clic o tocar la pantalla, con el **mismo alcance de
+  `Aura Range`**.
+- **Nueva tarjeta `Server Settings`** en Utilities: Job ID y número de
+  jugadores, copiar Job ID, rejoin y salto al servidor público más pequeño,
+  más grande o aleatorio. No escribe nada en el servidor (un cliente no puede).
 
 ## Cambios de v190
 

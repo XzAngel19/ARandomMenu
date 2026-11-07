@@ -14,7 +14,13 @@ local now=0
 local os={clock=function() return now end}
 local mt
 mt={__sub=function(a,b) return setmetatable({x=a.x-b.x,y=a.y-b.y,z=a.z-b.z},mt) end,
-    __index=function(v,k) if k=='Magnitude' then return math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z) end end}
+    __index=function(v,k)
+        if k=='Magnitude' then return math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z) end
+        if k=='X' then return v.x end
+        if k=='Y' then return v.y end
+        if k=='Z' then return v.z end
+        return nil
+    end}
 local function pos(x,y,z) return setmetatable({x=x,y=y,z=z},mt) end
 local function makePlayer(name,x)
     local root={Position=pos(x,0,0)}
@@ -77,6 +83,10 @@ local function addToggleOption(_,name,default,callback)
     options[name]=callback;callback(value)
 end
 local function addInformationOption() end
+-- v191: the proximity alert is tunable (radius + cooldown).
+local function addNumberOption(_,name,_,_,_,callback)
+    options[name]=callback;if callback then callback(nil) end
+end
 local function advance(seconds)
     now+=seconds
     if tick then tick(seconds) end

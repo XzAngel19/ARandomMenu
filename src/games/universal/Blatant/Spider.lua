@@ -4,8 +4,10 @@ export type Runtime = {
     host: any,
 }
 
+-- v191: renamed "Spider" -> "Wall Crawling" (visible name only; the
+-- ConfigKey/state/keybind stay "Universal.Spider").
 local Module = {
-    Name = "Spider",
+    Name = "Wall Crawling",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -156,11 +158,13 @@ function Module.init(context: Runtime): any
     end
 
     SpiderFeature = createUniversalFeature(
-        "Spider",
+        "Wall Crawling",
         "Climb a wall while moving toward it",
         20,
         toggleSpider,
-        {categoryName = "Exploits"}
+        -- The visible name changed in v191; the config key must not, or the
+        -- saved toggle and the player's keybind would be orphaned.
+        {categoryName = "Exploits", configKey = "Universal.Spider"}
     )
     local modeRows: {[string]: any} = {}
     local function refreshModeRows(): ()

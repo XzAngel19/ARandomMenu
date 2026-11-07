@@ -1,6 +1,8 @@
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Swim", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+-- v191: renamed "Swim" -> "Air Swim" (visible name only; ConfigKey, state and
+-- keybind stay "Universal.Swim").
+local Module = {Name = "Air Swim", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -20,7 +22,7 @@ function Module.init(context: Runtime): any
     end
 
     swim = framework.Categories.Exploits:CreateModule({
-        Name = "Swim",
+        Name = "Air Swim",
         Category = "Exploits",
         ConfigKey = "Universal.Swim",
         Order = 3,

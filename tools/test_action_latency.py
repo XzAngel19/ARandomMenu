@@ -58,7 +58,11 @@ assert "SHOT_CONFIRM_WINDOW: number = 1.5" in shoot
 knife_throw = read("src/games/MM2/Combat/KnifeThrow.lua")
 assert '"Delay"' in knife_throw  # Independent module with user-controlled delay
 knife_aura = read("src/games/MM2/Blatant/KnifeAura.lua")
-assert "lastAuraSwing < 0.86" in knife_aura  # measured swing cycle
+# The measured swing cycle (0.86 s) is still the AUTOMATIC aura's gate; v191
+# added "Hold Mouse", whose click path uses the knife's own cooldown (0.3 s)
+# instead, so the number now travels in `swingInterval`.
+assert "0.86" in knife_aura and "swingInterval" in knife_aura
+assert "holdMouse and manual ~= true" in knife_aura  # click mode never auto-swings
 unbox = read("src/games/MM2/Other/AutoUnbox.lua")
 assert '"Delay between boxes"' in unbox  # user-owned pacing
 

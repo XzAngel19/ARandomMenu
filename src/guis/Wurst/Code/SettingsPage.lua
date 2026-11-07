@@ -1917,10 +1917,15 @@ function Module.init(context: any): any
     -- Small build watermark on the window the user opens first: the
     -- short stamp ("v95") so a screenshot alone says which build it
     -- is, without opening anything.
-    local versionTag: string = string.match(
+    -- v191: the build is shown the way the player asked for it, in the
+    -- "Version 0.191" form rather than the internal "v191" stamp.
+    local buildNumber: string? = string.match(
         tostring(SOURCE_STAMP or ""),
-        "^v%d+"
-    ) or tostring(SOURCE_STAMP or "")
+        "^v(%d+)"
+    )
+    local versionTag: string = if buildNumber
+        then "Version 0." .. buildNumber
+        else tostring(SOURCE_STAMP or "")
     uiRecord = configWindow("UISettings", "UI Settings · " .. versionTag, {
         position = Vector2.new(screen.X - WINDOW_WIDTH - 12, 64),
         closable = false,
@@ -1995,7 +2000,11 @@ function Module.init(context: any): any
         {label = "Accent", default = Theme.accent, tokens = {"accent", "outline"}},
         {label = "Text", default = Theme.text, tokens = {"text", "accentText"}},
         {label = "Enabled", default = Theme.enabled, tokens = {"enabled"}},
-        {label = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
+        -- v191: this row is the "Arrows" token, but it now also paints the
+        -- window buttons (the Pin chip uses it too), so it is labelled
+        -- "Buttons". `key` keeps the v26 config key so a saved colour
+        -- is not lost by the rename.
+        {label = "Buttons", key = "Arrows", default = Theme.arrows, tokens = {"arrows"}},
     }
     -- Re-apply the saved palette when the page builds: the theme starts
     -- from the preset on every execution, so without this the chosen
@@ -2005,7 +2014,8 @@ function Module.init(context: any): any
         for _, row: any in ipairs(PALETTE_ROWS) do
             local saved: Color3? = colorFromConfig(
                 configData.values[
-                    uiPanel.configKey .. "." .. row.label:gsub("%W", "")
+                    uiPanel.configKey .. "."
+                        .. (row.key or row.label):gsub("%W", "")
                 ],
                 nil
             )
@@ -2040,7 +2050,8 @@ function Module.init(context: any): any
                             ThemeEngine.Set(token, color)
                         end
                     end
-                end
+                end,
+                row.key
             )
             if swatch and swatch.Parent and swatch.Parent:IsA("Frame") then
                 uiPaletteRows[labelText] = swatch.Parent :: Frame
@@ -2054,10 +2065,10 @@ function Module.init(context: any): any
     addNumberOption(uiPanel, "Opacity", OPACITY, 0.15, 1, function(value: number): ()
         local wanted: number = math.clamp(tonumber(value) or OPACITY, 0.15, 1)
         uiSettingsValues["Opacity"] = wanted
-        -- Composite each complete menu panel once. Individual rows, hover
-        -- styles, text and icons keep their normal relative contrast.
+        -- v191: background only. windows.SetOpacity fades the panel surface;
+        -- the title, labels, icons and controls stay at full opacity.
         windows.SetOpacity(wanted)
-    end, "Controls the opacity of each complete menu window.", 0.01, true)
+    end, "How see-through the menu BACKGROUND is. Text and controls stay fully readable at any value.", 0.01, true)
 
     uiSettingsValues["Tooltip opacity"] = TOOLTIP_OPACITY
     if state.featureTooltip then

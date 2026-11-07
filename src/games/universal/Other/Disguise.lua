@@ -860,6 +860,92 @@ function Module.init(context: Runtime): any
         end
     local invalidClipNotified: boolean = false
 
+    -- v191: the engine's Animate script asks for each clip the first time it
+    -- plays it. Writing ids whose asset is not downloaded yet makes that script
+    -- print "Failed to load animation with sanitized ID ..." and give up until
+    -- the character respawns -- exactly the "failed to load, restart the
+    -- character to see it" report. Downloading the ids first gives the script a
+    -- cached asset, so its very first load succeeds at injection. Failure is
+    -- silent and cached: an id that cannot be preloaded must never turn into a
+    -- notice or a repeat download attempt.
+    local preloadedClipIds: {[string]: boolean} = {}
+    local function preloadAnimations(ids: {string}): ()
+        local pending: {string} = {}
+        for _, id: string in ipairs(ids) do
+            if not preloadedClipIds[id] then
+                preloadedClipIds[id] = true
+                table.insert(pending, id)
+            end
+        end
+        if #pending == 0 then
+            return
+        end
+        pcall(function(): ()
+            local provider: any = (host :: any).ContentProvider
+                or game:GetService("ContentProvider")
+            if not provider or type(provider.PreloadAsync) ~= "function" then
+                return
+            end
+            local probes: {Instance} = {}
+            for _, id: string in ipairs(pending) do
+                local ok: boolean, probe: any = pcall(function(): any
+                    local animation: any = Instance.new("Animation")
+                    animation.AnimationId = id
+                    return animation
+                end)
+                if ok and probe then
+                    table.insert(probes, probe)
+                end
+            end
+            if #probes > 0 then
+                pcall(function(): ()
+                    provider:PreloadAsync(probes)
+                end)
+                for _, probe: Instance in ipairs(probes) do
+                    pcall(function(): ()
+                        probe:Destroy()
+                    end)
+                end
+            end
+        end)
+    end
+
+    -- The rig is not always finished when the module applies at injection: an
+    -- `Animate` script that has not replicated yet used to make this return 0
+    -- ("that avatar did not expose movement animations") with nothing to retry
+    -- it. Wait for the script instead of giving up on the first frame.
+    local function awaitAnimateScript(character: Model): Instance?
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if animate then
+            return animate
+        end
+        -- Frames, not fixed sleeps: the copy helpers never block for a wall
+        -- clock time, and a rig that never exposes the script stops the wait
+        -- instead of hanging it.
+        local runService: any = (host :: any).RunService
+        if not runService then
+            pcall(function(): ()
+                runService = game:GetService("RunService")
+            end)
+        end
+        if not runService then
+            return nil
+        end
+        for _ = 1, 240 do
+            local stepped: boolean = pcall(function(): ()
+                runService.Heartbeat:Wait()
+            end)
+            if not stepped or character.Parent == nil then
+                return nil
+            end
+            animate = character:FindFirstChild("Animate")
+            if animate then
+                return animate
+            end
+        end
+        return nil
+    end
+
     -- What every caller uses: the target's clips are resolved against the rig
     -- and written into the Animate slots. The result is verified by
     -- settleMovementAnimations right after, which owns every wait and every
@@ -870,7 +956,7 @@ function Module.init(context: Runtime): any
         slots: {[string]: any},
         targetRig: string?
     ): number
-        local animate: Instance? = character:FindFirstChild("Animate")
+        local animate: Instance? = awaitAnimateScript(character)
         if not animate then
             return 0
         end
@@ -908,6 +994,19 @@ function Module.init(context: Runtime): any
         -- slots cannot be written: it reports success without changing
         -- what the script plays here, which is exactly the reported
         -- "I pick Mage and Ninja keeps playing" desync.
+        -- Cache every clip first (see preloadAnimations): this is what stops
+        -- the engine's "Failed to load animation" at injection.
+        local clipIds: {string} = {}
+        for _, value: any in pairs(resolved) do
+            local list: {any} = if type(value) == "table" then value else {value}
+            for _, entry: any in ipairs(list) do
+                local id: string? = animationIdFromValue(entry)
+                if id then
+                    table.insert(clipIds, id)
+                end
+            end
+        end
+        preloadAnimations(clipIds)
         local changedCount: number = writeAnimationSlots(animate, resolved)
         if changedCount == 0 then
             changedCount = applySlotsViaDescription(humanoid, resolved)
@@ -1222,6 +1321,43 @@ function Module.init(context: Runtime): any
     local mirrorAllowed: boolean = false
     local lastResolvedSlots: {[string]: any}? = nil
 
+    -- v191: a restart is not a retry. The classic Animate script gives up on the
+    -- first clip it cannot load and never asks again, so one failed attempt at
+    -- injection left the avatar in its rest pose until the player respawned the
+    -- character. Now the script is restarted (the clips are already in the
+    -- engine's cache thanks to preloadAnimations) and, if it still has no track,
+    -- the ids are written back once more. Nothing is reverted here: the caller
+    -- keeps deciding whether the rig's own set comes back.
+    local function retryAnimateScript(
+        character: Model,
+        humanoid: Humanoid,
+        attempts: number
+    ): boolean
+        local animate: Instance? = character:FindFirstChild("Animate")
+        if not animate then
+            return false
+        end
+        for attempt: number = 1, attempts do
+            restartAnimateScript(animate)
+            task.wait(0.2 + attempt * 0.15)
+            if character.Parent == nil then
+                return false
+            end
+            local tracks: number = #playingAnimationTracks(humanoid)
+            if tracks > 0
+                and (poseMoves(humanoid, 0.25) ~= false
+                    or poseDriven(humanoid)) then
+                return true
+            end
+            -- No track at all means the script stopped before it even asked for
+            -- a clip: hand it the same ids again before the next restart.
+            if tracks == 0 and attempt == 1 and lastResolvedSlots then
+                writeAnimationSlots(animate, lastResolvedSlots)
+            end
+        end
+        return false
+    end
+
     local function settleMovementAnimations(
         character: Model,
         humanoid: Humanoid
@@ -1247,6 +1383,12 @@ function Module.init(context: Runtime): any
             if poseDriven(humanoid) then
                 return true
             end
+        end
+        -- v191: the pose is frozen and the script may simply have given up on
+        -- its first load (the "failed to load" report). Retry it before
+        -- declaring the target's clips unusable.
+        if retryAnimateScript(character, humanoid, 3) then
+            return true
         end
         -- Description retry, the offline-capable route: the ids came
         -- from the target's HumanoidDescription (they are not in this

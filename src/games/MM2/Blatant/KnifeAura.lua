@@ -30,6 +30,10 @@ function Module.init(runtime: any): any
     local knifeSettings: any = {
         aura = false,
         auraRange = 14,
+        -- v191 "Hold Mouse": the automatic swing loop is off and the knife
+        -- strikes when the player clicks (or taps), at the SAME reach the aura
+        -- uses.
+        holdMouse = false,
     }
     state.mm2KnifeRuntime = {
         masterEnabled = false,
@@ -104,8 +108,14 @@ function Module.init(runtime: any): any
     end
 
     local knifeControllerGeneration: number = 0
-    local function processKnifeAura(): ()
-        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then return end
+    local function processKnifeAura(manual: boolean?): ()
+        -- In Hold Mouse mode nothing swings on its own: only the click path
+        -- calls this with `manual`. The manual swing is throttled by the knife's
+        -- own cooldown instead of the slower aura interval, so every click that
+        -- the tool accepts actually lands.
+        if knifeSettings.holdMouse and manual ~= true then return end
+        local swingInterval: number = if manual == true then 0.3 else 0.86
+        if os.clock() - state.mm2KnifeRuntime.lastAuraSwing < swingInterval then return end
         local knife: Tool?, localRoot: BasePart? = canUseEquippedKnife(true)
         if not knife or not localRoot then
             return
@@ -123,7 +133,7 @@ function Module.init(runtime: any): any
             or not targetRoot
             or (targetRoot.Position - localRoot.Position).Magnitude
                 > currentRange
-            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < 0.86 then
+            or os.clock() - state.mm2KnifeRuntime.lastAuraSwing < swingInterval then
             return
         end
 
@@ -182,11 +192,63 @@ function Module.init(runtime: any): any
         end)
     end
 
+    -- The click/tap path for Hold Mouse. It is a real input listener (not a
+    -- tool hook) because the whole point is to reach targets outside the
+    -- handle's natural touch range: the player clicks, this picks the closest
+    -- living target inside "Aura Range" and sends the same HandleTouched contact
+    -- the automatic aura sends.
+    local holdConnection: RBXScriptConnection? = nil
+    local function stopHoldMouse(): ()
+        if holdConnection then
+            pcall(function(): ()
+                (holdConnection :: RBXScriptConnection):Disconnect()
+            end)
+            holdConnection = nil
+        end
+    end
+    local function refreshHoldMouse(): ()
+        stopHoldMouse()
+        if not knifeSettings.holdMouse or not knifeSettings.aura
+            or not state.mm2KnifeRuntime.masterEnabled then
+            return
+        end
+        local inputService: any = UserInputService
+        if not inputService or not inputService.InputBegan then
+            return
+        end
+        holdConnection = inputService.InputBegan:Connect(function(
+            input: any,
+            gameProcessed: boolean
+        ): ()
+            if gameProcessed then
+                return
+            end
+            local kind: any = input.UserInputType
+            local clicked: boolean = kind == Enum.UserInputType.MouseButton1
+            local touched: boolean = kind == Enum.UserInputType.Touch
+            if not clicked and not touched then
+                return
+            end
+            if inputService:GetFocusedTextBox() ~= nil then
+                return
+            end
+            local menu: any = services and services.menu or nil
+            if menu and type(menu.isCapturingInput) == "function" then
+                local ok: boolean, capturing: any = pcall(menu.isCapturingInput)
+                if ok and capturing == true then
+                    return
+                end
+            end
+            processKnifeAura(true)
+        end)
+    end
+
     local function refreshKnifeController(): ()
         knifeControllerGeneration += 1
         disconnectFeatureConnection("MM2KnifeVirtualHitbox")
         disconnectFeatureConnection("MM2KnifeAura")
         disconnectFeatureConnection("MM2KnifeController")
+        refreshHoldMouse()
         if not knifeSettings.aura or not state.mm2KnifeRuntime.masterEnabled then
             return
         end
@@ -404,7 +466,7 @@ function Module.init(runtime: any): any
     if wasEnabled then aura:Toggle(false) end
     local KnifeFeature: any = aura.Feature
     local originalDescription: string = KnifeFeature.description
-    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife. Includes Kill All and Kill Player."
+    KnifeFeature.description = "MM2 melee combat: Knife Aura stabs with your held knife (or click with Hold Mouse). Includes Kill All and Kill Player."
     KnifeFeature.tooltipText = KnifeFeature.description
     if type(KnifeFeature.SetName) == "function" then
         KnifeFeature:SetName("Knife Stab")
@@ -418,6 +480,7 @@ function Module.init(runtime: any): any
     aura.OptionFilter = function(name: string): boolean
         return name == "Knife Aura"
             or name == "Aura Range"
+            or name == "Hold Mouse"
             or name == "Kill All"
             or name == "Kill Player"
     end
@@ -430,6 +493,21 @@ function Module.init(runtime: any): any
     aura:CreateSlider({Name = "Aura Range", Min = 7, Max = 30, Default = 14,
         Show = {Option = "Knife Aura", Values = {true}},
         Function = function(value: number): () knifeSettings.auraRange = value end})
+    -- v191: the automatic swing loop can be replaced by the player's own click
+    -- / tap. The reach is the same one "Aura Range" sets, so a click lands a
+    -- stab on anything the aura could have reached on its own.
+    aura:CreateToggle({
+        Name = "Hold Mouse",
+        Default = false,
+        Show = {Option = "Knife Aura", Values = {true}},
+        Tooltip = "No automatic stabs: the knife strikes where you click (or tap), "
+            .. "with the same reach as Aura Range.",
+        Function = function(value: boolean): ()
+            knifeSettings.holdMouse = value
+            state.mm2KnifeRuntime.lastAuraSwing = -math.huge
+            refreshKnifeController()
+        end,
+    })
     aura:CreateButton({
         Name = "Kill All",
         Function = killAllPlayersAction,
@@ -492,6 +570,7 @@ function Module.init(runtime: any): any
     end
 
     activeCleanup = function(): ()
+        stopHoldMouse()
         if aura.Enabled then aura:Toggle(false) end
         if KnifeFeature.enabled then
             KnifeFeature.enabled = false
@@ -513,6 +592,7 @@ function Module.init(runtime: any): any
         aura.OptionFilter = function(name: string): boolean
             return name ~= "Knife Aura"
                 and name ~= "Aura Range"
+                and name ~= "Hold Mouse"
                 and name ~= "Kill All"
                 and name ~= "Kill Player"
         end

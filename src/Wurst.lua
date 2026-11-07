@@ -114,7 +114,7 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
-local SOURCE_STAMP: string = "v190-20261107-gun-ping-names"
+local SOURCE_STAMP: string = "v191-20261107-server-settings-fling-hold"
 
 local BOOT_STARTED_AT: number = os.clock()
 local BOOT_FINGERPRINT_SECONDS: number = 0
@@ -3743,7 +3743,43 @@ local toastSequence: number = 0
 local lastToastText: string = ""
 local lastToastAt: number = -math.huge
 
-local function notify(message: any): ()
+-- v191 notification pass: the toast is the only channel the player reads
+-- during a round, so it now
+--   * stays on screen long enough to read a long message (length-based
+--     lifetime instead of a flat 3.1 s),
+--   * never stacks into a wall that covers the play area (oldest toast is
+--     retired once the stack is full), and
+--   * paints its accent bar by kind ("danger" red, "good" green, otherwise
+--     the theme accent), so a warning does not look like the fifth "Loaded"
+--     line of the session.
+local TOAST_STACK_LIMIT: number = 5
+local activeToasts: {any} = {}
+
+local function toastAccent(kind: string?): Color3
+    if kind == "danger" then
+        return Theme.negative
+    end
+    if kind == "good" then
+        return Theme.enabled
+    end
+    return Theme.accent
+end
+
+local function toastLifetime(text: string): number
+    -- ~55 characters per second of comfortable reading, floor 2.6 s and a
+    -- ceiling so a stack cannot pile up behind one long message.
+    return math.clamp(2.6 + #text * 0.022, 2.6, 7)
+end
+
+local function retireToast(toast: any): ()
+    for index: number = #activeToasts, 1, -1 do
+        if activeToasts[index] == toast then
+            table.remove(activeToasts, index)
+        end
+    end
+end
+
+local function notify(message: any, kind: string?): ()
     local text: string = tostring(message)
     local now = os.clock()
     if text == lastToastText and now - lastToastAt < 3 then return end
@@ -3779,9 +3815,7 @@ local function notify(message: any): ()
     })
     local _accent: Frame = (create("Frame", {
         Parent = toast,
-        BackgroundColor3 = state.guiStyle == "Default"
-            and Theme.accent
-            or Theme.accent,
+        BackgroundColor3 = toastAccent(kind),
         BorderSizePixel = 0,
         Size = UDim2.new(0, 4, 1, 0),
         ZIndex = 302,
@@ -3803,7 +3837,17 @@ local function notify(message: any): ()
         TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
         {GroupTransparency = 0}
     ):Play()
-    task.delay(3.1, function(): ()
+    table.insert(activeToasts, toast)
+    while #activeToasts > TOAST_STACK_LIMIT do
+        local oldest: any = table.remove(activeToasts, 1)
+        if oldest and oldest ~= toast and oldest.Parent then
+            pcall(function(): ()
+                oldest:Destroy()
+            end)
+        end
+    end
+    task.delay(toastLifetime(text), function(): ()
+        retireToast(toast)
         if not toast.Parent then
             return
         end

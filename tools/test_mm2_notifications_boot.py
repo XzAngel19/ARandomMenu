@@ -22,6 +22,18 @@ with tempfile.TemporaryDirectory(prefix='notifications-boot-') as temp:
 local feature
 for _,item in ipairs(ex.allFeatures) do if item.configKey=='MM2.Notifications' then feature=item end end
 assert(feature and feature.categoryName=='Utilities')
+-- v191: the alert set grew (configurable radius/cooldown + the sheriff alert)
+-- and every row must exist in the real booted UI, not just in the source.
+assert(ex.state.toggleControls['MM2.Notifications.SheriffDown'],
+ 'v191: the Sheriff Down alert must be a real row')
+local radius=assert(ex.state.valueControls['MM2.Notifications.Closeradius'],
+ 'v191: Close radius must be a real slider')
+local cooldown=assert(ex.state.valueControls['MM2.Notifications.Closecooldown'],
+ 'v191: Close cooldown must be a real slider')
+assert(radius.default == 30, 'Close radius defaults to 30 studs')
+assert(cooldown.default == 8, 'Close cooldown defaults to 8 s')
+assert(ex.state.toggleControls['MM2.Notifications.MurderClose'],
+ 'the proximity alert itself still exists')
 local instant=assert(ex.state.toggleControls['MM2.Notifications.InstantRoles'])
 assert(instant.getChecked()==EXPECT_OPTION, 'real UI must restore the migrated option')
 assert(feature.enabled==EXPECT_MASTER, 'real card must restore the migrated master')

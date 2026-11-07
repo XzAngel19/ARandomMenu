@@ -7,6 +7,29 @@ from test_mm2_precision import PRELUDE, section
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'src/games/universal/Other/Disguise.lua').read_text()
 
+# v191: the injection report ("failed to load ... restart the character to see
+# it") has three guards, and all three must live in the shipped source:
+#   1. the clips are preloaded BEFORE the slots are written, so the engine's
+#      Animate script finds a cached asset on its first load;
+#   2. a character whose Animate script has not replicated yet is awaited
+#      instead of being reported as "no movement animations";
+#   3. a frozen pose retries the script (restart + rewrite) before the rig's own
+#      clips are restored.
+assert 'local function preloadAnimations(' in SOURCE
+assert 'ContentProvider' in SOURCE and 'PreloadAsync' in SOURCE
+assert SOURCE.index('preloadAnimations(clipIds)') < SOURCE.index(
+    'local changedCount: number = writeAnimationSlots(animate, resolved)'
+), 'the clips must be cached before the Animate slots are written'
+assert 'local function awaitAnimateScript(' in SOURCE
+assert SOURCE.index('local animate: Instance? = awaitAnimateScript(character)') < SOURCE.index(
+    'local resolved: {[string]: any}, dropped: number ='
+), 'the rig is awaited before the slots are resolved'
+assert 'local function retryAnimateScript(' in SOURCE
+settle = SOURCE.index('local function settleMovementAnimations(')
+assert SOURCE.index('if retryAnimateScript(character, humanoid, 3) then', settle) < SOURCE.index(
+    '-- Description retry, the offline-capable route', settle
+), 'the script retry must run before the description fallback'
+
 script = PRELUDE + r'''
 local character=setmetatable({},{__tostring=function() return "character" end})
 local activeCard={Enabled=true,status=nil,notifies={}}

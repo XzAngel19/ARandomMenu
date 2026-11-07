@@ -82,25 +82,28 @@ local actions=assert(panel:FindFirstChild('Actions'))
 assert(actions:FindFirstChild('Yes')).MouseButton1Click:Fire()
 assert(yes==1 and no==0,'the centred dialog preserves consent callbacks')
 
--- Window alpha must flatten the whole panel, not independently fade opaque
--- descendants and leave text/strokes floating. Live children and interaction
--- states must be left untouched; only the group's composite alpha changes.
+-- v191: Opacity is the BACKGROUND only. The panel shell fades; the group stays
+-- fully opaque so text, icons and strokes keep their contrast at any setting,
+-- and no descendant is individually faded.
 local category=assert(state.clickGui.categories.Exploits.window)
 local root=category.root
 assert(root.ClassName=='CanvasGroup','normal menu window must composite as a group')
-near(root.BackgroundTransparency,0,'panel base is solid before group opacity')
+near(root.BackgroundTransparency,1-(state.windows.opacity or 0.85),'panel base follows the current opacity')
 local header=assert(root:FindFirstChild('Header'))
 local baseHeader=header.BackgroundTransparency
 local sampleRow=assert(category.body:FindFirstChild('AntiAFKFeature') or category.body:GetChildren()[1])
 local baseRow=sampleRow.BackgroundTransparency
 for _,value in ipairs({0.15,0.35,0.85,1,0.5}) do
  opacityControl.apply(value)
- near(root.GroupTransparency,1-value,'group alpha')
+ near(root.GroupTransparency,0,'content is never faded by the opacity slider')
+ near(root.BackgroundTransparency,1-value,'background alpha follows the slider')
  near(header.BackgroundTransparency,baseHeader,'header is not individually faded')
  near(sampleRow.BackgroundTransparency,baseRow,'rows keep their original styling')
 end
 local created=state.windows.Create({id='OpacityAfter',title='after',position=Vector2.new(10,10),size=Vector2.new(200,100)})
-assert(created.root.ClassName=='CanvasGroup');near(created.root.GroupTransparency,0.5,'new windows inherit alpha')
+assert(created.root.ClassName=='CanvasGroup')
+near(created.root.GroupTransparency,0,'new windows never fade their content')
+near(created.root.BackgroundTransparency,0.5,'new windows inherit the background alpha')
 
 -- Different viewport orientations must not put every category title bar on
 -- the same spot. Moving back to a large viewport must recover a user's saved

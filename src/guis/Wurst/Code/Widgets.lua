@@ -2572,8 +2572,11 @@ function Module.init(context: any): WidgetLibrary
 
     state.colorPicker = colorPicker
 
-    local function addColorOption(feature, labelText, defaultColor, callback, hintText)
-        local optionKey = feature.configKey .. "." .. labelText:gsub("%W", "")
+    -- `keyText` (v191) keeps the SAVED config key stable when a row is
+    -- renamed: "Arrows" became "Buttons" and the stored colour must survive.
+    local function addColorOption(feature, labelText, defaultColor, callback, hintText, keyText)
+        local optionKey = feature.configKey .. "."
+            .. (keyText or labelText):gsub("%W", "")
         local color = colorFromConfig(configData.values[optionKey], defaultColor)
         -- A nil here (missing saved value AND missing default token) used to
         -- crash hexOf below and take the whole Settings page down with it.

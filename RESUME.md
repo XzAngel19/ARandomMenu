@@ -4,7 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v190-20261107-gun-ping-names`**.
+> **Estado actual:** build **`v191-20261107-server-settings-fling-hold`**,
+> que el menú muestra como **`Version 0.191`**.
 > Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
 > desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
 > viene de v187 `70bbfc4` en `arena/a4930bca-arandommenu`).
@@ -35,7 +36,42 @@
   5. Commit + push **normales** a `arena/9492e6b6-arandommenu`. Sin force-push,
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
-  "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+  "UI Settings · Version 0.NNN" en el menú es como el usuario verifica la
+  versión (v191 cambió el formato: antes decía "vNNN").
+
+## v191 — Doce ajustes: Opacity sólo-fondo, Fling completo, Hold Mouse y Server Settings (2026-11-07)
+
+Detalle completo en `docs/FIXES-v191.md`. Doce peticiones en la misma tanda:
+
+- **`Arrows` → `Player Pointers`** (sólo el nombre; `Universal.Arrows`, estado y
+  keybind intactos) y el **botón de Pin** pasa a usar el token `arrows`, con un
+  `PinTint` detrás: el chip se tiñe con el color de las flechas.
+- **La fila de paleta `Arrows` se llama `Buttons`** y conserva su clave guardada
+  (`key = "Arrows"` + `keyText` en `addColorOption`), así que el color elegido
+  antes sigue aplicándose.
+- **`Opacity` afecta sólo al fondo.** `SetOpacity` ya no escribe
+  `GroupTransparency` en el `CanvasGroup`: marca el panel con
+  `WurstPanelSurface` y mueve `BackgroundTransparency`. Textos, iconos y
+  controles quedan opacos siempre.
+- **Etiqueta `Version 0.NNN`** derivada del `SOURCE_STAMP`; este build dice
+  `Version 0.191`.
+- **Fling de MM2 completo otra vez**: `Fling Murderer`, `Fling Sheriff`,
+  `Fling All Innocents`, lista con rol, `Fling` y `Auto Fling Selected Target`,
+  con **Power 12 / Retries 3** de fábrica (máximos del motor).
+- **Disguise** precarga los clips (`ContentProvider:PreloadAsync`), espera al
+  script `Animate` y reintenta el script si la pose queda congelada, en vez de
+  exigir reiniciar el personaje.
+- **Blurt Roles es una acción instantánea**: sin `Blurt Now`; el automático es
+  la opción `Auto blurt`.
+- **`Spider` → `Wall Crawling`** (con `configKey` explícito) y **`Swim` →
+  `Air Swim`**.
+- **Notifications**: radio/enfriamiento configurables, dirección (N/NE/…),
+  `Sheriff Down`, y toasts con color por tipo, duración por longitud y pila de 5.
+- **Knife Stab `Hold Mouse`**: sin aura automática; clic/toque golpea al mismo
+  alcance de `Aura Range`, con el cooldown del cuchillo y limpieza del listener.
+- **`Server Settings`** en Utilities: Job ID y jugadores, copiar, rejoin y salto
+  al servidor público más pequeño/grande/aleatorio (con enfriamiento y avisos).
+  No escribe nada en el servidor.
 
 ## v190 — Gun PC sin `GetValue`, Fling de MM2 de vuelta y renombres (2026-11-07)
 
