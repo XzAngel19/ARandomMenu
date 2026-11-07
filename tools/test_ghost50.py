@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Actual Ghost controller: native walking ownership, sprint, jumping, Fly transitions and cleanup.
+"""Actual Ghost controller (v189): parked real body, native walk, velocity fly.
 
-v188 additions exercised here: the walk speed slider, the sprint multiplier, the
-minimum default Void depth, the Outline toggle (blue Highlight gone by default),
-the disguise attribute for other menu indexes, and the walking void guard.
-Does not simulate Roblox's collision solver; verifies Walk never writes the
-ghost's CFrame except through the bounded void guard.
+Verifies the failures reported live against v188 are structurally impossible:
+  * the real body is ANCHORED, non-collidable and re-placed at 10 Hz at most
+    (v188 rewrote it every frame on a live collidable body -> jitter/teleport);
+  * the clone spawns ABOVE the real body, never inside it;
+  * Fly is velocity on an UNANCHORED rig (v188 anchored the root, so velocity
+    was ignored and Fly did nothing);
+  * no Void guard, no Sprint multiplier, no Outline options remain;
+  * Void depth defaults to 5 and old profiles migrate to 5.
+Does not simulate Roblox's collision solver; verifies the module's own writes.
 """
 import os, subprocess, tempfile
 from pathlib import Path
@@ -68,21 +72,31 @@ end
 makeCharacter=function(position)
  local model=object('Model',{Archivable=false})
  local root=object('Part',{Name='HumanoidRootPart',Position=position,CFrame=CFrame.new(position),AssemblyLinearVelocity=Vector3.zero,AssemblyAngularVelocity=Vector3.zero});root.Parent=model
- for _,name in ipairs({'Head','Torso'}) do local p=object('Part',{Name=name});p.Parent=model end
+ for _,name in ipairs({'Head','Torso'}) do local p=object('Part',{Name=name,CanCollide=true});p.Parent=model end
  local h=object('Humanoid',{Name='Humanoid',Health=100,WalkSpeed=16,MoveDirection=Vector3.new(1,0,0),FloorMaterial='Ground',RigType='R6'});h.Parent=model
  return model,h,root
 end
 local Instance={new=function(class) return object(class) end}
 local character,h,root=makeCharacter(Vector3.new(0,20,0))
 local player={Character=character}
-local world=object('Workspace',{CurrentCamera={CameraSubject=h,CFrame=CFrame.new(0,20,0)},FallenPartsDestroyHeight=-500,Raycast=function() return nil end})
-local pressed={};local focused=false;local movementForward,movementRight=0,0;local jumpHeld=false
+local world=object('Workspace',{CurrentCamera={CameraSubject=h,CFrame=CFrame.new(0,20,0)},FallenPartsDestroyHeight=-500,
+ Raycast=function() return nil end})
 RaycastParams={new=function() return {FilterDescendantsInstances={}} end}
-local input={JumpRequest=signal(),GetFocusedTextBox=function() return focused end,IsKeyDown=function(_,k) return pressed[k] end,
- KeyboardEnabled=true}
+local pressed={};local focused=false;local movementForward,movementRight=0,0;local jumpHeld=false
+local input={JumpRequest=signal(),GetFocusedTextBox=function() return focused end,
+ IsKeyDown=function(_,k) return pressed[k] end,KeyboardEnabled=true}
 local pre=signal()
+-- The controller throttles the parked-body sync with os.clock; the shared
+-- PRELUDE freezes that clock, so it advances with each simulated frame here.
+local clock=0
+os.clock=function() return clock end
+local rawFire=pre.Fire
+function pre:Fire(dt) clock=clock+(dt or 0);rawFire(self,dt) end
 local flags={};local free=false;local spec=false
-local services={activity={set=function(n,v) flags[n]=v end},freeCam={IsActive=function() return free end},spectate={IsActive=function() return spec end},movementInput={getVector=function() return movementForward,movementRight end,isJumpHeld=function() return jumpHeld end}}
+local services={activity={set=function(n,v) flags[n]=v end},freeCam={IsActive=function() return free end},
+ spectate={IsActive=function() return spec end},
+ movementInput={getVector=function() return movementForward,movementRight end,
+ isJumpHeld=function() return jumpHeld end}}
 local card
 local framework={Categories={Utilities={CreateModule=function(_,d)
  card={Options={}}
@@ -107,135 +121,148 @@ local framework={Categories={Utilities={CreateModule=function(_,d)
  return card
 end}}}
 '''+ '\nlocal savedMarker=nil\nconfigData={values={}}\nqueueConfigSave=function() savedMarker=true end\nlocal Ghost=(function()\n'+(ROOT/'src/games/universal/Blatant/Invisible.lua').read_text()+'\nend)()\n'+r'''
-Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
-assert(not card.Options['Ghost Fly'].Value)
-assert(card.Options['Void depth'].Value==1 and card.Options['Void depth'].Metadata.min==1
-    and card.Options['Void depth'].Value==card.Options['Void depth'].Metadata.min,
-    'Void depth must default to its minimum')
-card:Toggle(true);assert(flags.ghost and not character.Archivable and pre:Count()==1)
-local clone=world:FindFirstChild('Wurst_Ghost');local gh=clone:FindFirstChildOfClass('Humanoid');local gr=clone:FindFirstChild('HumanoidRootPart')
-assert(not gr.Anchored and clone:FindFirstChild('Torso').CanCollide and not gr.CanCollide)
--- v188: walking input comes from the shared movement service (mobile
--- sticks and custom keybinds), not from raw WASD or the real humanoid.
-movementForward=1;pre:Fire(.02)
-assert(world.CurrentCamera.CameraSubject==gh and gh.WalkSpeed==16)
-near(gh.MoveDirection.Z,-1)
-near(gh.MoveDirection.X,0)
--- v188: no blue outline by default, and the puppet is disguised from the
--- other menu indexes (Entity/NPCESP reject WurstDisguise models).
-assert(not clone:FindFirstChild('GhostHighlight'),'ghost must not draw a Highlight by default')
-assert(clone:GetAttribute('WurstDisguise')==true,'ghost clone must carry the disguise attribute')
-card.Options.Outline:Set(true)
-local outline=clone:FindFirstChild('GhostHighlight')
-assert(outline and outline.OutlineTransparency==0.15 and outline.DepthMode=='Occluded',
- 'opt-in outline is occluded, never through walls')
-card.Options.Outline:Set(false);assert(not clone:FindFirstChild('GhostHighlight'))
-card.Options['Ghost transparency']:Set(0.8)
-assert(clone:FindFirstChild('Torso').Transparency==0.8,'transparency slider applies live')
-card.Options['Ghost transparency']:Set(0.5)
-local writes=gr.frameWrites;local count=loads
+local function reinit()
+ Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
+end
+reinit()
+-- Menu surface: four options, and none of the removed ones. Void depth 5.
+assert(card.Options['Ghost Fly'].Value==false and not card.Options['Fly speed'].Visible)
+assert(not card.Options['Sprint multiplier'] and not card.Options['Void guard'] and not card.Options.Outline,
+ 'v189 removed Sprint multiplier, Void guard and Outline')
+assert(card.Options['Void depth'].Value==5 and card.Options['Void depth'].Metadata.min==5
+ and card.Options['Void depth'].Metadata.max==350,'Void depth defaults to the minimum, now 5')
+local count=0;for _ in pairs(card.Options) do count+=1 end
+assert(count==5,'Ghost keeps exactly Fly, Fly speed, Void depth, WalkSpeed, transparency (5 options)')
+
+card:Toggle(true)
+assert(flags.ghost and not character.Archivable and pre:Count()==1)
+local clone=world:FindFirstChild('Wurst_Ghost')
+local gh=clone:FindFirstChildOfClass('Humanoid')
+local gr=clone:FindFirstChild('HumanoidRootPart')
+-- The real body is parked: anchored, non-collidable, and NOT respawned on top
+-- of the clone.
+assert(root.Anchored and not root.CanCollide and not character:FindFirstChild('Torso').CanCollide,
+ 'the real body must be anchored and non-collidable while Ghost is on')
+assert(h.PlatformStand and h.WalkSpeed==0)
+-- The clone spawns ABOVE the body, three studs up from where the body stands.
+near(gr.Position.Y,23)
+-- No blue outline, and the disguise keeps it out of NPC ESP/Entity.
+assert(not clone:FindFirstChild('GhostHighlight'),'ghost must never draw a Highlight')
+assert(clone:GetAttribute('WurstDisguise')==true)
+assert(gr.AssemblyLinearVelocity.Magnitude==0 and not gr.Anchored and clone:FindFirstChild('Torso').CanCollide)
+
+-- Walk: the clone moves through the movement service, never by CFrame.
+local writes=gr.frameWrites;local animationLoads=loads
 for _=1,20 do pre:Fire(.02) end
-assert(gr.frameWrites==writes and loads==count,'Walk must not position-lock or reload animation every frame')
-pressed.LeftShift=true;pre:Fire(.02);assert(gh.WalkSpeed==32)
-pressed.LeftShift=false;pre:Fire(.02);assert(gh.WalkSpeed==16)
--- v188: Ghost WalkSpeed is a real option and the sprint is a multiplier.
-card.Options['Ghost WalkSpeed']:Set(40);pre:Fire(.02);assert(gh.WalkSpeed==40)
-pressed.LeftShift=true;pre:Fire(.02);assert(gh.WalkSpeed==80)
-pressed.LeftShift=false;card.Options['Sprint multiplier']:Set(1);pre:Fire(.02)
-assert(gh.WalkSpeed==40,'multiplier 1 disables sprinting')
-card.Options['Sprint multiplier']:Set(2);card.Options['Ghost WalkSpeed']:Set(16);pre:Fire(.02)
+assert(gr.frameWrites==writes and loads==animationLoads,'Walk must not position-lock or reload animations every frame')
+movementForward=1;pre:Fire(.02)
+near(gh.MoveDirection.Z,-1);near(gh.MoveDirection.X,0)
 assert(gh.WalkSpeed==16)
+card.Options['Ghost WalkSpeed']:Set(40);pre:Fire(.02);assert(gh.WalkSpeed==40)
+card.Options['Ghost WalkSpeed']:Set(16)
+focused=true;movementForward=0;pre:Fire(.02);assert(gh.MoveDirection.Magnitude==0);focused=false
 input.JumpRequest:Fire();assert(gh.Jump)
 gh.Jump=false;gh.FloorMaterial='Air';gh.state='Freefall';input.JumpRequest:Fire();assert(not gh.Jump)
-gr.CFrame=CFrame.new(10,-20,0);gr.AssemblyLinearVelocity=Vector3.new(0,-100,0);writes=gr.frameWrites
-pre:Fire(.02);assert(gr.frameWrites==writes);near(gr.Position.Y,-20);near(gr.AssemblyLinearVelocity.Y,-100)
--- v188: the void guard is bounded, not a flight plane: only under the last
--- known height minus the margin, and only while walking.
-gr.CFrame=CFrame.new(10,-400,0);writes=gr.frameWrites;pre:Fire(.02)
-assert(gr.frameWrites==writes+1,'void guard re-seats a ghost that fell past the map floor')
-near(gr.Position.Y,-236)
-gr.CFrame=CFrame.new(10,-20,0)
-card.Options['Void guard']:Set(false);gr.CFrame=CFrame.new(10,-400,0);writes=gr.frameWrites;pre:Fire(.02)
-assert(gr.frameWrites==writes,'Void guard OFF leaves native falling alone')
-card.Options['Void guard']:Set(true);gr.CFrame=CFrame.new(10,20,0)
--- No ground ray or fixed-height fallback: native physics is free to keep falling.
-focused=true;pressed.LeftShift=true;pre:Fire(.02);assert(gh.WalkSpeed==16 and gh.MoveDirection.Magnitude==0);focused=false
-movementForward=0
-card.Options['Ghost Fly']:Set(true);pre:Fire(.1)
-assert(gr.Anchored and gh.PlatformStand and not clone:FindFirstChild('Torso').CanCollide)
--- v188: Fly is velocity driven, so it comes from the shared movement service
--- (mobile sticks, custom keybinds) instead of raw WASD keys, and raw keys are
--- not read at all any more.
-pressed.W=true;writes=gr.frameWrites;pre:Fire(.1)
-assert(gr.AssemblyLinearVelocity.Magnitude==0,'Fly ignores raw WASD; the service is the source')
-pressed.W=false;movementForward=1;writes=gr.frameWrites;pre:Fire(.1)
-assert(gr.frameWrites==writes,'Fly must not write the ghost CFrame')
+gh.FloorMaterial='Ground';gh.state='Running'
+
+-- The body sync is throttled to 10 Hz, not per frame.
+local bodyWrites=root.frameWrites
+for _=1,5 do pre:Fire(.01) end
+assert(root.frameWrites-bodyWrites<=1,'the parked body is re-placed at most once per 0.1 s')
+for _=1,10 do pre:Fire(.01) end
+assert(root.frameWrites-bodyWrites>=1,'the parked body still follows the clone')
+near(root.Position.Y,gr.Position.Y-5)
+
+-- Fly: velocity on an UNANCHORED rig. v188 anchored the root and then set
+-- velocity, which the engine ignores.
+card.Options['Ghost Fly']:Set(true)
+assert(not gr.Anchored and gh.PlatformStand and not clone:FindFirstChild('Torso').CanCollide,
+ 'Fly must leave the rig unanchored; anchored parts ignore velocity')
+movementForward=0;pressed.W=true;pre:Fire(.1)
+assert(gr.AssemblyLinearVelocity.Magnitude==0,'Fly ignores raw WASD; the movement service is the source')
+pressed.W=false
+movementForward=1;writes=gr.frameWrites;pre:Fire(.1)
+assert(gr.frameWrites==writes,'Fly must never write the clone CFrame')
 near(gr.AssemblyLinearVelocity.Z,-55)
 movementForward=0;movementRight=1;pre:Fire(.1);near(gr.AssemblyLinearVelocity.X,55)
-movementRight=0;movementForward=0;pressed.Space=true;pre:Fire(.1)
-near(gr.AssemblyLinearVelocity.Y,55)
-pressed.Space=false;pressed.LeftControl=true;pre:Fire(.1)
-near(gr.AssemblyLinearVelocity.Y,-55)
+movementRight=0;pressed.Space=true;pre:Fire(.1);near(gr.AssemblyLinearVelocity.Y,55)
+pressed.Space=false;pressed.LeftControl=true;pre:Fire(.1);near(gr.AssemblyLinearVelocity.Y,-55)
 pressed.LeftControl=false;pre:Fire(.1)
 assert(gr.AssemblyLinearVelocity.Magnitude==0,'no input means no drift')
-card.Options['Ghost Fly']:Set(false);pressed.W=false;pressed.LeftShift=false;pre:Fire(.02)
-assert(not gr.Anchored and not gh.PlatformStand and clone:FindFirstChild('Torso').CanCollide)
+pressed.Space=false;jumpHeld=true;pre:Fire(.1);near(gr.AssemblyLinearVelocity.Y,55)
+jumpHeld=false;pre:Fire(.1)
+card.Options['Ghost Fly']:Set(false)
+assert(not gh.PlatformStand and clone:FindFirstChild('Torso').CanCollide)
+
 -- Ghost does not steal a camera from FreeCam or Spectate.
 free=true;local external={};world.CurrentCamera={CameraSubject=external,CFrame=CFrame.new(0,0,0)};pre:Fire(.02)
 assert(world.CurrentCamera.CameraSubject==external);free=false
 pre:Fire(.02);assert(world.CurrentCamera.CameraSubject==gh)
+
+-- Respawn rebuilds the puppet and re-parks the new body.
 local newCharacter,newH,newRoot=makeCharacter(Vector3.new(100,40,0));player.Character=newCharacter
-pre:Fire(.02);assert(clone.destroyed and not newCharacter.Archivable)
+pre:Fire(.02);assert(clone.destroyed and not newCharacter.Archivable and newRoot.Anchored)
 clone=world:FindFirstChild('Wurst_Ghost');gr=clone:FindFirstChild('HumanoidRootPart');near(gr.Position.X,100)
-gr.CFrame=CFrame.new(110,35,0);card:Toggle(false)
+near(gr.Position.Y,43)
+
+-- Turning Ghost OFF hands the body back where the puppet was.
+gr.CFrame=CFrame.new(110,35,0)
+card:Toggle(false)
 near(newRoot.Position.X,110);near(newRoot.Position.Y,35)
-assert(clone.destroyed and not flags.ghost and world.CurrentCamera.CameraSubject==newH and pre:Count()==0 and input.JumpRequest:Count()==0)
+assert(not newRoot.Anchored and newRoot.CanCollide and not newH.PlatformStand,
+ 'OFF must restore collisions and unanchor the real body')
+assert(clone.destroyed and not flags.ghost and world.CurrentCamera.CameraSubject==newH and pre:Count()==0
+ and input.JumpRequest:Count()==0)
+
+-- Direct unload is the same contract as OFF.
 assert(card.Feature.activate());assert(card.Enabled and card.Feature.enabled and flags.ghost and pre:Count()==1)
 Ghost.destroy()
-assert(not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0 and input.JumpRequest:Count()==0,
- 'direct unload must also turn the feature/card OFF and detach its listeners')
--- A failed clone must not leave the card visually ON or persist its ON state.
-Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
+assert(not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0
+ and input.JumpRequest:Count()==0 and not newRoot.Anchored,
+ 'direct unload must turn everything OFF and hand the body back')
+
+-- A failed clone leaves the card OFF and the body untouched.
+reinit()
 cloneFails=true
 local ok=card.Feature.activate()
-assert(not ok and not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0,
- 'failed spawn must report failure and leave both feature and card OFF')
+assert(not ok and not card.Enabled and not card.Feature.enabled and not flags.ghost and pre:Count()==0
+ and not newRoot.Anchored and newRoot.CanCollide,
+ 'failed spawn must report failure, leave the card OFF and not park the body')
 cloneFails=false
+
+-- Losing the active ghost switches the visible feature OFF and frees the body.
 assert(card.Feature.activate() and card.Enabled and card.Feature.enabled and flags.ghost)
--- v188: the legacy 120-stud default migrates to the new minimum once, and a
--- depth the player actually chose is preserved.
-local function reinit()
- Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
-end
+clone=world:FindFirstChild('Wurst_Ghost');clone:Destroy();pre:Fire(.02)
+assert(not card.Enabled and not card.Feature.enabled and not flags.ghost)
+assert(not newRoot.Anchored and newRoot.CanCollide,'losing the ghost must not leave the body parked')
+Ghost.destroy()
+
+-- Migration: the v187 default (120) and the v188 minimum (1) both become 5,
+-- while a depth the player actually picked survives.
 configData.values["Universal.Ghost.Voiddepth"]=120
 configData.values["UI.GhostDepthDefault"]=nil
 savedMarker=nil
 reinit()
-assert(savedMarker==true and configData.values["Universal.Ghost.Voiddepth"]==1
- and configData.values["UI.GhostDepthDefault"]==1,
- 'the legacy 120 default must migrate to the minimum')
-assert(card.Options['Void depth'].Value==1,'the migrated value must reach the slider')
+assert(savedMarker==true and configData.values["Universal.Ghost.Voiddepth"]==5
+ and configData.values["UI.GhostDepthDefault"]==2,'the legacy 120 default must migrate to 5')
+assert(card.Options['Void depth'].Value==5)
 Ghost.destroy()
-configData.values["Universal.Ghost.Voiddepth"]=200
-configData.values["UI.GhostDepthDefault"]=nil
-savedMarker=nil
-reinit()
-assert(configData.values["Universal.Ghost.Voiddepth"]==200 and card.Options['Void depth'].Value==200,
- 'a depth the player picked must survive the migration')
-Ghost.destroy()
-configData.values["Universal.Ghost.Voiddepth"]=nil
+configData.values["Universal.Ghost.Voiddepth"]=1
 configData.values["UI.GhostDepthDefault"]=nil
 reinit()
-configData=nil -- back to a profile-less session for the remaining assertions
-assert(card.Feature.activate() and card.Enabled and card.Feature.enabled and flags.ghost)
-clone=world:FindFirstChild('Wurst_Ghost');clone:Destroy();pre:Fire(.02)
-assert(not card.Enabled and not card.Feature.enabled and not flags.ghost,
- 'losing the active ghost must also switch the visible feature OFF')
--- pre:Count() is the frame listener count, kept separate from the state check
--- because the mock connection set also holds listeners from earlier inits.
-assert(pre:Count()==1,'the lost-ghost path runs once and detaches its listener')
+assert(configData.values["Universal.Ghost.Voiddepth"]==5 and card.Options['Void depth'].Value==5,
+ 'a below-minimum value from v188 must rise to the new minimum')
 Ghost.destroy()
-pass('actual Ghost: native Walk, sprint/jump, Fly, camera and respawn; failed spawn, lost ghost and unload keep feature/card/listeners OFF')
+for _,kept in ipairs({200,42}) do
+ configData.values["Universal.Ghost.Voiddepth"]=kept
+ configData.values["UI.GhostDepthDefault"]=nil
+ reinit()
+ assert(configData.values["Universal.Ghost.Voiddepth"]==kept and card.Options['Void depth'].Value==kept,
+  'a depth the player picked must survive the migration')
+ Ghost.destroy()
+end
+configData=nil
+pass('actual Ghost v189: parked anchored body at 10 Hz, clone spawned above it, native walk, velocity fly, no guard/outline/sprint, depth 5 and migration')
 '''
 with tempfile.TemporaryDirectory() as tmp:
  p=Path(tmp)/'ghost.luau';p.write_text(script);subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)

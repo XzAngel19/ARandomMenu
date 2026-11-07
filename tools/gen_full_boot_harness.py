@@ -1184,13 +1184,15 @@ do
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
     local ghost=ex.state.framework:GetModule("Ghost")
     assert(ghost.Options["Ghost Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
-    -- v188: Ghost defaults. The real body sits right under the puppet (minimum
-    -- Void depth), WalkSpeed is a real option and the blue outline is OFF.
-    assert(ghost.Options["Void depth"].Value==1 and ghost.Options["Void depth"].Metadata.min==1
+    -- v189: Ghost defaults. Void depth is 5 (its minimum), and the options
+    -- that made the module heavy (Sprint multiplier, Void guard) plus the blue
+    -- Outline are gone for good.
+    assert(ghost.Options["Void depth"].Value==5 and ghost.Options["Void depth"].Metadata.min==5
         and ghost.Options["Void depth"].Metadata.max==350,
-        "Void depth must default to its minimum")
-    assert(ghost.Options["Ghost WalkSpeed"].Value==16 and ghost.Options["Sprint multiplier"].Value==2)
-    assert(ghost.Options.Outline.Value==false and ghost.Options["Void guard"].Value==true)
+        "Void depth must default to its minimum of 5")
+    assert(ghost.Options["Ghost WalkSpeed"].Value==16)
+    assert(not ghost.Options.Outline and not ghost.Options["Sprint multiplier"]
+        and not ghost.Options["Void guard"], "v189 removed Outline, Sprint multiplier and Void guard")
     assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
     local speedInput=ex.state.framework:GetModule("Speed Hack").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
     for _,value in ipairs({"1000","5000","1e12"}) do

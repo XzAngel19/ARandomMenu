@@ -4,7 +4,7 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v188-20261107-ghost-and-native-click`**.
+> **Estado actual:** build **`v189-20261107-ghost-rewrite`**.
 > Esta sesión trabaja exclusivamente en `arena/05c45e27-arandommenu`
 > (fast-forward desde el tip v187 `70bbfc4` de
 > `arena/a4930bca-arandommenu`, que conserva la historia de v178-v187).
@@ -36,6 +36,31 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v189 — Ghost reescrito (2026-11-07)
+
+Detalle en `docs/FIXES-v189.md`. El jugador reportó que Ghost «no funcionaba
+para nada, se trababa, volaba hacia arriba y se teletransportaba abajo». Tres
+causas reales en v188 y su corrección:
+
+- **Trabas:** v188 escribía `root.CFrame` del cuerpo real **cada frame** con el
+  cuerpo vivo y colisionable dentro del piso; la física peleaba y cada
+  escritura replicaba. Ahora el cuerpo real se **aparca** (`Anchored`,
+  `CanCollide=false`, `PlatformStand`, `WalkSpeed=0`) y se reubica como máximo
+  cada 0,1 s.
+- **Volaba:** el clon spawneaba en el mismo CFrame que el cuerpo real, ambos
+  colisionables. Ahora nace **3 studs arriba**.
+- **Fly inerte:** v188 anclaba el root y luego asignaba
+  `AssemblyLinearVelocity`; una parte anclada lo ignora. Ahora Fly es velocidad
+  sobre un rig **desanclado**, sin raycasts ni escrituras de `CFrame`.
+- **Opciones:** fuera `Void guard`, `Sprint multiplier` y `Outline` (quedan 5
+  filas). `Void depth` = **5** por defecto, mínimo 5, con migración 120→5 y
+  <5→5 respetando valores elegidos.
+- Al apagar se restauran colisiones **antes** de devolver el cuerpo; el orden
+  inverso dejaba el rig atravesando el piso.
+
+`bash tools/validate.sh` verde: 126 suites, boot `failures=0`, 46 tarjetas,
+Ghost con 5 opciones. Sigue siendo local: el servidor ve el cuerpo real.
 
 ## v188 — Ghost reparado y clic nativo verificado (2026-11-07)
 
