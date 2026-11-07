@@ -119,7 +119,7 @@ local RUNTIME_RAW_BASE: string =
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v194-20261107-loader-hardening"
+local SOURCE_STAMP: string = "v195-20261107-loader-mirrors"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"

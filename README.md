@@ -2,61 +2,44 @@
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
 La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v194`, se muestra como **`0.194`** y **`0.194 Release`**); `main` es
+(build `v195`, se muestra como **`0.195`** y **`0.195 Release`**); `main` es
 independiente.
 
 ## Loader
 
-Copia el bloque **entero** (son las mismas dos instrucciones de siempre, con
-reintento y con el error a la vista). La versión de una línea
-(`loadstring(game:HttpGet(url))()`) falla con `attempt to call a nil value`
-cuando la descarga llega cortada o el ejecutor cachea una respuesta parcial: ahí
-no se ve el motivo. Esta sí lo dice.
-
 ```lua
 getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
-
-local base = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
-    .. "arena/7446e4e3-arandommenu/src/Wurst.lua"
-local mark = "local RUNTIME_COMPATIBILITY_MARKER"
-
-local function download()
-    local last = "unknown"
-    for attempt = 1, 4 do
-        local ok, source = pcall(function()
-            -- `?t=` + `&a=` evitan la cache del ejecutor y la del CDN.
-            return game:HttpGet(base .. "?t=" .. os.time() .. "&a=" .. attempt)
-        end)
-        if ok and type(source) == "string" then
-            if #source < 100000 then
-                last = "descarga incompleta (" .. #source .. " bytes)"
-            elseif source:sub(1, #mark) ~= mark then
-                last = "la respuesta no es el menu (HTTP " .. #source .. " bytes)"
-            else
-                local chunk, err = loadstring(source, "@Wurst")
-                if chunk then
-                    return chunk
-                end
-                last = "error de compilacion: " .. tostring(err)
-            end
-        else
-            last = "HttpGet fallo: " .. tostring(source)
-        end
-        task.wait(1)
-    end
-    return nil, last
-end
-
-local chunk, err = download()
-if not chunk then
-    warn("[Wurst] loader: " .. tostring(err))
-    return
-end
-chunk()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/loader.lua"))()
 ```
 
-Si vuelve a fallar, manda la línea `[Wurst] loader: …` de la consola: dice
-exactamente si fue red, cache o compilación. Detalle en `docs/LOADER.md`.
+Son las mismas dos líneas de siempre; lo único que cambia es **a qué apuntan**:
+ahora cargan `loader.lua` (~5 KB) en lugar de `src/Wurst.lua` (255 KB).
+
+¿Por qué? Porque el fallo `:2: attempt to call a nil value` / `Script '', Line 2`
+ocurre cuando `loadstring` recibe un texto que no compila — descarga cortada,
+cache del ejecutor/CDN, o un `game:HttpGet` que el ejecutor quitó — y el cargador
+de una línea tira el motivo a la basura. `loader.lua` es minúsculo (si el
+ejecutor puede compilar eso, puede llegar al menú) y dentro hace todo lo que
+falta: valida tamaño y cabecera antes de compilar, reintenta 4 veces con `?t=` y
+`&a=` (rompe las dos caches), prueba un segundo espejo (jsDelivr), acepta
+`request`/`http_request`/`http.get`/`syn.request` si no hay `game:HttpGet`, usa
+`loadstring` o `load`, compila con nombre `@Wurst` (para que un error del menú se
+vea como `Wurst:3412`, no como `Script ''`) y, si todo falla, escribe
+`[Wurst] loader: <motivo>`.
+
+Detalle completo: `docs/LOADER.md`.
+
+## Cambios de v195
+
+- **`loader.lua` en la raíz del repo**: el cargador son ahora **dos líneas** que
+  apuntan a un fichero de ~5 KB. Si el ejecutor puede compilar eso, puede llegar
+  al menú; lo demás (validar tamaño y cabecera, 4 reintentos con cache-buster,
+  espejo jsDelivr, `request`/`http_request`/`http.get`/`syn.request` como
+  alternativas a `game:HttpGet`, `loadstring`/`load`, chunk `@Wurst`, motivo en
+  `warn`) vive dentro y está probado en `tools/test_loader_artifact.py`.
+- Los dos fallos que producían `attempt to call a nil value` sin explicación
+  (descarga cortada/cacheada y ejecutor sin `game:HttpGet`) ya no pueden pasar en
+  silencio: o cargan, o dicen `[Wurst] loader: <motivo>`.
 
 ## Cambios de v194
 

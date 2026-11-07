@@ -29,7 +29,15 @@ a la basura**, así que no se puede saber cuál de estas tres cosas pasó:
 
 ## El cargador bueno
 
-Está en el `README.md`. Sus tres diferencias con el de una línea:
+Dos líneas, apuntando a **`loader.lua`** (~5 KB) en la raíz del repo:
+
+```lua
+getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/loader.lua"))()
+```
+
+Ese fichero pequeño es el que baja el menú (255 KB) y el que se ocupa de todo lo
+que puede salir mal. Sus diferencias con el cargador de una línea:
 
 - `?t=<os.time()>&a=<intento>` en la URL: rompe la cache del ejecutor y la del
   CDN, así que cada intento pide el fichero de verdad;
@@ -37,7 +45,10 @@ Está en el `README.md`. Sus tres diferencias con el de una línea:
   (`local RUNTIME_COMPATIBILITY_MARKER`) antes de compilar: una descarga cortada
   o un HTML de error se detectan sin gastar el `loadstring`;
 - imprime el motivo con `warn("[Wurst] loader: …")` y reintenta hasta 4 veces,
-  un segundo entre intentos.
+  un segundo entre intentos;
+- prueba un **segundo espejo** (`cdn.jsdelivr.net`) y, si el ejecutor no expone
+  `game:HttpGet`, usa `request`, `http_request`, `http.get` o `syn.request`; si
+  no hay `loadstring`, usa `load`.
 
 Además pasa `"@Wurst"` como nombre de chunk, así que un error **dentro** del menú
 sale como `Wurst:3412: …` en lugar de `Script '':3412`, que es lo que hacía
@@ -57,7 +68,10 @@ imposible distinguir un fallo del cargador de un fallo del menú.
 
 ## Verificación del lado del repositorio
 
-`tools/test_v194_loader.py` comprueba, sin arrancar el juego:
+`tools/test_loader_artifact.py` **ejecuta** `loader.lua` contra un ejecutor
+simulado: descarga corta, cuerpo ajeno, HTTP que lanza, reintentos, espejos,
+URLs sin repetir y el `warn` final. `tools/test_v194_loader.py` comprueba, sin
+arrancar el juego:
 
 - que el cargador documentado lleva el cache-buster, la comprobación de tamaño y
   cabecera, el `warn` con motivo y el `"@Wurst"`;
