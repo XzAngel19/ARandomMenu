@@ -93,11 +93,16 @@ local function humanoidOf(player)
     if not character then return nil end
     return character:FindFirstChildOfClass("Humanoid")
 end
+-- v190: Data Ping is Plugin-restricted (`GetValue` fails with "lacking
+-- capability Plugin" in Delta), so the probe reports the engine reading the
+-- runtime itself uses. Milliseconds, or -1 when unavailable.
 local function pingMs()
-    local ok, value = pcall(function()
-        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-    end)
-    return ok and value or -1
+    local player = Players.LocalPlayer
+    local direct = player and player.GetNetworkPing
+    if type(direct) ~= "function" then return -1 end
+    local ok, value = pcall(direct, player)
+    if not ok or type(value) ~= "number" or value <= 0 then return -1 end
+    return value * 1000
 end
 
 local function sampleAll()

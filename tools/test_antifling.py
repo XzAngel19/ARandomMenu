@@ -109,12 +109,28 @@ local function update(dt) now+=dt;assert(tick);tick(dt) end
 Module.init(context)
 assert(feature.name=='Anti Fling' and options['Player Shield'] and options['Impact Shield'])
 assert(not tick and activeCount()==0,'OFF boot must be inert')
+-- v190: a CALM body is not shielded any more. Before this version every
+-- visible player got NoCollisionConstraint against every local part, so
+-- walking into someone went straight through them (the reported bug).
+local function armEnemy()
+ otherRoot.AssemblyLinearVelocity=Vector3.new(400,0,0)
+end
+local function disarmEnemy()
+ otherRoot.AssemblyLinearVelocity=Vector3.zero
+end
 feature.toggle(true);update(.2)
-assert(activeBetween(root,otherRoot)==1 and activeBetween(arm,otherRoot)==1
- and activeBetween(root,otherLimb)==1 and activeBetween(arm,otherLimb)==1,
- 'all local colliding parts are paired with the other character, including noncolliding limbs')
+assert(activeBetween(root,otherRoot)==0 and activeBetween(arm,otherRoot)==0,
+ 'a calm player body keeps normal collisions: Anti Fling is not a noclip')
 assert(activeBetween(root,hazard)==1 and activeBetween(arm,hazard)==1,
  'a nearby high-speed loose part is shielded')
+armEnemy();update(.2)
+assert(activeBetween(root,otherRoot)==1 and activeBetween(arm,otherRoot)==1,
+ 'a body moving at fling speed is shielded on every colliding local part')
+assert(activeBetween(root,otherLimb)==0,
+ 'non-colliding limbs are not linked: there is nothing to collide with')
+disarmEnemy();update(1)
+assert(activeBetween(root,otherRoot)==0,
+ 'the shield releases once the body stops flinging, restoring collisions')
 for _,p in ipairs({platform,anchored,slow,handle}) do
  assert(activeBetween(root,p)==0,'floor, anchored wall, slow prop and tools must remain usable: '..p.Name)
 end
@@ -149,22 +165,22 @@ pass('temporary velocity/spin hazard detection and evidence-gated emergency damp
 activity.walkfling=true;root.AssemblyLinearVelocity=Vector3.new(500,0,0);update(.2)
 assert(activeCount()==0 and root.AssemblyLinearVelocity.X==500,
  'intentional Walk Fling suspends both links and damping')
-activity.walkfling=nil;update(.2)
+activity.walkfling=nil;armEnemy();update(.2)
 assert(activeBetween(root,otherRoot)==1,'links return after deliberate fling ends')
 activity.fling=true;update(.2);assert(activeCount()==0)
-activity.fling=nil;update(.2);assert(activeCount()>0)
+activity.fling=nil;armEnemy();update(.2);assert(activeCount()>0)
 pass('own Fling and Walk Fling suspend protection and restore it afterwards')
 
-hum.Sit=true;update(.2)
+hum.Sit=true;armEnemy();update(.2)
 assert(activeBetween(root,hazard)==0 and activeBetween(root,otherRoot)==1,
- 'seat/vehicle stays usable while player pairs remain active')
+ 'seat/vehicle stays usable while a flinging body stays shielded')
 hum.Sit=false;update(.2)
-options['Impact Shield'](false);update(.2)
+options['Impact Shield'](false);armEnemy();update(.2)
 assert(activeBetween(root,hazard)==0 and activeBetween(root,otherRoot)==1)
 options['Player Shield'](false);update(.2)
 assert(activeCount()==0,'individual shields can be disabled independently')
-options['Player Shield'](true);options['Impact Shield'](true);update(.2)
-scanThrows=true;update(.2);update(.2)
+options['Player Shield'](true);options['Impact Shield'](true);armEnemy();update(.2)
+scanThrows=true;update(.2);update(.2);armEnemy();update(.2)
 assert(#notices==1 and activeBetween(root,otherRoot)==1,
  'unavailable spatial API warns once but does not remove player protection')
 scanThrows=false
@@ -177,27 +193,33 @@ for i=1,50 do
  part('Own'..i,myChar,true,false)
  part('Other'..i,otherChar,true,false,Vector3.new(5,0,0))
 end
-update(.2);assert(activeCount()<=2048 and activeCount()>=2000,'pair cap is enforced')
+armEnemy();update(.2);assert(activeCount()<=2048 and activeCount()>=2000,'pair cap is enforced')
 slow.AssemblyLinearVelocity=Vector3.new(200,0,0);update(.2)
 assert(activeCount()<=2048 and activeBetween(root,slow)==1,
  'new extreme hazards take priority over old player links at the cap')
 for i=#myChar.children,ownCount+1,-1 do local p=table.remove(myChar.children);p.Parent=nil end
 for i=#otherChar.children,otherCount+1,-1 do local p=table.remove(otherChar.children);p.Parent=nil end
-slow.AssemblyLinearVelocity=Vector3.zero;update(1)
+slow.AssemblyLinearVelocity=Vector3.zero;disarmEnemy();update(1)
 assert(activeCount()<20,'departing crowds release their temporary links')
 pass('bounded pair budget prioritizes incoming hazards and releases old crowds')
 
 local replacement=model('Me2',world)
 local newRoot=part('HumanoidRootPart',replacement,true,false)
 currentChar=replacement;currentRoot=newRoot;me.Character=replacement
-update(.2)
+armEnemy();update(.2)
 assert(activeBetween(root,otherRoot)==0 and activeBetween(newRoot,otherRoot)==1,
- 'respawn retires old constraints and protects the new body')
+ 'respawn retires old constraints and shields the new body from a flinging one')
 local otherReplacement=model('Them2',world)
 local otherNew=part('HumanoidRootPart',otherReplacement,true,false,Vector3.new(3,0,0))
-enemy.Character=otherReplacement;update(.2)
+-- The abandoned body stops flinging first, so its hold expires before the
+-- enemy respawns; otherwise the old rig is (correctly) still shielded.
+otherRoot.AssemblyLinearVelocity=Vector3.zero
+update(1)
+enemy.Character=otherReplacement
+otherNew.AssemblyLinearVelocity=Vector3.new(400,0,0)
+update(.2)
 assert(activeBetween(newRoot,otherRoot)==0 and activeBetween(newRoot,otherNew)==1,
- 'remote respawn removes obsolete target constraints')
+ 'remote respawn removes obsolete target constraints and follows the new body')
 feature.toggle(false)
 assert(tick==nil and activeCount()==0 and newRoot.CanCollide and otherNew.CanCollide,
  'OFF destroys every local constraint without modifying body collisions')

@@ -41,9 +41,11 @@ local waits=0
 local RunService={Heartbeat={Wait=function() waits+=1 end}}
 local notifications={}
 local function notify(message) table.insert(notifications,message) end
+local function warn(message) table.insert(notifications,tostring(message)) end
 local delayed={}
 local suspendedObservers={}
 local task={delay=function(_,fn) table.insert(delayed,fn) end,
+ defer=function(fn) table.insert(delayed,fn) end,
  spawn=function(fn)
   local co=coroutine.create(fn);local ok,err=coroutine.resume(co);assert(ok,tostring(err))
   if coroutine.status(co)=='suspended' then table.insert(suspendedObservers,co) end
@@ -115,10 +117,13 @@ local function fireGunAtTarget(p,opts)
  return true
 end
 local function last() return sent[#sent] end
+-- v190: the hook captures the click and ships it from a deferred thread, so
+-- the transport lands after the queue drains. Exactly one packet either way.
 local function click(remote,a,b,...)
  local n=#sent
- local result=chain(remote,a,b,...)
- assert(result=='transport result' and #sent==n+1,'one and only one native transport')
+ chain(remote,a,b,...)
+ flush()
+ assert(#sent==n+1,'one and only one native transport')
  return last().args
 end
 '''

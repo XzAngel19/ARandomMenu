@@ -474,9 +474,13 @@ end
 ''')
     chunks.append(r"""
 do
+    -- v190: Data Ping is gone. `StatsItem:GetValue` needs the Plugin
+    -- capability and Delta rejects it, so the only live reading is
+    -- Player:GetNetworkPing. The mock still exposes a Stats tree whose
+    -- GetValue must never be touched.
     local mm2Settings={predictionRtt=0.08}
     local directSeconds=0.075
-    local pingMilliseconds=120
+    local pingReads=0
     local LocalPlayer={GetNetworkPing=function() return directSeconds end}
     local Stats={FindFirstChild=function(_,name)
         if name~="Network" then return nil end
@@ -484,60 +488,50 @@ do
             if child~="ServerStatsItem" then return nil end
             return {FindFirstChild=function(_,leaf)
                 if leaf~="Data Ping" then return nil end
-                return {GetValue=function() return pingMilliseconds end}
+                return {GetValue=function() pingReads+=1 error("lacking capability Plugin") end}
             end}
         end}
     end}
 """)
     chunks.append(section(BASE, "local lastLatencyReadAt:", "local function getGunOriginCFrame"))
     chunks.append(r"""
+    local engine,data=readLatencyReadings()
+    near(engine,0.075,1e-9)
+    assert(data==nil,"Data Ping is not read any more")
     now=100
     local first=getEstimatedLatency()
     now=101
     local second=getEstimatedLatency()
     assert(first>0.075 and first<0.076,first)
     assert(second>0.075 and second<0.0761,second)
+    -- Invalid engine values (zero, absurd, throwing) keep the smoothed value
+    -- instead of collapsing to a guess or to a Plugin-restricted read.
     directSeconds=0
     now=102
-    getEstimatedLatency()
+    local held=getEstimatedLatency()
+    near(held,second,1e-6)
+    directSeconds=5
     now=103
-    near(getEstimatedLatency(),0.12,0.001)
-    directSeconds=5
-    now=104
-    getEstimatedLatency()
-    now=105
-    near(getEstimatedLatency(),0.12,0.001)
+    near(getEstimatedLatency(),held,1e-6)
     LocalPlayer.GetNetworkPing=function() error("unavailable") end
-    now=106
-    getEstimatedLatency()
-    now=107
-    near(getEstimatedLatency(),0.12,0.001)
-    -- The lower of the two engine readings wins. On 2026-10-18 GetNetworkPing
-    -- read 314/342 ms on shots whose measured echo was 152/164, and 241 ms at
-    -- session start when Data Ping read 130 (echo 144).
+    now=104
+    near(getEstimatedLatency(),held,1e-6)
+    -- A plausible engine reading moves the estimate, never jumps to it.
     LocalPlayer.GetNetworkPing=function() return directSeconds end
-    directSeconds=0.314
-    pingMilliseconds=172
-    now=110
-    getEstimatedLatency()
-    now=111
-    near(getEstimatedLatency(),0.172,0.005)
     directSeconds=0.105
-    pingMilliseconds=300
-    now=112
+    now=105
     getEstimatedLatency()
-    now=113
+    now=106
     near(getEstimatedLatency(),0.105,0.005)
-    local engine,data=readLatencyReadings()
-    near(engine,0.105,1e-9)
-    near(data,0.300,1e-9)
+    assert(pingReads==0,"no Plugin-capability read may reach the Stats tree")
+    local engineNow=readLatencyReadings()
+    near(engineNow,0.105,1e-9)
     directSeconds=5
-    pingMilliseconds=1500
-    now=114
+    now=107
     getEstimatedLatency()
-    now=115
+    now=108
     assert(getEstimatedLatency()<=0.6)
-    pass("latency: lower of GetNetworkPing and Data Ping, invalid values fall back, hard cap")
+    pass("latency: engine reading only, no Plugin GetValue, invalid values hold, hard cap")
 end
 """)
     # Execute the real writer with an in-memory encoder/IO sink. Detect accidental

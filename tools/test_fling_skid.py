@@ -347,9 +347,12 @@ Module.init(context)
 assert(feature == nil and next(options) == nil, "MM2 engine must not create a Fling card")
 assert(type(state.mm2PerformFling) == "function" and type(state.mm2FlingStep) == "function",
     "internal exports remain available to Auto Farm and Auto Win")
-assert(configData.states["MM2.Fling.AutoFlingSelectedTarget"] == nil
-    and configData.states["MM2.Fling.TouchFling"] == nil
-    and configData.states["Universal.Fling"] == false, "stale saved actions cannot restart")
+-- v190: the MM2 Fling CARD is back in its own module, so the engine no longer
+-- purges MM2.Fling*; only the retired universal Fling actions are dropped.
+assert(configData.states["Universal.Fling"] == false
+    and configData.states["Universal.Fling.AutoFlingSelectedTarget"] == nil
+    and configData.states["MM2.Fling.AutoFlingSelectedTarget"] == nil,
+    "stale universal Fling actions cannot restart anything")
 assert(not state.mm2PerformFling(nil), "a missing target cannot start a fling")
 local function startFling()
     assert(state.mm2PerformFling(victimPlayer, {blocking=false, silent=false}))
@@ -505,6 +508,33 @@ for _, object in ipairs(created) do
 end
 assert(sawScaledPin, "the EpixVel pin must keep the former default scale")
 pass("default Power 6 raises pose and pin strength")
+
+-- v190: the MM2 card passes its Power/Retries rows as options. The engine must
+-- use them for that call only and restore its defaults afterwards, so Auto Farm
+-- and Auto Win keep the documented numbers.
+-- Pose velocity is (9e7, 9e8, 9e7) * (Power / 3); the magnitude of one unit of
+-- scale is the reference every case below is measured against.
+local UNIT = math.sqrt(9e7 * 9e7 + 9e8 * 9e8 + 9e7 * 9e7)
+local function startFlingWith(options)
+    notifications = {}
+    resetWrites()
+    assert(state.mm2PerformFling(victimPlayer, options))
+    pump(650)
+    return writes.maxVelocity
+end
+local measuredPower3 = startFlingWith({silent = true, power = 3, retries = 0})
+assert(math.abs(measuredPower3 - UNIT) / UNIT < 0.01,
+    "Power 3 must be YARHM's exact scale, got " .. tostring(measuredPower3))
+local measuredPower9 = startFlingWith({silent = true, power = 9, retries = 0})
+assert(math.abs(measuredPower9 - UNIT * 3) / (UNIT * 3) < 0.01,
+    "Power 9 must scale the pose three times, got " .. tostring(measuredPower9))
+assert((state.mm2LastFling.retries or 0) == 0,
+    "Retries 0 must not add a second pass")
+local measuredDefault = startFlingWith({silent = true, retries = 0})
+assert(math.abs(measuredDefault - UNIT * 2) / (UNIT * 2) < 0.01,
+    "the engine must fall back to Power 6 after the card's options, got "
+        .. tostring(measuredDefault))
+pass("Power/Retries options apply to one call and the defaults come back")
 
 -- Retries: a victim that never moves gets a second pass ---------------------
 victimSpeed = 0

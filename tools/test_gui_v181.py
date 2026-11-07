@@ -27,9 +27,9 @@ local function byName(name)
 end
 
 -- 1. Motion Lock mode switching.
-local freeze = byName('Motion Lock')
-assert(freeze, 'Motion Lock card is missing')
-assert(freeze.options, 'Motion Lock has no options container')
+local freeze = byName('Freeze Animations')
+assert(freeze, 'Freeze Animations card is missing')
+assert(freeze.options, 'Freeze Animations has no options container')
 local ctl = ex.state.valueControls['Movement.FreezeMovements.Freezemode']
 assert(ctl and ctl.apply, 'the Freeze mode control is missing')
 
@@ -42,7 +42,7 @@ local function visibleRows()
 end
 
 local startRows = visibleRows()
-assert(startRows > 0, 'Motion Lock starts with visible rows: ' .. startRows)
+assert(startRows > 0, 'Freeze Animations starts with visible rows: ' .. startRows)
 -- The card starts collapsed, so only the rows themselves (not the container)
 -- are asserted here; opening the card is what the reported bug did.
 local containerWasVisible = freeze.options.Visible

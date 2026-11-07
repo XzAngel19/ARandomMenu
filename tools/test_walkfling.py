@@ -164,6 +164,38 @@ pump(12)
 assert(writes.maxSpeed == 0, "no frame work after OFF")
 pass("Walk Fling OFF restores collisions and stops the loop")
 
+-- v190: MM2 + Anti Fling ON refuses to start and says why. Anti Fling shields
+-- the very contact the pulse needs, so the player asked for a notice instead of
+-- a fling that silently does nothing.
+game = { PlaceId = 142823291 }
+host.state = { antiFlingActive = true }
+resetWrites()
+local refused, reason = pcall(feature.toggle, true)
+assert(not refused, "MM2 + Anti Fling ON must refuse Walk Fling")
+assert(tostring(reason):find("Anti Fling"), "the refusal names Anti Fling")
+pump(6)
+assert(writes.maxSpeed == 0 and activity["walkfling"] ~= true,
+    "a refused toggle starts nothing and marks no activity")
+pass("MM2 + Anti Fling ON refuses Walk Fling with a notice")
+
+-- The same flag outside MM2 must not block the card.
+game = { PlaceId = 1 }
+feature.toggle(true)
+pump(6)
+assert(writes.maxSpeed >= 30000, "outside MM2 the card still starts")
+feature.toggle(false)
+pump(6)
+-- And inside MM2 with Anti Fling OFF it starts normally.
+game = { PlaceId = 142823291 }
+host.state = { antiFlingActive = false }
+resetWrites()
+feature.toggle(true)
+pump(6)
+assert(writes.maxSpeed >= 30000, "MM2 with Anti Fling OFF starts normally")
+feature.toggle(false)
+pump(6)
+pass("the Anti Fling gate is MM2-only and follows the shield state")
+
 -- Destroying an already OFF module must not zero natural player motion.
 rootProps.Velocity=Vector3.new(3,4,5)
 rootProps.AssemblyLinearVelocity=Vector3.new(3,4,5)

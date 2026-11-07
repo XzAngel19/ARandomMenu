@@ -654,11 +654,14 @@ function Module.init(context: Runtime): any
             elseif root then
                 lockPosition(root)
             end
-        end, nil, "Motion Lock")
+        end, nil, "Freeze Animations")
     end
 
+    -- v190: renamed Motion Lock -> Freeze Animations at the player's request.
+    -- configKey stays "Movement.FreezeMovements", so profiles, keybinds and the
+    -- saved mode survive; only the visible title and its task name changed.
     FreezeFeature = createUniversalFeature(
-        "Motion Lock",
+        "Freeze Animations",
         "Pin the body where it stands, or keep any animation playing while moving",
         4,
         toggleFreezeMovements,

@@ -867,73 +867,61 @@ function Module.init(runtime: any): any
             or type(checkCaller) ~= "function" then
             return false
         end
-        local predecessor: any = nil
-        -- v187: the v183-v186 hook performed its own method calls
-        -- (getPlayerWeapon, FindFirstChild, raycasts) before invoking the
-        -- original namecall trampoline. Every one of those calls overwrites
-        -- the pending namecall method, so the trampoline dispatched
-        -- whatever method ran last instead of FireServer and the native
-        -- call died: live output showed "argument #1 expects a string, but
-        -- Instance was passed" from this hook for KnifeClient calls, plus
-        -- 'GetValue' (lacking capability Plugin) from GunClient -- the
-        -- weapons stopped actuating while Gun Aimbot was on. Two rules now:
-        -- (1) before the trampoline, only plain/C calls run: the method
-        -- check, checkcaller, and a comparison against the Shoot remote
-        -- cached OUTSIDE the hook; anything else trampolines immediately.
-        -- (2) once the solver has run (and clobbered the method register
-        -- beyond repair), modified or original frames are re-sent through
-        -- the engine: a fresh remote:FireServer call re-enters this hook,
-        -- which sees the guard flag and trampolines it while its method
-        -- register is still exactly "FireServer".
-        local resendingNativeShot: boolean = false
-        local function resendThroughEngine(remote: any, ...: any): any
-            resendingNativeShot = true
-            local results: any = table.pack(pcall(function(...: any): any
-                return ((remote :: any) :: RemoteEvent):FireServer(...)
-            end, ...))
-            resendingNativeShot = false
-            if results[1] == true then
-                return table.unpack(results, 2, results.n)
-            end
-            return nil
+        if type(task) ~= "table" or type(task.defer) ~= "function" then
+            -- v190: the redirect ships from its own thread. Without task.defer
+            -- the hook would have to call back into the engine on the game's
+            -- thread, which is exactly what broke the native click in
+            -- v183-v189. Fail closed and leave the native shot alone.
+            return false
         end
-        local function redirectNamecall(remote: any, ...: any): any
-            if resendingNativeShot then
-                return predecessor(remote, ...)
+        local predecessor: any = nil
+        -- v190: the redirect never runs on the game's thread any more.
+        --
+        -- v187 tried to be careful: it checked the pending method name, the
+        -- caller and a cached remote before touching the trampoline, then ran
+        -- the whole solver and re-sent the packet "through the engine" to
+        -- recover the method register the solver had clobbered. The live
+        -- console of 2026-11-07 showed that is not enough: every method call
+        -- inside the solver (FindFirstChild, raycasts, the ping read) rewrites
+        -- the pending namecall method, and the engine then dispatches whatever
+        -- ran last instead of FireServer. The player saw, once per click,
+        -- "The current thread cannot call 'GetValue' (lacking capability
+        -- Plugin)" attributed to `Workspace.<player>.Gun.GunClient`, and the
+        -- gun never actuated: the error WAS our ping read, dispatched in place
+        -- of the gun's FireServer.
+        --
+        -- The rule is mechanical now, not careful: after deciding to redirect,
+        -- the hook body performs NO namecall at all. It packs the arguments,
+        -- hands them to a fresh deferred thread and returns nil. The native
+        -- packet never reaches a corrupted register and no error of ours can
+        -- travel back into the game's click handler. The deferred thread does
+        -- the solving and sends exactly one packet: the redirected one when
+        -- the solver produced frames, or the original arguments verbatim when
+        -- it did not. That re-fire comes from an executor thread, so
+        -- checkcaller() sends it straight to the trampoline.
+        local pendingRedirects: number = 0
+        local MAX_PENDING_REDIRECTS: number = 2
+        local sendingRedirect: boolean = false
+        local function sendAsExecutor(remote: any, arguments: any): boolean
+            local previous: boolean = sendingRedirect
+            sendingRedirect = true
+            local ok: boolean, failure: any = pcall(function(): ()
+                remote:FireServer(table.unpack(arguments, 1, arguments.n))
+            end)
+            sendingRedirect = previous
+            if not ok then
+                warn("[Wurst] native gun redirect failed: " .. tostring(failure))
             end
+            return ok
+        end
+        local function redirectDeferred(remote: any, arguments: any): ()
             if not shootFeatureActive or not shootOptionsReady then
-                return predecessor(remote, ...)
-            end
-            local okMethod: boolean, method: any = pcall(getMethod)
-            if not okMethod or method ~= "FireServer" then
-                return predecessor(remote, ...)
-            end
-            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
-            if not okCaller or fromExecutor ~= false then
-                -- Auto Shoot, Auto Farm, Knife and other executor-originated
-                -- packets keep their own settings and never enter this hook.
-                return predecessor(remote, ...)
-            end
-            if remote ~= cachedShootRemote then
-                -- Not the gun's Shoot remote (or the cache has not caught
-                -- up with a newly acquired gun): trampolines untouched,
-                -- and schedule a cache refresh outside this call.
-                if task and type(task.defer) == "function" then
-                    local now: number = os.clock()
-                    if now - lastCacheProbeAt >= 0.5 then
-                        lastCacheProbeAt = now
-                        task.defer(refreshShootRemoteCache)
-                    end
-                end
-                return predecessor(remote, ...)
-            end
-            local arguments: any = table.pack(...)
-            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
-                return predecessor(remote, ...)
+                sendAsExecutor(remote, arguments)
+                return
             end
             local shotOrigin: CFrame? = nil
             local shotEnd: CFrame? = nil
-            local ok: boolean = pcall(function(): boolean
+            local ok: boolean = pcall(function(): any
                 lastRejectReason = ""
                 return fireGunAtTarget(getSelectedShootTarget(), {
                     quiet = true,
@@ -948,8 +936,15 @@ function Module.init(runtime: any): any
                 if ShootFeature then
                     pcall(function(): () ShootFeature:SetStatus("Native click redirected") end)
                 end
-                return resendThroughEngine(remote, shotOrigin, shotEnd,
-                    table.unpack(arguments, 3, arguments.n))
+                local redirected: any = table.pack(shotOrigin, shotEnd)
+                local copied: number = 2
+                for index: number = 3, arguments.n do
+                    copied += 1
+                    redirected[copied] = arguments[index]
+                end
+                redirected.n = copied
+                sendAsExecutor(remote, redirected)
+                return
             end
             if ShootFeature then
                 pcall(function(): ()
@@ -957,11 +952,57 @@ function Module.init(runtime: any): any
                         else (lastRejectReason ~= "" and lastRejectReason or "Native click unchanged"))
                 end)
             end
-            -- No target, blocked line, unsupported geometry or an error: keep
-            -- the native click intact instead of blocking it or firing twice.
-            -- Re-sent through the engine for the same reason as the redirect:
-            -- the solver's own calls already clobbered the method register.
-            return resendThroughEngine(remote, table.unpack(arguments, 1, arguments.n))
+            -- No target, blocked line, unsupported geometry or an error: the
+            -- click still fires exactly as the game authored it, one packet.
+            sendAsExecutor(remote, arguments)
+        end
+        local function redirectNamecall(remote: any, ...: any): any
+            if sendingRedirect then
+                -- Our own deferred packet; its method register is intact.
+                return predecessor(remote, ...)
+            end
+            if not shootFeatureActive or not shootOptionsReady then
+                return predecessor(remote, ...)
+            end
+            local okMethod: boolean, method: any = pcall(getMethod)
+            if not okMethod or method ~= "FireServer" then
+                return predecessor(remote, ...)
+            end
+            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
+            if not okCaller or fromExecutor ~= false then
+                -- Auto Shoot, Auto Farm, Knife, the overlay and our own
+                -- deferred re-fire arrive with the executor identity: they
+                -- keep their own settings and never enter this hook.
+                return predecessor(remote, ...)
+            end
+            if remote ~= cachedShootRemote then
+                -- Not the gun's Shoot remote (or the cache has not caught up
+                -- with a newly acquired gun): trampoline untouched, and the
+                -- cache is refreshed outside this call.
+                local now: number = os.clock()
+                if now - lastCacheProbeAt >= 0.5 then
+                    lastCacheProbeAt = now
+                    task.defer(refreshShootRemoteCache)
+                end
+                return predecessor(remote, ...)
+            end
+            local arguments: any = table.pack(...)
+            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
+                return predecessor(remote, ...)
+            end
+            if pendingRedirects >= MAX_PENDING_REDIRECTS then
+                -- A click storm must not queue work: keep the native shot.
+                return predecessor(remote, ...)
+            end
+            pendingRedirects += 1
+            task.defer(function(): ()
+                local handled: boolean, failure: any = pcall(redirectDeferred, remote, arguments)
+                pendingRedirects -= 1
+                if not handled then
+                    warn("[Wurst] native gun redirect error: " .. tostring(failure))
+                end
+            end)
+            return nil
         end
         local callback: any = redirectNamecall
         if type(state.newCClosure) == "function" then

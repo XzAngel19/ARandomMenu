@@ -14,7 +14,8 @@ import gen_full_boot_harness as harness
 # v185 removes three universal cards; BedFight keeps its own Anti Void.
 CASES = [
     ('Universal', 1, 33, None, None),
-    ('MM2', 142823291, 46, 'MM2', 'MM2.AutoFarm'),
+    # v190 restores the MM2 Fling card (one more card in MM2 only).
+    ('MM2', 142823291, 47, 'MM2', 'MM2.AutoFarm'),
     ('BedFight', 71480482338212, 43, 'BedFight', 'BedFight.AutoSwing'),
     ('TRS', 14315258385, 44, 'TRS', 'TRS.AutoHeader'),
     ('VD', 93978595733734, 47, 'VD', 'VD.AutoGenerator'),
@@ -114,6 +115,13 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
                     'BedFight-specific Anti Void must not be removed with the universal card'
                 )
             renamed = {card['name'] for card in cards}
+            if active == 'MM2':
+                # v190: the two renames and the restored MM2-only Fling card.
+                for wanted in ('Invisibility', 'Freeze Animations', 'Fling'):
+                    assert wanted in renamed, f'MM2 {mode}: v190 card missing: {wanted}'
+                assert 'Ghost' not in renamed and 'Motion Lock' not in renamed, (
+                    f'MM2 {mode}: the old card names must be gone'
+                )
             for wanted in ('Speed Hack', 'Jump Hack', 'Proximity Prompts'):
                 if wanted in renamed:
                     break

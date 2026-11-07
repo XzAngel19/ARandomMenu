@@ -30,13 +30,13 @@ function Module.init(runtime: any): any
         return ok and result == true
     end
 
-    -- The old MM2 card owned these keys. They are dropped so a saved config from
-    -- v138..v138.2 cannot restore a target or a toggle that no longer exists.
+    -- v190: the MM2 Fling card is back (src/games/MM2/Other/Fling.lua), so the
+    -- MM2.Fling* keys are no longer purged. The universal Fling module is still
+    -- gone, and an "on" state saved by it must not be restored anywhere.
     if configData and type(configData.states) == "table" then
-        configData.states["MM2.Fling"] = nil
-        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil
-        configData.states["MM2.Fling.TouchFling"] = nil
         configData.states["Universal.Fling"] = false
+        configData.states["Universal.Fling.AutoFlingSelectedTarget"] = nil
+        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil
     end
 
     -- SkidFling (zqyDSUWX / YARHM), the fling every working menu copies:
@@ -439,6 +439,17 @@ function Module.init(runtime: any): any
             and typeof(options.returnCFrame) == "CFrame"
             and options.returnCFrame
             or nil
+        -- v190: the MM2 Fling card passes its Power/Retries rows through
+        -- options instead of the engine keeping global state. Callers that send
+        -- nothing (Auto Farm, Auto Win) keep the documented defaults.
+        local requestedPower: number? = nil
+        local requestedRetries: number? = nil
+        if type(options) == "table" then
+            local power: number? = tonumber(options.power)
+            if power then requestedPower = math.clamp(power, 1, 12) end
+            local retries: number? = tonumber(options.retries)
+            if retries then requestedRetries = math.clamp(math.floor(retries), 0, 3) end
+        end
 
         if flingRunning then
             if not silent then
@@ -701,7 +712,14 @@ function Module.init(runtime: any): any
         -- Any error must reset flingRunning, otherwise every later fling answers
         -- "fling already running" for the rest of the session.
         local function guardedRun(): boolean
+            local savedPower: number = FLING_POWER
+            local savedRetries: number = flingRetries
+            if requestedPower then FLING_POWER = requestedPower end
+            if requestedRetries then flingRetries = requestedRetries end
             local ok: boolean, result: any = pcall(runFling)
+            -- Restore before anything else: the engine is a single-fling
+            -- machine and a later caller must not inherit this card's rows.
+            FLING_POWER, flingRetries = savedPower, savedRetries
             if not ok then
                 setFlingRunning(false)
                 if not silent then

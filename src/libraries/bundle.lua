@@ -1,5 +1,5 @@
 return {
-    stamp = "v189-20261107-ghost-rewrite",
+    stamp = "v190-20261107-gun-ping-names",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -2834,73 +2834,61 @@ function Module.init(runtime: any): any
             or type(checkCaller) ~= "function" then
             return false
         end
-        local predecessor: any = nil
-        -- v187: the v183-v186 hook performed its own method calls
-        -- (getPlayerWeapon, FindFirstChild, raycasts) before invoking the
-        -- original namecall trampoline. Every one of those calls overwrites
-        -- the pending namecall method, so the trampoline dispatched
-        -- whatever method ran last instead of FireServer and the native
-        -- call died: live output showed "argument #1 expects a string, but
-        -- Instance was passed" from this hook for KnifeClient calls, plus
-        -- 'GetValue' (lacking capability Plugin) from GunClient -- the
-        -- weapons stopped actuating while Gun Aimbot was on. Two rules now:
-        -- (1) before the trampoline, only plain/C calls run: the method
-        -- check, checkcaller, and a comparison against the Shoot remote
-        -- cached OUTSIDE the hook; anything else trampolines immediately.
-        -- (2) once the solver has run (and clobbered the method register
-        -- beyond repair), modified or original frames are re-sent through
-        -- the engine: a fresh remote:FireServer call re-enters this hook,
-        -- which sees the guard flag and trampolines it while its method
-        -- register is still exactly "FireServer".
-        local resendingNativeShot: boolean = false
-        local function resendThroughEngine(remote: any, ...: any): any
-            resendingNativeShot = true
-            local results: any = table.pack(pcall(function(...: any): any
-                return ((remote :: any) :: RemoteEvent):FireServer(...)
-            end, ...))
-            resendingNativeShot = false
-            if results[1] == true then
-                return table.unpack(results, 2, results.n)
-            end
-            return nil
+        if type(task) ~= "table" or type(task.defer) ~= "function" then
+            -- v190: the redirect ships from its own thread. Without task.defer
+            -- the hook would have to call back into the engine on the game's
+            -- thread, which is exactly what broke the native click in
+            -- v183-v189. Fail closed and leave the native shot alone.
+            return false
         end
-        local function redirectNamecall(remote: any, ...: any): any
-            if resendingNativeShot then
-                return predecessor(remote, ...)
+        local predecessor: any = nil
+        -- v190: the redirect never runs on the game's thread any more.
+        --
+        -- v187 tried to be careful: it checked the pending method name, the
+        -- caller and a cached remote before touching the trampoline, then ran
+        -- the whole solver and re-sent the packet "through the engine" to
+        -- recover the method register the solver had clobbered. The live
+        -- console of 2026-11-07 showed that is not enough: every method call
+        -- inside the solver (FindFirstChild, raycasts, the ping read) rewrites
+        -- the pending namecall method, and the engine then dispatches whatever
+        -- ran last instead of FireServer. The player saw, once per click,
+        -- "The current thread cannot call 'GetValue' (lacking capability
+        -- Plugin)" attributed to `Workspace.<player>.Gun.GunClient`, and the
+        -- gun never actuated: the error WAS our ping read, dispatched in place
+        -- of the gun's FireServer.
+        --
+        -- The rule is mechanical now, not careful: after deciding to redirect,
+        -- the hook body performs NO namecall at all. It packs the arguments,
+        -- hands them to a fresh deferred thread and returns nil. The native
+        -- packet never reaches a corrupted register and no error of ours can
+        -- travel back into the game's click handler. The deferred thread does
+        -- the solving and sends exactly one packet: the redirected one when
+        -- the solver produced frames, or the original arguments verbatim when
+        -- it did not. That re-fire comes from an executor thread, so
+        -- checkcaller() sends it straight to the trampoline.
+        local pendingRedirects: number = 0
+        local MAX_PENDING_REDIRECTS: number = 2
+        local sendingRedirect: boolean = false
+        local function sendAsExecutor(remote: any, arguments: any): boolean
+            local previous: boolean = sendingRedirect
+            sendingRedirect = true
+            local ok: boolean, failure: any = pcall(function(): ()
+                remote:FireServer(table.unpack(arguments, 1, arguments.n))
+            end)
+            sendingRedirect = previous
+            if not ok then
+                warn("[Wurst] native gun redirect failed: " .. tostring(failure))
             end
+            return ok
+        end
+        local function redirectDeferred(remote: any, arguments: any): ()
             if not shootFeatureActive or not shootOptionsReady then
-                return predecessor(remote, ...)
-            end
-            local okMethod: boolean, method: any = pcall(getMethod)
-            if not okMethod or method ~= "FireServer" then
-                return predecessor(remote, ...)
-            end
-            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
-            if not okCaller or fromExecutor ~= false then
-                -- Auto Shoot, Auto Farm, Knife and other executor-originated
-                -- packets keep their own settings and never enter this hook.
-                return predecessor(remote, ...)
-            end
-            if remote ~= cachedShootRemote then
-                -- Not the gun's Shoot remote (or the cache has not caught
-                -- up with a newly acquired gun): trampolines untouched,
-                -- and schedule a cache refresh outside this call.
-                if task and type(task.defer) == "function" then
-                    local now: number = os.clock()
-                    if now - lastCacheProbeAt >= 0.5 then
-                        lastCacheProbeAt = now
-                        task.defer(refreshShootRemoteCache)
-                    end
-                end
-                return predecessor(remote, ...)
-            end
-            local arguments: any = table.pack(...)
-            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
-                return predecessor(remote, ...)
+                sendAsExecutor(remote, arguments)
+                return
             end
             local shotOrigin: CFrame? = nil
             local shotEnd: CFrame? = nil
-            local ok: boolean = pcall(function(): boolean
+            local ok: boolean = pcall(function(): any
                 lastRejectReason = ""
                 return fireGunAtTarget(getSelectedShootTarget(), {
                     quiet = true,
@@ -2915,8 +2903,15 @@ function Module.init(runtime: any): any
                 if ShootFeature then
                     pcall(function(): () ShootFeature:SetStatus("Native click redirected") end)
                 end
-                return resendThroughEngine(remote, shotOrigin, shotEnd,
-                    table.unpack(arguments, 3, arguments.n))
+                local redirected: any = table.pack(shotOrigin, shotEnd)
+                local copied: number = 2
+                for index: number = 3, arguments.n do
+                    copied += 1
+                    redirected[copied] = arguments[index]
+                end
+                redirected.n = copied
+                sendAsExecutor(remote, redirected)
+                return
             end
             if ShootFeature then
                 pcall(function(): ()
@@ -2924,11 +2919,57 @@ function Module.init(runtime: any): any
                         else (lastRejectReason ~= "" and lastRejectReason or "Native click unchanged"))
                 end)
             end
-            -- No target, blocked line, unsupported geometry or an error: keep
-            -- the native click intact instead of blocking it or firing twice.
-            -- Re-sent through the engine for the same reason as the redirect:
-            -- the solver's own calls already clobbered the method register.
-            return resendThroughEngine(remote, table.unpack(arguments, 1, arguments.n))
+            -- No target, blocked line, unsupported geometry or an error: the
+            -- click still fires exactly as the game authored it, one packet.
+            sendAsExecutor(remote, arguments)
+        end
+        local function redirectNamecall(remote: any, ...: any): any
+            if sendingRedirect then
+                -- Our own deferred packet; its method register is intact.
+                return predecessor(remote, ...)
+            end
+            if not shootFeatureActive or not shootOptionsReady then
+                return predecessor(remote, ...)
+            end
+            local okMethod: boolean, method: any = pcall(getMethod)
+            if not okMethod or method ~= "FireServer" then
+                return predecessor(remote, ...)
+            end
+            local okCaller: boolean, fromExecutor: any = pcall(checkCaller)
+            if not okCaller or fromExecutor ~= false then
+                -- Auto Shoot, Auto Farm, Knife, the overlay and our own
+                -- deferred re-fire arrive with the executor identity: they
+                -- keep their own settings and never enter this hook.
+                return predecessor(remote, ...)
+            end
+            if remote ~= cachedShootRemote then
+                -- Not the gun's Shoot remote (or the cache has not caught up
+                -- with a newly acquired gun): trampoline untouched, and the
+                -- cache is refreshed outside this call.
+                local now: number = os.clock()
+                if now - lastCacheProbeAt >= 0.5 then
+                    lastCacheProbeAt = now
+                    task.defer(refreshShootRemoteCache)
+                end
+                return predecessor(remote, ...)
+            end
+            local arguments: any = table.pack(...)
+            if typeof(arguments[1]) ~= "CFrame" or typeof(arguments[2]) ~= "CFrame" then
+                return predecessor(remote, ...)
+            end
+            if pendingRedirects >= MAX_PENDING_REDIRECTS then
+                -- A click storm must not queue work: keep the native shot.
+                return predecessor(remote, ...)
+            end
+            pendingRedirects += 1
+            task.defer(function(): ()
+                local handled: boolean, failure: any = pcall(redirectDeferred, remote, arguments)
+                pendingRedirects -= 1
+                if not handled then
+                    warn("[Wurst] native gun redirect error: " .. tostring(failure))
+                end
+            end)
+            return nil
         end
         local callback: any = redirectNamecall
         if type(state.newCClosure) == "function" then
@@ -11024,6 +11065,249 @@ end
 return Module
 
 ]],
+        ["src/games/MM2/Other/Fling.lua"] = [[
+-- v190: the MM2 Fling card comes back as its own card.
+--
+-- History: v183 removed the universal `Fling` card at the player's request
+-- ("borren el Fling universal"), and the removal also took the MM2 card with
+-- it -- the engine stayed (`FlingEngine.lua`) but only Auto Farm and Auto Win
+-- could reach it. This module is that card again, MM2 only: pick a player from
+-- the list and the SkidFling engine throws them.
+--
+-- The card never flings on its own: no saved selection starts a fling at
+-- injection, and the list is the only trigger. Power and Retries travel with
+-- each call, so Auto Farm/Auto Win keep the documented engine defaults.
+--
+-- Anti Fling cancels the fling's own contact (its whole job is to prevent
+-- contact with a flinging body), so both this card and Walk Fling warn and
+-- refuse while it is on -- MM2 only, as the player asked.
+local Module = {
+    Name = "MM2 Fling",
+    Events = {} :: {[string]: any},
+    Initialized = false,
+    Runtime = nil :: any,
+}
+
+local activeCleanup: () -> () = function(): () end
+
+function Module.init(runtime: any): any
+    if Module.Initialized then
+        return Module
+    end
+    local core: any = state.mm2Core
+    assert(type(core) == "table", "MM2 Fling requires the MM2 core module")
+    Module.Runtime = runtime
+
+    local localPlayer: any = LocalPlayer
+    local playerService: any = Players
+
+    local settings = {
+        power = 6,
+        retries = 2,
+    }
+    local FlingFeature: any = nil
+    -- The list publishes its stored selection once, while it is being built.
+    -- Acting on that first call would fling a player at injection.
+    local listReady: boolean = false
+
+    local function antiFlingOn(): boolean
+        return state.antiFlingActive == true
+    end
+
+    local function roster(): {any}
+        local ok: boolean, players: any = pcall(function(): any
+            return playerService:GetPlayers()
+        end)
+        if not ok or type(players) ~= "table" then
+            return {}
+        end
+        return players
+    end
+
+    local function livingCharacter(player: any): (any?, any?)
+        local character: any = player and player.Character
+        if not character or not character.Parent then
+            return nil, nil
+        end
+        local humanoid: any = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then
+            return nil, nil
+        end
+        return character, humanoid
+    end
+
+    local function canFling(player: any): boolean
+        if not player or player == localPlayer then
+            return false
+        end
+        local character: any = livingCharacter(player)
+        return character ~= nil
+    end
+
+    local function playerNames(): {string}
+        local names: {string} = {}
+        for _, player: any in ipairs(roster()) do
+            if canFling(player) then
+                table.insert(names, tostring(player.Name))
+            end
+        end
+        table.sort(names)
+        return names
+    end
+
+    local function findPlayer(name: string?): any?
+        if not name or name == "" then
+            return nil
+        end
+        for _, player: any in ipairs(roster()) do
+            if tostring(player.Name) == name then
+                return player
+            end
+        end
+        return nil
+    end
+
+    local function setStatus(text: string?): ()
+        if FlingFeature and type(FlingFeature.SetStatus) == "function" then
+            pcall(function(): ()
+                FlingFeature:SetStatus(text)
+            end)
+        end
+    end
+
+    local function flingPlayer(name: string?): boolean
+        if not name or name == "" then
+            setStatus("Pick a target")
+            return false
+        end
+        if antiFlingOn() then
+            -- The player asked for this notice: with Anti Fling on the shield
+            -- blocks the contact the fling needs, so the fling would just look
+            -- broken and blame the engine.
+            if type(notify) == "function" then
+                notify("Anti Fling is ON: turn it off before flinging someone.")
+            end
+            setStatus("Anti Fling is ON")
+            return false
+        end
+        local target: any = findPlayer(name)
+        if not target then
+            setStatus("Player left")
+            return false
+        end
+        local perform: any = state.mm2PerformFling
+        if type(perform) ~= "function" then
+            setStatus("Fling engine unavailable")
+            return false
+        end
+        setStatus("Flinging " .. tostring(name))
+        local started: boolean = false
+        pcall(function(): ()
+            started = perform(target, {
+                power = settings.power,
+                retries = settings.retries,
+            })
+        end)
+        if not started then
+            setStatus("Fling busy or refused")
+        end
+        return started
+    end
+
+    FlingFeature = createUniversalFeature(
+        "Fling",
+        "Flings the player you pick with the MM2 SkidFling engine. Turn Anti Fling off first.",
+        9,
+        function(): () end,
+        {
+            categoryName = "Exploits",
+            parent = MM2Scroll,
+            registry = mm2Features,
+            -- Group card: the card itself never "runs", it holds the controls.
+            kind = "group",
+        }
+    )
+
+    local listHandle: any = nil
+    if type(addListOption) == "function" then
+        listHandle = addListOption(FlingFeature, "Target player", {
+            items = playerNames,
+            single = true,
+            default = {},
+            emptyText = "No other players",
+            hint = "Pick a player to fling right now. Anti Fling must be OFF: it cancels the contact the fling needs.",
+            onChanged = function(_selected: any, names: {string}): ()
+                if not listReady then
+                    return
+                end
+                local chosen: string? = names and names[1]
+                if not chosen or chosen == "" then
+                    return
+                end
+                -- Clear the row so the same player can be picked again; the
+                -- empty publish that follows is ignored above.
+                local key: string = tostring(FlingFeature.configKey or "MM2.Fling")
+                    .. ".Targetplayer"
+                local controls: any = state.listControls and state.listControls[key]
+                if controls then
+                    listReady = false
+                    pcall(function(): ()
+                        controls.set(chosen, false)
+                    end)
+                    listReady = true
+                end
+                flingPlayer(chosen)
+            end,
+        })
+        listReady = true
+    end
+
+    if type(addNumberOption) == "function" then
+        addNumberOption(FlingFeature, "Power", settings.power, 1, 10,
+            function(value: number): ()
+                settings.power = math.clamp(tonumber(value) or 6, 1, 10)
+            end,
+            "YARHM's exact numbers are Power 3. Higher values scale both the pose velocity and the pin, which is what lands a fling on a laggy or fast-moving target.",
+            1)
+        addNumberOption(FlingFeature, "Retries", settings.retries, 0, 3,
+            function(value: number): ()
+                settings.retries = math.clamp(math.floor(tonumber(value) or 0), 0, 3)
+            end,
+            "Extra half-length passes that swap the contact part, for a server that misses the first contact.",
+            2)
+    end
+    if type(addInformationOption) == "function" then
+        addInformationOption(
+            FlingFeature,
+            "MM2 only. While Anti Fling is ON the fling is refused with a notice: "
+                .. "its collision shield stops the contact the fling needs."
+        )
+    end
+
+    state.mm2FlingFeature = FlingFeature
+    state.mm2FlingSettings = settings
+    activeCleanup = function(): ()
+        state.mm2FlingFeature = nil
+        state.mm2FlingSettings = nil
+    end
+    Module.Initialized = true
+    return Module
+end
+
+function Module.destroy(): ()
+    if not Module.Initialized then
+        return
+    end
+    Module.Initialized = false
+    pcall(activeCleanup)
+    activeCleanup = function(): () end
+    Module.Events = {}
+    Module.Runtime = nil
+end
+
+return Module
+
+]],
         ["src/games/MM2/Other/FlingEngine.lua"] = [[
 local Module = {
     Name = "MM2 Fling Engine",
@@ -11057,13 +11341,13 @@ function Module.init(runtime: any): any
         return ok and result == true
     end
 
-    -- The old MM2 card owned these keys. They are dropped so a saved config from
-    -- v138..v138.2 cannot restore a target or a toggle that no longer exists.
+    -- v190: the MM2 Fling card is back (src/games/MM2/Other/Fling.lua), so the
+    -- MM2.Fling* keys are no longer purged. The universal Fling module is still
+    -- gone, and an "on" state saved by it must not be restored anywhere.
     if configData and type(configData.states) == "table" then
-        configData.states["MM2.Fling"] = nil
-        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil
-        configData.states["MM2.Fling.TouchFling"] = nil
         configData.states["Universal.Fling"] = false
+        configData.states["Universal.Fling.AutoFlingSelectedTarget"] = nil
+        configData.states["MM2.Fling.AutoFlingSelectedTarget"] = nil
     end
 
     -- SkidFling (zqyDSUWX / YARHM), the fling every working menu copies:
@@ -11466,6 +11750,17 @@ function Module.init(runtime: any): any
             and typeof(options.returnCFrame) == "CFrame"
             and options.returnCFrame
             or nil
+        -- v190: the MM2 Fling card passes its Power/Retries rows through
+        -- options instead of the engine keeping global state. Callers that send
+        -- nothing (Auto Farm, Auto Win) keep the documented defaults.
+        local requestedPower: number? = nil
+        local requestedRetries: number? = nil
+        if type(options) == "table" then
+            local power: number? = tonumber(options.power)
+            if power then requestedPower = math.clamp(power, 1, 12) end
+            local retries: number? = tonumber(options.retries)
+            if retries then requestedRetries = math.clamp(math.floor(retries), 0, 3) end
+        end
 
         if flingRunning then
             if not silent then
@@ -11728,7 +12023,14 @@ function Module.init(runtime: any): any
         -- Any error must reset flingRunning, otherwise every later fling answers
         -- "fling already running" for the rest of the session.
         local function guardedRun(): boolean
+            local savedPower: number = FLING_POWER
+            local savedRetries: number = flingRetries
+            if requestedPower then FLING_POWER = requestedPower end
+            if requestedRetries then flingRetries = requestedRetries end
             local ok: boolean, result: any = pcall(runFling)
+            -- Restore before anything else: the engine is a single-fling
+            -- machine and a later caller must not inherit this card's rows.
+            FLING_POWER, flingRetries = savedPower, savedRetries
             if not ok then
                 setFlingRunning(false)
                 if not silent then
@@ -13906,13 +14208,13 @@ function Module.init(runtime: any): any
 
     local function currentRtt(): number
         local latency: any = nil
-        -- Prefer Data Ping when both readings exist. The calibration
-        -- buckets are keyed by Data Ping for a reason: in the v102
-        -- session the smoothed lower-of-two estimate read 92-98 ms
-        -- while Data Ping read 109-118 ms and the server echo landed
-        -- at 110-130 ms, so taking the lower reading under-led every
-        -- shot until echoes accumulated. The combined estimate stays
-        -- as the fallback when Data Ping is unavailable.
+        -- Prefer the calibration source when both readings exist. v190
+        -- removed the only reader of Data Ping (`StatsItem:GetValue`
+        -- needs the Plugin capability, which Delta denies), so the
+        -- second slot is empty and the engine reading is used until the
+        -- measured echo takes over. The reading order is kept: taking
+        -- the lower of two estimates under-led every shot in the v102
+        -- session until echoes accumulated.
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any =
                 pcall(core.getLatencyReadings)
@@ -17693,39 +17995,35 @@ end
 
 local lastLatencyReadAt: number = -math.huge
 
--- Two engine readings of the same path. They disagree: in the 2026-10-18
--- session GetNetworkPing read 314/342 ms on two shots whose measured
--- confirmation echo was 152/164 ms, and it read 241 ms at session start when
--- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
--- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
--- This legacy smoothed fallback takes the lower of the two: over-leading is
--- the failure this data shows, and Prediction's median rejects a one-off dip.
--- The live predictor itself prefers Data Ping when both readings are present.
+-- v190: `Stats.Network.ServerStatsItem["Data Ping"]:GetValue()` is a
+-- Plugin-security method. Delta (and any executor that runs without the
+-- Plugin capability) answers it with "The current thread cannot call
+-- 'GetValue' (lacking capability Plugin)". The call ran on threads the game
+-- owns -- the 1 Hz overlay sample and, worse, the namecall hook that sits
+-- between the player's mouse click and the gun's native FireServer -- so the
+-- console filled with that error in a loop and the native shot died inside
+-- the hook. The read is gone: latency comes from `Player:GetNetworkPing`,
+-- every read stays inside pcall, and Prediction falls back to the echo it
+-- measures itself (`core.getEstimatedLatency` + acceptance prior).
+-- Reading Data Ping from older sessions is history, not a live source:
+-- GetNetworkPing read 314/342 ms on shots whose echo came back in 152/164 ms,
+-- so over-leading stays the failure mode the median and the lead correction
+-- are there to bound.
 local function readLatencyReadings(): (number?, number?)
     local engine: number? = nil
-    local data: number? = nil
     pcall(function(): ()
         local direct: any = (LocalPlayer :: any).GetNetworkPing
-        if type(direct) == "function" then
-            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
-            if okDirect and predictionMath.finite(seconds)
-                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
-                engine = seconds :: number
-            end
-        end
-        local network: Instance? = Stats:FindFirstChild("Network")
-        local serverItems: Instance? = network
-            and network:FindFirstChild("ServerStatsItem")
-        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
-        if pingItem and type(pingItem.GetValue) == "function" then
-            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds)
-                and pingMilliseconds >= 10 and pingMilliseconds <= 2000 then
-                data = pingMilliseconds / 1000
-            end
+        if type(direct) ~= "function" then return end
+        local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+        if okDirect and predictionMath.finite(seconds)
+            and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+            engine = seconds :: number
         end
     end)
-    return engine, data
+    -- Second slot kept so the predictor's "prefer the calibration source"
+    -- branch still has a shape to fall back from; nothing restricts-free
+    -- exposes Data Ping, so it is always nil today.
+    return engine, nil
 end
 
 local function getEstimatedLatency(): number
@@ -18466,16 +18764,18 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Telemetry only. Same source as the predictor (v190): Data Ping needs the
+    -- Plugin capability and a restricted call on this thread is exactly what
+    -- broke the gun, so this reads the engine value and nothing else.
     local function getPingMilliseconds(): number
         local pingMs: number = 0
         pcall(function(): ()
-            local network: Instance? = Stats:FindFirstChild("Network")
-            local serverItems: Instance? = network
-                and network:FindFirstChild("ServerStatsItem")
-            local pingItem: any = serverItems
-                and serverItems:FindFirstChild("Data Ping")
-            if pingItem and type(pingItem.GetValue) == "function" then
-                pingMs = tonumber(pingItem:GetValue()) or 0
+            local player: any = LocalPlayer
+            local direct: any = player and player.GetNetworkPing
+            if type(direct) ~= "function" then return end
+            local ok: boolean, seconds: any = pcall(direct, player)
+            if ok and finite(seconds) and (seconds :: number) > 0 then
+                pingMs = (seconds :: number) * 1000
             end
         end)
         return math.max(0, pingMs)
@@ -28916,27 +29216,28 @@ return Module
 
 ]],
         ["src/games/universal/Blatant/Invisible.lua"] = [[
--- Local ghost: a real, unanchored Humanoid walks under native gravity.
--- Only explicit Ghost Fly uses velocity; the real character stays parked
--- underneath at `Void depth`.
+-- Invisibility (v190 name; the module and its config key are still "Ghost"
+-- so saved profiles and keybinds survive): a real, unanchored Humanoid walks
+-- under native gravity. Only explicit Fly uses velocity; the real character
+-- stays parked underneath at `Void depth`.
 --
 -- v189 contract (rewrite after the live report "no funciona, se traba
 -- demasiado, vuela hacia arriba y se teletransporta"):
---   * The real body is ANCHORED and non-collidable while Ghost is on. v188
+--   * The real body is ANCHORED and non-collidable while Invisibility is on. v188
 --     rewrote root.CFrame every single frame on a live, collidable body that
 --     sat inside the floor at small depth; physics fought the writes (jitter,
 --     teleports) and every write replicated (the stutter). Now the body is
 --     frozen once and only re-placed at 10 Hz, so there is nothing to fight.
 --   * The clone spawns ABOVE the real body instead of inside it, so the two
 --     rigs never interpenetrate and the engine never launches either one.
---   * Ghost Fly is velocity driven on an UNANCHORED rig. v188 anchored the
+--   * Fly is velocity driven on an UNANCHORED rig. v188 anchored the
 --     root and then set AssemblyLinearVelocity, which an anchored part
 --     ignores -- that is why Fly did nothing and the rest of the module moved
 --     strangely. No raycasts in the flight loop either.
 --   * No Void guard, no Sprint multiplier, no Outline: fewer moving parts and
 --     no per-frame work beyond reading the movement service.
 --   * Void depth defaults to 5 (minimum 5) and migrates older profiles.
-local Module = {Name="Ghost",PlaceId=0,Initialized=false}
+local Module = {Name="Invisibility",PlaceId=0,Initialized=false}
 local cleanup
 
 function Module.init(context)
@@ -29239,15 +29540,19 @@ function Module.init(context)
         animate()
         syncBody(root,ghostRoot)
     end
-    card=context.framework.Categories.Utilities:CreateModule({Name="Ghost",Category="Utilities",Order=8,
-        Tooltip="A local clone walks under real gravity and you see through it; your real body is parked Void depth studs underneath. Ghost Fly turns the clone into a smooth velocity flight.",Function=function(enabled)
+    -- v190: renamed Ghost -> Invisibility. ConfigKey is pinned to the old one
+    -- so profiles and keybinds keep working; option ids derive from their
+    -- names, so the three "Ghost ..." rows are renamed with their defaults.
+    card=context.framework.Categories.Utilities:CreateModule({Name="Invisibility",Category="Utilities",Order=8,
+        ConfigKey="Universal.Ghost",
+        Tooltip="A local clone walks under real gravity and you see through it; your real body is parked Void depth studs underneath. Fly turns the clone into a smooth velocity flight.",Function=function(enabled)
             stop()
             if not enabled then return end
             local character=player.Character
             local humanoid,root=parts(character)
             if not humanoid or not root or humanoid.Health<=0 or not spawnGhost(character,root) then
                 card:Toggle(false)
-                error("Ghost could not create a live character.",0)
+                error("Invisibility could not create a live character.",0)
             end
             activity(true)
             parkBody(character,root,humanoid)
@@ -29259,18 +29564,18 @@ function Module.init(context)
             end))
             step(0)
         end})
-    card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
+    card:CreateToggle({Name="Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
         Tooltip="OFF: native walking and jumping. ON: smooth velocity flight with WASD or the mobile stick, Space up, LeftControl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=1,Max=250,Default=settings.flySpeed,
+    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=1,Max=250,Default=settings.flySpeed,
         Function=function(value) settings.flySpeed=value end})
     card:CreateSlider({Name="Void depth",Min=VOID_DEPTH_MIN,Max=VOID_DEPTH_MAX,Default=settings.depth,Function=function(value)
         settings.depth=math.clamp(value,VOID_DEPTH_MIN,VOID_DEPTH_MAX)
     end,Tooltip="How far under the clone your real body is parked. 5 is the default: close enough to keep the puppet honest, far enough not to touch the floor."})
-    card:CreateSlider({Name="Ghost WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
+    card:CreateSlider({Name="WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
         settings.walkSpeed=math.clamp(value,0,500)
         if state.humanoid and not settings.fly then state.humanoid.WalkSpeed=settings.walkSpeed end
     end,Tooltip="Walking speed of the clone."})
-    card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
+    card:CreateSlider({Name="Transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
         applyAppearance()
     end})
@@ -29901,8 +30206,30 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    -- v190: MM2-only notice. Anti Fling shields every colliding part against a
+    -- body moving at fling speeds -- which is exactly the contact Walk Fling
+    -- needs -- so enabling both at once made the fling look broken. The player
+    -- asked for the warning instead of silent failure: refusing here makes the
+    -- card revert itself and report "Could not toggle Walk Fling: ...".
+    local function mm2Game(): boolean
+        local shared: any = host.state
+        if shared and shared.activeGameName == "MM2" then
+            return true
+        end
+        local ok: boolean, placeId: any = pcall(function(): any return game.PlaceId end)
+        return ok and placeId == 142823291
+    end
+
+    local function antiFlingOn(): boolean
+        local shared: any = host.state
+        return shared ~= nil and shared.antiFlingActive == true
+    end
+
     local function toggleWalkFling(state: boolean): ()
         if state == true then
+            if mm2Game() and antiFlingOn() then
+                error("Anti Fling is ON. Turn it off first to use Walk Fling.", 0)
+            end
             startWalkFling()
             return
         end
@@ -29926,7 +30253,8 @@ function Module.init(context: Runtime): any
         walkFlingFeature,
         "While ON, every physics frame the local character is noclipped and given a "
             .. "huge velocity for one frame, which launches whoever you walk into. "
-            .. "Collisions are restored when it stops. It never starts on injection."
+            .. "Collisions are restored when it stops. It never starts on injection. "
+            .. "In MM2 it refuses to start while Anti Fling is ON."
     )
 
     activeCleanup = function(): ()
@@ -31227,6 +31555,9 @@ function Module.init(context: Runtime): any
     local character: Model? = nil
     local links: {[BasePart]: {[BasePart]: any}} = {}
     local hazardSeen: {[BasePart]: number} = {}
+    -- Body model -> clock value until which it stays shielded. Only populated
+    -- by a fling-speed body inside RADIUS (v190).
+    local dangerousUntil: {[Model]: number} = {}
     local nextScan: number = 0
     local dangerUntil: number = 0
     local suspended: boolean = false
@@ -31255,6 +31586,7 @@ function Module.init(context: Runtime): any
         end
         table.clear(links)
         table.clear(hazardSeen)
+        table.clear(dangerousUntil)
         dangerUntil = 0
     end
 
@@ -31317,29 +31649,62 @@ function Module.init(context: Runtime): any
         local characterModels: {[Model]: boolean} = {}
         local roster: any = players:GetPlayers()
 
-        -- Track every visible player body, not the shared world collision group.
-        -- Nearest bodies get the bounded constraint budget first on large servers.
+        -- v190: the shield is a FLING shield, not a permanent noclip against
+        -- every player. Until v189 every visible body got NoCollisionConstraint
+        -- against every one of our parts, so simply walking into someone went
+        -- through them (the player's report: "Anti Fling me hace noclipear los
+        -- cuerpos de las demás personas"). Now a body is shielded only while it
+        -- is actually a hazard -- a part of it moving or spinning at fling
+        -- speeds inside RADIUS -- and for HAZARD_HOLD seconds after, so an
+        -- ongoing fling keeps its protection between scans. Untouched bodies
+        -- keep normal collisions.
         for _, player: Player in ipairs(roster) do
             local other: Model? = player ~= localPlayer and player.Character or nil
             if other and other ~= owner and other.Parent then
                 characterModels[other] = true
-                local otherRoot: BasePart? = other:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local distance: number = otherRoot and (otherRoot.Position - root.Position).Magnitude or math.huge
-                table.insert(candidates, {model = other, distance = distance,
-                    parts = if playerShield then listBodyParts(other, false) else {}})
-            end
-        end
-        table.sort(candidates, function(a: any, b: any): boolean return a.distance < b.distance end)
-        if playerShield then
-            for _, candidate: any in ipairs(candidates) do
-                for _, part: BasePart in ipairs(candidate.parts) do
-                    desired[part] = true
-                    if candidate.distance <= RADIUS and fastPart(part, nil) then
-                        dangerUntil = math.max(dangerUntil, now + HAZARD_HOLD)
+                if playerShield then
+                    local otherRoot: BasePart? = other:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local distance: number = otherRoot
+                        and (otherRoot.Position - root.Position).Magnitude
+                        or math.huge
+                    if distance <= RADIUS then
+                        local parts: {BasePart} = listBodyParts(other, false)
+                        local hazard: boolean = false
+                        for _, part: BasePart in ipairs(parts) do
+                            if part.CanCollide and fastPart(part, nil) then
+                                hazard = true
+                                break
+                            end
+                        end
+                        if hazard then
+                            dangerousUntil[other] = now + HAZARD_HOLD
+                            dangerUntil = math.max(dangerUntil, now + HAZARD_HOLD)
+                        end
                     end
                 end
             end
         end
+        -- Release bodies that are no longer a threat, then rebuild the budget
+        -- from the ones that still are.
+        if playerShield then
+            for model: Model, expiresAt: number in pairs(dangerousUntil) do
+                if expiresAt <= now or not model.Parent then
+                    dangerousUntil[model] = nil
+                end
+            end
+            for model: Model in pairs(dangerousUntil) do
+                local otherRoot: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local distance: number = otherRoot
+                    and (otherRoot.Position - root.Position).Magnitude
+                    or math.huge
+                local parts: {BasePart} = listBodyParts(model, true)
+                table.insert(candidates, {model = model, distance = distance, parts = parts})
+                for _, part: BasePart in ipairs(parts) do
+                    desired[part] = true
+                end
+            end
+        end
+        table.sort(candidates, function(a: any, b: any): boolean return a.distance < b.distance end)
 
         -- The query is local and bounded. Anchored geometry, the supporting
         -- platform/assembly, seats and tools keep their normal interactions.
@@ -31529,6 +31894,9 @@ function Module.init(context: Runtime): any
 
     local function toggleAntiFling(value: boolean): ()
         enabled = value == true
+        -- v190: MM2's Fling card and Walk Fling read this flag to warn and
+        -- refuse while the shield is on (it cancels the contact a fling needs).
+        if host.state then host.state.antiFlingActive = enabled end
         disconnect("AntiFling")
         destroyLinks()
         character = nil
@@ -31550,7 +31918,7 @@ function Module.init(context: Runtime): any
         playerShield = value == true
         nextScan = 0
         if not playerShield and not impactShield then destroyLinks() end
-    end, "Prevent local physical collisions with other character bodies without changing their collision settings.")
+    end, "Shield yourself only from bodies that are moving or spinning at fling speeds nearby, for a moment after each hit. Calm players keep normal collisions, so you no longer walk through their bodies.")
     host.addToggleOption(feature, "Impact Shield", true, function(value: boolean): ()
         impactShield = value == true
         nextScan = 0
@@ -31561,6 +31929,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         toggleAntiFling(false)
+        if host.state then host.state.antiFlingActive = false end
     end
     Module.Initialized = true
     return feature
@@ -32696,11 +33065,14 @@ function Module.init(context: Runtime): any
             elseif root then
                 lockPosition(root)
             end
-        end, nil, "Motion Lock")
+        end, nil, "Freeze Animations")
     end
 
+    -- v190: renamed Motion Lock -> Freeze Animations at the player's request.
+    -- configKey stays "Movement.FreezeMovements", so profiles, keybinds and the
+    -- saved mode survive; only the visible title and its task name changed.
     FreezeFeature = createUniversalFeature(
-        "Motion Lock",
+        "Freeze Animations",
         "Pin the body where it stands, or keep any animation playing while moving",
         4,
         toggleFreezeMovements,
@@ -43117,14 +43489,24 @@ function Module.init(context: any): any
         return CONTROL_FONT
     end
 
+    -- v190: `StatsItem:GetValue()` needs the Plugin capability and Delta
+    -- rejects it ("The current thread cannot call 'GetValue'"), one error per
+    -- overlay sample. The overlay reads the engine value instead, and a failed
+    -- read simply leaves the row blank.
     local function getSessionPing(): number?
         local success: boolean, value: any = pcall(function(): number
-            local network: any = Stats:FindFirstChild("Network")
-            local serverStats: any = network and network:FindFirstChild("ServerStatsItem")
-            local ping: any = serverStats and serverStats:FindFirstChild("Data Ping")
-            return ping and ping:GetValue() or 0
+            local player: any = LocalPlayer or Players.LocalPlayer
+            local direct: any = player and player.GetNetworkPing
+            if type(direct) ~= "function" then
+                return 0
+            end
+            local seconds: any = direct(player)
+            return if type(seconds) == "number" then seconds * 1000 else 0
         end)
-        return success and tonumber(value) or nil
+        if not success then return nil end
+        local milliseconds: number? = tonumber(value)
+        if not milliseconds or milliseconds <= 0 then return nil end
+        return milliseconds
     end
 
     local lastTextGuiText: string = ""
@@ -54679,10 +55061,11 @@ local Manifest: Manifest = {
         ["FOV"] = "Render",
         ["Fast Vault Optimizer"] = "Movement",
         ["Fly"] = "Exploits",
-        ["Motion Lock"] = "Utilities",
+        ["Freeze Animations"] = "Utilities",
         ["Notifications"] = "Utilities",
+        ["Fling"] = "Exploits",
         ["Fullbright"] = "Render",
-        ["Ghost"] = "Utilities",
+        ["Invisibility"] = "Utilities",
         ["Goalkeeper Assist"] = "Exploits",
         ["Gravity"] = "World",
         ["Gun Aimbot"] = "Exploits",
@@ -54769,9 +55152,9 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},
         {path = "src/games/universal/Render/FreeCam.lua", name = "FreeCam", category = "World"},
-        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Motion Lock", category = "Utilities"},
+        {path = "src/games/universal/Movement/FreezeMovements.lua", name = "Freeze Animations", category = "Utilities"},
         {path = "src/games/universal/Render/Fullbright.lua", name = "Fullbright", category = "Render"},
-        {path = "src/games/universal/Blatant/Invisible.lua", name = "Ghost", category = "Utilities"},
+        {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisibility", category = "Utilities"},
         {path = "src/games/universal/Movement/Gravity.lua", name = "Gravity", category = "World"},
         {path = "src/games/universal/Render/HP.lua", name = "HP", category = "Render"},
         {path = "src/games/universal/Other/ImproveFps.lua", name = "Improve FPS", category = "World"},
@@ -54822,6 +55205,7 @@ local Manifest: Manifest = {
             "src/games/MM2/Other/Notifications.lua",
             "src/games/MM2/Other/AutoUnbox.lua",
             "src/games/MM2/Other/FlingEngine.lua",
+            "src/games/MM2/Other/Fling.lua",
             "src/games/MM2/Other/AutoFarm.lua",
             "src/games/MM2/Other/AutoVote.lua",
             "src/games/MM2/Other/CoinsAura.lua",

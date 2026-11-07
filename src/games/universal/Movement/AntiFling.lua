@@ -32,6 +32,9 @@ function Module.init(context: Runtime): any
     local character: Model? = nil
     local links: {[BasePart]: {[BasePart]: any}} = {}
     local hazardSeen: {[BasePart]: number} = {}
+    -- Body model -> clock value until which it stays shielded. Only populated
+    -- by a fling-speed body inside RADIUS (v190).
+    local dangerousUntil: {[Model]: number} = {}
     local nextScan: number = 0
     local dangerUntil: number = 0
     local suspended: boolean = false
@@ -60,6 +63,7 @@ function Module.init(context: Runtime): any
         end
         table.clear(links)
         table.clear(hazardSeen)
+        table.clear(dangerousUntil)
         dangerUntil = 0
     end
 
@@ -122,29 +126,62 @@ function Module.init(context: Runtime): any
         local characterModels: {[Model]: boolean} = {}
         local roster: any = players:GetPlayers()
 
-        -- Track every visible player body, not the shared world collision group.
-        -- Nearest bodies get the bounded constraint budget first on large servers.
+        -- v190: the shield is a FLING shield, not a permanent noclip against
+        -- every player. Until v189 every visible body got NoCollisionConstraint
+        -- against every one of our parts, so simply walking into someone went
+        -- through them (the player's report: "Anti Fling me hace noclipear los
+        -- cuerpos de las demás personas"). Now a body is shielded only while it
+        -- is actually a hazard -- a part of it moving or spinning at fling
+        -- speeds inside RADIUS -- and for HAZARD_HOLD seconds after, so an
+        -- ongoing fling keeps its protection between scans. Untouched bodies
+        -- keep normal collisions.
         for _, player: Player in ipairs(roster) do
             local other: Model? = player ~= localPlayer and player.Character or nil
             if other and other ~= owner and other.Parent then
                 characterModels[other] = true
-                local otherRoot: BasePart? = other:FindFirstChild("HumanoidRootPart") :: BasePart?
-                local distance: number = otherRoot and (otherRoot.Position - root.Position).Magnitude or math.huge
-                table.insert(candidates, {model = other, distance = distance,
-                    parts = if playerShield then listBodyParts(other, false) else {}})
-            end
-        end
-        table.sort(candidates, function(a: any, b: any): boolean return a.distance < b.distance end)
-        if playerShield then
-            for _, candidate: any in ipairs(candidates) do
-                for _, part: BasePart in ipairs(candidate.parts) do
-                    desired[part] = true
-                    if candidate.distance <= RADIUS and fastPart(part, nil) then
-                        dangerUntil = math.max(dangerUntil, now + HAZARD_HOLD)
+                if playerShield then
+                    local otherRoot: BasePart? = other:FindFirstChild("HumanoidRootPart") :: BasePart?
+                    local distance: number = otherRoot
+                        and (otherRoot.Position - root.Position).Magnitude
+                        or math.huge
+                    if distance <= RADIUS then
+                        local parts: {BasePart} = listBodyParts(other, false)
+                        local hazard: boolean = false
+                        for _, part: BasePart in ipairs(parts) do
+                            if part.CanCollide and fastPart(part, nil) then
+                                hazard = true
+                                break
+                            end
+                        end
+                        if hazard then
+                            dangerousUntil[other] = now + HAZARD_HOLD
+                            dangerUntil = math.max(dangerUntil, now + HAZARD_HOLD)
+                        end
                     end
                 end
             end
         end
+        -- Release bodies that are no longer a threat, then rebuild the budget
+        -- from the ones that still are.
+        if playerShield then
+            for model: Model, expiresAt: number in pairs(dangerousUntil) do
+                if expiresAt <= now or not model.Parent then
+                    dangerousUntil[model] = nil
+                end
+            end
+            for model: Model in pairs(dangerousUntil) do
+                local otherRoot: BasePart? = model:FindFirstChild("HumanoidRootPart") :: BasePart?
+                local distance: number = otherRoot
+                    and (otherRoot.Position - root.Position).Magnitude
+                    or math.huge
+                local parts: {BasePart} = listBodyParts(model, true)
+                table.insert(candidates, {model = model, distance = distance, parts = parts})
+                for _, part: BasePart in ipairs(parts) do
+                    desired[part] = true
+                end
+            end
+        end
+        table.sort(candidates, function(a: any, b: any): boolean return a.distance < b.distance end)
 
         -- The query is local and bounded. Anchored geometry, the supporting
         -- platform/assembly, seats and tools keep their normal interactions.
@@ -334,6 +371,9 @@ function Module.init(context: Runtime): any
 
     local function toggleAntiFling(value: boolean): ()
         enabled = value == true
+        -- v190: MM2's Fling card and Walk Fling read this flag to warn and
+        -- refuse while the shield is on (it cancels the contact a fling needs).
+        if host.state then host.state.antiFlingActive = enabled end
         disconnect("AntiFling")
         destroyLinks()
         character = nil
@@ -355,7 +395,7 @@ function Module.init(context: Runtime): any
         playerShield = value == true
         nextScan = 0
         if not playerShield and not impactShield then destroyLinks() end
-    end, "Prevent local physical collisions with other character bodies without changing their collision settings.")
+    end, "Shield yourself only from bodies that are moving or spinning at fling speeds nearby, for a moment after each hit. Calm players keep normal collisions, so you no longer walk through their bodies.")
     host.addToggleOption(feature, "Impact Shield", true, function(value: boolean): ()
         impactShield = value == true
         nextScan = 0
@@ -366,6 +406,7 @@ function Module.init(context: Runtime): any
 
     activeCleanup = function(): ()
         toggleAntiFling(false)
+        if host.state then host.state.antiFlingActive = false end
     end
     Module.Initialized = true
     return feature

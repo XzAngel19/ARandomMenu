@@ -1,15 +1,35 @@
 # Wurst
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
-La versión de esta sesión está en la rama `arena/05c45e27-arandommenu`; `main`
-es independiente.
+La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
+(build `v190`); `main` es independiente.
 
 ## Loader
 
 ```lua
-getgenv().WURST_BRANCH = "arena/05c45e27-arandommenu"
-loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/05c45e27-arandommenu/src/Wurst.lua"))()
+getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
+loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/src/Wurst.lua"))()
 ```
+
+## Cambios de v190
+
+- **Gun Aimbot (PC) arreglado en la raíz.** El error en bucle
+  `The current thread cannot call 'GetValue' (lacking capability Plugin)` era
+  nuestro lector de `Data Ping` ejecutándose dentro del hook del clic: Delta no
+  da la capability Plugin y, además, el hook dejaba el método namecall pisado,
+  así que el `FireServer` del `GunClient` moría antes de salir. Ahora no queda
+  ninguna lectura restringida y el hook sólo captura el clic y lo resuelve en un
+  hilo aparte, enviando un único paquete.
+- **Fling de MM2 vuelve** como tarjeta propia en Exploits (Target player,
+  Power, Retries). El Fling universal sigue eliminado; era el que pediste
+  borrar.
+- **Aviso de Anti Fling (sólo MM2):** con Anti Fling activo, Walk Fling se
+  niega y Fling avisa en vez de fallar en silencio.
+- **Anti Fling ya no es un noclip contra personas:** sólo protege de cuerpos que
+  de verdad se están moviendo a velocidad de fling; un jugador tranquilo
+  conserva sus colisiones normales.
+- **Renombres** (mismo `ConfigKey`, se conservan perfiles y keybinds):
+  `Ghost` → `Invisibility` y `Motion Lock` → `Freeze Animations`.
 
 ## Cambios de v179
 

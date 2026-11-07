@@ -1099,14 +1099,24 @@ function Module.init(context: any): any
         return CONTROL_FONT
     end
 
+    -- v190: `StatsItem:GetValue()` needs the Plugin capability and Delta
+    -- rejects it ("The current thread cannot call 'GetValue'"), one error per
+    -- overlay sample. The overlay reads the engine value instead, and a failed
+    -- read simply leaves the row blank.
     local function getSessionPing(): number?
         local success: boolean, value: any = pcall(function(): number
-            local network: any = Stats:FindFirstChild("Network")
-            local serverStats: any = network and network:FindFirstChild("ServerStatsItem")
-            local ping: any = serverStats and serverStats:FindFirstChild("Data Ping")
-            return ping and ping:GetValue() or 0
+            local player: any = LocalPlayer or Players.LocalPlayer
+            local direct: any = player and player.GetNetworkPing
+            if type(direct) ~= "function" then
+                return 0
+            end
+            local seconds: any = direct(player)
+            return if type(seconds) == "number" then seconds * 1000 else 0
         end)
-        return success and tonumber(value) or nil
+        if not success then return nil end
+        local milliseconds: number? = tonumber(value)
+        if not milliseconds or milliseconds <= 0 then return nil end
+        return milliseconds
     end
 
     local lastTextGuiText: string = ""

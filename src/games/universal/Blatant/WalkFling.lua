@@ -161,8 +161,30 @@ function Module.init(context: Runtime): any
         end)
     end
 
+    -- v190: MM2-only notice. Anti Fling shields every colliding part against a
+    -- body moving at fling speeds -- which is exactly the contact Walk Fling
+    -- needs -- so enabling both at once made the fling look broken. The player
+    -- asked for the warning instead of silent failure: refusing here makes the
+    -- card revert itself and report "Could not toggle Walk Fling: ...".
+    local function mm2Game(): boolean
+        local shared: any = host.state
+        if shared and shared.activeGameName == "MM2" then
+            return true
+        end
+        local ok: boolean, placeId: any = pcall(function(): any return game.PlaceId end)
+        return ok and placeId == 142823291
+    end
+
+    local function antiFlingOn(): boolean
+        local shared: any = host.state
+        return shared ~= nil and shared.antiFlingActive == true
+    end
+
     local function toggleWalkFling(state: boolean): ()
         if state == true then
+            if mm2Game() and antiFlingOn() then
+                error("Anti Fling is ON. Turn it off first to use Walk Fling.", 0)
+            end
             startWalkFling()
             return
         end
@@ -186,7 +208,8 @@ function Module.init(context: Runtime): any
         walkFlingFeature,
         "While ON, every physics frame the local character is noclipped and given a "
             .. "huge velocity for one frame, which launches whoever you walk into. "
-            .. "Collisions are restored when it stops. It never starts on injection."
+            .. "Collisions are restored when it stops. It never starts on injection. "
+            .. "In MM2 it refuses to start while Anti Fling is ON."
     )
 
     activeCleanup = function(): ()

@@ -1720,39 +1720,35 @@ end
 
 local lastLatencyReadAt: number = -math.huge
 
--- Two engine readings of the same path. They disagree: in the 2026-10-18
--- session GetNetworkPing read 314/342 ms on two shots whose measured
--- confirmation echo was 152/164 ms, and it read 241 ms at session start when
--- Data Ping read 130 and the echo came back in 144. Across 17 recorded shots
--- Data Ping was within 30 ms of the echo in 12, GetNetworkPing in 3.
--- This legacy smoothed fallback takes the lower of the two: over-leading is
--- the failure this data shows, and Prediction's median rejects a one-off dip.
--- The live predictor itself prefers Data Ping when both readings are present.
+-- v190: `Stats.Network.ServerStatsItem["Data Ping"]:GetValue()` is a
+-- Plugin-security method. Delta (and any executor that runs without the
+-- Plugin capability) answers it with "The current thread cannot call
+-- 'GetValue' (lacking capability Plugin)". The call ran on threads the game
+-- owns -- the 1 Hz overlay sample and, worse, the namecall hook that sits
+-- between the player's mouse click and the gun's native FireServer -- so the
+-- console filled with that error in a loop and the native shot died inside
+-- the hook. The read is gone: latency comes from `Player:GetNetworkPing`,
+-- every read stays inside pcall, and Prediction falls back to the echo it
+-- measures itself (`core.getEstimatedLatency` + acceptance prior).
+-- Reading Data Ping from older sessions is history, not a live source:
+-- GetNetworkPing read 314/342 ms on shots whose echo came back in 152/164 ms,
+-- so over-leading stays the failure mode the median and the lead correction
+-- are there to bound.
 local function readLatencyReadings(): (number?, number?)
     local engine: number? = nil
-    local data: number? = nil
     pcall(function(): ()
         local direct: any = (LocalPlayer :: any).GetNetworkPing
-        if type(direct) == "function" then
-            local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
-            if okDirect and predictionMath.finite(seconds)
-                and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
-                engine = seconds :: number
-            end
-        end
-        local network: Instance? = Stats:FindFirstChild("Network")
-        local serverItems: Instance? = network
-            and network:FindFirstChild("ServerStatsItem")
-        local pingItem: any = serverItems and serverItems:FindFirstChild("Data Ping")
-        if pingItem and type(pingItem.GetValue) == "function" then
-            local pingMilliseconds: number? = tonumber(pingItem:GetValue())
-            if predictionMath.finite(pingMilliseconds)
-                and pingMilliseconds >= 10 and pingMilliseconds <= 2000 then
-                data = pingMilliseconds / 1000
-            end
+        if type(direct) ~= "function" then return end
+        local okDirect: boolean, seconds: any = pcall(direct, LocalPlayer)
+        if okDirect and predictionMath.finite(seconds)
+            and (seconds :: number) > 0.001 and (seconds :: number) <= 2 then
+            engine = seconds :: number
         end
     end)
-    return engine, data
+    -- Second slot kept so the predictor's "prefer the calibration source"
+    -- branch still has a shape to fall back from; nothing restricts-free
+    -- exposes Data Ping, so it is always nil today.
+    return engine, nil
 end
 
 local function getEstimatedLatency(): number
@@ -2493,16 +2489,18 @@ local function createTrajectoryCalibration(): any
         }
     end
 
+    -- Telemetry only. Same source as the predictor (v190): Data Ping needs the
+    -- Plugin capability and a restricted call on this thread is exactly what
+    -- broke the gun, so this reads the engine value and nothing else.
     local function getPingMilliseconds(): number
         local pingMs: number = 0
         pcall(function(): ()
-            local network: Instance? = Stats:FindFirstChild("Network")
-            local serverItems: Instance? = network
-                and network:FindFirstChild("ServerStatsItem")
-            local pingItem: any = serverItems
-                and serverItems:FindFirstChild("Data Ping")
-            if pingItem and type(pingItem.GetValue) == "function" then
-                pingMs = tonumber(pingItem:GetValue()) or 0
+            local player: any = LocalPlayer
+            local direct: any = player and player.GetNetworkPing
+            if type(direct) ~= "function" then return end
+            local ok: boolean, seconds: any = pcall(direct, player)
+            if ok and finite(seconds) and (seconds :: number) > 0 then
+                pingMs = (seconds :: number) * 1000
             end
         end)
         return math.max(0, pingMs)

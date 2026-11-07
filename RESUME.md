@@ -4,10 +4,10 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v189-20261107-ghost-rewrite`**.
-> Esta sesión trabaja exclusivamente en `arena/05c45e27-arandommenu`
-> (fast-forward desde el tip v187 `70bbfc4` de
-> `arena/a4930bca-arandommenu`, que conserva la historia de v178-v187).
+> **Estado actual:** build **`v190-20261107-gun-ping-names`**.
+> Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
+> desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
+> viene de v187 `70bbfc4` en `arena/a4930bca-arandommenu`).
 > El árbol base histórico es `arena/76bc3f2f-arandommenu` en `9395998`.
 > El usuario se comunica en español. Respóndele en español.
 >
@@ -36,6 +36,40 @@
      sin reescribir historia, sin trabajar en otra rama.
 - Sin bundle regenerado + stamp, el cambio **no llega al usuario**. El watermark
   "UI Settings · vNNN" en el menú es como el usuario verifica la versión.
+
+## v190 — Gun PC sin `GetValue`, Fling de MM2 de vuelta y renombres (2026-11-07)
+
+Detalle completo en `docs/FIXES-v190.md`. Cinco peticiones del jugador en la
+misma tanda y una causa raíz nueva:
+
+- **Gun Aimbot PC — el error era nuestro.** `StatsItem:GetValue` (Data Ping) es
+  Plugin-security y Delta la rechaza (`The current thread cannot call 'GetValue'
+  (lacking capability Plugin)`). v183-v187 la ejecutaban desde el hook namecall,
+  que además pisaba el registro de método: el motor despachaba `GetValue` en vez
+  del `FireServer` del `GunClient` y la gun no accionaba. v190 quita toda lectura
+  restringida y **el hook ya no hace trabajo en el hilo del juego**: captura los
+  argumentos, `task.defer`, y el hilo diferido envía uno y solo un paquete
+  (redirigido o el original). No hay trampolín después de ejecutar código
+  propio; `sendingRedirect` impide reentrar.
+- **Ping:** solo `Player:GetNetworkPing` (siempre en `pcall`), en `base.lua`,
+  `Prediction.lua`, el overlay y `tools/diagnostics/ShootProbe.lua`. Data Ping
+  ya no se lee en ningún sitio; el predictor usa mediana del motor + eco medido +
+  corrección aprendida. Precisión real pendiente de probar en vivo.
+- **Fling de MM2 vuelve** (`src/games/MM2/Other/Fling.lua`, Exploits, grupo):
+  Target player (lista viva), Power 1-10 (6) y Retries 0-3 (2). Nunca flingea al
+  inyectar; `FlingEngine` acepta `options.power/retries` por llamada y restaura
+  sus defaults. El Fling **Universal** sigue eliminado.
+- **Aviso Anti Fling (solo MM2):** Walk Fling se niega con error visible y la
+  tarjeta se revierte; el Fling de MM2 avisa y no llama al motor. Bandera
+  compartida `state.antiFlingActive`.
+- **Anti Fling ya no noclipa personas:** solo enlaza partes colisionables de
+  cuerpos que se mueven/giran a velocidad de fling dentro de 30 studs, con
+  retención de 0,75 s. Cuerpo calmado = colisiones normales.
+- **Renombres:** `Ghost` → `Invisibility` (`ConfigKey` sigue `Universal.Ghost`;
+  filas `Fly`, `WalkSpeed`, `Transparency`; `Void depth` conserva nombre/valor) y
+  `Motion Lock` → `Freeze Animations` (`Movement.FreezeMovements` intacto).
+- `bash tools/validate.sh` verde: 82 fuentes, 128 suites, boot `failures=0`,
+  47 tarjetas en debug y release. Los mocks no prueban Delta, física ni daño.
 
 ## v189 — Ghost reescrito (2026-11-07)
 

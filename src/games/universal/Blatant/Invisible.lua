@@ -1,24 +1,25 @@
--- Local ghost: a real, unanchored Humanoid walks under native gravity.
--- Only explicit Ghost Fly uses velocity; the real character stays parked
--- underneath at `Void depth`.
+-- Invisibility (v190 name; the module and its config key are still "Ghost"
+-- so saved profiles and keybinds survive): a real, unanchored Humanoid walks
+-- under native gravity. Only explicit Fly uses velocity; the real character
+-- stays parked underneath at `Void depth`.
 --
 -- v189 contract (rewrite after the live report "no funciona, se traba
 -- demasiado, vuela hacia arriba y se teletransporta"):
---   * The real body is ANCHORED and non-collidable while Ghost is on. v188
+--   * The real body is ANCHORED and non-collidable while Invisibility is on. v188
 --     rewrote root.CFrame every single frame on a live, collidable body that
 --     sat inside the floor at small depth; physics fought the writes (jitter,
 --     teleports) and every write replicated (the stutter). Now the body is
 --     frozen once and only re-placed at 10 Hz, so there is nothing to fight.
 --   * The clone spawns ABOVE the real body instead of inside it, so the two
 --     rigs never interpenetrate and the engine never launches either one.
---   * Ghost Fly is velocity driven on an UNANCHORED rig. v188 anchored the
+--   * Fly is velocity driven on an UNANCHORED rig. v188 anchored the
 --     root and then set AssemblyLinearVelocity, which an anchored part
 --     ignores -- that is why Fly did nothing and the rest of the module moved
 --     strangely. No raycasts in the flight loop either.
 --   * No Void guard, no Sprint multiplier, no Outline: fewer moving parts and
 --     no per-frame work beyond reading the movement service.
 --   * Void depth defaults to 5 (minimum 5) and migrates older profiles.
-local Module = {Name="Ghost",PlaceId=0,Initialized=false}
+local Module = {Name="Invisibility",PlaceId=0,Initialized=false}
 local cleanup
 
 function Module.init(context)
@@ -321,15 +322,19 @@ function Module.init(context)
         animate()
         syncBody(root,ghostRoot)
     end
-    card=context.framework.Categories.Utilities:CreateModule({Name="Ghost",Category="Utilities",Order=8,
-        Tooltip="A local clone walks under real gravity and you see through it; your real body is parked Void depth studs underneath. Ghost Fly turns the clone into a smooth velocity flight.",Function=function(enabled)
+    -- v190: renamed Ghost -> Invisibility. ConfigKey is pinned to the old one
+    -- so profiles and keybinds keep working; option ids derive from their
+    -- names, so the three "Ghost ..." rows are renamed with their defaults.
+    card=context.framework.Categories.Utilities:CreateModule({Name="Invisibility",Category="Utilities",Order=8,
+        ConfigKey="Universal.Ghost",
+        Tooltip="A local clone walks under real gravity and you see through it; your real body is parked Void depth studs underneath. Fly turns the clone into a smooth velocity flight.",Function=function(enabled)
             stop()
             if not enabled then return end
             local character=player.Character
             local humanoid,root=parts(character)
             if not humanoid or not root or humanoid.Health<=0 or not spawnGhost(character,root) then
                 card:Toggle(false)
-                error("Ghost could not create a live character.",0)
+                error("Invisibility could not create a live character.",0)
             end
             activity(true)
             parkBody(character,root,humanoid)
@@ -341,18 +346,18 @@ function Module.init(context)
             end))
             step(0)
         end})
-    card:CreateToggle({Name="Ghost Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
+    card:CreateToggle({Name="Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
         Tooltip="OFF: native walking and jumping. ON: smooth velocity flight with WASD or the mobile stick, Space up, LeftControl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Ghost Fly"},Min=1,Max=250,Default=settings.flySpeed,
+    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=1,Max=250,Default=settings.flySpeed,
         Function=function(value) settings.flySpeed=value end})
     card:CreateSlider({Name="Void depth",Min=VOID_DEPTH_MIN,Max=VOID_DEPTH_MAX,Default=settings.depth,Function=function(value)
         settings.depth=math.clamp(value,VOID_DEPTH_MIN,VOID_DEPTH_MAX)
     end,Tooltip="How far under the clone your real body is parked. 5 is the default: close enough to keep the puppet honest, far enough not to touch the floor."})
-    card:CreateSlider({Name="Ghost WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
+    card:CreateSlider({Name="WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
         settings.walkSpeed=math.clamp(value,0,500)
         if state.humanoid and not settings.fly then state.humanoid.WalkSpeed=settings.walkSpeed end
     end,Tooltip="Walking speed of the clone."})
-    card:CreateSlider({Name="Ghost transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
+    card:CreateSlider({Name="Transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
         applyAppearance()
     end})

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Actual Ghost controller (v189): parked real body, native walk, velocity fly.
+"""Actual Invisibility controller (v189 logic, v190 name): parked real body, native walk, velocity fly.
 
 Verifies the failures reported live against v188 are structurally impossible:
   * the real body is ANCHORED, non-collidable and re-placed at 10 Hz at most
@@ -126,13 +126,13 @@ local function reinit()
 end
 reinit()
 -- Menu surface: four options, and none of the removed ones. Void depth 5.
-assert(card.Options['Ghost Fly'].Value==false and not card.Options['Fly speed'].Visible)
+assert(card.Options['Fly'].Value==false and not card.Options['Fly speed'].Visible)
 assert(not card.Options['Sprint multiplier'] and not card.Options['Void guard'] and not card.Options.Outline,
  'v189 removed Sprint multiplier, Void guard and Outline')
 assert(card.Options['Void depth'].Value==5 and card.Options['Void depth'].Metadata.min==5
  and card.Options['Void depth'].Metadata.max==350,'Void depth defaults to the minimum, now 5')
 local count=0;for _ in pairs(card.Options) do count+=1 end
-assert(count==5,'Ghost keeps exactly Fly, Fly speed, Void depth, WalkSpeed, transparency (5 options)')
+assert(count==5,'Invisibility keeps exactly Fly, Fly speed, Void depth, WalkSpeed, Transparency (5 options)')
 
 card:Toggle(true)
 assert(flags.ghost and not character.Archivable and pre:Count()==1)
@@ -158,8 +158,8 @@ assert(gr.frameWrites==writes and loads==animationLoads,'Walk must not position-
 movementForward=1;pre:Fire(.02)
 near(gh.MoveDirection.Z,-1);near(gh.MoveDirection.X,0)
 assert(gh.WalkSpeed==16)
-card.Options['Ghost WalkSpeed']:Set(40);pre:Fire(.02);assert(gh.WalkSpeed==40)
-card.Options['Ghost WalkSpeed']:Set(16)
+card.Options['WalkSpeed']:Set(40);pre:Fire(.02);assert(gh.WalkSpeed==40)
+card.Options['WalkSpeed']:Set(16)
 focused=true;movementForward=0;pre:Fire(.02);assert(gh.MoveDirection.Magnitude==0);focused=false
 input.JumpRequest:Fire();assert(gh.Jump)
 gh.Jump=false;gh.FloorMaterial='Air';gh.state='Freefall';input.JumpRequest:Fire();assert(not gh.Jump)
@@ -175,7 +175,7 @@ near(root.Position.Y,gr.Position.Y-5)
 
 -- Fly: velocity on an UNANCHORED rig. v188 anchored the root and then set
 -- velocity, which the engine ignores.
-card.Options['Ghost Fly']:Set(true)
+card.Options['Fly']:Set(true)
 assert(not gr.Anchored and gh.PlatformStand and not clone:FindFirstChild('Torso').CanCollide,
  'Fly must leave the rig unanchored; anchored parts ignore velocity')
 movementForward=0;pressed.W=true;pre:Fire(.1)
@@ -191,7 +191,7 @@ pressed.LeftControl=false;pre:Fire(.1)
 assert(gr.AssemblyLinearVelocity.Magnitude==0,'no input means no drift')
 pressed.Space=false;jumpHeld=true;pre:Fire(.1);near(gr.AssemblyLinearVelocity.Y,55)
 jumpHeld=false;pre:Fire(.1)
-card.Options['Ghost Fly']:Set(false)
+card.Options['Fly']:Set(false)
 assert(not gh.PlatformStand and clone:FindFirstChild('Torso').CanCollide)
 
 -- Ghost does not steal a camera from FreeCam or Spectate.

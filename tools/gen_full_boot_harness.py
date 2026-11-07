@@ -841,18 +841,18 @@ do
     assert(Lighting.EnvironmentSpecularScale == 0.1 and Lighting.GlobalShadows == false,
       "removing Shaders must leave the place lighting untouched")
     print("[HARNESS] SHADERS REMOVED")
-    local freeze = findFeature("Motion Lock")
-    assert(freeze, "Motion Lock feature must exist after boot")
+    local freeze = findFeature("Freeze Animations")
+    assert(freeze, "Freeze Animations feature must exist after boot")
     for cycle = 1, 2 do
       local okF, errF = pcall(freeze.onToggle, true)
-      assert(okF, "Motion Lock ON must not error: " .. tostring(errF))
+      assert(okF, "Freeze Animations ON must not error: " .. tostring(errF))
       -- mode switches while enabled re-apply the feature (the stuck-anchor
       -- bug); exercise it like the cycle option does
       local okR1 = pcall(freeze.onToggle, false)
       local okR2 = pcall(freeze.onToggle, true)
-      assert(okR1 and okR2, "Motion Lock re-apply must not error")
+      assert(okR1 and okR2, "Freeze Animations re-apply must not error")
       local okFOff, errFOff = pcall(freeze.onToggle, false)
-      assert(okFOff, "Motion Lock OFF must not error: " .. tostring(errFOff))
+      assert(okFOff, "Freeze Animations OFF must not error: " .. tostring(errFOff))
     end
     print("[HARNESS] FREEZE MOVEMENTS TOGGLE CYCLES CLEAN")
     local coinsAura = findFeature("Coins Aura")
@@ -987,7 +987,7 @@ do
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Arrows", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
       Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Spider", "Speed Hack", "Jump Hack", "Proximity Prompts", "Walk Fling"},
-      Utilities = {"Auto Shoot", "Teleport", "Motion Lock", "Ghost", "Anti Fling"},
+      Utilities = {"Auto Shoot", "Teleport", "Freeze Animations", "Invisibility", "Anti Fling"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
     for category, names in pairs(expected) do
@@ -1110,10 +1110,27 @@ do
       assert(autoShoot.categoryName == "Utilities", "Auto Shoot must be in Utilities")
     end
     assert(not findFeature("Time Changer"))
-    -- v185 removes only the universal cards; MM2 retains its internal
+    -- v185 removed only the universal cards; MM2 retains its internal
     -- engine for Auto Farm/Auto Win and Walk Fling stays universal.
-    assert(not findFeature("Fling") and not findFeature("Swim Walk") and not findFeature("Anti Void"),
+    -- v190 restores an MM2-ONLY Fling card, so "Fling" exists again but its
+    -- identity is the MM2 card, never the removed universal one.
+    assert(not findFeature("Swim Walk") and not findFeature("Anti Void"),
       "removed universal cards must not return in MM2")
+    local mm2Fling = findFeature("Fling")
+    assert(mm2Fling and mm2Fling.configKey == "MM2.Fling",
+      "v190 restores Fling as an MM2 card (configKey MM2.Fling)")
+    -- The card is built with the card factory, so its rows live in the widget
+    -- registries instead of the framework Options table.
+    local flingRows = ex.state.listControls and ex.state.listControls["MM2.Fling.Targetplayer"]
+    assert(flingRows, "the Fling card exposes a live Target player list")
+    local flingValues = ex.state.valueControls or {}
+    assert(flingValues["MM2.Fling.Power"] and flingValues["MM2.Fling.Retries"],
+      "the Fling card exposes Power and Retries")
+    assert(ex.state.mm2PerformFling ~= nil, "the Fling engine stays exported for Auto Farm/Auto Win")
+    assert(not findFeature("Ghost") and not findFeature("Motion Lock"),
+      "v190 renames Ghost and Motion Lock")
+    assert(findFeature("Invisibility") and findFeature("Freeze Animations"),
+      "v190 exposes Invisibility and Freeze Animations")
     assert(type(ex.state.mm2PerformFling) == "function", "MM2 Farm/Win fling export missing")
     assert(type(ex.state.mm2FlingStep) == "function", "MM2 per-frame fling export missing")
     local walkFling = findFeature("Walk Fling")
@@ -1182,15 +1199,15 @@ do
     assert(type(ex.state.dock.BeginMove)=="function")
     local aim=ex.state.framework:GetModule("Aimbot")
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
-    local ghost=ex.state.framework:GetModule("Ghost")
-    assert(ghost.Options["Ghost Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
-    -- v189: Ghost defaults. Void depth is 5 (its minimum), and the options
+    local ghost=ex.state.framework:GetModule("Invisibility")
+    assert(ghost.Options["Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
+    -- v189 defaults, v190 names: Void depth is 5 (its minimum), and the options
     -- that made the module heavy (Sprint multiplier, Void guard) plus the blue
     -- Outline are gone for good.
     assert(ghost.Options["Void depth"].Value==5 and ghost.Options["Void depth"].Metadata.min==5
         and ghost.Options["Void depth"].Metadata.max==350,
         "Void depth must default to its minimum of 5")
-    assert(ghost.Options["Ghost WalkSpeed"].Value==16)
+    assert(ghost.Options["WalkSpeed"].Value==16)
     assert(not ghost.Options.Outline and not ghost.Options["Sprint multiplier"]
         and not ghost.Options["Void guard"], "v189 removed Outline, Sprint multiplier and Void guard")
     assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")

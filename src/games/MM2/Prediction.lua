@@ -899,13 +899,13 @@ function Module.init(runtime: any): any
 
     local function currentRtt(): number
         local latency: any = nil
-        -- Prefer Data Ping when both readings exist. The calibration
-        -- buckets are keyed by Data Ping for a reason: in the v102
-        -- session the smoothed lower-of-two estimate read 92-98 ms
-        -- while Data Ping read 109-118 ms and the server echo landed
-        -- at 110-130 ms, so taking the lower reading under-led every
-        -- shot until echoes accumulated. The combined estimate stays
-        -- as the fallback when Data Ping is unavailable.
+        -- Prefer the calibration source when both readings exist. v190
+        -- removed the only reader of Data Ping (`StatsItem:GetValue`
+        -- needs the Plugin capability, which Delta denies), so the
+        -- second slot is empty and the engine reading is used until the
+        -- measured echo takes over. The reading order is kept: taking
+        -- the lower of two estimates under-led every shot in the v102
+        -- session until echoes accumulated.
         if type(core.getLatencyReadings) == "function" then
             local ok: boolean, engine: any, data: any =
                 pcall(core.getLatencyReadings)
