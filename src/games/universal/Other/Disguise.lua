@@ -2354,12 +2354,12 @@ function Module.init(context: Runtime): any
         end
 
         local selectedMode: string = settings.mode
-        -- v192: applying a disguise must never leave the player on the phone
-        -- input scheme. A touchscreen laptop reports TouchEnabled = true, and
-        -- the game answers to it by showing its touch HUD; the guard below only
-        -- hides Roblox's TouchGui and puts a game that mirrors the setting in a
-        -- PlayerGui attribute back on "PC". The input scheme, the keybinds and
-        -- the mouse icon are not touched.
+        -- v192/v193: applying a disguise must never leave the player looking at
+        -- phone controls. A touchscreen laptop reports TouchEnabled = true and
+        -- the game answers with its touch HUD; `host.suppressTouchControls`
+        -- hides those two ScreenGuis (Roblox's TouchGui and the game's
+        -- TouchInteractButtons) on a keyboard machine and does nothing else:
+        -- input scheme, keybinds and mouse icon are untouched.
         local repairControls: any = host.suppressTouchControls
         if type(repairControls) == "function" then
             task.delay(0.6, function(): ()

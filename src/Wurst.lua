@@ -114,12 +114,12 @@ local RUNTIME_RAW_BASE: string =
         .. RUNTIME_BRANCH
         .. "/"
 
--- v192: the build number shown in the menu has ONE source, this stamp. "v192"
+-- v192: the build number shown in the menu has ONE source, this stamp. "v193"
 -- renders as "0.192" in the window titles and as "0.192 Release" next to the
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v192-20261107-server-hop-overlay"
+local SOURCE_STAMP: string = "v193-20261107-live-server-readout"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"
@@ -652,53 +652,95 @@ local TEXT_SCALE_MAXIMUM: number = 1.2
 local IS_MOBILE_DEVICE: boolean = UserInputService.TouchEnabled
     and not UserInputService.KeyboardEnabled
 
--- v192: a Windows touchscreen laptop reports TouchEnabled = true, so Roblox
--- spawns its phone controls (PlayerGui.TouchGui) and games switch their own HUD
--- to the mobile layout. A machine with a keyboard AND a mouse is a desktop, so:
+-- v192/v193: a Windows touchscreen laptop reports TouchEnabled = true, so
+-- Roblox spawns its phone controls (PlayerGui.TouchGui) and games switch their
+-- own HUD to the touch layout. The player's screenshot showed Murder Mystery 2
+-- doing exactly that: its `TouchInteractButtons` ScreenGui (Throw / Equip /
+-- Perk) is a StarterGui template with ResetOnSpawn = false, so it sits in
+-- PlayerGui and gets Enabled = true the moment the game believes the device is
+-- a phone.
 --
---   1. Roblox's TouchGui gets Enabled = false (and again whenever it returns).
---   2. A game that stores its input mode in the `Device` attribute of PlayerGui
---      (Murder Mystery 2 does: "PC" / "Phone" / "Tablet" / "Gamepad", read by
---      every one of its GUIs) is put back on "PC" when it says Phone/Tablet.
+-- A machine with a keyboard is a desktop, so the two GUIs that ARE the phone
+-- controls are hidden: Roblox's `TouchGui` and the game's `TouchInteractButtons`.
+-- This is deliberately the least intrusive fix available:
 --
--- Nothing here writes TouchEnabled (a client cannot), nothing changes the input
--- scheme and no keybind is touched: mouse and keyboard keep working, which is
--- the point. On a device with no keyboard or no mouse both steps are skipped.
+--   * it writes ONLY `ScreenGui.Enabled` on those two GUIs, never anything the
+--     game reads as state (v192 wrote the `Device` attribute of PlayerGui, which
+--     changes game logic and can make the game rebuild its whole HUD -- removed);
+--   * it never writes TouchEnabled (a client cannot), never touches the mouse
+--     icon, MouseBehavior, the camera or a keybind;
+--   * on a device without a keyboard nothing happens at all.
+--
+-- Re-applied whenever one of those GUIs appears and whenever the game turns one
+-- back on, because Murder Mystery 2 does that on every HUD refresh.
+local DESKTOP_HIDDEN_GUIS: {[string]: boolean} = {
+    TouchGui = true,
+    TouchInteractButtons = true,
+}
+
+local function isDesktopMachine(): boolean
+    if not UserInputService.KeyboardEnabled then
+        return false
+    end
+    if UserInputService.MouseEnabled then
+        return true
+    end
+    -- No mouse reported (a few touch drivers say so): a mouse or keyboard key
+    -- as the last input still means the player is not using thumbs.
+    local ok: boolean, lastInput: any = pcall(function(): any
+        return UserInputService:GetLastInputType()
+    end)
+    if not ok then
+        return false
+    end
+    return lastInput == Enum.UserInputType.MouseButton1
+        or lastInput == Enum.UserInputType.MouseMovement
+        or lastInput == Enum.UserInputType.MouseWheel
+        or lastInput == Enum.UserInputType.Keyboard
+end
+
 local function suppressTouchControls(): ()
-    if not (UserInputService.TouchEnabled
-        and UserInputService.KeyboardEnabled
-        and UserInputService.MouseEnabled) then
+    if not UserInputService.TouchEnabled or not isDesktopMachine() then
         return
     end
-    local ok: boolean, touchGui: any = pcall(function(): any
-        return PlayerGui:FindFirstChild("TouchGui")
-    end)
-    if ok and touchGui and touchGui:IsA("ScreenGui") and touchGui.Enabled then
-        pcall(function(): ()
-            touchGui.Enabled = false
+    for name: string in pairs(DESKTOP_HIDDEN_GUIS) do
+        local ok: boolean, gui: any = pcall(function(): any
+            return PlayerGui:FindFirstChild(name)
         end)
-    end
-    local deviceOk: boolean, device: any = pcall(function(): any
-        return PlayerGui:GetAttribute("Device")
-    end)
-    if deviceOk and (device == "Phone" or device == "Tablet") then
-        pcall(function(): ()
-            PlayerGui:SetAttribute("Device", "PC")
-        end)
+        if ok and gui and gui:IsA("ScreenGui") and gui.Enabled then
+            pcall(function(): ()
+                gui.Enabled = false
+            end)
+        end
     end
 end
+
+-- Keep watching the GUIs that the game turns back on. The handler calls the
+-- same guarded write, so the property change it causes finds nothing to do and
+-- there is no loop.
 pcall(function(): ()
+    local function watch(gui: Instance): ()
+        pcall(function(): ()
+            gui:GetPropertyChangedSignal("Enabled"):Connect(function(): ()
+                if gui.Enabled then
+                    task.defer(suppressTouchControls)
+                end
+            end)
+        end)
+    end
+
     suppressTouchControls()
     PlayerGui.ChildAdded:Connect(function(child: Instance): ()
-        if child.Name == "TouchGui" then
+        if DESKTOP_HIDDEN_GUIS[child.Name] then
+            watch(child)
             task.defer(suppressTouchControls)
         end
     end)
-    PlayerGui.AttributeChanged:Connect(function(name: string): ()
-        if name == "Device" then
-            task.defer(suppressTouchControls)
+    for _, child: Instance in ipairs(PlayerGui:GetChildren()) do
+        if DESKTOP_HIDDEN_GUIS[child.Name] then
+            watch(child)
         end
-    end)
+    end
 end)
 
 local configData: any = {

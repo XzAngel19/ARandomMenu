@@ -4,8 +4,8 @@
 > reglas del usuario, y los errores que ya se pagaron una vez. Si algo aquí
 > contradice lo que crees, gana este documento (y los datos de calibración).
 >
-> **Estado actual:** build **`v192-20261107-server-hop-overlay`**,
-> que el menú muestra como **`0.192`** y como **`0.192 Release`**
+> **Estado actual:** build **`v193-20261107-live-server-readout`**,
+> que el menú muestra como **`0.193`** y como **`0.193 Release`**
 > (`SOURCE_STAMP` es la única fuente de las dos etiquetas).
 > Esta sesión trabaja exclusivamente en `arena/7446e4e3-arandommenu`, creada
 > desde el tip v189 `9b06cca` de `arena/05c45e27-arandommenu` (que a su vez
@@ -45,6 +45,33 @@
   origin/arena/7446e4e3-arandommenu` + recomitear la tanda + push. **No** hacer
   `git rebase` a mano: los conflictos en `bundle.lua`, `Manifest.lua` y el
   harness cuestan más que recomitear.
+
+## v193 — Lectura de servidor viva, hops que no fallan, controles de celular ocultos (2026-11-07)
+
+Detalle completo en `docs/FIXES-v193.md`.
+
+- **Server Settings ya no dibuja ventana.** La lectura es una sección
+  `Overlay Info` con filas de estado (`state.addSectionOption` +
+  `state.addStatOption`), como AutoFarm: `Server`, `Players`, `In server`,
+  `Uptime`, `Server time`, `Place`. **Nunca se para**: el ticker se crea en
+  `init`, corre a 1 Hz y solo lo suelta `destroy()`; apagar la tarjeta no lo
+  detiene. Se eliminó `Refresh every` y las filas `Build`, `Round`, `You`.
+- **`Place`** muestra el nombre del place y `· subplace` si
+  `PlaceId ~= GameId`.
+- **Hops**: URL con `sortOrder`/`limit`/`cursor` (nada de
+  `excludeFullServers`), hasta 2 páginas por orden, filtro de hueco en cliente y
+  **fallback** `Teleport(game.PlaceId, LocalPlayer)` cuando todo está lleno.
+- **Controles de celular**: se apagan solo `PlayerGui.TouchGui` y
+  `PlayerGui.TouchInteractButtons` (la GUI de MM2 con Lanzar/Equipar/Beneficio,
+  leída del place: `ScreenGui`, `ResetOnSpawn = false`), y solo con teclado.
+  **Se quitó** la reescritura del atributo `Device` de v192: es estado del juego
+  y le hace reconstruir el HUD (la cascada de errores de módulos en consola).
+  Nada escribe `TouchEnabled`, `MouseIconEnabled` ni `MouseBehavior`.
+- **Disguise** sigue llamando a `host.suppressTouchControls()` tras cada
+  aplicación (0,6 s) y mantiene el reinicio de banderas en `CharacterAdded`.
+- **Suites**: `tools/test_server_settings.py` reescrito (filas vivas, subplace,
+  hops multipágina + fallback) y `tools/test_v193_build.py` (reglas de fuente)
+  sustituye a `test_v192_build.py`.
 
 ## v192 — Fling arreglado, hops con hueco, overlay de servidor, versión única (2026-11-07)
 

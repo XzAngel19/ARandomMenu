@@ -136,7 +136,8 @@ Nuevas, en `docs/skills/`:
   clipboard, smallest/largest/random con hueco real, cooldown, fallos, sin
   rejoin).
 - `python3 tools/test_mm2_fling_card.py` → `PASS` con `Players` clonado.
-- `python3 tools/test_v192_build.py` → `PASS` (reglas de fuente de este build).
+- `python3 tools/test_v192_build.py` → `PASS` (reglas de fuente; v193 lo sustituyó
+  por `tools/test_v193_build.py`).
 - `bash tools/validate.sh` → `EXIT=0` (fuentes, suites, catálogo, release).
 
 **No medido:** nada de esto prueba física de Roblox, aceptación del teleport por

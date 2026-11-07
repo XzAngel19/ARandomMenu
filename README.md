@@ -2,7 +2,7 @@
 
 Menú para Roblox con módulos universales y para MM2, BedFight, TRS, VD y X2.
 La versión de esta sesión está en la rama `arena/7446e4e3-arandommenu`
-(build `v192`, se muestra como **`0.192`** y **`0.192 Release`**); `main` es
+(build `v193`, se muestra como **`0.193`** y **`0.193 Release`**); `main` es
 independiente.
 
 ## Loader
@@ -11,6 +11,25 @@ independiente.
 getgenv().WURST_BRANCH = "arena/7446e4e3-arandommenu"
 loadstring(game:HttpGet("https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/7446e4e3-arandommenu/src/Wurst.lua"))()
 ```
+
+## Cambios de v193
+
+- **La lectura del servidor es una sección viva**, como el `Overlay Info` de
+  AutoFarm: `Server`, `Players`, `In server`, `Uptime`, `Server time` y `Place`.
+  Sin ventana flotante, sin deslizador `Refresh every`, y **nunca se para**: el
+  ticker se crea al inyectar y solo lo suelta `destroy()`, también con la tarjeta
+  apagada. Se quitaron las filas `Build`, `Round` y `You`.
+- **`Place` dice el nombre del place** y añade `· subplace` cuando
+  `game.PlaceId ~= game.GameId`.
+- **Hops que ya no fallan:** la URL lleva solo `sortOrder`, `limit` y `cursor`;
+  se leen hasta 2 páginas por orden; el filtro de hueco libre se hace en el
+  cliente y, si **todas** las instancias listadas están llenas, el hop avisa y
+  hace `Teleport(placeId)` en vez de dejar al jugador donde estaba.
+- **Controles de celular ocultos sin tocar el juego:** se apagan solo dos
+  `ScreenGui` (`TouchGui` de Roblox y `TouchInteractButtons` de MM2), y solo en
+  una máquina con teclado. Se eliminó la escritura del atributo `Device` de
+  `PlayerGui` que hacía v192 (eso es estado del juego y le hace reconstruir el
+  HUD). Nunca se escribe `TouchEnabled`, ni el icono del ratón, ni los keybinds.
 
 ## Cambios de v192
 

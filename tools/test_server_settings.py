@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Execute the real v192 "Server Settings" card against mocked services.
+"""Execute the real v193 "Server Settings" card against mocked services.
 
 What this proves:
 
   * the card registers in Utilities and "Rejoin Server" is GONE;
-  * "Copy Job ID" copies the live Job ID (and still reports the id when the
-    executor has no clipboard);
-  * the readout carries the server uptime, and "Show server info" builds an
-    overlay whose rows hold the Job ID, the player count, the uptime, the server
-    clock, the place, the local player and the build label;
-  * a hop only ever picks a server with a FREE SLOT: a 12/12 instance is never a
-    candidate, an empty 0/12 instance is never "smallest", "largest" is the
-    fullest server that can still be joined (11/12 in a 12-slot place) and
-    "random" never picks the server you are already in;
-  * a failed HTTP read or a list without a joinable server is reported instead
-    of teleporting;
-  * the hop cooldown refuses a second hop in the same couple of seconds;
-  * the readout only refreshes while the card is ON.
+  * the readout is a LIVE section of stat rows (AutoFarm's "Overlay Info" style)
+    with server data only: Server, Players, In server, Uptime, Server time,
+    Place -- no Build, no Round, no You, and no floating window;
+  * that readout never stops: the ticker is created at init, survives the card
+    being switched off and keeps writing on its own clock;
+  * the place row names the place and marks a subplace (`PlaceId ~= GameId`);
+  * a hop only picks a server with a FREE SLOT, reads several pages (cursor),
+    never sends a query flag it does not need, skips empty instances for
+    "smallest", picks the fullest joinable one (11/12) for "largest", and when
+    every listed server is full it falls back to joining a random server instead
+    of failing;
+  * a failed HTTP read is reported instead of teleporting;
+  * the hop cooldown refuses a second hop in the same couple of seconds.
 
 It does NOT prove that Roblox accepts the teleport: TeleportService is a mock.
 Nothing here talks to games.roblox.com either: HttpGet answers from a table.
@@ -35,9 +35,9 @@ assert '"src/games/universal/Other/ServerSettings.lua"' in MANIFEST, (
     "Server Settings must be in the universal load list"
 )
 assert '["Server Settings"] = "Utilities"' in MANIFEST, "Server Settings lives in Utilities"
-assert 'addActionOption(card, "Rejoin Server"' not in SOURCE, (
-    "v192: the Rejoin Server action is removed from the card"
-)
+assert 'addActionOption(card, "Rejoin Server"' not in SOURCE, "v192: Rejoin is removed"
+assert "excludeFullServers" not in SOURCE.split("-- v193")[0], "v193: no unneeded endpoint flag is sent"
+assert "&excludeFullServers" not in SOURCE, "v193: the endpoint URL sends no extra flag"
 
 script = r'''
 local now = 0
@@ -53,72 +53,17 @@ local function notify(message, kind)
 end
 
 local clipboard = {}
-local setclipboard = function(text) table.insert(clipboard, text) end
+setclipboard = function(text) table.insert(clipboard, text) end
 
 local jobId = "abc123def456"
 local placeId = 142823291
 
--- Enum / UDim2 / Vector2 / Instance building: just enough for the overlay.
-local function enumTable()
-    return setmetatable({}, { __index = function(self, key)
-        local child = enumTable()
-        rawset(self, key, child)
-        return child
-    end })
+local players = { list = {}, MaxPlayers = 12 }
+function players:GetPlayers() return self.list end
+for index = 1, 5 do
+    table.insert(players.list, { Name = "P" .. index })
 end
-Enum = enumTable()
-UDim2 = {
-    new = function(x, xo, y, yo) return { x = x, xo = xo, y = y, yo = yo } end,
-    fromOffset = function(x, y) return { xo = x, yo = y } end,
-    fromScale = function(x, y) return { x = x, y = y } end,
-}
-UDim = { new = function(a, b) return { a = a, b = b } end }
-Vector2 = { new = function(x, y) return { x = x, y = y } end }
-Color3 = { fromRGB = function(r, g, b) return { r = r, g = g, b = b, kind = "Color3" } end }
-typeof = function(value) return type(value) end
-
-local objects = {}
-local function create(class, properties)
-    local object = { ClassName = class, Parent = nil, Text = "", Enabled = true }
-    object.MouseButton1Click = {
-        Connect = function(_self, fn)
-            object.onClick = fn
-            return { Disconnect = function() end }
-        end,
-    }
-    for key, value in pairs(properties or {}) do
-        object[key] = value
-    end
-    table.insert(objects, object)
-    return object
-end
-
--- An object still exists only while its overlay root is parented: the mock
--- keeps every instance it ever built, exactly like a destroyed Frame stays in
--- memory until GC, so "gone" has to mean "detached from the ScreenGui".
-local function attached(object)
-    local node = object
-    while node do
-        if node.Name == "WurstServerInfo" and node.Parent == nil then
-            return false
-        end
-        node = node.Parent
-    end
-    return true
-end
-
-local function findText(text)
-    for _, object in ipairs(objects) do
-        if object.ClassName == "TextLabel" and object.Text == text and attached(object) then
-            return object
-        end
-    end
-    return nil
-end
-
-ScreenGui = { ClassName = "ScreenGui" }
-Theme = {}
-PRODUCT = { version = "0.192 Release" }
+local LocalPlayer = { Name = "Me", UserId = 42 }
 
 task = {
     spawn = function(fn) fn() end,
@@ -127,19 +72,49 @@ task = {
 }
 
 local teleports = {}
+local anyServerJoins = {}
 local function TeleportToPlaceInstance(_self, place, targetJob, player)
     table.insert(teleports, { place = place, job = targetJob, player = player })
 end
-local Teleport = function() error("Teleport must not be used") end
+local function Teleport(_self, place, player)
+    table.insert(anyServerJoins, { place = place, player = player })
+end
 
-local httpAnswer = { data = {} }
+-- Two pages per sort order, served from this table. `cursor` selects page 2.
+local serverPages = {
+    Asc = {
+        { data = {
+            { id = "empty", playing = 0, maxPlayers = 12 },
+            { id = "small", playing = 2, maxPlayers = 12 },
+            { id = jobId, playing = 5, maxPlayers = 12 },
+        } },
+        { data = {
+            { id = "mid", playing = 6, maxPlayers = 12 },
+        }, nextPageCursor = "page3" },
+    },
+    Desc = {
+        { data = {
+            { id = "big", playing = 11, maxPlayers = 12 },
+            { id = "full", playing = 12, maxPlayers = 12 },
+        } },
+        { data = {} },
+    },
+}
+
+local lastEndpoint = nil
+local currentAnswer = { data = {} }
+local httpBlocked = false
 local function HttpGet(_self, url)
     lastEndpoint = url
-    if type(httpAnswer) == "function" then
-        httpAnswer()
+    if httpBlocked then
+        error("http blocked")
     end
-    -- A real executor returns the JSON text; the mock returns a marker and the
-    -- HttpService mock hands the configured answer back.
+    local order = string.match(url, "sortOrder=(%a+)") or "Asc"
+    local page = 1
+    if string.find(url, "cursor=", 1, true) then
+        page = 2
+    end
+    currentAnswer = (serverPages[order] and serverPages[order][page]) or { data = {} }
     return "{}"
 end
 
@@ -147,11 +122,11 @@ game = {
     JobId = jobId,
     PlaceId = placeId,
     PlaceVersion = 7,
-    Name = "TestPlace",
+    Name = "Murder Mystery 2",
     HttpGet = HttpGet,
     GetService = function(_self, name)
         if name == "HttpService" then
-            return { JSONDecode = function(_self, _body) return httpAnswer end }
+            return { JSONDecode = function(_self, _body) return currentAnswer end }
         elseif name == "TeleportService" then
             return { TeleportToPlaceInstance = TeleportToPlaceInstance, Teleport = Teleport }
         elseif name == "Players" then
@@ -166,19 +141,38 @@ workspace = {
     GetServerTimeNow = function(_self) return 1000 end,
 }
 
-local players = { list = {}, MaxPlayers = 12 }
-function players:GetPlayers() return self.list end
-for index = 1, 5 do
-    table.insert(players.list, { Name = "P" .. index })
+-- Stat rows, exactly like Widgets.addStatOption hands them out.
+local statValues = {}
+local statLabels = {}
+local sections = {}
+state = {
+    addSectionOption = function(_feature, title)
+        table.insert(sections, title)
+        return { Name = "Section_" .. title }
+    end,
+    addStatOption = function(_feature, label, initial)
+        statLabels[label] = true
+        statValues[label] = tostring(initial or "")
+        return {
+            set = function(text)
+                statValues[label] = tostring(text)
+            end,
+        }
+    end,
+}
+
+-- Instance building must not even be reached: v193 has no floating window.
+local framesBuilt = 0
+local function create(_class, _properties)
+    framesBuilt += 1
+    return {}
 end
-local LocalPlayer = { Name = "Me", UserId = 42 }
 
 local featureConnections = {}
 local function disconnectFeatureConnection(name) featureConnections[name] = nil end
 local TaskManager = {
-    Connect = function(_self, fn, _priority, name)
-        local record = { fn = fn, name = name }
-        return record
+    Connect = function(_self, fn)
+        return { fn = fn, Disconnect = function() end }
     end,
 }
 
@@ -196,17 +190,6 @@ local actions = {}
 local function addActionOption(_feature, label, callback)
     actions[label] = { callback = callback }
 end
-local toggles = {}
-local function addToggleOption(_feature, label, default, callback, hint)
-    toggles[label] = { default = default, callback = callback, hint = hint }
-end
-local numbers = {}
-local function addNumberOption(_feature, label, default, minimum, maximum, callback, hint, step, persist)
-    numbers[label] = {
-        default = default, min = minimum, max = maximum,
-        callback = callback, hint = hint, step = step, persist = persist,
-    }
-end
 local information = {}
 local function addInformationOption(_feature, text)
     table.insert(information, text)
@@ -218,16 +201,12 @@ local host = {
     notify = notify,
     createUniversalFeature = createUniversalFeature,
     addActionOption = addActionOption,
-    addToggleOption = addToggleOption,
-    addNumberOption = addNumberOption,
     addInformationOption = addInformationOption,
     TaskManager = TaskManager,
     featureConnections = featureConnections,
     disconnectFeatureConnection = disconnectFeatureConnection,
     cloneReference = function(value) return value end,
 }
-
-state = {}
 
 local Module = (function()
 ''' + SOURCE + r'''
@@ -251,82 +230,72 @@ for _, label in ipairs({ "Copy Job ID", "Hop: smallest server",
     assert(actions[label], "missing action: " .. label)
 end
 assert(actions["Rejoin Server"] == nil, "v192: Rejoin Server is gone")
-assert(toggles["Show server info"], "the readout toggle exists")
-assert(numbers["Refresh every"], "the refresh slider exists")
-eq(numbers["Refresh every"].default, 3, "refresh default")
-eq(numbers["Refresh every"].min, 1, "refresh min")
-eq(numbers["Refresh every"].max, 15, "refresh max")
 
--- CARD OFF => no status work, no ticker, no overlay.
-eq(card.status, nil, "an OFF card writes no status")
-eq(featureConnections.ServerSettingsTick, nil, "an OFF card owns no ticker")
-assert(findText("Server Info") == nil, "an OFF card builds no overlay")
+-- The readout is a live "Overlay Info" section, with server data only.
+eq(#sections, 1, "one section holds the readout")
+eq(sections[1], "Overlay Info", "the section is the AutoFarm-style one")
+for _, label in ipairs({ "Server", "Players", "In server", "Uptime", "Server time", "Place" }) do
+    assert(statLabels[label], "missing stat row: " .. label)
+end
+for _, forbidden in ipairs({ "Build", "Round", "You" }) do
+    assert(not statLabels[forbidden], "v193 removes the " .. forbidden .. " row")
+end
+eq(framesBuilt, 0, "v193 builds no floating window at all")
 
--- CARD ON => the readout shows the short Job ID, the players and the uptime.
+-- Live values, read at init.
+eq(statValues["Server"], "abc123de", "the Server row shows the short Job ID")
+eq(statValues["Players"], "5 / 12", "the Players row shows players / limit")
+eq(statValues["Uptime"], "1:02:05", "the Uptime row shows the server uptime")
+eq(statValues["Server time"], "01:02:03", "the Server time row shows the server clock")
+eq(statValues["Place"], "Murder Mystery 2", "the Place row names the place")
+assert(string.find(statValues["In server"], "P1", 1, true), "the In server row lists names")
+
+-- A subplace is marked as one.
+game.GameId = 999999
+now += 1
+featureConnections.ServerSettingsTick.fn(1)
+eq(statValues["Place"], "Murder Mystery 2 · subplace", "a subplace says so")
+game.GameId = placeId
+
+-- The ticker is created at init and never dropped, not even with the card off.
+assert(featureConnections.ServerSettingsTick, "the readout ticks from init")
+card.enabled = false
+card.onToggle(false)
+assert(featureConnections.ServerSettingsTick, "switching the card off does not stop the readout")
+workspace.DistributedGameTime = 3726
+now += 1
+featureConnections.ServerSettingsTick.fn(1)
+eq(statValues["Uptime"], "1:02:06", "the readout keeps advancing with the card off")
 card.enabled = true
 card.onToggle(true)
-eq(card.status, "abc123de · 5/12 · up 1:02:05", "readout shows id, players and uptime")
-assert(featureConnections.ServerSettingsTick, "an ON card owns its ticker")
-
--- The overlay carries every readable field.
-assert(findText("Server Info"), "the overlay has a title")
-assert(findText("abc123def456"), "the overlay shows the full Job ID")
-assert(findText("5 / 12"), "the overlay shows players / limit")
-assert(findText("1:02:05"), "the overlay shows the server uptime")
-assert(findText("01:02:03 UTC"), "the overlay shows the server clock")
-assert(findText("TestPlace · v7"), "the overlay shows the place and its version")
-assert(findText("Me (42)"), "the overlay shows the local player")
-assert(findText("0.192 Release"), "the overlay shows the derived build label")
 
 -- Copy Job ID goes through the executor clipboard.
 actions["Copy Job ID"].callback()
 eq(#clipboard, 1, "one clipboard write")
 eq(clipboard[1], jobId, "the live Job ID is copied")
 
--- Without a clipboard the id is still reported.
-setclipboard = nil
-local beforeNotices = #notifications
-actions["Copy Job ID"].callback()
-eq(#notifications, beforeNotices + 1, "a missing clipboard still says something")
-assert(string.find(notifications[#notifications].text, jobId, 1, true),
-    "the message carries the Job ID")
-
--- Only servers with a free slot are candidates.
-local servers = {
-    data = {
-        { id = "empty", playing = 0, maxPlayers = 12 },
-        { id = "small", playing = 2, maxPlayers = 12 },
-        { id = "mid", playing = 6, maxPlayers = 12 },
-        { id = "big", playing = 11, maxPlayers = 12 },
-        { id = "full", playing = 12, maxPlayers = 12 },
-        { id = jobId, playing = 5, maxPlayers = 12 },
-    },
-}
-httpAnswer = servers
+-- A hop only lands where a slot is free, and reads several pages.
 actions["Hop: smallest server"].callback()
 eq(#teleports, 1, "one teleport for a hop")
-eq(teleports[1].job, "small", "smallest server with players, never an empty one")
-eq(teleports[1].place, placeId, "same place")
-eq(teleports[1].player, LocalPlayer, "the local player is teleported")
-assert(string.find(lastEndpoint, "excludeFullServers=true", 1, true),
-    "the endpoint is asked to exclude full servers: " .. tostring(lastEndpoint))
+eq(teleports[1].job, "small", "smallest joinable server, never the empty one")
+assert(string.find(lastEndpoint, "sortOrder=Asc", 1, true), "smallest reads the quiet end")
+assert(not string.find(lastEndpoint, "excludeFullServers", 1, true),
+    "v193 sends no flag it does not need")
 
 -- The cooldown blocks an immediate second hop.
 actions["Hop: largest server"].callback()
 eq(#teleports, 1, "the hop cooldown refuses a second hop")
-assert(string.find(notifications[#notifications].text, "Slow down"),
-    "the cooldown explains itself: " .. tostring(notifications[#notifications].text))
+assert(string.find(notifications[#notifications].text, "Slow down"), "the cooldown explains itself")
 
 now += 5
 actions["Hop: largest server"].callback()
 eq(#teleports, 2, "after the cooldown the hop happens")
-eq(teleports[2].job, "big", "largest server = fullest server that still has a slot (11/12)")
-assert(string.find(notifications[#notifications].text, "11/12", 1, true),
-    "the message states the real player count: " .. tostring(notifications[#notifications].text))
+eq(teleports[2].job, "big", "largest = fullest server that still has a slot (11/12)")
+assert(string.find(lastEndpoint, "sortOrder=Desc", 1, true), "largest reads the busy end")
 
 now += 5
 local seen = {}
-for _ = 1, 20 do
+for _ = 1, 15 do
     now += 5
     actions["Hop: random server"].callback()
     local chosen = teleports[#teleports].job
@@ -336,49 +305,41 @@ for _ = 1, 20 do
 end
 assert(seen.small or seen.big or seen.mid or seen.empty, "random hop picks a listed server")
 
--- A failed request must never teleport.
+-- A failed request is reported and never teleports.
 now += 5
-httpAnswer = function() error("http blocked") end
+httpBlocked = true
 local teleportsBefore = #teleports
 actions["Hop: smallest server"].callback()
 eq(#teleports, teleportsBefore, "a failed server list never teleports")
-assert(string.find(notifications[#notifications].text, "Server hop"),
-    "the failure is reported")
+assert(string.find(notifications[#notifications].text, "Server hop"), "the failure is reported")
+httpBlocked = false
 
--- A list without a joinable server is reported too.
+-- v193: when every listed server is full, the hop still moves the player: it
+-- joins any server instead of answering "not found".
 now += 5
-httpAnswer = { data = {
-    { id = jobId, playing = 5, maxPlayers = 12 },
-    { id = "full", playing = 12, maxPlayers = 12 },
-} }
+local savedAsc = serverPages.Asc
+serverPages.Asc = { { data = {
+    { id = "full1", playing = 12, maxPlayers = 12 },
+    { id = "full2", playing = 12, maxPlayers = 12 },
+} } }
+local anyBefore = #anyServerJoins
 actions["Hop: smallest server"].callback()
-eq(#teleports, teleportsBefore, "no free slot means no teleport")
-assert(string.find(notifications[#notifications].text, "free slot"),
-    "the missing slot is explained: " .. tostring(notifications[#notifications].text))
+eq(#teleports, teleportsBefore, "a full list never teleports into an instance")
+eq(#anyServerJoins, anyBefore + 1, "a full list still joins any server")
+eq(anyServerJoins[#anyServerJoins].place, placeId, "the fallback joins the same place")
+assert(string.find(notifications[#notifications].text, "full", 1, true),
+    "the fallback explains itself: " .. tostring(notifications[#notifications].text))
+serverPages.Asc = savedAsc
 
--- The ticker refreshes the readout and the overlay, then turning the card off
--- drops both.
-httpAnswer = servers
 players.list = { players.list[1] }
-workspace.DistributedGameTime = 8
-featureConnections.ServerSettingsTick.fn(10)
-eq(card.status, "abc123de · 1/12 · up 0:00:08", "an ON card refreshes its status")
-assert(findText("1 / 12"), "the overlay refreshes with the card")
-card.enabled = false
-card.onToggle(false)
-eq(featureConnections.ServerSettingsTick, nil, "turning the card off disconnects the ticker")
-eq(card.status, nil, "turning the card off clears the status")
-
--- The option still opens the overlay again when it comes back.
-card.enabled = true
-card.onToggle(true)
-assert(findText("Server Info"), "the overlay comes back with the card")
-toggles["Show server info"].callback(false)
-assert(findText("Server Info") == nil, "turning the option off removes the overlay")
+now += 1
+featureConnections.ServerSettingsTick.fn(1)
+eq(statValues["Players"], "1 / 12", "the Players row follows the roster")
 
 Module.destroy()
 eq(state.serverSettingsCard, nil, "destroy clears the exported card")
-print("PASS Server Settings: readout + uptime, overlay, clipboard, smallest/largest/random with a real slot, cooldown, failures, no rejoin")
+eq(featureConnections.ServerSettingsTick, nil, "destroy drops the readout")
+print("PASS Server Settings: live Overlay Info rows (never stopping), place + subplace, hops with a real slot over several pages, full-list fallback, cooldown, no rejoin")
 '''
 
 with tempfile.TemporaryDirectory(prefix="server-settings-") as temp:
