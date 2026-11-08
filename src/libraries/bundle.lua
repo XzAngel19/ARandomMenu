@@ -1,5 +1,5 @@
 return {
-    stamp = "v196-20261107-wurst-lua-is-the-loader",
+    stamp = "v196-20261107-verified-loader",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
