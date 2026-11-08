@@ -23,14 +23,118 @@ function Module.init(context: Runtime): any
     local entity: any = context.entity
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
+    local localPlayer: Player? = host.LocalPlayer
     local runtime: any = {
         target = nil,
         lockedTarget = nil,
+        lastFire = -math.huge,
     }
     local card: any
 
     local function camera(): Camera?
         return currentWorkspace.CurrentCamera
+    end
+
+    local function getHeldTool(): Tool?
+        local player: Player? = localPlayer or host.LocalPlayer
+        if not player then return nil end
+        local character: Model? = player.Character
+        if not character then return nil end
+        for _, child: Instance in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") then
+                return child :: Tool
+            end
+        end
+        return nil
+    end
+
+    local function tryFireOnce(): boolean
+        local player: Player? = localPlayer or host.LocalPlayer
+        local tool: Tool? = getHeldTool()
+        -- If no tool in character, try backpack and equip (for games that unequip on reload)
+        if not tool and player then
+            local backpack: Instance? = player:FindFirstChild("Backpack")
+            if backpack then
+                for _, child: Instance in ipairs(backpack:GetChildren()) do
+                    if child:IsA("Tool") then
+                        tool = child :: Tool
+                        local character: Model? = player.Character
+                        local hum: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+                        if hum then
+                            pcall(function(): () hum:EquipTool(tool :: Tool) end)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if tool then
+            if tool.Enabled == false then return false end
+            local ok: boolean = pcall(function(): () (tool :: Tool):Activate() end)
+            if ok then return true end
+        end
+        -- Rivals / FPS without Tool (ViewModel + RemoteEvent): fallback to virtual click
+        -- Use VirtualInputManager or executor mouse1click so any semi-auto gun fires.
+        local vimOk: boolean = pcall(function(): ()
+            local vim: any = game:GetService("VirtualInputManager")
+            if vim and type(vim.SendMouseButtonEvent) == "function" then
+                -- Press and release quickly; the CPS loop controls rate
+                vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+                vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+            else
+                error("no vim")
+            end
+        end)
+        if vimOk then return true end
+        local env: any = getfenv()
+        local click: any = env.mouse1click or env.mouse1press
+        if type(click) == "function" then
+            local ok2: boolean = pcall(function(): () click() end)
+            if ok2 then return true end
+            -- mouse1press needs release
+            local rel: any = env.mouse1release
+            if type(rel) == "function" then
+                pcall(function(): () click(); task.wait(0.02); rel() end)
+                return true
+            end
+        end
+        return false
+    end
+
+    local function getCPS(): number
+        local opt: any = nil
+        if card and card.Options then
+            opt = card.Options["Clicks Per Second"] or card.Options["Fire rate"] or card.Options["CPS"]
+        end
+        if opt and opt.Value ~= nil then
+            return math.max(1, tonumber(opt.Value) or 12)
+        end
+        return 12
+    end
+
+    local function shouldAutoFire(): boolean
+        if not card or not card.Options or not card.Options["Auto Fire"] then return false end
+        if not card.Options["Auto Fire"].Value then return false end
+        local rate: number = getCPS()
+        local now: number = os.clock()
+        if now - runtime.lastFire < 1 / rate then return false end
+        local fireMode: string = "Hold"
+        if card.Options["Auto Fire mode"] then
+            fireMode = tostring(card.Options["Auto Fire mode"].Value)
+        end
+        if fireMode == "Always" then
+            runtime.lastFire = now
+            return true
+        end
+        local okHeld: boolean, isPressed: any = pcall(function(): any
+            return userInput:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+        end)
+        if not okHeld then return false end
+        if isPressed == true then
+            runtime.lastFire = now
+            return true
+        end
+        return false
     end
 
     local function moveCamera(target: any, deltaTime: number): boolean
@@ -80,7 +184,7 @@ function Module.init(context: Runtime): any
                     return true
                 end
             end
-            local lp: Player? = host.LocalPlayer
+            local lp: Player? = localPlayer or host.LocalPlayer
             local char: Model? = lp and lp.Character
             local head: BasePart? = char and char:FindFirstChild("Head") :: BasePart?
             if head then
@@ -97,26 +201,24 @@ function Module.init(context: Runtime): any
             local env: any = getfenv()
             local moverel: any = env.mousemoverel or env.mousemove or (host and (host.mousemoverel or host.mousemove))
             if type(moverel) ~= "function" then return false end
-            -- Use ScreenPoint to match GetMouseLocation (both include top-bar inset)
+            -- Use ScreenPoint to match GetMouseLocation (both include top-bar inset 36px)
             local ok: boolean, screenPos: any, onScreen: any = pcall(function(): any
                 return cameraObject:WorldToScreenPoint(target.position)
             end)
             if not ok or type(screenPos) ~= "Vector3" then return false end
             if onScreen == false and mode ~= "Aimbot" then return false end
+            -- Always use GetMouseLocation (with inset) for delta; fallback to Viewport/2+inset
             local mouse: Vector2? = nil
             local mouseOk: boolean, mousePos: any = pcall(function(): any return userInput:GetMouseLocation() end)
             if mouseOk and typeof(mousePos) == "Vector2" then
                 mouse = mousePos
             else
-                -- Fallback: ViewportSize/2 + GuiInset (36px top bar)
                 local vp: Vector2 = cameraObject.ViewportSize
                 local insetY: number = 36
                 pcall(function(): ()
                     local guiService: any = game:GetService("GuiService")
                     local inset: Vector2 = guiService:GetGuiInset()
-                    if typeof(inset) == "Vector2" then
-                        insetY = inset.Y
-                    end
+                    if typeof(inset) == "Vector2" then insetY = inset.Y end
                 end)
                 mouse = Vector2.new(vp.X / 2, vp.Y / 2 + insetY)
             end
@@ -154,7 +256,6 @@ function Module.init(context: Runtime): any
             end
             local newCFrame: CFrame = CFrame.lookAt(current.Position, current.Position + blended.Unit)
             local runService: any = (host :: any).RunService or (services and services.runService)
-            -- Prefer BindToRenderStep at Camera+1 so we win over the game's own camera controller (Rivals uses Scriptable+RenderStepped)
             if runService and type(runService.BindToRenderStep) == "function" then
                 local bound: boolean = false
                 pcall(function(): ()
@@ -174,7 +275,6 @@ function Module.init(context: Runtime): any
                     bound = true
                 end)
                 if bound then
-                    -- Also set immediately for executors / tests where BindToRenderStep doesn't tick
                     pcall(function(): () cameraObject.CFrame = newCFrame end)
                     return true
                 end
@@ -185,12 +285,24 @@ function Module.init(context: Runtime): any
             return ok
         end
 
-        -- Auto: try Mouse first for both (most natural, respects game's recoil/smoothing), Camera as fallback.
-        -- Previous Camera-first for locked caused stutter because direct CFrame fights the FPS controller.
+        -- Hybrid fix for Rivals: with Tool/weapon, the gun's ray often uses mouse Hit, not just camera.
+        -- Pure Camera leaves Mouse Hit at old side; pure Mouse has 1-frame camera lag.
+        -- For natural + accurate, do BOTH when locked (FPS). For 3rd person, Mouse is enough.
         if cameraMode == "Auto" then
-            if tryMouse() then return true end
-            if tryCamera() then return true end
-            return false
+            local locked: boolean = isMouseLocked()
+            if locked then
+                -- FPS shift-lock / 1st person: try both to keep camera and Mouse Hit synced.
+                -- Mouse first (game's native delta), then immediate Camera to remove 1-frame lag for hitscan.
+                local didMouse: boolean = tryMouse()
+                local didCamera: boolean = tryCamera()
+                -- If we did Camera, we synced immediately; if only Mouse, camera will catch next frame via game's handler.
+                return didMouse or didCamera
+            else
+                -- 3rd person: Mouse is natural and weapon (if any) follows camera via game's orbit, no need for double.
+                if tryMouse() then return true end
+                if tryCamera() then return true end
+                return false
+            end
         elseif cameraMode == "Camera" then
             return tryCamera()
         elseif cameraMode == "Mouse" then
@@ -244,13 +356,17 @@ function Module.init(context: Runtime): any
         return runtime.lockedTarget
     end
 
-    -- Compat migrate CFrame->Camera
     pcall(function(): ()
         local cfg: any = host.configData
         if cfg and type(cfg.values) == "table" then
             local key: string = "Universal.AimAssist.Camera"
             if cfg.values[key] == "CFrame" then
                 cfg.values[key] = "Camera"
+            end
+            local oldKey: string = "Universal.AimAssist.Fire rate"
+            local newKey: string = "Universal.AimAssist.Clicks Per Second"
+            if cfg.values[oldKey] ~= nil and cfg.values[newKey] == nil then
+                cfg.values[newKey] = cfg.values[oldKey]
             end
         end
     end)
@@ -265,6 +381,7 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             runtime.target = nil
             runtime.lockedTarget = nil
+            runtime.lastFire = -math.huge
             if not enabled then
                 card:SetStatus(nil)
                 local rs: any = (host :: any).RunService
@@ -296,6 +413,9 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local moved: boolean = moveCamera(selected, deltaTime)
+                if shouldAutoFire() then
+                    pcall(tryFireOnce)
+                end
                 local targetPlayer: Player? = selected.player
                 local displayName: string = targetPlayer
                     and tostring(targetPlayer.DisplayName or targetPlayer.Name)
@@ -330,7 +450,7 @@ function Module.init(context: Runtime): any
         Name = "Camera",
         List = {"Auto", "Camera", "Mouse"},
         Index = 1,
-        Tooltip = "Auto: Mouse primero (natural, respeta recoil) luego Camera. Camera: CFrame directo (útil en 1st person shift-lock si Mouse no va). Mouse: solo mousemoverel.",
+        Tooltip = "Auto: 3rd=Mouse (natural) 1st/FPS=Mouse+Camera híbrido para que el arma siga (Mouse Hit + CFrame instant). Camera: solo CFrame (1st person). Mouse: solo mousemoverel.",
     })
     card:CreateSlider({
         Name = "FOV",
@@ -403,8 +523,29 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Hold the current Aimbot target. Turn off to release it every frame.",
     })
+    card:CreateToggle({
+        Name = "Auto Fire",
+        Default = false,
+        Tooltip = "Autoclick genérico: si no hay Tool hace click virtual. No toca GUI.",
+    })
+    card:CreateDropdown({
+        Name = "Auto Fire mode",
+        List = {"Hold", "Always"},
+        Index = 1,
+        Show = {Option = "Auto Fire"},
+        Tooltip = "Hold = solo mientras mantienes click izquierdo (para semi-auto). Always = dispara solo al tener target.",
+    })
+    card:CreateSlider({
+        Name = "Clicks Per Second",
+        Min = 1,
+        Max = 20,
+        Step = 1,
+        Default = 12,
+        Show = {Option = "Auto Fire"},
+        Tooltip = "Clicks por segundo manteniendo. 12 default = pistola semi-auto. Sube para automático.",
+    })
     card:CreateNote(
-        "Natural: Auto prueba Mouse (mousemoverel ViewportPoint) luego Camera (CFrame.lookAt). Camera directo funciona en 1st person shift-lock donde el juego sobrescribe mouse."
+        "Natural: Auto 3rd=Mouse, 1st=Mouse+Camera híbrido (sincroniza Mouse Hit + CFrame) para que el arma no se quede atrás."
     )
 
     pcall(function()
@@ -429,6 +570,7 @@ function Module.init(context: Runtime): any
         patchOption("Strength", "0%", "100%", "(%)")
         patchOption("Prediction", "0 s", "0.5 s", "(s)")
         patchOption("Maxdistance", "25 studs", "2000 studs", "(studs)")
+        patchOption("ClicksPerSecond", "1", "20", "(cps)")
     end)
 
     activeCard = card
