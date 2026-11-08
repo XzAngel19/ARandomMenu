@@ -54,7 +54,7 @@ check(runtime is not None, "src/Wurst.lua declares RUNTIME_BRANCH")
 branch = runtime.group(1)
 
 check(branch.startswith("arena/"), f"RUNTIME_BRANCH is an arena branch (got {branch})")
-check(branch == "arena/e21ba23f-arandommenu",
+check(branch == "arena/8723512f-arandommenu",
       f"RUNTIME_BRANCH is this session's branch (got {branch})")
 
 # The changelog is allowed to name the old branches: that is the explanation of

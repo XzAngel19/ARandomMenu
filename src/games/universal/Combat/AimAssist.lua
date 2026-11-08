@@ -47,13 +47,13 @@ function Module.init(context: Runtime): any
         local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
-            -- Speed caps turn rate; Strength controls the pull near the target.
-            -- Both are time-based, rather than a frame-count smoothing factor.
             local dt = math.max(deltaTime, 0)
             local speed = math.max(0, card.Options.Speed.Value)
             local strength = math.max(0, card.Options.Strength.Value) / 100
             if speed == 0 or strength == 0 or dt == 0 then return false end
             local angle = math.acos(math.clamp(current.LookVector:Dot(offset.Unit), -1, 1))
+            -- Deadzone 0.5° prevents micro-jitter when already locked (perfect lock)
+            if angle < math.rad(0.5) then return false end
             alpha = math.min(1 - math.exp(-strength * 10 * dt),
                 angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
@@ -185,8 +185,8 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             runtime.lockedTarget = nil
         end,
-        Tooltip = "Aim Assist uses Speed and Strength inside FOV. Aimbot snaps "
-            .. "to a valid target and can keep a sticky lock.",
+        Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed (°/s) y Strength (%). Aimbot = snap directo a target válido con Sticky lock opcional. FOV solo afecta a Aim Assist.",
+
     })
     card:CreateSlider({
         Name = "FOV",
@@ -195,14 +195,16 @@ function Module.init(context: Runtime): any
         Max = 500,
         Step = 5,
         Default = 180,
-        Tooltip = "Pixels around the cursor in which a target may be selected.",
+        Tooltip = "FOV en píxeles: radio alrededor del cursor donde se busca target. 15 px (pequeño) — 500 px (pantalla casi completa). Default 180 px. Solo Aim Assist usa FOV; Aimbot ignora FOV.",
     })
     card:CreateSlider({Name="Speed",Min=0,Max=360,Default=180,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
-        Tooltip="Maximum camera turn in degrees per second. Higher = faster. 0 = no assist."})
+        Tooltip="Speed en grados por segundo (°/s): rotación máxima de cámara. 0 = sin ayuda, 90°/s lento, 180°/s default (equilibrado), 360°/s casi instantáneo."})
     card:CreateSlider({Name="Strength",Min=0,Max=100,Default=75,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
-        Tooltip="Pull toward the target, in percent. Higher = firmer tracking; 0 = no assist. Aimbot snaps instead."})
+        Tooltip="Strength en porcentaje (0-100%): fuerza de arrastre hacia el target. 0% = nada, 50% suave, 75% default firme, 100% máxima. Aimbot ignora Strength y hace snap directo."})
+    -- Units visible below sliders: enlarges menu slightly so 180 what? is answered without hover
+    card:CreateNote("FOV: 15-500 píxeles (radio) — 180 px default • Speed: 0-360 °/s — 180°/s default • Strength: 0-100% — 75% default. 500 = píxeles, 180 = grados por segundo / porcentaje.")
     card:CreateDropdown({
         Name = "Target part",
         List = {"Closest", "Head", "Torso"},
@@ -221,7 +223,7 @@ function Module.init(context: Runtime): any
         Max = 0.5,
         Step = 0.01,
         Default = 0.06,
-        Tooltip = "Seconds of target velocity to lead. Set to 0 for no lead.",
+        Tooltip = "Prediction en segundos (s): anticipa movimiento. 0 s = sin predicción, 0.06 s default (60 ms), 0.2 s para targets rápidos. Calcula posición futura = velocidad * segundos.",
     })
     card:CreateSlider({
         Name = "Max distance",
@@ -229,8 +231,9 @@ function Module.init(context: Runtime): any
         Max = 2000,
         Step = 5,
         Default = 600,
-        Tooltip = "Ignore targets farther than this many studs.",
+        Tooltip = "Max distance en studs: ignora targets más lejos. 25 studs cerca, 600 studs default, 2000 studs mapa completo.",
     })
+    card:CreateNote("Prediction: 0-0.5 segundos — 0.06 s default (60 ms). Max distance en studs — 600 studs default. Más predicción = más adelanto, más distancia = más targets lejanos.")
     card:CreateToggle({
         Name = "Visibility check",
         Default = true,
@@ -259,8 +262,33 @@ function Module.init(context: Runtime): any
             .. "select a new target every frame.",
     })
     card:CreateNote(
-        "Camera-only assist. It never edits remotes, raycasts or hitboxes."
+        "Camera-only: solo mueve tu cámara, nunca toca remotes ni hitboxes. Deadzone 0.5° evita temblor cuando ya estás centrado. FOV en px, Speed en °/s, Strength en %."
     )
+
+    -- Show units directly on slider labels and min/max numbers (enlarges menu slightly for clarity, pcall safe if layout differs)
+    pcall(function()
+        local feature: any = (card :: any).Feature or (card :: any)._feature or card
+        local optionsFrame: any = (feature :: any).options or (card :: any).options
+        if not optionsFrame or type(optionsFrame.FindFirstChild) ~= "function" then return end
+        local function patchOption(optionName: string, minText: string, maxText: string, suffix: string)
+            local row: any = optionsFrame:FindFirstChild("Option_" .. optionName:gsub("%W", ""))
+            if not row then return end
+            local label: any = row:FindFirstChild("OptionLabel")
+            if label and suffix then pcall(function() label.Text = label.Text .. " " .. suffix end) end
+            local slider: any = row:FindFirstChild("Slider")
+            if slider then
+                local minL: any = slider:FindFirstChild("MinLabel")
+                local maxL: any = slider:FindFirstChild("MaxLabel")
+                if minL then pcall(function() minL.Text = minText end) end
+                if maxL then pcall(function() maxL.Text = maxText end) end
+            end
+        end
+        patchOption("FOV", "15 px", "500 px", "(píxeles)")
+        patchOption("Speed", "0°/s", "360°/s", "(°/s)")
+        patchOption("Strength", "0%", "100%", "(%)")
+        patchOption("Prediction", "0 s", "0.5 s", "(s)")
+        patchOption("Maxdistance", "25 studs", "2000 studs", "(studs)")
+    end)
 
     activeCard = card
     Module.Initialized = true

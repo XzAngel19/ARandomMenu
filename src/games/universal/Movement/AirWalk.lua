@@ -6,7 +6,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "AirWalk",
+    Name = "Air Walk",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -99,7 +99,7 @@ function Module.init(context: Runtime): any
 
     local airWalk: any
     airWalk = framework.Categories.Exploits:CreateModule({
-        Name = "AirWalk",
+        Name = "Air Walk",
         Category = "Exploits",
         ConfigKey = "Universal.AirWalk",
         Order = 11,

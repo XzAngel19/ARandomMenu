@@ -107,21 +107,30 @@ set('Auto jump',true);h.FloorMaterial='Ground';local changes=h.changes
 module.SetSprintHeld(true);near(h.WalkSpeed,30);assert(h.changes==changes,'Sprint OFF must not activate Auto jump')
 module.SetSprintHeld(false);near(h.WalkSpeed,16);set('Auto jump',false)
 pass('foot: all five modes, analog input, zero-input braking, Y preserved, wall volume, hitch/burst timing, external WalkSpeed, respawn, Fly/state skips and Sprint OFF')
-assert(not module.Options['Vehicle speed'] and not module.Options['Vehicle mode']
-    and not module.Options['Vehicle multiplier'] and not module.Options['Vehicle speed value']
-    and not module.Options['Motor torque'], 'all vehicle controls must be removed')
-local seat={MaxSpeed=40,Torque=10}
+-- v197: vehicle support - Velocity/Impulse/CFrame/Teleport work in any vehicle using velocity/CFrame
+assert(module.Options['Vehicle multiplier'] and module.Options['Response'] and module.Options['Braking'] and module.Options['Keep vertical'],
+    'vehicle controls must exist (Vehicle multiplier, Response, Braking, Keep vertical)')
+-- Vehicle mock: acts as BasePart assembly
+local seat={MaxSpeed=40,Torque=10, AssemblyLinearVelocity=Vector3.new(0,5,0), AssemblyMass=10, Anchored=false, CFrame=CFrame.new(Vector3.new(10,0,10)), Position=Vector3.new(10,0,10), Size=Vector3.new(4,2,6), CollisionGroup='Default', Parent=true}
+function seat:ApplyImpulse(v) self.AssemblyLinearVelocity += v/self.AssemblyMass end
 module:Toggle(true);set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
 local initialVelocity=root.AssemblyLinearVelocity
+local initialSeatVel=seat.AssemblyLinearVelocity
 h.Sit=true;h.SeatPart=seat
-for _,mode in ipairs({'WalkSpeed','Velocity','Impulse','CFrame','Teleport'}) do
- set('Mode',mode);tick();near(h.WalkSpeed,16)
- assert(seat.MaxSpeed==40 and seat.Torque==10 and root.AssemblyLinearVelocity==initialVelocity,
-    'seated Speed must not alter the seat or character velocity')
-end
-h.SeatPart=nil;h.Sit=false;set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
+-- WalkSpeed must stay inactive while seated (cannot drive vehicle)
+set('Mode','WalkSpeed');h.MoveDirection=Vector3.new(1,0,0);tick();near(h.WalkSpeed,16)
+assert(seat.AssemblyLinearVelocity==initialSeatVel and root.AssemblyLinearVelocity==initialVelocity, 'WalkSpeed must stay inactive while seated')
+-- Velocity must drive the vehicle (with Vehicle multiplier 1.2)
+set('Mode','Velocity');h.MoveDirection=Vector3.new(1,0,0);tick()
+assert(seat.AssemblyLinearVelocity.X > 30 and seat.AssemblyLinearVelocity.Y==5, 'Velocity must drive vehicle with multiplier')
+-- Impulse must also drive vehicle
+set('Mode','Impulse');h.MoveDirection=Vector3.new(0.5,0,0);seat.AssemblyLinearVelocity=Vector3.new(0,5,0);tick()
+assert(seat.AssemblyLinearVelocity.X > 5, 'Impulse must drive vehicle')
+h.SeatPart=nil;h.Sit=false;h.MoveDirection=Vector3.new(1,0,0);set('Mode','WalkSpeed');tick();near(h.WalkSpeed,32)
+-- Also check new options work on foot: Response and Braking
+set('Mode','Velocity');assert(module.Options['Response'].Value==1 and module.Options['Braking'].Value==0.8, 'Response/Braking defaults')
 Module.destroy();near(h.WalkSpeed,16);assert(run.PreSimulation:Count()==0)
-pass('vehicle controls removed; on-foot Speed stays inactive while seated and resumes on exit')
+pass('vehicle support: WalkSpeed inactive while seated, Velocity/Impulse/CFrame/Teleport drive any vehicle with multiplier/Response/Braking')
 '''
 with tempfile.TemporaryDirectory(prefix='speed-') as d:
     path=Path(d)/'speed.luau';path.write_text(script)

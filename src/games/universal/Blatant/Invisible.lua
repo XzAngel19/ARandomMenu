@@ -18,7 +18,8 @@
 --     strangely. No raycasts in the flight loop either.
 --   * No Void guard, no Sprint multiplier, no Outline: fewer moving parts and
 --     no per-frame work beyond reading the movement service.
---   * Void depth defaults to 5 (minimum 5) and migrates older profiles.
+--   * Void depth defaults to 3 (minimum 0) so melee/weapons can hit: the real
+   --   body is close enough to the clone to deal damage. Older profiles migrate.
 local Module = {Name="Invisibility",PlaceId=0,Initialized=false}
 local cleanup
 
@@ -26,24 +27,31 @@ function Module.init(context)
     local host, services = context.host, context.services
     local player, input, run = host.LocalPlayer, host.UserInputService, host.RunService
     local world = host.workspace or workspace
-    local VOID_DEPTH_MIN, VOID_DEPTH_MAX = 5, 350
-    local settings = {fly=false, flySpeed=55, walkSpeed=16, depth=VOID_DEPTH_MIN, transparency=0.5}
-    local state = {connections={},tracks={},bodyParts={}}
+    local VOID_DEPTH_MIN, VOID_DEPTH_MAX = 0, 350
+    local VOID_DEPTH_DEFAULT = 3
+    local settings = {fly=false, flySpeed=55, walkSpeed=16, depth=VOID_DEPTH_DEFAULT, transparency=0.5}
+    local state = {connections={},tracks={},bodyParts={}, savedWalkSpeed=nil, savedPlatformStand=nil, savedAnchored=nil}
     local card
 
-    -- One-time migration. v187 shipped 120 as the default (useless: the body
-    -- ends up so far down it no longer follows you) and v188 offered 1. Both
-    -- are rewritten to the new minimum; any other value the player actually
-    -- picked is kept.
+    -- One-time migration. v187 shipped 120, v188 offered 1 and v189 used 5.
+    -- All are rewritten to the new default 3 so melee can hit (depth 0-3 keeps
+    -- the real body within weapon range). Any other value the player picked is kept.
     do
         local stored = type(configData) == "table" and configData.values or nil
-        if type(stored) == "table" and stored["UI.GhostDepthDefault"] ~= 2 then
+        if type(stored) == "table" and stored["UI.GhostDepthDefault"] ~= 3 then
             local saved = tonumber(stored["Universal.Ghost.Voiddepth"])
-            if saved == nil or saved < VOID_DEPTH_MIN or saved == 120 then
-                stored["Universal.Ghost.Voiddepth"] = VOID_DEPTH_MIN
+            if saved == nil or saved == 120 or saved == 1 or saved == 5 then
+                stored["Universal.Ghost.Voiddepth"] = VOID_DEPTH_DEFAULT
+            elseif saved ~= nil and (saved < VOID_DEPTH_MIN or saved > VOID_DEPTH_MAX) then
+                stored["Universal.Ghost.Voiddepth"] = math.clamp(saved, VOID_DEPTH_MIN, VOID_DEPTH_MAX)
             end
-            stored["UI.GhostDepthDefault"] = 2
+            stored["UI.GhostDepthDefault"] = 3
             if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
+        do
+            local stored2 = type(configData) == "table" and configData.values or nil
+            local migrated = stored2 and tonumber(stored2["Universal.Ghost.Voiddepth"])
+            if migrated then settings.depth = math.clamp(migrated, VOID_DEPTH_MIN, VOID_DEPTH_MAX) end
         end
     end
 
@@ -70,8 +78,6 @@ function Module.init(context)
         state.bodyParts={}
         for _,object in ipairs(character:GetDescendants()) do
             if object:IsA("BasePart") then
-                -- A rig part that reports nothing is treated as collidable, so
-                -- OFF always hands back a real value instead of nil.
                 local collide=object.CanCollide
                 if type(collide)~="boolean" then collide=true end
                 table.insert(state.bodyParts,{part=object,collide=collide})
@@ -79,9 +85,12 @@ function Module.init(context)
             end
         end
         if humanoid then
+            state.savedWalkSpeed = humanoid.WalkSpeed
+            state.savedPlatformStand = humanoid.PlatformStand
             humanoid.PlatformStand=true
             pcall(function() humanoid.WalkSpeed=0 end)
         end
+        state.savedAnchored = root.Anchored
         root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
         root.Anchored=true
     end
@@ -106,20 +115,33 @@ function Module.init(context)
     local function stop()
         for _,connection in ipairs(state.connections) do connection:Disconnect() end
         table.clear(state.connections)
-        -- Restore collisions FIRST: the hand-back below touches CanCollide, so
-        -- restoring it afterwards would leave the body non-collidable (it did:
-        -- v189 first draft turned Ghost off and the player fell through floors).
         unparkBody()
         local humanoid, root=parts(player.Character)
-        if state.character == player.Character and state.root and root and humanoid
-            and humanoid.Health > 0 then
-            -- Continue exactly where the puppet ended, then hand the body back
-            -- to physics in one step.
-            root.Anchored=false
-            root.CFrame=state.root.CFrame
-            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
-            humanoid.PlatformStand=false
+        -- Always restore movement state, even if character respawned or puppet lost.
+        if humanoid and humanoid.Parent then
+            if state.savedWalkSpeed ~= nil then
+                pcall(function() humanoid.WalkSpeed = state.savedWalkSpeed end)
+            elseif humanoid.WalkSpeed == 0 then
+                pcall(function() humanoid.WalkSpeed = settings.walkSpeed or 16 end)
+            end
+            if state.savedPlatformStand ~= nil then
+                humanoid.PlatformStand = state.savedPlatformStand
+            else
+                humanoid.PlatformStand = false
+            end
         end
+        if root and root.Parent then
+            if state.root and state.root.Parent and state.character == player.Character and humanoid and humanoid.Health > 0 then
+                root.CFrame=state.root.CFrame
+            end
+            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            if state.savedAnchored ~= nil then
+                root.Anchored = state.savedAnchored
+            else
+                root.Anchored = false
+            end
+        end
+        state.savedWalkSpeed, state.savedPlatformStand, state.savedAnchored = nil, nil, nil
         clearGhost();state.character=nil;activity(false)
     end
     local function turnOff()
@@ -348,16 +370,16 @@ function Module.init(context)
         end})
     card:CreateToggle({Name="Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
         Tooltip="OFF: native walking and jumping. ON: smooth velocity flight with WASD or the mobile stick, Space up, LeftControl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=1,Max=250,Default=settings.flySpeed,
+    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=0,Max=250,Default=settings.flySpeed,
         Function=function(value) settings.flySpeed=value end})
     card:CreateSlider({Name="Void depth",Min=VOID_DEPTH_MIN,Max=VOID_DEPTH_MAX,Default=settings.depth,Function=function(value)
         settings.depth=math.clamp(value,VOID_DEPTH_MIN,VOID_DEPTH_MAX)
-    end,Tooltip="How far under the clone your real body is parked. 5 is the default: close enough to keep the puppet honest, far enough not to touch the floor."})
-    card:CreateSlider({Name="WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
+    end,Tooltip="How far under the clone your real body is parked. 0-3 = same height so melee/weapons can hit, 5+ hides deeper. Default 3 (melee-friendly)."})
+    card:CreateSlider({Name="WalkSpeed",Min=0,Max=200,Default=settings.walkSpeed,Function=function(value)
         settings.walkSpeed=math.clamp(value,0,500)
         if state.humanoid and not settings.fly then state.humanoid.WalkSpeed=settings.walkSpeed end
-    end,Tooltip="Walking speed of the clone."})
-    card:CreateSlider({Name="Transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
+    end,Tooltip="Walking speed of the clone (studs/s). 0 = stop, 16 = default Roblox. Works with Fly off."})
+    card:CreateSlider({Name="Transparency",Min=0,Max=1,Step=0.05,Default=settings.transparency,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
         applyAppearance()
     end})

@@ -10,7 +10,7 @@ Script '', Line 2
 Ese `Script '', Line 2` es el cargador de **dos líneas**:
 
 ```lua
-getgenv().WURST_BRANCH = "arena/e21ba23f-arandommenu"
+getgenv().WURST_BRANCH = "arena/8723512f-arandommenu"
 loadstring(game:HttpGet("<url de src/Wurst.lua>"))()
 ```
 
@@ -39,14 +39,14 @@ a la basura**, así que no se puede saber cuál de estas cuatro cosas pasó:
 el ejecutor y ya está:
 
 ```
-https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/e21ba23f-arandommenu/src/Wurst.lua
+https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/8723512f-arandommenu/src/Wurst.lua
 ```
 
 Si prefieres el cargador con reintentos — recomendado, porque dice **por qué**
 falló en vez de morir en `:2:` — pega esto:
 
 ```lua
-getgenv().WURST_BRANCH = "arena/e21ba23f-arandommenu"
+getgenv().WURST_BRANCH = "arena/8723512f-arandommenu"
 local branch = getgenv().WURST_BRANCH
 local url = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
     .. branch
@@ -111,7 +111,7 @@ antes). Si esa rama no existe, el primer fichero no habría cargado; si existe
 pero está desactualizada, el fallo aparece aquí:
 
 ```
-[Wurst:Bootstrap] Bundle: HTTP 404 · branch arena/e21ba23f-arandommenu
+[Wurst:Bootstrap] Bundle: HTTP 404 · branch arena/8723512f-arandommenu
 [Wurst:Bootstrap] Manifest: src/libraries/Manifest.lua did not load; the menu cannot boot
 ```
 

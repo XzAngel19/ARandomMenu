@@ -8,7 +8,7 @@ Verifies the failures reported live against v188 are structurally impossible:
   * Fly is velocity on an UNANCHORED rig (v188 anchored the root, so velocity
     was ignored and Fly did nothing);
   * no Void guard, no Sprint multiplier, no Outline options remain;
-  * Void depth defaults to 5 and old profiles migrate to 5.
+  * Void depth defaults to 3 (min 0) so melee can hit and old profiles migrate to 3.
 Does not simulate Roblox's collision solver; verifies the module's own writes.
 """
 import os, subprocess, tempfile
@@ -125,12 +125,12 @@ local function reinit()
  Ghost.init({host={LocalPlayer=player,UserInputService=input,RunService={PreSimulation=pre},workspace=world},framework=framework,services=services})
 end
 reinit()
--- Menu surface: four options, and none of the removed ones. Void depth 5.
+-- Menu surface: five options, none removed. Void depth 3 (melee-friendly).
 assert(card.Options['Fly'].Value==false and not card.Options['Fly speed'].Visible)
 assert(not card.Options['Sprint multiplier'] and not card.Options['Void guard'] and not card.Options.Outline,
  'v189 removed Sprint multiplier, Void guard and Outline')
-assert(card.Options['Void depth'].Value==5 and card.Options['Void depth'].Metadata.min==5
- and card.Options['Void depth'].Metadata.max==350,'Void depth defaults to the minimum, now 5')
+assert(card.Options['Void depth'].Value==3 and card.Options['Void depth'].Metadata.min==0
+ and card.Options['Void depth'].Metadata.max==350,'Void depth defaults to 3 (min 0) for melee')
 local count=0;for _ in pairs(card.Options) do count+=1 end
 assert(count==5,'Invisibility keeps exactly Fly, Fly speed, Void depth, WalkSpeed, Transparency (5 options)')
 
@@ -171,7 +171,7 @@ for _=1,5 do pre:Fire(.01) end
 assert(root.frameWrites-bodyWrites<=1,'the parked body is re-placed at most once per 0.1 s')
 for _=1,10 do pre:Fire(.01) end
 assert(root.frameWrites-bodyWrites>=1,'the parked body still follows the clone')
-near(root.Position.Y,gr.Position.Y-5)
+near(root.Position.Y,gr.Position.Y-3)
 
 -- Fly: velocity on an UNANCHORED rig. v188 anchored the root and then set
 -- velocity, which the engine ignores.
@@ -243,15 +243,15 @@ configData.values["Universal.Ghost.Voiddepth"]=120
 configData.values["UI.GhostDepthDefault"]=nil
 savedMarker=nil
 reinit()
-assert(savedMarker==true and configData.values["Universal.Ghost.Voiddepth"]==5
- and configData.values["UI.GhostDepthDefault"]==2,'the legacy 120 default must migrate to 5')
-assert(card.Options['Void depth'].Value==5)
+assert(savedMarker==true and configData.values["Universal.Ghost.Voiddepth"]==3
+ and configData.values["UI.GhostDepthDefault"]==3,'the legacy 120 default must migrate to 3')
+assert(card.Options['Void depth'].Value==3)
 Ghost.destroy()
 configData.values["Universal.Ghost.Voiddepth"]=1
 configData.values["UI.GhostDepthDefault"]=nil
 reinit()
-assert(configData.values["Universal.Ghost.Voiddepth"]==5 and card.Options['Void depth'].Value==5,
- 'a below-minimum value from v188 must rise to the new minimum')
+assert(configData.values["Universal.Ghost.Voiddepth"]==3 and card.Options['Void depth'].Value==3,
+ 'a below-minimum value from v188 must rise to the new minimum 0 -> default 3')
 Ghost.destroy()
 for _,kept in ipairs({200,42}) do
  configData.values["Universal.Ghost.Voiddepth"]=kept
@@ -262,7 +262,8 @@ for _,kept in ipairs({200,42}) do
  Ghost.destroy()
 end
 configData=nil
-pass('actual Ghost v189: parked anchored body at 10 Hz, clone spawned above it, native walk, velocity fly, no guard/outline/sprint, depth 5 and migration')
+pass('actual Ghost v189-197: parked anchored body at 10 Hz, clone spawned above it, native walk, velocity fly, no guard/outline/sprint, depth 3 (melee-friendly) and migration')
 '''
 with tempfile.TemporaryDirectory() as tmp:
  p=Path(tmp)/'ghost.luau';p.write_text(script);subprocess.run([os.environ.get('LUAU','luau'),str(p)],check=True)
+

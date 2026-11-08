@@ -42,6 +42,7 @@ local card
 local framework={Categories={Exploits={CreateModule=function(_,d)
  card={Enabled=false,Options={},cleanups={}}
  function card:CreateSlider(o) self.Options[o.Name]={Value=o.Default} end
+ function card:CreateNote(o) end
  function card:CreateDropdown(o)
   local option={Value=o.List[o.Index]};self.Options[o.Name]=option
   function option:Set(value) self.Value=value;if o.Function then o.Function(value) end end

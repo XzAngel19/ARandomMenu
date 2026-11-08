@@ -40,9 +40,9 @@ opacityControl.apply(-2)
 near(ex.configData.values['ClickGUI.Opacity'],0.15,'typed opacity is bounded')
 local movement=assert(state.valueControls['Universal.Speed.Speed'])
 movement.apply(-12)
-near(state.framework:GetModule('Speed Hack').Options.Speed.Value,-12,'movement keeps negative manual values')
+near(state.framework:GetModule('Speed Settings').Options.Speed.Value,-12,'movement keeps negative manual values')
 movement.apply(300)
-near(state.framework:GetModule('Speed Hack').Options.Speed.Value,300,'movement keeps values above slider range')
+near(state.framework:GetModule('Speed Settings').Options.Speed.Value,300,'movement keeps values above slider range')
 movement.apply(32)
 
 -- Pointer movement uses the track geometry at the beginning of a drag. Changing

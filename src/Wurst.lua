@@ -98,7 +98,7 @@ end
 -- player following the docs asked GitHub for a branch that had never been
 -- pushed, got "404: Not Found" back, and `loadstring` turned that into
 -- `:2: attempt to call a nil value` with no cause. One branch, one default.
-local RUNTIME_BRANCH: string = "arena/e21ba23f-arandommenu"
+local RUNTIME_BRANCH: string = "arena/8723512f-arandommenu"
 do
     local override: any = nil
     local okGenv, genv = pcall(function()
@@ -129,7 +129,7 @@ local RUNTIME_SAFETY_SOURCE_URL: string = RUNTIME_RAW_BASE .. "src/Wurst.lua"
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v196-20261107-verified-loader"
+local SOURCE_STAMP: string = "v197-20261108-wurst-rama-fixes"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"

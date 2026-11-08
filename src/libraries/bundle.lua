@@ -1,5 +1,5 @@
 return {
-    stamp = "v196-20261107-verified-loader",
+    stamp = "v197-20261108-wurst-rama-fixes",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -5517,7 +5517,7 @@ function Module.init(runtime: any): any
         return trail
     end
 
-    local speed: any = state.framework and state.framework:GetModule("Speed Hack")
+    local speed: any = state.framework and (state.framework:GetModule("Speed Settings") or state.framework:GetModule("Speed Hack"))
     assert(speed, "Sprint option requires the Speed module")
     speed.ClearSprint = clearSprintTrail
     speed.SprintFrame = function(active: boolean, root: BasePart): ()
@@ -29806,7 +29806,8 @@ return Module
 --     strangely. No raycasts in the flight loop either.
 --   * No Void guard, no Sprint multiplier, no Outline: fewer moving parts and
 --     no per-frame work beyond reading the movement service.
---   * Void depth defaults to 5 (minimum 5) and migrates older profiles.
+--   * Void depth defaults to 3 (minimum 0) so melee/weapons can hit: the real
+   --   body is close enough to the clone to deal damage. Older profiles migrate.
 local Module = {Name="Invisibility",PlaceId=0,Initialized=false}
 local cleanup
 
@@ -29814,24 +29815,31 @@ function Module.init(context)
     local host, services = context.host, context.services
     local player, input, run = host.LocalPlayer, host.UserInputService, host.RunService
     local world = host.workspace or workspace
-    local VOID_DEPTH_MIN, VOID_DEPTH_MAX = 5, 350
-    local settings = {fly=false, flySpeed=55, walkSpeed=16, depth=VOID_DEPTH_MIN, transparency=0.5}
-    local state = {connections={},tracks={},bodyParts={}}
+    local VOID_DEPTH_MIN, VOID_DEPTH_MAX = 0, 350
+    local VOID_DEPTH_DEFAULT = 3
+    local settings = {fly=false, flySpeed=55, walkSpeed=16, depth=VOID_DEPTH_DEFAULT, transparency=0.5}
+    local state = {connections={},tracks={},bodyParts={}, savedWalkSpeed=nil, savedPlatformStand=nil, savedAnchored=nil}
     local card
 
-    -- One-time migration. v187 shipped 120 as the default (useless: the body
-    -- ends up so far down it no longer follows you) and v188 offered 1. Both
-    -- are rewritten to the new minimum; any other value the player actually
-    -- picked is kept.
+    -- One-time migration. v187 shipped 120, v188 offered 1 and v189 used 5.
+    -- All are rewritten to the new default 3 so melee can hit (depth 0-3 keeps
+    -- the real body within weapon range). Any other value the player picked is kept.
     do
         local stored = type(configData) == "table" and configData.values or nil
-        if type(stored) == "table" and stored["UI.GhostDepthDefault"] ~= 2 then
+        if type(stored) == "table" and stored["UI.GhostDepthDefault"] ~= 3 then
             local saved = tonumber(stored["Universal.Ghost.Voiddepth"])
-            if saved == nil or saved < VOID_DEPTH_MIN or saved == 120 then
-                stored["Universal.Ghost.Voiddepth"] = VOID_DEPTH_MIN
+            if saved == nil or saved == 120 or saved == 1 or saved == 5 then
+                stored["Universal.Ghost.Voiddepth"] = VOID_DEPTH_DEFAULT
+            elseif saved ~= nil and (saved < VOID_DEPTH_MIN or saved > VOID_DEPTH_MAX) then
+                stored["Universal.Ghost.Voiddepth"] = math.clamp(saved, VOID_DEPTH_MIN, VOID_DEPTH_MAX)
             end
-            stored["UI.GhostDepthDefault"] = 2
+            stored["UI.GhostDepthDefault"] = 3
             if type(queueConfigSave) == "function" then queueConfigSave() end
+        end
+        do
+            local stored2 = type(configData) == "table" and configData.values or nil
+            local migrated = stored2 and tonumber(stored2["Universal.Ghost.Voiddepth"])
+            if migrated then settings.depth = math.clamp(migrated, VOID_DEPTH_MIN, VOID_DEPTH_MAX) end
         end
     end
 
@@ -29858,8 +29866,6 @@ function Module.init(context)
         state.bodyParts={}
         for _,object in ipairs(character:GetDescendants()) do
             if object:IsA("BasePart") then
-                -- A rig part that reports nothing is treated as collidable, so
-                -- OFF always hands back a real value instead of nil.
                 local collide=object.CanCollide
                 if type(collide)~="boolean" then collide=true end
                 table.insert(state.bodyParts,{part=object,collide=collide})
@@ -29867,9 +29873,12 @@ function Module.init(context)
             end
         end
         if humanoid then
+            state.savedWalkSpeed = humanoid.WalkSpeed
+            state.savedPlatformStand = humanoid.PlatformStand
             humanoid.PlatformStand=true
             pcall(function() humanoid.WalkSpeed=0 end)
         end
+        state.savedAnchored = root.Anchored
         root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
         root.Anchored=true
     end
@@ -29894,20 +29903,33 @@ function Module.init(context)
     local function stop()
         for _,connection in ipairs(state.connections) do connection:Disconnect() end
         table.clear(state.connections)
-        -- Restore collisions FIRST: the hand-back below touches CanCollide, so
-        -- restoring it afterwards would leave the body non-collidable (it did:
-        -- v189 first draft turned Ghost off and the player fell through floors).
         unparkBody()
         local humanoid, root=parts(player.Character)
-        if state.character == player.Character and state.root and root and humanoid
-            and humanoid.Health > 0 then
-            -- Continue exactly where the puppet ended, then hand the body back
-            -- to physics in one step.
-            root.Anchored=false
-            root.CFrame=state.root.CFrame
-            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
-            humanoid.PlatformStand=false
+        -- Always restore movement state, even if character respawned or puppet lost.
+        if humanoid and humanoid.Parent then
+            if state.savedWalkSpeed ~= nil then
+                pcall(function() humanoid.WalkSpeed = state.savedWalkSpeed end)
+            elseif humanoid.WalkSpeed == 0 then
+                pcall(function() humanoid.WalkSpeed = settings.walkSpeed or 16 end)
+            end
+            if state.savedPlatformStand ~= nil then
+                humanoid.PlatformStand = state.savedPlatformStand
+            else
+                humanoid.PlatformStand = false
+            end
         end
+        if root and root.Parent then
+            if state.root and state.root.Parent and state.character == player.Character and humanoid and humanoid.Health > 0 then
+                root.CFrame=state.root.CFrame
+            end
+            root.AssemblyLinearVelocity,root.AssemblyAngularVelocity=Vector3.zero,Vector3.zero
+            if state.savedAnchored ~= nil then
+                root.Anchored = state.savedAnchored
+            else
+                root.Anchored = false
+            end
+        end
+        state.savedWalkSpeed, state.savedPlatformStand, state.savedAnchored = nil, nil, nil
         clearGhost();state.character=nil;activity(false)
     end
     local function turnOff()
@@ -30136,16 +30158,16 @@ function Module.init(context)
         end})
     card:CreateToggle({Name="Fly",Default=false,Function=function(value) settings.fly=value;applyMode() end,
         Tooltip="OFF: native walking and jumping. ON: smooth velocity flight with WASD or the mobile stick, Space up, LeftControl down."})
-    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=1,Max=250,Default=settings.flySpeed,
+    card:CreateSlider({Name="Fly speed",Show={Option="Fly"},Min=0,Max=250,Default=settings.flySpeed,
         Function=function(value) settings.flySpeed=value end})
     card:CreateSlider({Name="Void depth",Min=VOID_DEPTH_MIN,Max=VOID_DEPTH_MAX,Default=settings.depth,Function=function(value)
         settings.depth=math.clamp(value,VOID_DEPTH_MIN,VOID_DEPTH_MAX)
-    end,Tooltip="How far under the clone your real body is parked. 5 is the default: close enough to keep the puppet honest, far enough not to touch the floor."})
-    card:CreateSlider({Name="WalkSpeed",Min=1,Max=200,Default=settings.walkSpeed,Function=function(value)
+    end,Tooltip="How far under the clone your real body is parked. 0-3 = same height so melee/weapons can hit, 5+ hides deeper. Default 3 (melee-friendly)."})
+    card:CreateSlider({Name="WalkSpeed",Min=0,Max=200,Default=settings.walkSpeed,Function=function(value)
         settings.walkSpeed=math.clamp(value,0,500)
         if state.humanoid and not settings.fly then state.humanoid.WalkSpeed=settings.walkSpeed end
-    end,Tooltip="Walking speed of the clone."})
-    card:CreateSlider({Name="Transparency",Min=0.1,Max=0.9,Step=0.05,Default=settings.transparency,Function=function(value)
+    end,Tooltip="Walking speed of the clone (studs/s). 0 = stop, 16 = default Roblox. Works with Fly off."})
+    card:CreateSlider({Name="Transparency",Min=0,Max=1,Step=0.05,Default=settings.transparency,Function=function(value)
         settings.transparency=math.clamp(value,0,1)
         applyAppearance()
     end})
@@ -30901,13 +30923,13 @@ function Module.init(context: Runtime): any
         local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
-            -- Speed caps turn rate; Strength controls the pull near the target.
-            -- Both are time-based, rather than a frame-count smoothing factor.
             local dt = math.max(deltaTime, 0)
             local speed = math.max(0, card.Options.Speed.Value)
             local strength = math.max(0, card.Options.Strength.Value) / 100
             if speed == 0 or strength == 0 or dt == 0 then return false end
             local angle = math.acos(math.clamp(current.LookVector:Dot(offset.Unit), -1, 1))
+            -- Deadzone 0.5° prevents micro-jitter when already locked (perfect lock)
+            if angle < math.rad(0.5) then return false end
             alpha = math.min(1 - math.exp(-strength * 10 * dt),
                 angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
@@ -31039,8 +31061,8 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             runtime.lockedTarget = nil
         end,
-        Tooltip = "Aim Assist uses Speed and Strength inside FOV. Aimbot snaps "
-            .. "to a valid target and can keep a sticky lock.",
+        Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed (°/s) y Strength (%). Aimbot = snap directo a target válido con Sticky lock opcional. FOV solo afecta a Aim Assist.",
+
     })
     card:CreateSlider({
         Name = "FOV",
@@ -31049,14 +31071,16 @@ function Module.init(context: Runtime): any
         Max = 500,
         Step = 5,
         Default = 180,
-        Tooltip = "Pixels around the cursor in which a target may be selected.",
+        Tooltip = "FOV en píxeles: radio alrededor del cursor donde se busca target. 15 px (pequeño) — 500 px (pantalla casi completa). Default 180 px. Solo Aim Assist usa FOV; Aimbot ignora FOV.",
     })
     card:CreateSlider({Name="Speed",Min=0,Max=360,Default=180,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
-        Tooltip="Maximum camera turn in degrees per second. Higher = faster. 0 = no assist."})
+        Tooltip="Speed en grados por segundo (°/s): rotación máxima de cámara. 0 = sin ayuda, 90°/s lento, 180°/s default (equilibrado), 360°/s casi instantáneo."})
     card:CreateSlider({Name="Strength",Min=0,Max=100,Default=75,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
-        Tooltip="Pull toward the target, in percent. Higher = firmer tracking; 0 = no assist. Aimbot snaps instead."})
+        Tooltip="Strength en porcentaje (0-100%): fuerza de arrastre hacia el target. 0% = nada, 50% suave, 75% default firme, 100% máxima. Aimbot ignora Strength y hace snap directo."})
+    -- Units visible below sliders: enlarges menu slightly so 180 what? is answered without hover
+    card:CreateNote("FOV: 15-500 píxeles (radio) — 180 px default • Speed: 0-360 °/s — 180°/s default • Strength: 0-100% — 75% default. 500 = píxeles, 180 = grados por segundo / porcentaje.")
     card:CreateDropdown({
         Name = "Target part",
         List = {"Closest", "Head", "Torso"},
@@ -31075,7 +31099,7 @@ function Module.init(context: Runtime): any
         Max = 0.5,
         Step = 0.01,
         Default = 0.06,
-        Tooltip = "Seconds of target velocity to lead. Set to 0 for no lead.",
+        Tooltip = "Prediction en segundos (s): anticipa movimiento. 0 s = sin predicción, 0.06 s default (60 ms), 0.2 s para targets rápidos. Calcula posición futura = velocidad * segundos.",
     })
     card:CreateSlider({
         Name = "Max distance",
@@ -31083,8 +31107,9 @@ function Module.init(context: Runtime): any
         Max = 2000,
         Step = 5,
         Default = 600,
-        Tooltip = "Ignore targets farther than this many studs.",
+        Tooltip = "Max distance en studs: ignora targets más lejos. 25 studs cerca, 600 studs default, 2000 studs mapa completo.",
     })
+    card:CreateNote("Prediction: 0-0.5 segundos — 0.06 s default (60 ms). Max distance en studs — 600 studs default. Más predicción = más adelanto, más distancia = más targets lejanos.")
     card:CreateToggle({
         Name = "Visibility check",
         Default = true,
@@ -31113,8 +31138,33 @@ function Module.init(context: Runtime): any
             .. "select a new target every frame.",
     })
     card:CreateNote(
-        "Camera-only assist. It never edits remotes, raycasts or hitboxes."
+        "Camera-only: solo mueve tu cámara, nunca toca remotes ni hitboxes. Deadzone 0.5° evita temblor cuando ya estás centrado. FOV en px, Speed en °/s, Strength en %."
     )
+
+    -- Show units directly on slider labels and min/max numbers (enlarges menu slightly for clarity, pcall safe if layout differs)
+    pcall(function()
+        local feature: any = (card :: any).Feature or (card :: any)._feature or card
+        local optionsFrame: any = (feature :: any).options or (card :: any).options
+        if not optionsFrame or type(optionsFrame.FindFirstChild) ~= "function" then return end
+        local function patchOption(optionName: string, minText: string, maxText: string, suffix: string)
+            local row: any = optionsFrame:FindFirstChild("Option_" .. optionName:gsub("%W", ""))
+            if not row then return end
+            local label: any = row:FindFirstChild("OptionLabel")
+            if label and suffix then pcall(function() label.Text = label.Text .. " " .. suffix end) end
+            local slider: any = row:FindFirstChild("Slider")
+            if slider then
+                local minL: any = slider:FindFirstChild("MinLabel")
+                local maxL: any = slider:FindFirstChild("MaxLabel")
+                if minL then pcall(function() minL.Text = minText end) end
+                if maxL then pcall(function() maxL.Text = maxText end) end
+            end
+        end
+        patchOption("FOV", "15 px", "500 px", "(píxeles)")
+        patchOption("Speed", "0°/s", "360°/s", "(°/s)")
+        patchOption("Strength", "0%", "100%", "(%)")
+        patchOption("Prediction", "0 s", "0.5 s", "(s)")
+        patchOption("Maxdistance", "25 studs", "2000 studs", "(studs)")
+    end)
 
     activeCard = card
     Module.Initialized = true
@@ -31801,7 +31851,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "AirWalk",
+    Name = "Air Walk",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -31894,7 +31944,7 @@ function Module.init(context: Runtime): any
 
     local airWalk: any
     airWalk = framework.Categories.Exploits:CreateModule({
-        Name = "AirWalk",
+        Name = "Air Walk",
         Category = "Exploits",
         ConfigKey = "Universal.AirWalk",
         Order = 11,
@@ -32439,7 +32489,7 @@ function Module.init(context: Runtime): any
         -- sprinting, jumps, vehicles and game launch pads are not capped merely
         -- because this feature is on.
         local walkSpeed: number = math.max(16, tonumber(humanoid.WalkSpeed) or 16)
-        local speed: any = framework and framework:GetModule("Speed Hack")
+        local speed: any = framework and (framework:GetModule("Speed Settings") or framework:GetModule("Speed Hack"))
         if speed and speed.Enabled and speed.Options.Speed then
             walkSpeed = math.max(walkSpeed, tonumber(speed.Options.Speed.Value) or 0)
         end
@@ -33938,7 +33988,8 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local now: number = os.clock()
-                if now - lastBoostAt < 0.08 then
+                local interval: number = infiniteJump.Options["Jump interval"] and infiniteJump.Options["Jump interval"].Value or 0.18
+                if now - lastBoostAt < interval then
                     return
                 end
                 lastBoostAt = now
@@ -34100,6 +34151,7 @@ function Module.init(context: Runtime): any
         Function = function(value: string): ()
             if infiniteJump.Enabled then infiniteJump:SetStatus(value) end
         end,
+        Tooltip = "Normal = one jump per press in air, Rise = hold to ascend. Jump Power + Interval control both.",
     })
 
     infiniteJump:CreateSlider({
@@ -34107,8 +34159,19 @@ function Module.init(context: Runtime): any
         Min = 1,
         Max = 250,
         Default = 50,
-        Tooltip = "Vertical jump velocity applied in mid-air (1-250 slider preset; supports negative values to invert jump physics).",
+        Tooltip = "Vertical jump velocity applied in mid-air (1-250). Negative inverts jump.",
     })
+
+    infiniteJump:CreateSlider({
+        Name = "Jump interval",
+        Min = 0.05,
+        Max = 0.6,
+        Step = 0.01,
+        Default = 0.18,
+        Tooltip = "Minimum delay between mid-air jumps in seconds. Default 0.18 s (vanilla-like). Lower = faster spam, higher = slower rhythm.",
+    })
+
+    infiniteJump:CreateNote("Jump interval: 0.18 s is default Roblox rhythm. 0.05 s = spam fast, 0.6 s = slow.")
 
     activeCleanup = function(): ()
         if infiniteJump.Enabled then
@@ -34140,7 +34203,7 @@ export type Runtime = {
 }
 
 local Module = {
-    Name = "Jump Hack",
+    Name = "Jump Settings",
     PlaceId = 0,
     Events = {} :: {[string]: any},
     Initialized = false,
@@ -34156,7 +34219,6 @@ function Module.init(context: Runtime): any
     local LocalPlayer: Player = host.LocalPlayer or game:GetService("Players").LocalPlayer
 
     local originalJumpPower = setmetatable({}, {__mode = "k"}) :: {[Humanoid]: {jumpPower: number, useJumpPower: boolean}}
-    local lastInfiniteJumpAt: number = -math.huge
 
     local function characterParts(): (Model?, Humanoid?, BasePart?)
         local character: Model? = LocalPlayer.Character
@@ -34187,58 +34249,14 @@ function Module.init(context: Runtime): any
             and state ~= Enum.HumanoidStateType.FallingDown and state ~= Enum.HumanoidStateType.Dead
     end
 
-    local fallHumanoid: Humanoid? = nil
-    local fallConnection: RBXScriptConnection? = nil
-    local originalStates = nil
-    local redirecting = false
-    local fallBoosted: Humanoid? = nil
-    local pressHeld = false
-    local jumpTouch: InputObject? = nil
-
-    local function clearFallController(): ()
-        if fallConnection then fallConnection:Disconnect(); fallConnection = nil end
-        if fallHumanoid and fallHumanoid.Parent and originalStates then
-            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,originalStates.jumping)
-            fallHumanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,originalStates.freefall)
-        end
-        fallHumanoid, originalStates, fallBoosted = nil, nil, nil
-    end
-    local function enforceFall(humanoid: Humanoid): ()
-        humanoid.Jump = false
-        if humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping,false) end
-        if not humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall) then humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall,true) end
-        if humanoid:GetState() == Enum.HumanoidStateType.Jumping and not redirecting then
-            redirecting = true
-            humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-            redirecting = false
-        end
-    end
-    local function syncFallController(humanoid: Humanoid?, enabled: boolean): ()
-        if not enabled or not humanoid or not canControlJump(humanoid) then
-            if fallHumanoid then clearFallController() end
-            return
-        end
-        if fallHumanoid ~= humanoid then
-            clearFallController()
-            fallHumanoid = humanoid
-            originalStates = {jumping=humanoid:GetStateEnabled(Enum.HumanoidStateType.Jumping),
-                freefall=humanoid:GetStateEnabled(Enum.HumanoidStateType.Freefall)}
-            fallConnection = humanoid.StateChanged:Connect(function(_,nextState)
-                if not canControlJump(humanoid) or nextState == Enum.HumanoidStateType.Landed then clearFallController()
-                elseif nextState == Enum.HumanoidStateType.Jumping then enforceFall(humanoid) end
-            end)
-        end
-        enforceFall(humanoid)
-    end
-
     local function performHighJump(velocityOverride: number?): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
         local velocityVal: number = velocityOverride or 72
-        local current: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(
+        local current: Vector3 = root.AssemblyLinearVelocity
+        root.AssemblyLinearVelocity = Vector3.new(
             current.X,
             velocityVal,
             current.Z
@@ -34248,119 +34266,74 @@ function Module.init(context: Runtime): any
         end
     end
 
-    local function performInfiniteJump(mode: string, strength: number, interval: number): ()
+    local longJumpSpeed = 50
+    local longJumpMode = "Velocity"
+
+    local function performLongJump(): ()
         local _, humanoid: Humanoid?, root: BasePart? = characterParts()
         if not humanoid or not root or root.Anchored or not canControlJump(humanoid) then
             return
         end
-
-        local now: number = os.clock()
-        if now - lastInfiniteJumpAt < interval then
-            return
+        -- Read live values from options (robust if test sets Value directly)
+        local optsMode: any = jump and jump.Options and jump.Options["Long jump mode"]
+        local optsSpeed: any = jump and jump.Options and jump.Options["Long jump speed"]
+        local mode: string = optsMode and optsMode.Value or longJumpMode
+        local speed: number = optsSpeed and optsSpeed.Value or longJumpSpeed
+        local moveDir: Vector3 = humanoid.MoveDirection
+        local flat: Vector3 = Vector3.new(moveDir.X, 0, moveDir.Z)
+        if flat.Magnitude < 0.05 then
+            local cam: any = host.workspace and host.workspace.CurrentCamera
+            if cam and cam.CFrame then
+                local lv: Vector3 = cam.CFrame.LookVector
+                flat = Vector3.new(lv.X, 0, lv.Z)
+            else
+                flat = Vector3.new(0, 0, -1)
+            end
         end
-        lastInfiniteJumpAt = now
-
-        local velocity: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-        -- Positive Y is intentional: Fall changes the actual local state,
-        -- not the trajectory into downward motion or a manual animation.
-        -- X/Z momentum is unchanged; this makes no server-state guarantee.
-        syncFallController(humanoid, mode == "Fall")
-        fallBoosted = mode == "Fall" and humanoid or nil
-        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(velocity.X, strength, velocity.Z)
-        humanoid:ChangeState(mode == "Fall" and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Jumping)
+        if flat.Magnitude < 0.001 then return end
+        flat = flat.Magnitude > 1 and flat.Unit or flat
+        local cur: Vector3 = root.AssemblyLinearVelocity
+        if mode == "Velocity" then
+            root.AssemblyLinearVelocity = Vector3.new(flat.X * speed, cur.Y, flat.Z * speed)
+        elseif mode == "Impulse" then
+            local diff: Vector3 = Vector3.new(flat.X * speed - cur.X, 0, flat.Z * speed - cur.Z)
+            if diff.Magnitude > 0.001 then
+                root:ApplyImpulse(diff * root.AssemblyMass)
+            end
+        else -- CFrame: instant teleport forward
+            local step: Vector3 = flat * speed * 0.25
+            local pos: Vector3 = root.CFrame.Position
+            root.CFrame = CFrame.new(Vector3.new(pos.X + step.X, pos.Y + step.Y, pos.Z + step.Z))
+        end
+        if humanoid.FloorMaterial ~= Enum.Material.Air then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
     end
 
     local jump: any
-    local function refreshFall(): ()
-        local _, humanoid, root = characterParts()
-        syncFallController(humanoid,fallBoosted == humanoid and root ~= nil and not root.Anchored and jump.Enabled and jump.Options["Infinite jump"].Value
-            and jump.Options["Infinite jump mode"].Value == "Fall")
-    end
     jump = framework.Categories.Exploits:CreateModule({
-        Name = "Jump Hack",
+        Name = "Jump Settings",
         Category = "Exploits",
         ConfigKey = "Universal.Jump",
         Order = 6,
-        Tooltip = "Consolidated jump controls: adjust Jump Power, execute High Jump, enable Infinite Jump and Auto Jump.",
+        Tooltip = "Jump controls: adjust Jump Power, High Jump button, Long Jump button and Auto Jump. Infinite Jump moved to its own module.",
         Function = function(enabled: boolean): ()
             restoreJumpPower()
-            clearFallController()
-            lastInfiniteJumpAt = -math.huge
-            pressHeld, jumpTouch = false, nil
             if not enabled then
                 jump:SetStatus(nil)
                 return
             end
-
             jump:SetStatus("active")
-            jump:Clean(function(): () restoreJumpPower(); clearFallController() end)
-
-            local function requestJump(): ()
-                if pressHeld then return end
-                pressHeld = true
-                if UserInputService.TouchEnabled then
-                    local touches = UserInputService:GetTouches()
-                    if #touches == 1 then jumpTouch = touches[1]
-                    else
-                        local gui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-                        local touchGui = gui and gui:FindFirstChild("TouchGui")
-                        local button = touchGui and touchGui:FindFirstChild("JumpButton",true)
-                        if button then
-                            local at, size = button.AbsolutePosition, button.AbsoluteSize
-                            for _, touch in ipairs(touches) do
-                                local p = touch.Position
-                                if p.X >= at.X and p.Y >= at.Y and p.X <= at.X+size.X and p.Y <= at.Y+size.Y then jumpTouch = touch;break end
-                            end
-                        end
-                    end
-                end
-                local _, humanoid, root = characterParts()
-                -- Ground takeoff belongs to Roblox: ordinary Jumping/animation.
-                -- Only a new press in midair is an extra jump.
-                if not humanoid or not root then return end
-                if humanoid.FloorMaterial ~= Enum.Material.Air then return end
-                local opts = jump.Options
-                if not opts["Infinite jump"] or not opts["Infinite jump"].Value then
-                    return
-                end
-                local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
-                if mode == "Rise" then
-                    return
-                end
-                local strength: number = opts["Infinite jump power"] and opts["Infinite jump power"].Value or 50
-                local interval: number = opts["Jump interval"] and opts["Jump interval"].Value or 0.18
-                performInfiniteJump(mode, strength, interval)
-            end
-            if movementInput and type(movementInput.onJumpRequest) == "function" then
-                jump:Clean(movementInput.onJumpRequest(requestJump))
-            else
-                jump:Clean(UserInputService.JumpRequest:Connect(requestJump))
-            end
-
-            jump:Clean(UserInputService.InputEnded:Connect(function(event)
-                if event.KeyCode == Enum.KeyCode.Space or event.KeyCode == Enum.KeyCode.ButtonA
-                    or event.UserInputType == Enum.UserInputType.Touch and (not jumpTouch or event == jumpTouch) then
-                    pressHeld, jumpTouch = false, nil
-                end
-            end))
-            jump:Clean(UserInputService.WindowFocusReleased:Connect(function() pressHeld, jumpTouch = false, nil end))
-            refreshFall()
+            jump:Clean(function(): () restoreJumpPower() end)
+            -- No infinite jump handling here; handled by Infinite Jump module
             jump:Clean(host.RunService.PreSimulation:Connect(function(): ()
                 local opts = jump.Options
                 local _, humanoid: Humanoid?, root: BasePart? = characterParts()
                 if not humanoid or not root or humanoid.Health <= 0 then
-                    clearFallController()
                     return
                 end
-
                 local canMove = canControlJump(humanoid) and not root.Anchored
-                local fallMode: boolean = canMove and opts["Infinite jump"] and opts["Infinite jump"].Value
-                    and opts["Infinite jump mode"].Value == "Fall"
-                local state = humanoid:GetState()
-                local grounded = humanoid.FloorMaterial ~= Enum.Material.Air
-                    and state ~= Enum.HumanoidStateType.Jumping and state ~= Enum.HumanoidStateType.Freefall
-                if grounded or fallBoosted ~= humanoid then clearFallController() end
-                syncFallController(humanoid, fallMode and fallBoosted == humanoid)
+                if not canMove then return end
 
                 if opts["Custom jump power"] and opts["Custom jump power"].Value then
                     local wantedPower: number = opts["Jump power"] and opts["Jump power"].Value or 80
@@ -34372,46 +34345,23 @@ function Module.init(context: Runtime): any
                     end
                     humanoid.UseJumpPower = true
                     humanoid.JumpPower = wantedPower
-                    if wantedPower < 0 and state == Enum.HumanoidStateType.Jumping then
-                        local curVel: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-                        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, wantedPower, curVel.Z)
+                    if wantedPower < 0 and humanoid:GetState() == Enum.HumanoidStateType.Jumping then
+                        local curVel: Vector3 = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(curVel.X, wantedPower, curVel.Z)
                     end
                 else
-                    restoreJumpPower()
+                    -- Restore if not using custom
+                    if originalJumpPower[humanoid] then
+                        humanoid.JumpPower = originalJumpPower[humanoid].jumpPower
+                        humanoid.UseJumpPower = originalJumpPower[humanoid].useJumpPower
+                        originalJumpPower[humanoid] = nil
+                    end
                 end
 
                 if canMove and opts["Auto jump"] and opts["Auto jump"].Value then
                     local moveDir: Vector3 = humanoid.MoveDirection
                     if moveDir.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
                         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                    end
-                end
-
-                -- Long Jump: horizontal boost when jumping
-                if canMove and longJumpEnabled and humanoid.FloorMaterial ~= Enum.Material.Air then
-                    local moveDir: Vector3 = humanoid.MoveDirection
-                    if moveDir.Magnitude > 0.05 then
-                        local dir: Vector3 = moveDir * longJumpSpeed
-                        if longJumpMode == "Velocity" then
-                            root.AssemblyLinearVelocity = dir + Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
-                        elseif longJumpMode == "Impulse" then
-                            local diff: Vector3 = (dir - root.AssemblyLinearVelocity) * Vector3.new(1, 0, 1)
-                            if diff.Magnitude > 2 then
-                                root:ApplyImpulse(diff * root.AssemblyMass)
-                            end
-                        else -- CFrame
-                            root.CFrame += dir * (1/60)
-                        end
-                    end
-                end
-
-                if canMove and opts["Infinite jump"] and opts["Infinite jump"].Value then
-                    local mode: string = opts["Infinite jump mode"] and opts["Infinite jump mode"].Value or "Normal"
-                    if mode == "Rise" and movementInput and type(movementInput.isJumpHeld) == "function" and movementInput.isJumpHeld() then
-                        humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-                        local curVel: Vector3 = (root :: BasePart).AssemblyLinearVelocity
-                        local riseSpd: number = opts["Rise speed"] and opts["Rise speed"].Value or 75
-                        ;(root :: BasePart).AssemblyLinearVelocity = Vector3.new(curVel.X, riseSpd, curVel.Z)
                     end
                 end
             end))
@@ -34421,7 +34371,7 @@ function Module.init(context: Runtime): any
     jump:CreateToggle({
         Name = "Custom jump power",
         Default = false,
-        Tooltip = "Enables custom jump height/power for ground jumps. Turn off if you only want Infinite Jump or High Jump.",
+        Tooltip = "Enables custom jump height/power for ground jumps.",
     })
 
     jump:CreateSlider({
@@ -34435,7 +34385,7 @@ function Module.init(context: Runtime): any
                 jump:SetStatus(tostring(math.round(value)))
             end
         end,
-        Tooltip = "Character jump power (default Roblox jump is 50). Negative values launch the character downward.",
+        Tooltip = "Character jump power (default 50). Negative launches downward.",
     })
 
     jump:CreateButton({
@@ -34452,59 +34402,7 @@ function Module.init(context: Runtime): any
         Min = 1,
         Max = 250,
         Default = 72,
-        Tooltip = "Vertical velocity applied when High Jump button is pressed. Negative values launch the character downward.",
-    })
-
-    jump:CreateToggle({
-        Name = "Infinite jump",
-        Default = false,
-        Function = refreshFall,
-        Tooltip = "Allows jumping repeatedly in mid-air.",
-    })
-
-    jump:CreateDropdown({
-        Name = "Infinite jump mode",
-        Show = {Option = "Infinite jump", Values = {true}},
-        List = {"Normal", "Rise", "Fall"},
-        Function = refreshFall,
-        Index = 1,
-        Tooltip = "Normal = mid-air jump; Rise = hold to rise; Fall = normal ground jump, then Freefall for each extra mid-air press. Release jump between presses; holding does not repeat. Server behavior is not guaranteed.",
-    })
-
-    jump:CreateSlider({
-        Name = "Infinite jump power",
-        Show = {
-            {Option = "Infinite jump", Values = {true}},
-            {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
-        },
-        Min = 1,
-        Max = 250,
-        Default = 50,
-        Tooltip = "Vertical impulse applied during mid-air jumps. Negative values push the character downward.",
-    })
-
-    jump:CreateSlider({
-        Name = "Rise speed",
-        Show = {
-            {Option = "Infinite jump", Values = {true}},
-            {Option = "Infinite jump mode", Values = {"Rise"}},
-        },
-        Min = 1,
-        Max = 250,
-        Default = 75,
-        Tooltip = "Vertical speed while holding jump in Rise mode. Negative values descend instead of rising.",
-    })
-
-    jump:CreateSlider({
-        Name = "Jump interval",
-        Show = {
-            {Option = "Infinite jump", Values = {true}},
-            {Option = "Infinite jump mode", Values = {"Normal", "Fall"}},
-        },
-        Min = 0.05,
-        Max = 0.6,
-        Default = 0.18,
-        Tooltip = "Minimum delay in seconds between mid-air jumps.",
+        Tooltip = "Vertical velocity for High Jump button. Negative = downward.",
     })
 
     jump:CreateToggle({
@@ -34513,47 +34411,38 @@ function Module.init(context: Runtime): any
         Tooltip = "Continuously jumps while walking on the ground.",
     })
 
-    -- Long Jump: horizontal boost when jumping (from VapeV4)
-    local longJumpEnabled = false
-    local longJumpSpeed = 50
-    local longJumpMode = "Velocity"
-
-    jump:CreateToggle({
+    jump:CreateButton({
         Name = "Long jump",
-        Default = false,
-        Function = function(value: boolean): ()
-            longJumpEnabled = value
+        Function = function(): ()
+            performLongJump()
         end,
-        Tooltip = "Adds horizontal speed boost in your move direction when jumping.",
+        Tooltip = "Horizontal boost in your move/camera direction (button like High Jump). Uses Long jump mode/speed below.",
     })
 
     jump:CreateDropdown({
         Name = "Long jump mode",
-        Show = {Option = "Long jump", Values = {true}},
         List = {"Velocity", "Impulse", "CFrame"},
         Index = 1,
         Function = function(value: string): ()
             longJumpMode = value
         end,
-        Tooltip = "How the horizontal boost is applied: Velocity (smooth), Impulse (forces), or CFrame (direct position).",
+        Tooltip = "How Long Jump is applied: Velocity (smooth), Impulse (physics), CFrame (teleport).",
     })
 
     jump:CreateSlider({
         Name = "Long jump speed",
-        Show = {Option = "Long jump", Values = {true}},
         Min = 1,
         Max = 250,
         Default = 50,
         Function = function(value: number): ()
             longJumpSpeed = value
         end,
-        Tooltip = "Horizontal boost speed in studs/second. Negative values boost backwards.",
+        Tooltip = "Horizontal speed for Long Jump button in studs/s. Negative = backwards.",
     })
 
     activeCleanup = function(): ()
         if jump.Enabled then jump:Toggle(false) end
         restoreJumpPower()
-        clearFallController()
     end
     Module.Initialized = true
     return jump
@@ -34573,7 +34462,7 @@ return Module
         ["src/games/universal/Movement/Speed.lua"] = [[
 export type Runtime = {framework: any, entity: any, host: any, services: any}
 
-local Module = {Name = "Speed Hack", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
+local Module = {Name = "Speed Settings", PlaceId = 0, Events = {} :: {[string]: any}, Initialized = false}
 local activeCleanup
 
 function Module.init(context: Runtime): any
@@ -34604,11 +34493,8 @@ function Module.init(context: Runtime): any
         if not walk then walk = {humanoid=humanoid,base=humanoid.WalkSpeed} end
         local current = humanoid.WalkSpeed
         if walk.applied ~= nil and current ~= walk.applied then walk.base = current end
-        -- Negative WalkSpeed inverts controls (Roblox legacy behavior)
         if current ~= value then humanoid.WalkSpeed = value end
         walk.applied = value
-        -- When WalkSpeed is negative, invert the move direction by setting
-        -- the Humanoid's MoveDirection opposite to input
         if value < 0 then
             local moveDir = humanoid.MoveDirection
             if moveDir and moveDir.Magnitude > 0.01 and type(humanoid.Move) == "function" then
@@ -34651,19 +34537,92 @@ function Module.init(context: Runtime): any
             return
         end
         if not speed.Enabled and not speed.SprintHeld then restoreWalk(); return end
-        local seated = humanoid.SeatPart ~= nil or humanoid.Sit
-        if speed.SprintFrame then speed.SprintFrame(speed.SprintHeld and not seated,root) end
-        if seated then restoreWalk(); return end
-        local fly = framework.GetModule and framework:GetModule("Fly")
-        local state = humanoid:GetState()
-        if root.Anchored or (fly and fly.Enabled) or state == Enum.HumanoidStateType.Climbing
-            or state == Enum.HumanoidStateType.Swimming or state == Enum.HumanoidStateType.Physics
-            or state == Enum.HumanoidStateType.PlatformStanding then restoreWalk(); return end
         local opts = speed.Options
         local mode = speed.Enabled and opts.Mode.Value or "WalkSpeed"
         local target = speed.Enabled and opts.Speed.Value or 0
         if speed.SprintHeld then target = math.max(target,30) end
         if mode ~= lastMode then restoreWalk(); teleportElapsed = 0; lastMode = mode end
+
+        -- Vehicle handling: Velocity/Impulse/CFrame/Teleport work in any vehicle/seat
+        local seat: any = humanoid.SeatPart
+        local isSeated: boolean = seat ~= nil or humanoid.Sit
+        if isSeated then
+            if speed.SprintFrame then speed.SprintFrame(speed.SprintHeld and false, root) end
+            -- WalkSpeed cannot drive a vehicle
+            if mode == "WalkSpeed" then restoreWalk(); return end
+            local vehicle: any = seat
+            -- Fallback: if SeatPart is Vehicleseat but root is still character, try seat parent
+            if not vehicle or not vehicle.Parent then restoreWalk(); return end
+            -- Prevent affecting WalkSpeed while seated
+            restoreWalk()
+            local fly = framework.GetModule and framework:GetModule("Fly")
+            if vehicle.Anchored or (fly and fly.Enabled) then return end
+            local move = direction(humanoid)
+            -- Apply vehicle multiplier
+            local vehicleMul: number = opts["Vehicle multiplier"] and opts["Vehicle multiplier"].Value or 1.2
+            local vehicleTarget: number = target * vehicleMul
+            local response: number = opts["Response"] and opts["Response"].Value or 1
+            local keepY: boolean = opts["Keep vertical"] == nil or opts["Keep vertical"].Value
+            if mode == "Velocity" or (mode == "WalkSpeed" and target < 0) then
+                local vel: Vector3 = vehicle.AssemblyLinearVelocity
+                local targetVel: Vector3 = Vector3.new(move.X*vehicleTarget, keepY and vel.Y or 0, move.Z*vehicleTarget)
+                if response >= 1 then
+                    vehicle.AssemblyLinearVelocity = targetVel
+                else
+                    -- Smooth response: lerp
+                    local lerpAlpha: number = math.clamp(response * (dt or 1/60) * 12, 0, 1)
+                    local curXZ: Vector3 = Vector3.new(vel.X, 0, vel.Z)
+                    local tarXZ: Vector3 = Vector3.new(targetVel.X, 0, targetVel.Z)
+                    local newXZ: Vector3 = Vector3.new(curXZ.X + (tarXZ.X - curXZ.X) * lerpAlpha, 0, curXZ.Z + (tarXZ.Z - curXZ.Z) * lerpAlpha)
+                    vehicle.AssemblyLinearVelocity = Vector3.new(newXZ.X, targetVel.Y, newXZ.Z)
+                    if move.Magnitude < 0.01 then
+                        -- Braking when no input
+                        local brake: number = opts["Braking"] and opts["Braking"].Value or 0.8
+                        if brake < 0.99 then
+                            local brakeAlpha: number = math.clamp((1-brake) * (dt or 1/60) * 10, 0, 1)
+                            local curV: Vector3 = vehicle.AssemblyLinearVelocity
+                            vehicle.AssemblyLinearVelocity = Vector3.new(curV.X * (1-brakeAlpha), curV.Y, curV.Z * (1-brakeAlpha))
+                            if vehicle.AssemblyLinearVelocity.Magnitude < 0.5 then vehicle.AssemblyLinearVelocity = Vector3.new(0, curV.Y, 0) end
+                        end
+                    end
+                end
+            elseif mode == "Impulse" then
+                local vel: Vector3 = vehicle.AssemblyLinearVelocity
+                local targetVelXZ: Vector3 = Vector3.new(move.X*vehicleTarget, 0, move.Z*vehicleTarget)
+                local diff: Vector3 = Vector3.new(targetVelXZ.X - vel.X, 0, targetVelXZ.Z - vel.Z)
+                -- Response scales impulse
+                diff *= math.clamp(response, 0.2, 2)
+                if diff.Magnitude > 0.001 then vehicle:ApplyImpulse(diff * vehicle.AssemblyMass) end
+            elseif move.Magnitude > 0.001 then
+                local elapsed = math.clamp(dt or 0,0,0.1)
+                if mode == "Teleport" then
+                    teleportElapsed += elapsed
+                    local interval = opts["Burst delay"].Value
+                    if teleportElapsed < interval then return end
+                    teleportElapsed %= interval
+                    elapsed = interval
+                end
+                local step = move * vehicleTarget * elapsed
+                if opts["Wall check"].Value then step = blocked(vehicle, step) end
+                -- Move vehicle, not character
+                vehicle.CFrame += step
+                -- Also move character root to stay with vehicle
+                if root and root.Parent then
+                    root.CFrame = vehicle.CFrame * CFrame.new(0, 2, 0)
+                end
+            else teleportElapsed = 0 end
+            if speed.Enabled and opts["Auto jump"].Value and move.Magnitude > 0.05 then
+                -- Auto jump not applicable while seated
+            end
+            return
+        end
+        -- On-foot handling
+        if speed.SprintFrame then speed.SprintFrame(speed.SprintHeld and not isSeated,root) end
+        local fly = framework.GetModule and framework:GetModule("Fly")
+        local state = humanoid:GetState()
+        if root.Anchored or (fly and fly.Enabled) or state == Enum.HumanoidStateType.Climbing
+            or state == Enum.HumanoidStateType.Swimming or state == Enum.HumanoidStateType.Physics
+            or state == Enum.HumanoidStateType.PlatformStanding then restoreWalk(); return end
         if mode == "WalkSpeed" then applyWalk(humanoid,target) else restoreWalk() end
         local move = direction(humanoid)
         if speed.Enabled and opts["Auto jump"].Value and move.Magnitude > 0.05 and humanoid.FloorMaterial ~= Enum.Material.Air then
@@ -34671,11 +34630,33 @@ function Module.init(context: Runtime): any
         end
         if mode == "WalkSpeed" and target >= 0 then return end
         local velocity = root.AssemblyLinearVelocity
+        local response: number = opts["Response"] and opts["Response"].Value or 1
+        local keepY: boolean = opts["Keep vertical"] == nil or opts["Keep vertical"].Value
+        local braking: number = opts["Braking"] and opts["Braking"].Value or 0.8
         if mode == "Velocity" or (mode == "WalkSpeed" and target < 0) then
-            root.AssemblyLinearVelocity = Vector3.new(move.X*target,velocity.Y,move.Z*target)
+            local targetVel: Vector3 = Vector3.new(move.X*target, keepY and velocity.Y or 0, move.Z*target)
+            if response >= 1 or move.Magnitude < 0.01 and braking >= 0.99 then
+                root.AssemblyLinearVelocity = targetVel
+            else
+                local lerpAlpha: number = math.clamp(response * (dt or 1/60) * 12, 0, 1)
+                local curXZ: Vector3 = Vector3.new(velocity.X, 0, velocity.Z)
+                local tarXZ: Vector3 = Vector3.new(targetVel.X, 0, targetVel.Z)
+                local newXZ: Vector3 = Vector3.new(curXZ.X + (tarXZ.X - curXZ.X) * lerpAlpha, 0, curXZ.Z + (tarXZ.Z - curXZ.Z) * lerpAlpha)
+                root.AssemblyLinearVelocity = Vector3.new(newXZ.X, keepY and velocity.Y or targetVel.Y, newXZ.Z)
+                if move.Magnitude < 0.01 then
+                    if braking < 0.99 then
+                        local brakeAlpha: number = math.clamp((1-braking) * (dt or 1/60) * 10, 0, 1)
+                        local curV: Vector3 = root.AssemblyLinearVelocity
+                        root.AssemblyLinearVelocity = Vector3.new(curV.X * (1-brakeAlpha), curV.Y, curV.Z * (1-brakeAlpha))
+                        if root.AssemblyLinearVelocity.Magnitude < 0.5 and keepY then root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+                        elseif root.AssemblyLinearVelocity.Magnitude < 0.5 then root.AssemblyLinearVelocity = Vector3.zero end
+                    end
+                end
+            end
         elseif mode == "Impulse" then
-            local difference = Vector3.new(move.X*target-velocity.X,0,move.Z*target-velocity.Z)
-            if difference.Magnitude > 0.001 then root:ApplyImpulse(difference*root.AssemblyMass) end
+            local diff = Vector3.new(move.X*target-velocity.X,0,move.Z*target-velocity.Z)
+            diff *= math.clamp(response, 0.2, 2)
+            if diff.Magnitude > 0.001 then root:ApplyImpulse(diff*root.AssemblyMass) end
         elseif move.Magnitude > 0.001 then
             local elapsed = math.clamp(dt or 0,0,0.1)
             if mode == "Teleport" then
@@ -34687,13 +34668,15 @@ function Module.init(context: Runtime): any
             end
             local speedDelta = target < 0 and (target - humanoid.WalkSpeed) or math.max(0, target - humanoid.WalkSpeed)
             local step = move * speedDelta * elapsed
+            -- Response scales CFrame step
+            step *= math.clamp(response, 0.5, 2)
             if opts["Wall check"].Value then step = blocked(root,step) end
             root.CFrame += step
         else teleportElapsed = 0 end
     end
     speed = framework.Categories.Exploits:CreateModule({
-        Name="Speed Hack",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
-        Tooltip="On-foot movement; inactive while seated.",
+        Name="Speed Settings",Category="Exploits",ConfigKey="Universal.Speed",Order=1,
+        Tooltip="Movement with full vehicle support. WalkSpeed on foot only; Velocity/Impulse/CFrame/Teleport work in any vehicle or object using velocity.",
         Function=function(enabled)
             restoreWalk(); teleportElapsed, lastMode = 0, nil
             if not enabled then
@@ -34720,7 +34703,11 @@ function Module.init(context: Runtime): any
         if speed.Enabled then speed:SetStatus(speed.Options.Mode.Value) end
     end
     speed:CreateDropdown({Name="Mode",List={"WalkSpeed","Velocity","Impulse","CFrame","Teleport"},Index=2,Function=changed})
-    speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32})
+    speed:CreateSlider({Name="Speed",Min=1,Max=250,Default=32, Tooltip="Speed in studs/s. WalkSpeed sets Humanoid.WalkSpeed, Velocity/Impulse drive AssemblyLinearVelocity, CFrame/Teleport move CFrame."})
+    speed:CreateSlider({Name="Response",Min=0.2,Max=2,Step=0.1,Default=1, Show={Option="Mode",Values={"Velocity","Impulse","CFrame"}}, Tooltip="Response: how fast velocity reaches target. 0.2 sluggish, 1 default balanced, 2 instant."})
+    speed:CreateSlider({Name="Braking",Min=0,Max=1,Step=0.05,Default=0.8, Show={Option="Mode",Values={"Velocity"}}, Tooltip="Braking when no input: 0 = instant stop, 0.8 default smooth, 1 = keep momentum."})
+    speed:CreateSlider({Name="Vehicle multiplier",Min=0.5,Max=3,Step=0.1,Default=1.2, Tooltip="Scales Speed when in a vehicle/seat (Velocity/Impulse/CFrame/Teleport only). 1 = same as on foot, 1.2 default slightly faster in vehicle."})
+    speed:CreateToggle({Name="Keep vertical",Default=true, Show={Option="Mode",Values={"Velocity","Impulse"}}, Tooltip="Preserve Y velocity (gravity/jump). OFF = full 3D velocity control (also affects vehicles)."})
     speed:CreateToggle({Name="Wall check",Default=true,Show={Option="Mode",Values={"CFrame","Teleport"}}})
     speed:CreateSlider({Name="Burst delay",Min=0.05,Max=1,Default=0.2,Show={Option="Mode",Values={"Teleport"}}})
     speed:CreateToggle({Name="Auto jump",Default=false})
@@ -56520,7 +56507,7 @@ local Manifest: Manifest = {
         ["Improve FPS"] = "World",
         ["Invisibility"] = "Utilities",
         ["Invisible"] = "Exploits",
-        ["Jump Hack"] = "Exploits",
+        ["Jump Settings"] = "Exploits",
         ["KillAura"] = "Exploits",
         ["Killer Hit Aura"] = "Exploits",
         ["Killer Power Cooldowns"] = "Render",
@@ -56552,7 +56539,7 @@ local Manifest: Manifest = {
         ["Silent Aim"] = "Exploits",
         ["Silent Steps / Anti-Sound"] = "Movement",
         ["SilentAIM"] = "Exploits",
-        ["Speed Hack"] = "Exploits",
+        ["Speed Settings"] = "Exploits",
         ["Spider"] = "Exploits",
         ["Teleport"] = "Utilities",
         ["Time Changer"] = "Render",
@@ -56595,7 +56582,7 @@ local Manifest: Manifest = {
         -- <arandommenu:modules> managed by tools/card.py
         {path = "src/games/universal/Combat/AimAssist.lua", name = "Aimbot", category = "Exploits"},
         {path = "src/games/universal/Blatant/Swim.lua", name = "Air Swim", category = "Exploits"},
-        {path = "src/games/universal/Movement/AirWalk.lua", name = "AirWalk", category = "Exploits"},
+        {path = "src/games/universal/Movement/AirWalk.lua", name = "Air Walk", category = "Exploits"},
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
@@ -56611,7 +56598,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Movement/InfiniteJump.lua", name = "Infinite Jump", category = "Exploits"},
         {path = "src/games/universal/Blatant/Invisible.lua", name = "Invisibility", category = "Utilities"},
         {path = "src/games/universal/Render/ItemRender.lua", name = "ItemESP", category = "Render"},
-        {path = "src/games/universal/Movement/Jump.lua", name = "Jump Hack", category = "Exploits"},
+        {path = "src/games/universal/Movement/Jump.lua", name = "Jump Settings", category = "Exploits"},
         {path = "src/games/universal/Combat/KillAura.lua", name = "KillAura", category = "Exploits"},
         {path = "src/games/universal/Render/Markers.lua", name = "Markers", category = "Render"},
         {path = "src/games/universal/Render/Nametags.lua", name = "Nametags", category = "Render"},
@@ -56623,7 +56610,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Other/RejoinServer.lua", name = "Rejoin Server", category = "Utilities"},
         {path = "src/games/universal/Other/ServerSettings.lua", name = "Server Settings", category = "Utilities"},
         {path = "src/games/universal/Render/Spectate.lua", name = "Spectate", category = "World"},
-        {path = "src/games/universal/Movement/Speed.lua", name = "Speed Hack", category = "Exploits"},
+        {path = "src/games/universal/Movement/Speed.lua", name = "Speed Settings", category = "Exploits"},
         {path = "src/games/universal/Movement/ClickTeleport.lua", name = "Teleport", category = "Utilities"},
         {path = "src/games/universal/Blatant/WalkFling.lua", name = "Walk Fling", category = "Exploits"},
         {path = "src/games/universal/Blatant/Spider.lua", name = "Wall Crawling", category = "Exploits"},

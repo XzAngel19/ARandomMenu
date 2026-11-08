@@ -90,7 +90,8 @@ function Module.init(context: Runtime): any
                     return
                 end
                 local now: number = os.clock()
-                if now - lastBoostAt < 0.08 then
+                local interval: number = infiniteJump.Options["Jump interval"] and infiniteJump.Options["Jump interval"].Value or 0.18
+                if now - lastBoostAt < interval then
                     return
                 end
                 lastBoostAt = now
@@ -252,6 +253,7 @@ function Module.init(context: Runtime): any
         Function = function(value: string): ()
             if infiniteJump.Enabled then infiniteJump:SetStatus(value) end
         end,
+        Tooltip = "Normal = one jump per press in air, Rise = hold to ascend. Jump Power + Interval control both.",
     })
 
     infiniteJump:CreateSlider({
@@ -259,8 +261,19 @@ function Module.init(context: Runtime): any
         Min = 1,
         Max = 250,
         Default = 50,
-        Tooltip = "Vertical jump velocity applied in mid-air (1-250 slider preset; supports negative values to invert jump physics).",
+        Tooltip = "Vertical jump velocity applied in mid-air (1-250). Negative inverts jump.",
     })
+
+    infiniteJump:CreateSlider({
+        Name = "Jump interval",
+        Min = 0.05,
+        Max = 0.6,
+        Step = 0.01,
+        Default = 0.18,
+        Tooltip = "Minimum delay between mid-air jumps in seconds. Default 0.18 s (vanilla-like). Lower = faster spam, higher = slower rhythm.",
+    })
+
+    infiniteJump:CreateNote("Jump interval: 0.18 s is default Roblox rhythm. 0.05 s = spam fast, 0.6 s = slow.")
 
     activeCleanup = function(): ()
         if infiniteJump.Enabled then

@@ -65,7 +65,7 @@ function Module.init(runtime: any): any
         return trail
     end
 
-    local speed: any = state.framework and state.framework:GetModule("Speed Hack")
+    local speed: any = state.framework and (state.framework:GetModule("Speed Settings") or state.framework:GetModule("Speed Hack"))
     assert(speed, "Sprint option requires the Speed module")
     speed.ClearSprint = clearSprintTrail
     speed.SprintFrame = function(active: boolean, root: BasePart): ()

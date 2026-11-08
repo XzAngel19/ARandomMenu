@@ -340,7 +340,7 @@ function Module.init(context: Runtime): any
         -- sprinting, jumps, vehicles and game launch pads are not capped merely
         -- because this feature is on.
         local walkSpeed: number = math.max(16, tonumber(humanoid.WalkSpeed) or 16)
-        local speed: any = framework and framework:GetModule("Speed Hack")
+        local speed: any = framework and (framework:GetModule("Speed Settings") or framework:GetModule("Speed Hack"))
         if speed and speed.Enabled and speed.Options.Speed then
             walkSpeed = math.max(walkSpeed, tonumber(speed.Options.Speed.Value) or 0)
         end

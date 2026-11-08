@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix='wurst-boot-') as tmp:
                 assert 'Ghost' not in renamed and 'Motion Lock' not in renamed, (
                     f'MM2 {mode}: the old card names must be gone'
                 )
-            for wanted in ('Speed Hack', 'Jump Hack', 'Proximity Prompts'):
+            for wanted in ('Speed Settings', 'Jump Settings', 'Proximity Prompts', 'Speed Hack', 'Jump Hack'):
                 if wanted in renamed:
                     break
             else:

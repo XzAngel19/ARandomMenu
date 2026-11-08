@@ -880,12 +880,12 @@ do
     print("[HARNESS] COINS AURA + GUN AURA + AUTO VOTE TOGGLE CYCLES CLEAN")
     local infiniteJump = findFeature("Infinite Jump")
     assert(infiniteJump and infiniteJump.categoryName == "Exploits", "Infinite Jump standalone module must exist in Exploits")
-    local airWalk = findFeature("AirWalk")
-    assert(airWalk and airWalk.categoryName == "Exploits", "AirWalk standalone module must exist in Exploits")
+    local airWalk = findFeature("Air Walk")
+    assert(airWalk and airWalk.categoryName == "Exploits", "Air Walk standalone module must exist in Exploits")
     local okAWOn, errAWOn = pcall(airWalk.onToggle, true)
-    assert(okAWOn, "AirWalk ON must not error: " .. tostring(errAWOn))
+    assert(okAWOn, "Air Walk ON must not error: " .. tostring(errAWOn))
     local okAWOff, errAWOff = pcall(airWalk.onToggle, false)
-    assert(okAWOff, "AirWalk OFF must not error: " .. tostring(errAWOff))
+    assert(okAWOff, "Air Walk OFF must not error: " .. tostring(errAWOff))
     local autoWin = findFeature("Auto Win")
     assert(autoWin and autoWin.categoryName == "Utilities", "Auto Win module must exist in Utilities")
     assert(autoWin.options:FindFirstChild("Option_SheriffWins"), "Auto Win must expose Sheriff Wins overlay")
@@ -986,7 +986,7 @@ do
     assert(ex.state.moduleSearch.Resolve("Aim Assist").entry.displayName == "Aimbot", "old Aimbot search alias must work")
     local expected = {
       Render = {"ItemESP", "PlayerESP", "Chams", "Nametags", "HP", "Player Pointers", "NPCESP", "FOV", "Fullbright", "X-Ray", "Zoom", "Markers"},
-      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Wall Crawling", "Speed Hack", "Jump Hack", "Proximity Prompts", "Walk Fling"},
+      Exploits = {"Aimbot", "Knife Stab", "Gun Aimbot", "Knife Throw", "Fly", "Noclip", "Wall Crawling", "Speed Settings", "Jump Settings", "Proximity Prompts", "Walk Fling"},
       Utilities = {"Auto Shoot", "Teleport", "Freeze Animations", "Invisibility", "Anti Fling", "Server Settings"},
       World = {"Improve FPS", "Gravity", "Anti AFK", "Blurt Roles", "FreeCam", "Disguise"},
     }
@@ -1212,27 +1212,27 @@ do
     assert(aim.Options.Speed and aim.Options.Strength and not aim.Options.Smoothing)
     local ghost=ex.state.framework:GetModule("Invisibility")
     assert(ghost.Options["Fly"].Value==false and not ghost.Options["Fly speed"].Visible)
-    -- v189 defaults, v190 names: Void depth is 5 (its minimum), and the options
+    -- v189 defaults, v190 names, v197 melee-friendly: Void depth is 3 (default) with min 0, max 350, and the options
     -- that made the module heavy (Sprint multiplier, Void guard) plus the blue
     -- Outline are gone for good.
-    assert(ghost.Options["Void depth"].Value==5 and ghost.Options["Void depth"].Metadata.min==5
+    assert(ghost.Options["Void depth"].Value==3 and ghost.Options["Void depth"].Metadata.min==0
         and ghost.Options["Void depth"].Metadata.max==350,
-        "Void depth must default to its minimum of 5")
+        "Void depth must default to 3 with min 0 for melee")
     assert(ghost.Options["WalkSpeed"].Value==16)
     assert(not ghost.Options.Outline and not ghost.Options["Sprint multiplier"]
         and not ghost.Options["Void guard"], "v189 removed Outline, Sprint multiplier and Void guard")
-    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
-    local speedInput=ex.state.framework:GetModule("Speed Hack").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
+    assert(ex.state.framework:GetModule("Speed Settings").Options.Speed.Value==5000,"restoring a profile must not clamp to the drag range")
+    local speedInput=ex.state.framework:GetModule("Speed Settings").Options.Speed.Object:FindFirstChild("Slider"):FindFirstChild("NumericValue")
     for _,value in ipairs({"1000","5000","1e12"}) do
         speedInput.Focused:Fire();speedInput.Text=value;speedInput.FocusLost:Fire()
-        assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==tonumber(value))
+        assert(ex.state.framework:GetModule("Speed Settings").Options.Speed.Value==tonumber(value))
     end
     ex.state.valueControls["Universal.Speed.Speed"].apply(5000)
-    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000)
+    assert(ex.state.framework:GetModule("Speed Settings").Options.Speed.Value==5000)
     speedInput.Focused:Fire();speedInput.Text="1e999";speedInput.FocusLost:Fire()
-    assert(ex.state.framework:GetModule("Speed Hack").Options.Speed.Value==5000,"reject infinity without corrupting the previous value")
+    assert(ex.state.framework:GetModule("Speed Settings").Options.Speed.Value==5000,"reject infinity without corrupting the previous value")
     ex.state.valueControls["Universal.Speed.Speed"].apply(32)
-    local speed = ex.state.framework:GetModule("Speed Hack")
+    local speed = ex.state.framework:GetModule("Speed Settings")
     assert(speed and speed.Options.Sprint, "Sprint must be an option of Speed")
     -- Vehicle options visibility tests simplified due to mock limitations
     
@@ -1240,7 +1240,7 @@ do
     assert(sprintBinding and sprintBinding.key == Enum.KeyCode.Unknown, "Sprint needs an unassigned configurable key slot")
     assert(sprintBinding.hold and speed.Options.Sprint.Metadata.type == "action", "Sprint must be a held action, not toggle")
     
-    local jump = ex.state.framework:GetModule("Jump Hack")
+    local jump = ex.state.framework:GetModule("Jump Settings")
     -- Jump options visibility tests simplified due to mock limitations
     if jump.Options["Infinite jump"] then
         pcall(function()

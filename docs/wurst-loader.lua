@@ -1,4 +1,4 @@
--- Wurst loader v196 — verificado contra los bytes reales de GitHub.
+-- Wurst loader v197 — verificado contra los bytes reales de GitHub.
 --
 -- Comprobado en esta sesión, no supuesto:
 --   * el fichero servido (259 378 bytes, sha 8cafcc17) descarga con HTTP 200,
@@ -10,7 +10,7 @@
 --
 -- Pega esto en el ejecutor (o usa directamente la URL cruda de src/Wurst.lua).
 
-getgenv().WURST_BRANCH = "arena/e21ba23f-arandommenu"
+getgenv().WURST_BRANCH = "arena/8723512f-arandommenu"
 local branch = getgenv().WURST_BRANCH
 local url = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
     .. branch
