@@ -31012,41 +31012,28 @@ function Module.init(context: Runtime): any
             local env: any = getfenv()
             local moverel: any = env.mousemoverel or env.mousemove or (host and (host.mousemoverel or host.mousemove))
             if type(moverel) ~= "function" then return false end
-            -- Use ViewportPoint for consistency with ViewportSize and GetMouseLocation
+            -- Use ScreenPoint to match GetMouseLocation (both include top-bar inset)
             local ok: boolean, screenPos: any, onScreen: any = pcall(function(): any
-                return cameraObject:WorldToViewportPoint(target.position)
+                return cameraObject:WorldToScreenPoint(target.position)
             end)
-            if not ok or type(screenPos) ~= "Vector3" then
-                -- fallback to ScreenPoint
-                ok, screenPos, onScreen = pcall(function(): any
-                    return cameraObject:WorldToScreenPoint(target.position)
-                end)
-                if not ok or type(screenPos) ~= "Vector3" then return false end
-            end
+            if not ok or type(screenPos) ~= "Vector3" then return false end
             if onScreen == false and mode ~= "Aimbot" then return false end
-            -- Always prefer GetMouseLocation when available, even when locked
             local mouse: Vector2? = nil
             local mouseOk: boolean, mousePos: any = pcall(function(): any return userInput:GetMouseLocation() end)
             if mouseOk and typeof(mousePos) == "Vector2" then
                 mouse = mousePos
             else
+                -- Fallback: ViewportSize/2 + GuiInset (36px top bar)
                 local vp: Vector2 = cameraObject.ViewportSize
-                mouse = Vector2.new(vp.X / 2, vp.Y / 2)
-            end
-            -- For locked first-person, ViewportPoint vs GetMouseLocation may have 36px inset mismatch.
-            -- If locked, ensure mouse is centered in viewport coordinates.
-            if isMouseLocked() then
-                local vp: Vector2 = cameraObject.ViewportSize
-                -- GetMouseLocation in locked mode should already be center, but if it's not, force center
-                if mouse then
-                    local center: Vector2 = Vector2.new(vp.X / 2, vp.Y / 2)
-                    -- If mouse is far from center (>100px) while locked, it's likely using ScreenPoint vs Viewport mismatch, use center
-                    if (mouse :: Vector2).X < 5 or (mouse :: Vector2).Y < 5 then
-                        mouse = center
+                local insetY: number = 36
+                pcall(function(): ()
+                    local guiService: any = game:GetService("GuiService")
+                    local inset: Vector2 = guiService:GetGuiInset()
+                    if typeof(inset) == "Vector2" then
+                        insetY = inset.Y
                     end
-                else
-                    mouse = Vector2.new(vp.X / 2, vp.Y / 2)
-                end
+                end)
+                mouse = Vector2.new(vp.X / 2, vp.Y / 2 + insetY)
             end
             local m: Vector2 = mouse :: Vector2
             local delta: Vector2 = Vector2.new(screenPos.X - m.X, screenPos.Y - m.Y)
@@ -31087,13 +31074,15 @@ function Module.init(context: Runtime): any
             return ok
         end
 
-        -- Auto: 1st person shift-lock -> Mouse (Rivals partida uses mouse delta), 3rd person -> Mouse as well, but Camera as fallback.
-        -- User reported Camera works for 1st person, Mouse for 3rd, so we try both.
-        -- For natural feel, try the primary driver first, then fallback.
+        -- Auto: user report: 3rd person works with Mouse, 1st person shift-lock needs Camera (CFrame). CFrame doesn't work for mouse mode.
         if cameraMode == "Auto" then
-            -- Try mouse first (most natural for both, goes through game's recoil/sway), then camera
-            if tryMouse() then return true end
-            if tryCamera() then return true end
+            if isMouseLocked() then
+                if tryCamera() then return true end
+                if tryMouse() then return true end
+            else
+                if tryMouse() then return true end
+                if tryCamera() then return true end
+            end
             return false
         elseif cameraMode == "Camera" then
             return tryCamera()
