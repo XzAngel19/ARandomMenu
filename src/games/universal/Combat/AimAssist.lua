@@ -153,21 +153,43 @@ function Module.init(context: Runtime): any
                 return false
             end
             local newCFrame: CFrame = CFrame.lookAt(current.Position, current.Position + blended.Unit)
+            local runService: any = (host :: any).RunService or (services and services.runService)
+            -- Prefer BindToRenderStep at Camera+1 so we win over the game's own camera controller (Rivals uses Scriptable+RenderStepped)
+            if runService and type(runService.BindToRenderStep) == "function" then
+                local bound: boolean = false
+                pcall(function(): ()
+                    local prioOk: boolean, prio: any = pcall(function(): any
+                        return (Enum :: any).RenderPriority.Camera.Value
+                    end)
+                    local priority: number = prioOk and type(prio) == "number" and (prio + 1) or 200
+                    pcall(function(): () runService:UnbindFromRenderStep("WurstAimAssistCam") end)
+                    runService:BindToRenderStep("WurstAimAssistCam", priority, function(): ()
+                        pcall(function(): ()
+                            if cameraObject and cameraObject.Parent then
+                                cameraObject.CFrame = newCFrame
+                            end
+                        end)
+                        pcall(function(): () runService:UnbindFromRenderStep("WurstAimAssistCam") end)
+                    end)
+                    bound = true
+                end)
+                if bound then
+                    -- Also set immediately for executors / tests where BindToRenderStep doesn't tick
+                    pcall(function(): () cameraObject.CFrame = newCFrame end)
+                    return true
+                end
+            end
             local ok: boolean = pcall(function(): ()
                 cameraObject.CFrame = newCFrame
             end)
             return ok
         end
 
-        -- Auto: user report: 3rd person works with Mouse, 1st person shift-lock needs Camera (CFrame). CFrame doesn't work for mouse mode.
+        -- Auto: try Mouse first for both (most natural, respects game's recoil/smoothing), Camera as fallback.
+        -- Previous Camera-first for locked caused stutter because direct CFrame fights the FPS controller.
         if cameraMode == "Auto" then
-            if isMouseLocked() then
-                if tryCamera() then return true end
-                if tryMouse() then return true end
-            else
-                if tryMouse() then return true end
-                if tryCamera() then return true end
-            end
+            if tryMouse() then return true end
+            if tryCamera() then return true end
             return false
         elseif cameraMode == "Camera" then
             return tryCamera()
@@ -245,6 +267,10 @@ function Module.init(context: Runtime): any
             runtime.lockedTarget = nil
             if not enabled then
                 card:SetStatus(nil)
+                local rs: any = (host :: any).RunService
+                if rs and type(rs.UnbindFromRenderStep) == "function" then
+                    pcall(function(): () rs:UnbindFromRenderStep("WurstAimAssistCam") end)
+                end
                 return
             end
             card:SetStatus("searching")
@@ -283,6 +309,10 @@ function Module.init(context: Runtime): any
             card:Clean(function(): ()
                 runtime.target = nil
                 card:SetStatus(nil)
+                local rs: any = (host :: any).RunService
+                if rs and type(rs.UnbindFromRenderStep) == "function" then
+                    pcall(function(): () rs:UnbindFromRenderStep("WurstAimAssistCam") end)
+                end
             end)
         end,
     })
