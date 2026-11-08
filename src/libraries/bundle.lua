@@ -30938,121 +30938,14 @@ function Module.init(context: Runtime): any
     local entity: any = context.entity
     local userInput: UserInputService = host.UserInputService
     local currentWorkspace: Workspace = host.workspace or workspace
-    local localPlayer: Player? = host.LocalPlayer
     local runtime: any = {
         target = nil,
         lockedTarget = nil,
-        lastFire = -math.huge,
     }
     local card: any
 
     local function camera(): Camera?
         return currentWorkspace.CurrentCamera
-    end
-
-    local function getHeldTool(): Tool?
-        local player: Player? = localPlayer
-        if not player then
-            player = host.LocalPlayer
-        end
-        local character: Model? = player and player.Character
-        if not character then
-            return nil
-        end
-        for _, child: Instance in ipairs(character:GetChildren()) do
-            if child:IsA("Tool") then
-                return child :: Tool
-            end
-        end
-        return nil
-    end
-
-    local function tryFireOnce(): boolean
-        local player: Player? = localPlayer or host.LocalPlayer
-        local tool: Tool? = getHeldTool()
-        if not tool and player then
-            local backpack: Instance? = player:FindFirstChild("Backpack")
-            if backpack then
-                for _, child: Instance in ipairs(backpack:GetChildren()) do
-                    if child:IsA("Tool") then
-                        tool = child :: Tool
-                        local character: Model? = player.Character
-                        local hum: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                        if hum then
-                            pcall(function(): ()
-                                hum:EquipTool(tool :: Tool)
-                            end)
-                        end
-                        break
-                    end
-                end
-            end
-        end
-        if not tool then
-            return false
-        end
-        if tool.Enabled == false then
-            return false
-        end
-        local ok: boolean = pcall(function(): ()
-            (tool :: Tool):Activate()
-        end)
-        return ok
-    end
-
-    local function getCPS(): number
-        -- New name is Clicks Per Second, old save is Fire rate
-        local opt: any = nil
-        if card and card.Options then
-            opt = card.Options["Clicks Per Second"] or card.Options["Fire rate"] or card.Options["CPS"]
-        end
-        if opt and opt.Value ~= nil then
-            return math.max(1, tonumber(opt.Value) or 12)
-        end
-        return 12
-    end
-
-    local function shouldAutoFire(): boolean
-        if not card or not card.Options or not card.Options["Auto Fire"] then
-            return false
-        end
-        if not card.Options["Auto Fire"].Value then
-            return false
-        end
-        -- No target required: autoclick should work whenever you hold click, like any semi-auto gun
-        local rate: number = getCPS()
-        local now: number = os.clock()
-        if now - runtime.lastFire < 1 / rate then
-            return false
-        end
-        local fireMode: string = "Hold"
-        if card.Options["Auto Fire mode"] then
-            fireMode = tostring(card.Options["Auto Fire mode"].Value)
-        end
-        if fireMode == "Always" then
-            runtime.lastFire = now
-            return true
-        end
-        local okHeld: boolean, isPressed: any = pcall(function(): any
-            return userInput:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-        end)
-        if not okHeld then
-            -- Some executors don't implement IsMouseButtonPressed; try alternative
-            local ok2: boolean, alt: any = pcall(function(): any
-                -- fallback: Check if mouse1 is down via getfenv
-                local env: any = getfenv()
-                if env and type(env.isrbxactive) == "function" then
-                    -- isrbxactive is not mouse, skip
-                end
-                return false
-            end)
-            return false
-        end
-        if isPressed == true then
-            runtime.lastFire = now
-            return true
-        end
-        return false
     end
 
     local function moveCamera(target: any, deltaTime: number): boolean
@@ -31065,7 +30958,6 @@ function Module.init(context: Runtime): any
         if card.Options["Camera"] then
             cameraModeRaw = tostring(card.Options["Camera"].Value)
         end
-        -- Compat: old save used "CFrame", new uses "Camera"
         local cameraMode: string = cameraModeRaw
         if cameraModeRaw == "CFrame" then
             cameraMode = "Camera"
@@ -31103,7 +30995,7 @@ function Module.init(context: Runtime): any
                     return true
                 end
             end
-            local lp: Player? = localPlayer or host.LocalPlayer
+            local lp: Player? = host.LocalPlayer
             local char: Model? = lp and lp.Character
             local head: BasePart? = char and char:FindFirstChild("Head") :: BasePart?
             if head then
@@ -31120,31 +31012,49 @@ function Module.init(context: Runtime): any
             local env: any = getfenv()
             local moverel: any = env.mousemoverel or env.mousemove or (host and (host.mousemoverel or host.mousemove))
             if type(moverel) ~= "function" then return false end
+            -- Use ViewportPoint for consistency with ViewportSize and GetMouseLocation
             local ok: boolean, screenPos: any, onScreen: any = pcall(function(): any
-                return cameraObject:WorldToScreenPoint(target.position)
+                return cameraObject:WorldToViewportPoint(target.position)
             end)
-            if not ok or type(screenPos) ~= "Vector3" then return false end
+            if not ok or type(screenPos) ~= "Vector3" then
+                -- fallback to ScreenPoint
+                ok, screenPos, onScreen = pcall(function(): any
+                    return cameraObject:WorldToScreenPoint(target.position)
+                end)
+                if not ok or type(screenPos) ~= "Vector3" then return false end
+            end
             if onScreen == false and mode ~= "Aimbot" then return false end
-            local locked: boolean = isMouseLocked()
-            local mouse: Vector2
-            if locked then
+            -- Always prefer GetMouseLocation when available, even when locked
+            local mouse: Vector2? = nil
+            local mouseOk: boolean, mousePos: any = pcall(function(): any return userInput:GetMouseLocation() end)
+            if mouseOk and typeof(mousePos) == "Vector2" then
+                mouse = mousePos
+            else
                 local vp: Vector2 = cameraObject.ViewportSize
                 mouse = Vector2.new(vp.X / 2, vp.Y / 2)
-            else
-                local mouseOk: boolean, mousePos: any = pcall(function(): any return userInput:GetMouseLocation() end)
-                if mouseOk and typeof(mousePos) == "Vector2" then
-                    mouse = mousePos
+            end
+            -- For locked first-person, ViewportPoint vs GetMouseLocation may have 36px inset mismatch.
+            -- If locked, ensure mouse is centered in viewport coordinates.
+            if isMouseLocked() then
+                local vp: Vector2 = cameraObject.ViewportSize
+                -- GetMouseLocation in locked mode should already be center, but if it's not, force center
+                if mouse then
+                    local center: Vector2 = Vector2.new(vp.X / 2, vp.Y / 2)
+                    -- If mouse is far from center (>100px) while locked, it's likely using ScreenPoint vs Viewport mismatch, use center
+                    if (mouse :: Vector2).X < 5 or (mouse :: Vector2).Y < 5 then
+                        mouse = center
+                    end
                 else
-                    local vp: Vector2 = cameraObject.ViewportSize
                     mouse = Vector2.new(vp.X / 2, vp.Y / 2)
                 end
             end
-            local delta: Vector2 = Vector2.new(screenPos.X - mouse.X, screenPos.Y - mouse.Y)
+            local m: Vector2 = mouse :: Vector2
+            local delta: Vector2 = Vector2.new(screenPos.X - m.X, screenPos.Y - m.Y)
             if mode ~= "Aimbot" then
                 delta = delta * alpha
             end
-            if delta.Magnitude < 0.5 then return false end
-            local maxDelta: number = 400
+            if delta.Magnitude < 0.3 then return false end
+            local maxDelta: number = 500
             if math.abs(delta.X) > maxDelta or math.abs(delta.Y) > maxDelta then
                 delta = delta.Unit * maxDelta
             end
@@ -31177,17 +31087,14 @@ function Module.init(context: Runtime): any
             return ok
         end
 
-        -- Auto: choose driver based on lock state. Rivals 3rd person (not locked) -> Mouse, 1st person shift-lock -> Camera
+        -- Auto: 1st person shift-lock -> Mouse (Rivals partida uses mouse delta), 3rd person -> Mouse as well, but Camera as fallback.
+        -- User reported Camera works for 1st person, Mouse for 3rd, so we try both.
+        -- For natural feel, try the primary driver first, then fallback.
         if cameraMode == "Auto" then
-            if isMouseLocked() then
-                if tryCamera() then return true end
-                if tryMouse() then return true end
-                return false
-            else
-                if tryMouse() then return true end
-                if tryCamera() then return true end
-                return false
-            end
+            -- Try mouse first (most natural for both, goes through game's recoil/sway), then camera
+            if tryMouse() then return true end
+            if tryCamera() then return true end
+            return false
         elseif cameraMode == "Camera" then
             return tryCamera()
         elseif cameraMode == "Mouse" then
@@ -31241,7 +31148,7 @@ function Module.init(context: Runtime): any
         return runtime.lockedTarget
     end
 
-    -- Compat: migrate old CFrame -> Camera before UI is built
+    -- Compat migrate CFrame->Camera
     pcall(function(): ()
         local cfg: any = host.configData
         if cfg and type(cfg.values) == "table" then
@@ -31249,14 +31156,6 @@ function Module.init(context: Runtime): any
             if cfg.values[key] == "CFrame" then
                 cfg.values[key] = "Camera"
             end
-            local oldKey: string = "Universal.AimAssist.Fire rate"
-            local newKey: string = "Universal.AimAssist.Clicks Per Second"
-            if cfg.values[oldKey] ~= nil and cfg.values[newKey] == nil then
-                cfg.values[newKey] = cfg.values[oldKey]
-            end
-        end
-        if cfg and type(cfg.states) == "table" then
-            -- nothing for dropdowns there
         end
     end)
 
@@ -31270,7 +31169,6 @@ function Module.init(context: Runtime): any
         Function = function(enabled: boolean): ()
             runtime.target = nil
             runtime.lockedTarget = nil
-            runtime.lastFire = -math.huge
             if not enabled then
                 card:SetStatus(nil)
                 return
@@ -31293,10 +31191,6 @@ function Module.init(context: Runtime): any
                 end
                 local selected: any = selectTarget()
                 runtime.target = selected
-                -- Auto Fire: check even without target for Always, but for Hold we check hold state
-                if shouldAutoFire() then
-                    pcall(tryFireOnce)
-                end
                 if not selected then
                     card:SetStatus("searching")
                     return
@@ -31326,13 +31220,13 @@ function Module.init(context: Runtime): any
         Function = function(): ()
             runtime.lockedTarget = nil
         end,
-        Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed/Strength. Aimbot = snap directo con Sticky opcional. Para natural usa Aim Assist.",
+        Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed/Strength (natural). Aimbot = snap directo con Sticky opcional.",
     })
     card:CreateDropdown({
         Name = "Camera",
         List = {"Auto", "Camera", "Mouse"},
         Index = 1,
-        Tooltip = "Auto: detecta 1st person shift-lock (Rivals partida) -> Camera, 3rd person -> Mouse. Camera: fuerza CFrame directo (funciona en 1st person). Mouse: fuerza mousemoverel.",
+        Tooltip = "Auto: Mouse primero (natural, respeta recoil) luego Camera. Camera: CFrame directo (útil en 1st person shift-lock si Mouse no va). Mouse: solo mousemoverel.",
     })
     card:CreateSlider({
         Name = "FOV",
@@ -31341,11 +31235,11 @@ function Module.init(context: Runtime): any
         Max = 500,
         Step = 5,
         Default = 180,
-        Tooltip = "FOV en píxeles: radio alrededor del cursor. 15 pequeño — 500 pantalla completa. Default 180. Solo Aim Assist.",
+        Tooltip = "FOV en píxeles: radio alrededor del cursor. 15 pequeño — 500 pantalla completa. Default 180.",
     })
     card:CreateSlider({Name="Speed",Min=0,Max=360,Default=180,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
-        Tooltip="Speed °/s: rotación máxima. 0 sin ayuda, 90 lento, 180 default, 360 instantáneo."})
+        Tooltip="Speed °/s: rotación máxima. 0 sin ayuda, 180 default, 360 instantáneo."})
     card:CreateSlider({Name="Strength",Min=0,Max=100,Default=75,Step=5,
         Show={Option="Mode",Values={"Aim Assist"}},
         Tooltip="Strength %: fuerza de arrastre. 0 nada, 50 suave, 75 default, 100 máxima."})
@@ -31405,29 +31299,8 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Hold the current Aimbot target. Turn off to release it every frame.",
     })
-    card:CreateToggle({
-        Name = "Auto Fire",
-        Default = false,
-        Tooltip = "Automatic: al mantener click dispara el Tool equipado (Tool:Activate) sin clicks repetidos. Solo el arma en mano.",
-    })
-    card:CreateDropdown({
-        Name = "Auto Fire mode",
-        Show = {Option = "Auto Fire", Values = {true}},
-        List = {"Hold", "Always"},
-        Index = 1,
-        Tooltip = "Hold = solo mientras mantienes MouseButton1 (natural). Always = dispara siempre que Auto Fire esté ON.",
-    })
-    card:CreateSlider({
-        Name = "Clicks Per Second",
-        Show = {Option = "Auto Fire", Values = {true}},
-        Min = 1,
-        Max = 30,
-        Step = 1,
-        Default = 12,
-        Tooltip = "CPS: clicks por segundo (1-30). 12 default semi-auto fluido; 8 pistolas, 15-20 ametralladora. No es fire rate del arma, es tu autoclick.",
-    })
     card:CreateNote(
-        "Natural: solo cámara. Auto detecta 1st person shift-lock -> Camera (CFrame directo), 3rd person -> Mouse (mousemoverel). Auto Fire solo hace Tool:Activate (CPS)."
+        "Natural: Auto prueba Mouse (mousemoverel ViewportPoint) luego Camera (CFrame.lookAt). Camera directo funciona en 1st person shift-lock donde el juego sobrescribe mouse."
     )
 
     pcall(function()
@@ -31452,21 +31325,6 @@ function Module.init(context: Runtime): any
         patchOption("Strength", "0%", "100%", "(%)")
         patchOption("Prediction", "0 s", "0.5 s", "(s)")
         patchOption("Maxdistance", "25 studs", "2000 studs", "(studs)")
-        patchOption("ClicksPerSecond", "1 CPS", "30 CPS", "(CPS)")
-    end)
-
-    -- Migrate old saves: if user had Fire rate, copy to CPS
-    pcall(function(): ()
-        local cpsOpt: any = card.Options["Clicks Per Second"]
-        local oldOpt: any = card.Options["Fire rate"]
-        if cpsOpt and oldOpt and oldOpt.Value ~= nil and cpsOpt.Value == 12 and oldOpt.Value ~= 12 then
-            cpsOpt.Value = oldOpt.Value
-        end
-        -- Handle legacy Camera mode CFrame
-        local camOpt: any = card.Options["Camera"]
-        if camOpt and camOpt.Value == "CFrame" then
-            camOpt.Value = "Camera"
-        end
     end)
 
     activeCard = card
