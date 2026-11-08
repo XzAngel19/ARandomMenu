@@ -140,9 +140,33 @@ function Module.init(runtime: any): any
         end
         local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
         root.CFrame = targetCFrame
-        character:SetPrimaryPartCFrame(targetCFrame)
-        root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
-        root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
+        -- WalkFling technique is the most reliable on current physics: set both
+        -- classic and assembly velocities. Keep YARHM's high base but also apply
+        -- assembly so the server replicates even with modern solver.
+        pcall(function(): ()
+            character:SetPrimaryPartCFrame(targetCFrame)
+        end)
+        local vel: Vector3 = scaledVelocity(FLING_VELOCITY_BASE)
+        local rot: Vector3 = scaledVelocity(FLING_ROT_VELOCITY_BASE)
+        -- Humanoid Physics like WalkFling helps replication
+        local hum: Humanoid? = character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.ChangeState then
+            pcall(function(): ()
+                hum:ChangeState(Enum.HumanoidStateType.Physics)
+            end)
+        end
+        root.Velocity = vel
+        root.AssemblyLinearVelocity = vel
+        root.RotVelocity = rot
+        root.AssemblyAngularVelocity = rot
+        -- Extra noclip for the fling contact (like WalkFling)
+        pcall(function(): ()
+            for _, part: Instance in ipairs(character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    (part :: BasePart).CanCollide = false
+                end
+            end
+        end)
     end
 
     -- Round trip / 2: how stale the server's copy of the victim is by the time it
