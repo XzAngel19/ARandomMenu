@@ -19,7 +19,7 @@ exactly `:2: attempt to call a nil value`.
 
 So this suite pins the three things that failure taught:
 
-  * the loader in README.md, `RUNTIME_BRANCH` in src/Wurst.lua and the loader
+  * the loader in docs/LOADER.md, `RUNTIME_BRANCH` in src/Wurst.lua and the loader
     example in docs/LOADER.md name the SAME branch;
   * every documented URL is built from that one branch name (no second copy);
   * a failed download reports a short reason plus the branch, so a 404 can no
@@ -31,7 +31,8 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-README = (ROOT / "README.md").read_text(encoding="utf-8")
+# v196: `src/Wurst.lua` is the loader, so the instructions a player copies live in
+# docs/LOADER.md. There is no README to read any more.
 LOADER_DOC = (ROOT / "docs/LOADER.md").read_text(encoding="utf-8")
 WURST = (ROOT / "src/Wurst.lua").read_text(encoding="utf-8")
 
@@ -42,9 +43,9 @@ def check(condition: bool, message: str) -> None:
 
 
 def loader_block() -> str:
-    start = README.index("## Loader")
-    end = README.index("## Cambios de v195") if "## Cambios de v195" in README else len(README)
-    return README[start:end]
+    start = LOADER_DOC.index("## El cargador")
+    end = LOADER_DOC.index("## Cuando carga el fichero", start)
+    return LOADER_DOC[start:end]
 
 
 # --- one branch, everywhere -------------------------------------------------
@@ -69,19 +70,33 @@ def instruction_branches(text: str) -> set:
     return found
 
 
-documented = instruction_branches(README) | instruction_branches(LOADER_DOC)
+documented = instruction_branches(LOADER_DOC)
 check(documented == {branch},
       "every loader instruction names the runtime branch "
       f"(found {sorted(documented)})")
-check(instruction_branches(README) == {branch},
-      "the README loader instructions match RUNTIME_BRANCH")
 check(instruction_branches(LOADER_DOC) == {branch},
       "the LOADER.md loader instructions match RUNTIME_BRANCH")
+
+# v196: the Reinject button used to download from a hardcoded older session
+# branch. The only source address in the runtime must be the branch above.
+safety = re.search(r'local RUNTIME_SAFETY_SOURCE_URL: string = ([^\n]+)', WURST)
+check(safety is not None, "src/Wurst.lua declares RUNTIME_SAFETY_SOURCE_URL")
+check(safety.group(1).strip() == 'RUNTIME_RAW_BASE .. "src/Wurst.lua"',
+      "RUNTIME_SAFETY_SOURCE_URL is derived from RUNTIME_BRANCH, not hardcoded")
+hardcoded = [
+    line for line in WURST.splitlines()
+    if "raw.githubusercontent.com" in line and "arena/" in line
+]
+check(hardcoded == [], f"no hardcoded branch URL survives in src/Wurst.lua: {hardcoded}")
 
 block = loader_block()
 check(f'getgenv().WURST_BRANCH = "{branch}"' in block,
       "the documented loader sets WURST_BRANCH to that same branch")
-check(f'.. "{branch}/src/Wurst.lua"' in block,
+# v196: the loader builds the URL from the WURST_BRANCH it just set instead of
+# repeating the branch in a second literal, so there is one place to change.
+check(f'getgenv().WURST_BRANCH = "{branch}"' in block
+      and '.. branch' in block
+      and '"/src/Wurst.lua"' in block,
       "the documented loader URL is built from that same branch")
 check(block.count("arena/") == 2,
       "the loader block has exactly two branch mentions (env var and URL)")

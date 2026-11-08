@@ -35,11 +35,64 @@ a la basura**, así que no se puede saber cuál de estas cuatro cosas pasó:
 
 ## El cargador bueno
 
-Está en el `README.md`. Sus tres diferencias con el de una línea:
+`src/Wurst.lua` **es** el loader: no hay un fichero aparte. Copia su URL cruda en
+el ejecutor y ya está:
+
+```
+https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/e21ba23f-arandommenu/src/Wurst.lua
+```
+
+Si prefieres el cargador con reintentos — recomendado, porque dice **por qué**
+falló en vez de morir en `:2:` — pega esto:
+
+```lua
+getgenv().WURST_BRANCH = "arena/e21ba23f-arandommenu"
+local branch = getgenv().WURST_BRANCH
+local url = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
+    .. branch
+    .. "/src/Wurst.lua"
+
+local source, reason = nil, nil
+for attempt = 1, 4 do
+    local requestUrl = url .. "?t=" .. tostring(os.time()) .. "&a=" .. tostring(attempt)
+    local ok, response = pcall(function()
+        return game:HttpGet(requestUrl, true)
+    end)
+    if ok and type(response) == "string" then
+        local size = #response
+        local marked = string.find(response, "local RUNTIME_COMPATIBILITY_MARKER", 1, true) ~= nil
+        if size >= 100000 and marked then
+            source = response
+            break
+        end
+        if size < 100000 then
+            reason = "descarga incompleta (" .. tostring(size) .. " bytes)"
+        else
+            reason = "la respuesta no es el menu (HTTP " .. tostring(size) .. " bytes)"
+        end
+    else
+        reason = "HttpGet fallo: " .. tostring(response)
+    end
+    task.wait(1)
+end
+
+if not source then
+    return warn("[Wurst] loader: " .. tostring(reason)
+        .. " · branch " .. tostring(branch))
+end
+
+local chunk, err = loadstring(source, "@Wurst")
+if not chunk then
+    return warn("[Wurst] loader: error de compilacion: " .. tostring(err))
+end
+chunk()
+```
+
+Sus diferencias con el de una línea:
 
 - `?t=<os.time()>&a=<intento>` en la URL: rompe la cache del ejecutor y la del
   CDN, así que cada intento pide el fichero de verdad;
-- comprueba **tamaño** (`> 100000` bytes) y **cabecera**
+- comprueba **tamaño** (`>= 100000` bytes) y **cabecera**
   (`local RUNTIME_COMPATIBILITY_MARKER`) antes de compilar: una descarga cortada
   o un HTML de error se detectan sin gastar el `loadstring`;
 - imprime el motivo con `warn("[Wurst] loader: …")` y reintenta hasta 4 veces,
@@ -69,7 +122,7 @@ crudo de la respuesta (`404: Not Found`) y no decía de qué rama venía.
 
 La regla práctica: si el bundle falla con `HTTP 404`, la rama que cargaste y la
 rama del repo no son la misma. Pon `getgenv().WURST_BRANCH = "<rama>"` antes de
-inyectar, o usa el cargador del `README.md`, que ya la fija.
+inyectar, o usa el cargador de arriba, que ya la fija.
 
 ## Qué hacer si vuelve a fallar
 
@@ -94,9 +147,14 @@ sin arrancar el juego:
   salto de línea y que su cabecera es la esperada — es decir, que **lo que se
   publica se puede cargar con `loadstring` tal cual**.
 
-Además, `test_v195_loader.py` fija que la rama del loader del `README.md`, la de
-`RUNTIME_BRANCH` y la de este documento sean **la misma** (esa desalineación fue
-causa directa del fallo de carga) y que un fallo de descarga nombre la rama.
+Además, `test_v195_loader.py` fija que la rama del cargador de este documento y la
+de `RUNTIME_BRANCH` sean **la misma** (esa desalineación fue causa directa del
+fallo de carga), que un fallo de descarga nombre la rama y que no sobreviva
+ninguna URL con rama escrita a mano en `src/Wurst.lua`.
+
+Desde v196 `src/Wurst.lua` **es** el loader, así que no hay fichero aparte que se
+pueda desincronizar: el botón *Reinject* de Ajustes descarga exactamente de
+`RUNTIME_BRANCH` (antes apuntaba a una rama de sesión vieja, `arena/76bc3f2f`).
 
 Lo que no puede comprobar: la red del jugador ni la versión de Luau de su
 ejecutor. Si el problema es cualquiera de esos dos, el `warn` lo dirá.

@@ -1,7 +1,11 @@
 local RUNTIME_COMPATIBILITY_MARKER: string =
     "Initialization error — check executor console"
-local RUNTIME_SAFETY_SOURCE_URL: string =
-    "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/arena/76bc3f2f-arandommenu/src/Wurst.lua"
+-- v196: `src/Wurst.lua` IS the loader. A player pastes its raw URL into the
+-- executor, so the file a re-inject downloads has to be this same branch.
+-- This constant used to hardcode an older session branch, which meant the
+-- Reinject button in Settings could pull a different (older) menu than the one
+-- already running. It is no longer a second address: RUNTIME_SAFETY_SOURCE_URL
+-- below is built from RUNTIME_BRANCH, exactly like RUNTIME_RAW_BASE.
 
 local DEFAULT_FEATURE_CATEGORY: string = "Utilities"
 
@@ -118,13 +122,14 @@ local RUNTIME_RAW_BASE: string =
     "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
         .. RUNTIME_BRANCH
         .. "/"
+local RUNTIME_SAFETY_SOURCE_URL: string = RUNTIME_RAW_BASE .. "src/Wurst.lua"
 
 -- v192: the build number shown in the menu has ONE source, this stamp. "v193"
 -- renders as "0.192" in the window titles and as "0.192 Release" next to the
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v196-20261107-chunk-local-register-fix"
+local SOURCE_STAMP: string = "v196-20261107-wurst-lua-is-the-loader"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"
