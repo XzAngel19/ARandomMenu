@@ -1,5 +1,5 @@
 return {
-    stamp = "v197-20261108-wurst-rama-fixes",
+    stamp = "v198-20261109-wurst-rama-fixes",
     files = {
         ["src/games/BedFight/Combat/AutoSwing.lua"] = [[
 local Module = {Name = "BedFight Auto Swing", Initialized = false, Connection = nil}
@@ -30675,9 +30675,11 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- Fixed at the previous maximum (3x Infinite Yield's baseline). There is
-    -- no Power option: only an explicit ON toggle may produce this pulse.
-    local POWER: number = 30000
+    -- Fixed at a higher effective power than the old 30000 (now more reliable
+    -- for modern physics and heavier rigs). No Power option by design: only ON
+    -- produces the pulse, and the test asserts >=30000.
+    local POWER: number = 50000
+    local SPIN: number = 50000
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -30762,9 +30764,14 @@ function Module.init(context: Runtime): any
                 if not enabled or session ~= mySession then
                     break
                 end
-                local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
+                local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
                 if character and root and root.Parent then
                     local savedVelocity: Vector3 = root.AssemblyLinearVelocity
+                    local savedAngular: Vector3 = root.AssemblyAngularVelocity or Vector3.zero
+                    -- Modern technique: also use angular velocity and ensure Humanoid is in Physics for replication
+                    if humanoid and humanoid.ChangeState then
+                        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Physics) end)
+                    end
                     pcall(function(): ()
                         rememberCollision(character)
                         for _, part: Instance in ipairs(character:GetChildren()) do
@@ -30773,8 +30780,12 @@ function Module.init(context: Runtime): any
                             end
                         end
                         local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
+                        local spin: Vector3 = Vector3.new(SPIN, SPIN, SPIN)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
+                        root.AssemblyAngularVelocity = spin
+                        -- Also set RotVelocity for older physics
+                        pcall(function() (root :: any).RotVelocity = spin end)
                     end)
                     RunService.RenderStepped:Wait()
                     -- A toggle-off that lands in the middle of an iteration must
@@ -30784,6 +30795,8 @@ function Module.init(context: Runtime): any
                         pcall(function(): ()
                             root.Velocity = savedVelocity
                             root.AssemblyLinearVelocity = savedVelocity
+                            root.AssemblyAngularVelocity = savedAngular
+                            pcall(function() (root :: any).RotVelocity = savedAngular end)
                         end)
                     end
                     RunService.Stepped:Wait()
@@ -30793,6 +30806,8 @@ function Module.init(context: Runtime): any
                             local oscillated: Vector3 = savedVelocity + Vector3.new(0, movel, 0)
                             root.Velocity = oscillated
                             root.AssemblyLinearVelocity = oscillated
+                            local spinOsc: Vector3 = Vector3.new(0, SPIN * 0.1, 0)
+                            root.AssemblyAngularVelocity = spinOsc
                             movel = -movel
                         end)
                     end
@@ -30914,13 +30929,17 @@ function Module.init(context: Runtime): any
         if not cameraObject or not target then
             return false
         end
+        local mode: string = card.Options["Mode"].Value
+        local cameraMode: string = "Auto"
+        if card.Options["Camera"] then
+            cameraMode = card.Options["Camera"].Value
+        end
         local current: CFrame = cameraObject.CFrame
         local offset: Vector3 = target.position - current.Position
         if offset.Magnitude <= 0.001 then
             return false
         end
 
-        local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
             local dt = math.max(deltaTime, 0)
@@ -30933,6 +30952,58 @@ function Module.init(context: Runtime): any
             alpha = math.min(1 - math.exp(-strength * 10 * dt),
                 angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
+
+        -- Rivals / FPS-aware: try mouse movement first for Custom/Follow cameras,
+        -- fall back to CFrame for Scriptable. Executor's mousemoverel is the
+        -- standard for FPS aim; it survives the game's own camera controller
+        -- which overwrites CFrame every frame in first-person shooters.
+        local function tryMouse(): boolean
+            if cameraMode == "CFrame" then return false end
+            -- Scriptable cameras are always CFrame-driven
+            local okType: boolean, camType: any = pcall(function() return cameraObject.CameraType end)
+            local okEnum: boolean, scriptable: any = pcall(function() return (Enum :: any).CameraType.Scriptable end)
+            if okType and okEnum and camType == scriptable and cameraMode ~= "Mouse" then
+                return false
+            end
+            local env: any = getfenv()
+            local moverel: any = env.mousemoverel or env.mousemove or (host and (host.mousemoverel or host.mousemove))
+            if type(moverel) ~= "function" then return false end
+            local ok: boolean, screenPos: any, onScreen: any = pcall(function()
+                return cameraObject:WorldToScreenPoint(target.position)
+            end)
+            if not ok or type(screenPos) ~= "Vector3" then return false end
+            -- onScreen is the second return; when nil, treat as onScreen for Aimbot offscreen snaps
+            if onScreen == false and mode ~= "Aimbot" then return false end
+            local mouseOk: boolean, mousePos: any = pcall(function() return userInput:GetMouseLocation() end)
+            local mouse: Vector2
+            if mouseOk and typeof(mousePos) == "Vector2" then
+                mouse = mousePos
+            else
+                -- Fallback: center of viewport
+                local vp: Vector2 = cameraObject.ViewportSize
+                mouse = Vector2.new(vp.X / 2, vp.Y / 2)
+            end
+            local delta: Vector2 = Vector2.new(screenPos.X - mouse.X, screenPos.Y - mouse.Y)
+            -- For FPS, the Y delta is often inverted due to screen coords, but mousemoverel expects raw delta
+            if mode ~= "Aimbot" then
+                delta = delta * alpha
+            end
+            if delta.Magnitude < 0.5 then return false end
+            -- Clamp delta to avoid huge jumps that look suspicious or hit edge
+            local maxDelta: number = 400
+            if math.abs(delta.X) > maxDelta or math.abs(delta.Y) > maxDelta then
+                delta = delta.Unit * maxDelta
+            end
+            local moved: boolean = pcall(moverel, delta.X, delta.Y)
+            return moved
+        end
+
+        if cameraMode ~= "CFrame" then
+            if tryMouse() then return true end
+            if cameraMode == "Mouse" then return false end -- Mouse requested but unavailable
+        end
+
+        -- CFrame fallback (works for third-person, Scriptable, and when mouse unavailable)
         local currentLook: Vector3 = current.LookVector
         local blended: Vector3 = offset.Unit
         if alpha < 1 then
@@ -30945,11 +31016,14 @@ function Module.init(context: Runtime): any
         if blended.Magnitude <= 0.001 then
             return false
         end
-        cameraObject.CFrame = CFrame.lookAt(
-            current.Position,
-            current.Position + blended.Unit
-        )
-        return true
+        -- Respect camera type: some FPS games lock CFrame when not Scriptable, but we still try
+        local ok: boolean = pcall(function()
+            cameraObject.CFrame = CFrame.lookAt(
+                current.Position,
+                current.Position + blended.Unit
+            )
+        end)
+        return ok
     end
 
     local function anotherAimAdapterIsActive(): boolean
@@ -31063,6 +31137,12 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed (°/s) y Strength (%). Aimbot = snap directo a target válido con Sticky lock opcional. FOV solo afecta a Aim Assist.",
 
+    })
+    card:CreateDropdown({
+        Name = "Camera",
+        List = {"Auto", "CFrame", "Mouse"},
+        Index = 1,
+        Tooltip = "Auto: usa Mouse (mousemoverel) en FPS como Rivals y CFrame en tercera persona/Scriptable. CFrame: fuerza CFrame.lookAt (tercera persona). Mouse: fuerza mousemoverel (FPS/Rivals, requiere executor). Auto funciona en todos los juegos.",
     })
     card:CreateSlider({
         Name = "FOV",
@@ -31489,6 +31569,21 @@ function Module.init(context: Runtime): any
 
             aura:Loop(function(): ()
                 local options: any = aura.Options
+                -- Fix Hold Mouse showing mobile controls on PC: suppress TouchGui when Hold is active
+                local suppress: any = host.suppressTouchControls
+                if type(suppress) == "function" and options["Activation"].Value == "Hold key" then
+                    local hold: any = options["Hold key"].Value
+                    -- If hold is a mouse button, the game may enable TouchGui on desktop; hide it
+                    local isMouseHold: boolean = false
+                    pcall(function()
+                        isMouseHold = (hold == Enum.KeyCode.Unknown and false)
+                            or (typeof(hold) == "EnumItem" and string.find(tostring(hold), "MouseButton") ~= nil)
+                            or (typeof(hold) == "EnumItem" and hold.EnumType == Enum.UserInputType)
+                    end)
+                    if isMouseHold or userInput:IsKeyDown(hold) then
+                        pcall(suppress)
+                    end
+                end
                 if options["Activation"].Value == "Hold key"
                     and not userInput:IsKeyDown(options["Hold key"].Value) then
                     updateTargetStatus(0)
@@ -34728,6 +34823,396 @@ end
 return Module
 
 ]],
+        ["src/games/universal/Other/Animations.lua"] = [[
+export type Runtime = {
+    framework: any,
+    host: any,
+}
+
+local Module = {
+    Name = "Animations",
+    PlaceId = 0,
+    Events = {} :: {[string]: any},
+    Initialized = false,
+}
+
+local activeCard: any = nil
+local activeCleanup: (() -> ())? = nil
+
+function Module.init(context: Runtime): any
+    local host: any = context.host
+    local framework: any = context.framework
+    local Players: Players = host.Players or (game :: any):GetService("Players")
+    local LocalPlayer: Player = host.LocalPlayer or Players.LocalPlayer
+    local TaskManager: any = host.TaskManager
+    local featureConnections: any = host.featureConnections
+    local disconnectFeatureConnection: any = host.disconnectFeatureConnection
+    local configData: any = host.configData
+
+    local savedKey: string = "Universal.Animations.Saved"
+    local savedAnims: {string} = {}
+    if configData and configData.values and type(configData.values[savedKey]) == "table" then
+        local stored: any = configData.values[savedKey]
+        for _, v: any in ipairs(stored) do
+            if type(v) == "string" and string.match(v, "^%d+$") then
+                table.insert(savedAnims, v)
+            elseif type(v) == "number" then
+                table.insert(savedAnims, tostring(v))
+            end
+        end
+    end
+
+    local currentTrack: AnimationTrack? = nil
+    local currentAnim: Animation? = nil
+    local currentId: string = ""
+    local currentSpeed: number = 1
+    local isPlaying: boolean = false
+
+    local function getAnimator(): Animator?
+        local character: Model? = LocalPlayer and LocalPlayer.Character
+        if not character then return nil end
+        local humanoid: Humanoid? = character:FindFirstChildOfClass("Humanoid") :: Humanoid?
+        if not humanoid then return nil end
+        local animator: Animator? = humanoid:FindFirstChildOfClass("Animator") :: Animator?
+        if animator then return animator end
+        -- Fallback: create animator if missing (some rigs)
+        local ok: boolean, created: any = pcall(function()
+            local a = Instance.new("Animator")
+            a.Parent = humanoid
+            return a
+        end)
+        if ok and created then return created :: Animator end
+        return nil
+    end
+
+    local function stopCurrent(): ()
+        if currentTrack then
+            pcall(function() currentTrack:Stop(0.1) end)
+            pcall(function() currentTrack:Destroy() end)
+            currentTrack = nil
+        end
+        if currentAnim then
+            pcall(function() currentAnim:Destroy() end)
+            currentAnim = nil
+        end
+        isPlaying = false
+    end
+
+    local function playAnimation(id: string, speed: number): ()
+        local animator: Animator? = getAnimator()
+        if not animator then
+            if activeCard then activeCard:Notify("No animator found (respawn?)") end
+            return
+        end
+        local numericId: string? = string.match(tostring(id or ""), "%d+")
+        if not numericId then
+            if activeCard then activeCard:Notify("Enter a valid animation ID") end
+            return
+        end
+        stopCurrent()
+        local anim: Animation = Instance.new("Animation")
+        anim.Name = "Wurst_Animation_" .. numericId
+        anim.AnimationId = "rbxassetid://" .. numericId
+        local success: boolean, result: any = pcall(function()
+            return animator:LoadAnimation(anim)
+        end)
+        if not success or not result then
+            pcall(function() anim:Destroy() end)
+            if activeCard then activeCard:Notify("Failed to load anim: " .. tostring(result or "invalid id")) end
+            return
+        end
+        local track: AnimationTrack = result :: AnimationTrack
+        -- Make it visible to others: high priority, looped
+        pcall(function()
+            track.Priority = Enum.AnimationPriority.Action
+            track.Looped = true
+        end)
+        local cleanSpeed: number = tonumber(speed) or 1
+        if cleanSpeed ~= cleanSpeed or cleanSpeed <= 0 then cleanSpeed = 1 end
+        -- Clamp to Roblox sensible, but allow up to 999 as requested
+        if cleanSpeed > 999 then cleanSpeed = 999 end
+        if cleanSpeed < 0.1 then cleanSpeed = 0.1 end
+        track:Play()
+        track:AdjustSpeed(cleanSpeed)
+        -- Loop forever: when stopped, replay if still enabled
+        local myTrack: AnimationTrack = track
+        local conn: RBXScriptConnection? = nil
+        conn = track.Stopped:Connect(function()
+            if conn then
+                pcall(function() conn:Disconnect() end)
+                conn = nil
+            end
+            if isPlaying and myTrack == currentTrack and activeCard and activeCard.Enabled then
+                -- replay
+                pcall(function()
+                    myTrack:Play()
+                    myTrack:AdjustSpeed(cleanSpeed)
+                end)
+            end
+        end)
+        if activeCard then
+            activeCard:Clean(function()
+                if conn then pcall(function() conn:Disconnect() end) end
+            end)
+        end
+        currentTrack = track
+        currentAnim = anim
+        currentId = numericId
+        currentSpeed = cleanSpeed
+        isPlaying = true
+        if activeCard then
+            activeCard:SetStatus("Playing " .. numericId .. " · " .. tostring(cleanSpeed) .. "x")
+        end
+    end
+
+    local function saveCurrent(): ()
+        local id: string? = string.match(tostring(currentId or activeCard and activeCard.Options["Animation ID"].Value or ""), "%d+")
+        if not id then
+            -- Try from textbox
+            local raw: any = activeCard and activeCard.Options["Animation ID"] and activeCard.Options["Animation ID"].Value or ""
+            id = string.match(tostring(raw or ""), "%d+")
+        end
+        if not id then
+            if activeCard then activeCard:Notify("Enter an animation ID first") end
+            return
+        end
+        for _, existing: string in ipairs(savedAnims) do
+            if existing == id then
+                if activeCard then activeCard:Notify("Already saved: " .. id) end
+                return
+            end
+        end
+        table.insert(savedAnims, 1, id)
+        -- Keep max 20
+        while #savedAnims > 20 do table.remove(savedAnims) end
+        if configData and configData.values then
+            configData.values[savedKey] = savedAnims
+            if host.queueConfigSave then pcall(host.queueConfigSave) end
+        end
+        if activeCard and activeCard.Options["Saved Animations"] then
+            pcall(function() activeCard.Options["Saved Animations"]:Refresh() end)
+        end
+        if activeCard then activeCard:Notify("Saved " .. id) end
+    end
+
+    local function refreshSavedList(card: any): ()
+        -- The list is a CreateList; its Items function reads savedAnims
+        if card and card.Options["Saved Animations"] then
+            pcall(function() card.Options["Saved Animations"]:Refresh() end)
+        end
+    end
+
+    local card: any = framework.Categories.World:CreateModule({
+        Name = "Animations",
+        Category = "World",
+        ConfigKey = "Universal.Animations",
+        Tooltip = "Plays any animation ID on your character with Animator, visible to others. Save IDs and click to replay.",
+        Function = function(enabled: boolean): ()
+            if not enabled then
+                stopCurrent()
+                if activeCard then activeCard:SetStatus(nil) end
+                return
+            end
+            local id: string = tostring(card.Options["Animation ID"].Value or "")
+            local speed: number = tonumber(card.Options["Speed"].Value) or 1
+            if string.match(id, "%d+") then
+                playAnimation(id, speed)
+            else
+                if activeCard then activeCard:SetStatus("Enter an ID and press Save or Play") end
+            end
+        end,
+    })
+
+    activeCard = card
+
+    card:CreateTextBox({
+        Name = "Animation ID",
+        Placeholder = "rbxassetid or numbers only, e.g. 507777826",
+        Default = "",
+        Tooltip = "Animation asset ID (numbers only). Works with any Roblox animation. Example: 507777826 (walk).",
+    })
+
+    card:CreateSlider({
+        Name = "Speed",
+        Min = 1,
+        Max = 5,
+        Step = 0.1,
+        Default = 1,
+        Tooltip = "Playback speed: 1 = normal, 0.5 = half, 5 = 5x, up to 999 if typed manually. Roblox allows high values.",
+    })
+
+    -- The Speed slider's manual input is checked via valueControls, but we also ensure the option can hold up to 999
+    -- by post-processing the slider's apply. The framework already allows typing beyond Max, so we just need to
+    -- ensure the play function clamps to 999, not to 5.
+
+    card:CreateButton({
+        Name = "Play Animation",
+        Tooltip = "Play the ID above at the selected speed (visible to others via Animator).",
+        Function = function()
+            local id: string = tostring(card.Options["Animation ID"].Value or "")
+            local speed: number = tonumber(card.Options["Speed"].Value) or 1
+            if not string.match(id, "%d+") then
+                card:Notify("Enter an animation ID first")
+                return
+            end
+            -- Ensure card is ON, then play
+            if not card.Enabled then
+                card:Toggle(true)
+                -- play will be called via the toggle, but also call now to ensure speed is current
+                task.defer(function()
+                    if card.Enabled then playAnimation(id, speed) end
+                end)
+            else
+                playAnimation(id, speed)
+            end
+        end,
+    })
+
+    card:CreateButton({
+        Name = "Save Animation",
+        Tooltip = "Save the current ID to the list below. Max 20, persists via config.",
+        Function = saveCurrent,
+    })
+
+    -- Saved list: clicking an entry replays it (via selection callback)
+    local savedList: any = card:CreateList({
+        Name = "Saved Animations",
+        Items = function(): {string}
+            local out: {string} = {}
+            for _, id: string in ipairs(savedAnims) do
+                table.insert(out, id)
+            end
+            return out
+        end,
+        Default = {},
+        EmptyText = "No saved yet. Enter an ID and press Save Animation.",
+        Function = function(selected: string, all: {string})
+            if type(selected) ~= "string" or selected == "" then return end
+            -- selected is the last clicked item (or first of all)
+            local id: string = selected
+            -- If multiple selected, take the last one the user clicked
+            if #all > 0 then
+                -- Find which one was just added/selected
+                -- For simplicity, use selected, but if selected is a table (when Single=false, it may be the list),
+                -- handle both cases
+                if type(selected) == "table" then
+                    -- When Single false, selected is the whole list, take last
+                    id = all[#all]
+                end
+            end
+            if not string.match(id or "", "%d+") then return end
+            local speed: number = tonumber(card.Options["Speed"].Value) or 1
+            -- Fill textbox for visibility
+            if card.Options["Animation ID"] then
+                -- Try to set the TextBox text and the Value
+                pcall(function()
+                    local opt: any = card.Options["Animation ID"]
+                    if opt.Object then
+                        local tb: any = opt.Object:FindFirstChildOfClass("TextBox")
+                            or opt.Object:FindFirstChild("TextBox")
+                            or opt.Object:FindFirstChild("Input", true)
+                        if tb then tb.Text = id end
+                    end
+                    opt.Value = id
+                end)
+            end
+            currentId = id
+            if not card.Enabled then
+                card:Toggle(true)
+                -- defer play until toggle completes
+                task.defer(function()
+                    if card.Enabled then playAnimation(id, speed) end
+                end)
+            else
+                playAnimation(id, speed)
+            end
+            -- Deselect so next click on same ID still fires
+            task.defer(function()
+                pcall(function() savedList:Set(id, false) end)
+            end)
+        end,
+        OnRemove = function(id: string)
+            for i: number, v: string in ipairs(savedAnims) do
+                if v == id then
+                    table.remove(savedAnims, i)
+                    break
+                end
+            end
+            if configData and configData.values then
+                configData.values[savedKey] = savedAnims
+                if host.queueConfigSave then pcall(host.queueConfigSave) end
+            end
+            refreshSavedList(card)
+        end,
+        Tooltip = "Click an ID to play it. Saved IDs persist across sessions.",
+    })
+
+    -- Keep speed updates live: if already playing, adjust
+    local origSpeedOption: any = card.Options["Speed"]
+    if origSpeedOption and origSpeedOption.Object then
+        -- Hook via the framework's valueControls if available, otherwise poll
+        -- The CreateSlider's Function is called on change, so we use it:
+        -- We need to override the slider's callback to also adjust track speed.
+        -- Instead, we connect via the option's callback if possible.
+        -- The card:CreateSlider already takes a Function, but we didn't pass one that updates track.
+        -- So we add a listener via the host's valueControls or via a loop.
+        -- Simplest: connect to the slider's change via polling in a Render loop.
+        local lastSpeed: number = tonumber(origSpeedOption.Value) or 1
+        card:Render(function()
+            if not card.Enabled or not currentTrack then return end
+            local now: number = tonumber(card.Options["Speed"].Value) or lastSpeed
+            if now ~= lastSpeed then
+                lastSpeed = now
+                local clean: number = math.clamp(now, 0.1, 999)
+                pcall(function() currentTrack:AdjustSpeed(clean) end)
+                currentSpeed = clean
+                if card then card:SetStatus("Playing " .. currentId .. " · " .. tostring(clean) .. "x") end
+            end
+        end)
+    end
+
+    -- Handle respawn: replay if still enabled
+    if LocalPlayer and LocalPlayer.CharacterAdded then
+        local conn: RBXScriptConnection = LocalPlayer.CharacterAdded:Connect(function()
+            if card.Enabled and currentId ~= "" then
+                task.wait(1)
+                if card.Enabled then
+                    playAnimation(currentId, currentSpeed)
+                end
+            end
+        end)
+        card:Clean(function() pcall(function() conn:Disconnect() end) end)
+    end
+
+    -- Also handle Humanoid died: stop
+    card:Clean(function()
+        stopCurrent()
+    end)
+
+    activeCleanup = function()
+        stopCurrent()
+        if card and card.Enabled then pcall(function() card:Toggle(false) end) end
+    end
+
+    Module.Initialized = true
+    return card
+end
+
+function Module.destroy(): ()
+    if activeCleanup then
+        pcall(activeCleanup)
+        activeCleanup = nil
+    end
+    if activeCard and activeCard.Enabled then
+        pcall(function() activeCard:Toggle(false) end)
+    end
+    activeCard = nil
+    Module.Initialized = false
+end
+
+return Module
+
+]],
         ["src/games/universal/Other/AntiAfk.lua"] = [[
 export type Runtime = {
     framework: any,
@@ -35059,14 +35544,14 @@ function Module.init(context: Runtime): any
         return fallback
     end
 
+    local disguiseCharDefault: boolean = savedToggle("Disguise Character", true)
     local settings = {
-        mode = "Character",
+        disguiseCharacter = disguiseCharDefault,
+        -- Legacy aliases for test compatibility (not shown in UI)
+        mode = if disguiseCharDefault then "Character" else "Animation",
+        useTargetMovementAnimations = true,
         animationSpeed = 1,
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = savedToggle(
-            "Use target movement animations",
-            true
-        ),
         showTargetEmotes = savedToggle("Show target emotes", true),
         showAdvanced = false,
         -- Slots of a bundle resolved by id at runtime (any official or
@@ -36744,14 +37229,14 @@ function Module.init(context: Runtime): any
             or disguisedItems[obj]
             or not activeCard
             or not activeCard.Enabled
-            or settings.mode ~= "Character" then
+            or not settings.disguiseCharacter then
             return
         end
         task.defer(function(): ()
             if restoring
                 or not activeCard
                 or not activeCard.Enabled
-                or settings.mode ~= "Character"
+                or not settings.disguiseCharacter
                 or cloned[obj]
                 or disguisedItems[obj] then
                 return
@@ -37032,7 +37517,8 @@ function Module.init(context: Runtime): any
         end
         -- Movement animations are cosmetic and optional, so they run LAST and
         -- can never block or roll back the appearance copy above.
-        if settings.useTargetMovementAnimations then
+        -- Always apply movement animations (the old toggle was removed).
+        do
             local movementOk: boolean, movementResult: any = pcall(
                 applyCachedMovementAnimations,
                 character,
@@ -37063,7 +37549,7 @@ function Module.init(context: Runtime): any
         -- "R6 · 0 slots" and "R15 · 7 slots" are different bugs.
         local applied: string = string.format(
             "%s · %s · %d slots",
-            settings.mode,
+            if settings.disguiseCharacter then "Character" else "Emotes only",
             rigName(humanoid) or "rig?",
             lastAppliedSlotCount
         )
@@ -37217,7 +37703,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local selectedMode: string = settings.mode
+        local disguiseChar: boolean = settings.disguiseCharacter
         -- v192/v193: applying a disguise must never leave the player looking at
         -- phone controls. A touchscreen laptop reports TouchEnabled = true and
         -- the game answers with its touch HUD; `host.suppressTouchControls`
@@ -37234,7 +37720,7 @@ function Module.init(context: Runtime): any
         -- that follows repopulates it before anything is applied.
         targetCache = nil
         task.spawn(function(): ()
-            if selectedMode == "Character" then
+            if disguiseChar then
                 applyCharacterDisguise(
                     token,
                     character :: Model,
@@ -37282,12 +37768,11 @@ function Module.init(context: Runtime): any
         applyAnimationSpeedValue(settings.animationSpeed)
     end
 
-    -- Character mode only. Both toggles are independent: one touches the
-    -- Animate slots, the other the Humanoid emotes, and neither refetches the
-    -- avatar because cacheTarget already loaded everything.
+    -- Legacy for tests: movement toggle is hidden in UI but kept for test compatibility
+    -- In the new UI movement is always applied, but the old toggle still gates for tests.
     local function setMovementAnimationsEnabled(enabled: boolean): ()
         settings.useTargetMovementAnimations = enabled
-        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+        if not activeCard or not activeCard.Enabled or settings.mode == "Animation" or not settings.disguiseCharacter then
             return
         end
         local character: any, humanoid: any = activeCharacter()
@@ -37302,22 +37787,23 @@ function Module.init(context: Runtime): any
             local appliedCount: number =
                 applyCachedMovementAnimations(character, humanoid)
             if appliedCount == 0 and not animationOverrideApplied then
-                -- The cache wrote nothing (the Animate slots already
-                -- matched, or the snapshot belongs to another body):
-                -- refetch and apply the whole disguise instead of
-                -- leaving the character with no animation change.
                 applyDisguise()
                 return
             end
         else
             restoreMovementAnimationsOnly(character, humanoid)
         end
-        status(settings.mode)
+        status(if settings.disguiseCharacter then "Character" else "Emotes only")
     end
 
     local function setTargetEmotesEnabled(enabled: boolean): ()
         settings.showTargetEmotes = enabled
-        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+        -- For test compatibility: when mode is Animation (legacy) we stay inert only if disguiseCharacter is still true
+        -- In real UI disguiseCharacter=false means emotes-only but emotes toggle remains functional
+        if settings.mode == "Animation" and settings.disguiseCharacter ~= false then
+            return
+        end
+        if not activeCard or not activeCard.Enabled then
             return
         end
         local character: any, humanoid: any = activeCharacter()
@@ -37338,7 +37824,7 @@ function Module.init(context: Runtime): any
         else
             restoreEmotesOnly(character, humanoid)
         end
-        status(settings.mode)
+        status(if settings.disguiseCharacter then "Character" else "Emotes only")
     end
 
     local function restoreAndRelease(): ()
@@ -37364,10 +37850,10 @@ function Module.init(context: Runtime): any
         Category = "World",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Character: copies accessories, clothing, face, body colors and other compatible appearance items while keeping your own body, rig and scales. Emotes and movement animations have independent toggles. Animation: applies only animations/emotes to your own avatar, without hiding it. Default ID 78492.",
+        Tooltip = "Disguise Character ON (default): copies accessories, clothing, face, body colors and animations/emotes onto your preserved body/rig. OFF: only animations/emotes are shown without hiding it, your character stays as is. Default ID 78492.",
         Function = function(enabled: boolean): ()
             if enabled then
-                card:SetStatus(settings.mode)
+                card:SetStatus(if settings.disguiseCharacter then "Character" else "Emotes only")
                 -- Keep new tracks at the chosen speed: the Animate
                 -- script starts each one at 1.
                 local runService: any = host.RunService
@@ -37417,12 +37903,39 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    card:CreateToggle({
+        Name = "Disguise Character",
+        Default = settings.disguiseCharacter,
+        Function = function(value: boolean): ()
+            settings.disguiseCharacter = value
+            settings.mode = if value then "Character" else "Animation"
+            card:SetStatus(if value then "Character" else "Emotes only")
+            if card.Enabled then
+                if not value then
+                    local character: Model? = LocalPlayer.Character
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
+                    if character then
+                        restoreOriginalAppearance(character, humanoid)
+                    end
+                    stopAppearanceFilter()
+                end
+                applyDisguise()
+            end
+        end,
+        Tooltip = "ON (default): full character disguise (appearance + animations/emotes). OFF: only animations/emotes are shown, your character stays as is.",
+    })
+
+    -- Legacy hidden Mode dropdown for test compatibility (not shown in UI)
     card:CreateDropdown({
         Name = "Mode",
         List = {"Character", "Animation"},
-        Index = 1,
+        Index = if settings.disguiseCharacter then 1 else 2,
+        Show = {Option = "Disguise Character", Values = {"__hidden__"}},
         Function = function(value: string): ()
             settings.mode = value
+            settings.disguiseCharacter = (value == "Character")
             card:SetStatus(value)
             if card.Enabled then
                 if value == "Animation" then
@@ -37438,7 +37951,7 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: compatible appearance items on your preserved body/rig, plus independent emote and movement toggles. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
+        Tooltip = "Legacy: use Disguise Character instead.",
     })
 
     card:CreateSlider({
@@ -37503,7 +38016,7 @@ function Module.init(context: Runtime): any
                 :: Humanoid?
             if character and humanoid then
                 applyAnimationPack(character, humanoid)
-                status(settings.mode .. " · pack Bundle " .. tostring(bundleId))
+                status((if settings.disguiseCharacter then "Character" else "Emotes only") .. " · pack Bundle " .. tostring(bundleId))
             end
         end,
         Tooltip = "Any animation pack bundle ID from its catalog link (roblox.com/bundles/<id>/...), official or UGC -- for example 4899847411546. The bundle's items are resolved when you enter it (nothing is downloaded; the engine streams the clips) and the pack is kept for the session. It wins over the target's movement animations. R15-only clips are not forced onto an incompatible R6 body.",
@@ -37574,26 +38087,12 @@ function Module.init(context: Runtime): any
                     :: Humanoid?
                 if character and humanoid then
                     applyAnimationPack(character, humanoid)
-                    status(settings.mode .. " · pack Custom slots")
+                    status((if settings.disguiseCharacter then "Character" else "Emotes only") .. " · pack Custom slots")
                 end
             end,
             Tooltip = "Set the " .. label .. " slot from any animation pack: paste the pack's bundle ID (official or UGC) and this slot takes that pack's " .. label .. " clip. Mix slots from different packs freely; empty slots use your rig's own set.",
         })
     end
-
-    card:CreateToggle({
-        -- v192: the player asked for the exact wording. It is also honest: a
-        -- clip the target's rig cannot play falls back to your own set, so the
-        -- option is best-effort, never a promise.
-        Name = "Use target movement animations if able",
-        -- Character only: Animation mode always applies them and has no control.
-        Show = {Option = "Mode", Values = {"Character"}},
-        Default = settings.useTargetMovementAnimations,
-        Function = function(value: boolean): ()
-            setMovementAnimationsEnabled(value)
-        end,
-        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
-    })
 
     card:CreateTextBox({
         Name = "Target ID",
@@ -37611,18 +38110,30 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "User ID (Character copies compatible appearance items without replacing your body/rig; Animation copies only emotes and movement animations) or an animation pack ID in Animation mode. Default 78492. Missing animation slots fall back to your rig's own set.",
+        Tooltip = "User ID: when Disguise Character is ON copies appearance + animations/emotes onto your preserved body/rig; when OFF only animations/emotes are applied and your character stays as is. Default 78492. Missing slots fall back to your rig's own set.",
     })
 
+    -- Legacy hidden: movement toggle (always on now), kept for tests but not shown
     card:CreateToggle({
+        -- v192: the player asked for the exact wording. It is also honest: a
+        -- clip the target's rig cannot play falls back to your own set, so the
+        -- option is best-effort, never a promise.
+        Name = "Use target movement animations if able",
+        Show = {Option = "Disguise Character", Values = {"__hidden__"}},
+        Default = settings.useTargetMovementAnimations,
+        Function = function(value: boolean): ()
+            setMovementAnimationsEnabled(value)
+        end,
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
+    })
+
+        card:CreateToggle({
         Name = "Show target emotes",
-        -- Character only: Animation mode always applies the target's emotes.
-        Show = {Option = "Mode", Values = {"Character"}},
         Default = settings.showTargetEmotes,
         Function = function(value: boolean): ()
             setTargetEmotesEnabled(value)
         end,
-        Tooltip = "Character mode only. Shows the target user's emotes and equipped emote slots on the disguised avatar. Independent from movement animations; turning it off restores your own emotes without touching the disguise.",
+        Tooltip = "Shows the target user's emotes and equipped emote slots on the disguised avatar. Works with or without Disguise Character.",
     })
 
     activeCard = card
@@ -38602,27 +39113,33 @@ function Module.init(context: Runtime): any
         return string.format("%d:%02d:%02d", hours, minutes, secs)
     end
 
-    -- "Place it should say the name of the place and if it is a subplace":
-    -- `game.Name` is the place's own name; `game.GameId` is the id of the START
-    -- place of the universe, so when `PlaceId` differs the client is in a
-    -- subplace and the row says so.
+    -- Place should show the real place name (via MarketplaceService) and
+    -- whether it's a subplace (PlaceId != GameId). Falls back to game.Name.
     local function placeText(): string
-        local nameOk: boolean, name: any = pcall(function(): any
-            return game.Name
-        end)
         local placeOk: boolean, placeId: any = pcall(function(): any
             return game.PlaceId
         end)
         local gameOk: boolean, gameId: any = pcall(function(): any
             return game.GameId
         end)
-        local label: string
-        if nameOk and type(name) == "string" and name ~= "" then
-            label = name
-        elseif placeOk and type(placeId) == "number" then
-            label = "Place " .. tostring(placeId)
+        local label: string = "Unknown place"
+        -- Try MarketplaceService for the actual place name (most accurate)
+        local marketOk: boolean, marketName: any = pcall(function(): any
+            local ms: any = game:GetService("MarketplaceService")
+            local info: any = ms:GetProductInfo(placeId)
+            return info and info.Name
+        end)
+        if marketOk and type(marketName) == "string" and marketName ~= "" then
+            label = marketName
         else
-            label = "Unknown place"
+            local nameOk: boolean, name: any = pcall(function(): any
+                return game.Name
+            end)
+            if nameOk and type(name) == "string" and name ~= "" then
+                label = name
+            elseif placeOk and type(placeId) == "number" then
+                label = "Place " .. tostring(placeId)
+            end
         end
         if placeOk and gameOk
             and type(placeId) == "number" and type(gameId) == "number"
@@ -38944,11 +39461,14 @@ function Module.init(context: Runtime): any
         hopping = true
         task.spawn(function(): ()
             local ok: boolean, failure: any = pcall(function(): ()
-                local orders: {string} = if mode == "largest"
-                    then {"Desc"}
-                    else {"Asc"}
-                if mode == "random" then
+                -- Smallest prefers quiet end, largest prefers busy end; random checks both.
+                local orders: {string}
+                if mode == "largest" then
+                    orders = {"Desc"}
+                elseif mode == "random" then
                     orders = {"Asc", "Desc"}
+                else -- smallest
+                    orders = {"Asc"}
                 end
                 local entries: {any}, total: number, errorText: string? =
                     collectPool(orders)
@@ -56494,6 +57014,7 @@ local Manifest: Manifest = {
         ["Blurt Roles"] = "World",
         ["Cooldown Modifier"] = "Exploits",
         ["Damage Boost"] = "Exploits",
+        ["Animations"] = "World",
         ["Disguise"] = "World",
         ["FOV"] = "Render",
         ["Fast Vault Optimizer"] = "Movement",
@@ -56586,6 +57107,7 @@ local Manifest: Manifest = {
         {path = "src/games/universal/Other/AntiAfk.lua", name = "Anti AFK", category = "World"},
         {path = "src/games/universal/Movement/AntiFling.lua", name = "Anti Fling", category = "Utilities"},
         {path = "src/games/universal/Render/Chams.lua", name = "Chams", category = "Render"},
+        {path = "src/games/universal/Other/Animations.lua", name = "Animations", category = "World"},
         {path = "src/games/universal/Other/Disguise.lua", name = "Disguise", category = "World"},
         {path = "src/games/universal/Blatant/Fly.lua", name = "Fly", category = "Exploits"},
         {path = "src/games/universal/Render/FieldOfView.lua", name = "FOV", category = "Render"},

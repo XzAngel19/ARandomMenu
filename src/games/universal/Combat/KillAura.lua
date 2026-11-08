@@ -304,6 +304,21 @@ function Module.init(context: Runtime): any
 
             aura:Loop(function(): ()
                 local options: any = aura.Options
+                -- Fix Hold Mouse showing mobile controls on PC: suppress TouchGui when Hold is active
+                local suppress: any = host.suppressTouchControls
+                if type(suppress) == "function" and options["Activation"].Value == "Hold key" then
+                    local hold: any = options["Hold key"].Value
+                    -- If hold is a mouse button, the game may enable TouchGui on desktop; hide it
+                    local isMouseHold: boolean = false
+                    pcall(function()
+                        isMouseHold = (hold == Enum.KeyCode.Unknown and false)
+                            or (typeof(hold) == "EnumItem" and string.find(tostring(hold), "MouseButton") ~= nil)
+                            or (typeof(hold) == "EnumItem" and hold.EnumType == Enum.UserInputType)
+                    end)
+                    if isMouseHold or userInput:IsKeyDown(hold) then
+                        pcall(suppress)
+                    end
+                end
                 if options["Activation"].Value == "Hold key"
                     and not userInput:IsKeyDown(options["Hold key"].Value) then
                     updateTargetStatus(0)

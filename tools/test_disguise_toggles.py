@@ -19,7 +19,7 @@ handlers = section(
 )
 
 script = PRELUDE + 'local host={configData={states={}}}\n' + saved + r'''
-local settings={mode="Character"}
+local settings={mode="Character", disguiseCharacter=true, useTargetMovementAnimations=true, showTargetEmotes=true}
 local activeCard={Enabled=true,status=nil}
 local function status(message) activeCard.status=message end
 local notifications={}
@@ -99,14 +99,17 @@ assert(table.concat(calls,",")=="refetch")
 pass("no cache: a real application is requested instead of guessing")
 
 reset();cached(emotes,{1})
-settings.mode="Animation"
+settings.mode="Animation"; settings.disguiseCharacter=false
 setMovementAnimationsEnabled(false)
-setTargetEmotesEnabled(false)
 assert(table.concat(calls,",")=="" and #notifications==0,
-    "Animation mode has no toggles to run")
-assert(settings.useTargetMovementAnimations==false and settings.showTargetEmotes==false)
-settings.mode="Character"
-pass("Animation mode: handlers are inert but keep the preference")
+    "Animation mode movement toggle is inert")
+assert(settings.useTargetMovementAnimations==false)
+reset()
+setTargetEmotesEnabled(false)
+assert(table.concat(calls,",")=="emote-",
+    "emotes toggle still works in Animation mode")
+settings.mode="Character"; settings.disguiseCharacter=true; settings.showTargetEmotes=true
+pass("Animation mode: movement handler inert, emotes still functional, preferences kept")
 
 reset();activeCard.Enabled=false
 setMovementAnimationsEnabled(true)
@@ -130,6 +133,8 @@ setTargetEmotesEnabled(true)
 assert(table.concat(calls,",")=="anim+,emote-,anim-,emote+")
 pass("both toggles are independent in either order")
 
+host.configData.states["Universal.Disguise.DisguiseCharacter"]=false
+assert(savedToggle("Disguise Character",true)==false, "a saved OFF check must win over the default for Disguise Character")
 host.configData.states["Universal.Disguise.Usetargetmovementanimationsifable"]=false
 assert(savedToggle("Use target movement animations if able",true)==false,
     "a saved OFF check must win over the default")

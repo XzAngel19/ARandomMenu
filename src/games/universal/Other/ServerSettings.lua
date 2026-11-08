@@ -162,27 +162,33 @@ function Module.init(context: Runtime): any
         return string.format("%d:%02d:%02d", hours, minutes, secs)
     end
 
-    -- "Place it should say the name of the place and if it is a subplace":
-    -- `game.Name` is the place's own name; `game.GameId` is the id of the START
-    -- place of the universe, so when `PlaceId` differs the client is in a
-    -- subplace and the row says so.
+    -- Place should show the real place name (via MarketplaceService) and
+    -- whether it's a subplace (PlaceId != GameId). Falls back to game.Name.
     local function placeText(): string
-        local nameOk: boolean, name: any = pcall(function(): any
-            return game.Name
-        end)
         local placeOk: boolean, placeId: any = pcall(function(): any
             return game.PlaceId
         end)
         local gameOk: boolean, gameId: any = pcall(function(): any
             return game.GameId
         end)
-        local label: string
-        if nameOk and type(name) == "string" and name ~= "" then
-            label = name
-        elseif placeOk and type(placeId) == "number" then
-            label = "Place " .. tostring(placeId)
+        local label: string = "Unknown place"
+        -- Try MarketplaceService for the actual place name (most accurate)
+        local marketOk: boolean, marketName: any = pcall(function(): any
+            local ms: any = game:GetService("MarketplaceService")
+            local info: any = ms:GetProductInfo(placeId)
+            return info and info.Name
+        end)
+        if marketOk and type(marketName) == "string" and marketName ~= "" then
+            label = marketName
         else
-            label = "Unknown place"
+            local nameOk: boolean, name: any = pcall(function(): any
+                return game.Name
+            end)
+            if nameOk and type(name) == "string" and name ~= "" then
+                label = name
+            elseif placeOk and type(placeId) == "number" then
+                label = "Place " .. tostring(placeId)
+            end
         end
         if placeOk and gameOk
             and type(placeId) == "number" and type(gameId) == "number"
@@ -504,11 +510,14 @@ function Module.init(context: Runtime): any
         hopping = true
         task.spawn(function(): ()
             local ok: boolean, failure: any = pcall(function(): ()
-                local orders: {string} = if mode == "largest"
-                    then {"Desc"}
-                    else {"Asc"}
-                if mode == "random" then
+                -- Smallest prefers quiet end, largest prefers busy end; random checks both.
+                local orders: {string}
+                if mode == "largest" then
+                    orders = {"Desc"}
+                elseif mode == "random" then
                     orders = {"Asc", "Desc"}
+                else -- smallest
+                    orders = {"Asc"}
                 end
                 local entries: {any}, total: number, errorText: string? =
                     collectPool(orders)

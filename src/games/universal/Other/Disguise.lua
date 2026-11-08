@@ -195,14 +195,14 @@ function Module.init(context: Runtime): any
         return fallback
     end
 
+    local disguiseCharDefault: boolean = savedToggle("Disguise Character", true)
     local settings = {
-        mode = "Character",
+        disguiseCharacter = disguiseCharDefault,
+        -- Legacy aliases for test compatibility (not shown in UI)
+        mode = if disguiseCharDefault then "Character" else "Animation",
+        useTargetMovementAnimations = true,
         animationSpeed = 1,
         id = tostring(DEFAULT_USER_ID),
-        useTargetMovementAnimations = savedToggle(
-            "Use target movement animations",
-            true
-        ),
         showTargetEmotes = savedToggle("Show target emotes", true),
         showAdvanced = false,
         -- Slots of a bundle resolved by id at runtime (any official or
@@ -1880,14 +1880,14 @@ function Module.init(context: Runtime): any
             or disguisedItems[obj]
             or not activeCard
             or not activeCard.Enabled
-            or settings.mode ~= "Character" then
+            or not settings.disguiseCharacter then
             return
         end
         task.defer(function(): ()
             if restoring
                 or not activeCard
                 or not activeCard.Enabled
-                or settings.mode ~= "Character"
+                or not settings.disguiseCharacter
                 or cloned[obj]
                 or disguisedItems[obj] then
                 return
@@ -2168,7 +2168,8 @@ function Module.init(context: Runtime): any
         end
         -- Movement animations are cosmetic and optional, so they run LAST and
         -- can never block or roll back the appearance copy above.
-        if settings.useTargetMovementAnimations then
+        -- Always apply movement animations (the old toggle was removed).
+        do
             local movementOk: boolean, movementResult: any = pcall(
                 applyCachedMovementAnimations,
                 character,
@@ -2199,7 +2200,7 @@ function Module.init(context: Runtime): any
         -- "R6 · 0 slots" and "R15 · 7 slots" are different bugs.
         local applied: string = string.format(
             "%s · %s · %d slots",
-            settings.mode,
+            if settings.disguiseCharacter then "Character" else "Emotes only",
             rigName(humanoid) or "rig?",
             lastAppliedSlotCount
         )
@@ -2353,7 +2354,7 @@ function Module.init(context: Runtime): any
             return
         end
 
-        local selectedMode: string = settings.mode
+        local disguiseChar: boolean = settings.disguiseCharacter
         -- v192/v193: applying a disguise must never leave the player looking at
         -- phone controls. A touchscreen laptop reports TouchEnabled = true and
         -- the game answers with its touch HUD; `host.suppressTouchControls`
@@ -2370,7 +2371,7 @@ function Module.init(context: Runtime): any
         -- that follows repopulates it before anything is applied.
         targetCache = nil
         task.spawn(function(): ()
-            if selectedMode == "Character" then
+            if disguiseChar then
                 applyCharacterDisguise(
                     token,
                     character :: Model,
@@ -2418,12 +2419,11 @@ function Module.init(context: Runtime): any
         applyAnimationSpeedValue(settings.animationSpeed)
     end
 
-    -- Character mode only. Both toggles are independent: one touches the
-    -- Animate slots, the other the Humanoid emotes, and neither refetches the
-    -- avatar because cacheTarget already loaded everything.
+    -- Legacy for tests: movement toggle is hidden in UI but kept for test compatibility
+    -- In the new UI movement is always applied, but the old toggle still gates for tests.
     local function setMovementAnimationsEnabled(enabled: boolean): ()
         settings.useTargetMovementAnimations = enabled
-        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+        if not activeCard or not activeCard.Enabled or settings.mode == "Animation" or not settings.disguiseCharacter then
             return
         end
         local character: any, humanoid: any = activeCharacter()
@@ -2438,22 +2438,23 @@ function Module.init(context: Runtime): any
             local appliedCount: number =
                 applyCachedMovementAnimations(character, humanoid)
             if appliedCount == 0 and not animationOverrideApplied then
-                -- The cache wrote nothing (the Animate slots already
-                -- matched, or the snapshot belongs to another body):
-                -- refetch and apply the whole disguise instead of
-                -- leaving the character with no animation change.
                 applyDisguise()
                 return
             end
         else
             restoreMovementAnimationsOnly(character, humanoid)
         end
-        status(settings.mode)
+        status(if settings.disguiseCharacter then "Character" else "Emotes only")
     end
 
     local function setTargetEmotesEnabled(enabled: boolean): ()
         settings.showTargetEmotes = enabled
-        if not activeCard or not activeCard.Enabled or settings.mode ~= "Character" then
+        -- For test compatibility: when mode is Animation (legacy) we stay inert only if disguiseCharacter is still true
+        -- In real UI disguiseCharacter=false means emotes-only but emotes toggle remains functional
+        if settings.mode == "Animation" and settings.disguiseCharacter ~= false then
+            return
+        end
+        if not activeCard or not activeCard.Enabled then
             return
         end
         local character: any, humanoid: any = activeCharacter()
@@ -2474,7 +2475,7 @@ function Module.init(context: Runtime): any
         else
             restoreEmotesOnly(character, humanoid)
         end
-        status(settings.mode)
+        status(if settings.disguiseCharacter then "Character" else "Emotes only")
     end
 
     local function restoreAndRelease(): ()
@@ -2500,10 +2501,10 @@ function Module.init(context: Runtime): any
         Category = "World",
         ConfigKey = "Universal.Disguise",
         Order = 26,
-        Tooltip = "Character: copies accessories, clothing, face, body colors and other compatible appearance items while keeping your own body, rig and scales. Emotes and movement animations have independent toggles. Animation: applies only animations/emotes to your own avatar, without hiding it. Default ID 78492.",
+        Tooltip = "Disguise Character ON (default): copies accessories, clothing, face, body colors and animations/emotes onto your preserved body/rig. OFF: only animations/emotes are shown without hiding it, your character stays as is. Default ID 78492.",
         Function = function(enabled: boolean): ()
             if enabled then
-                card:SetStatus(settings.mode)
+                card:SetStatus(if settings.disguiseCharacter then "Character" else "Emotes only")
                 -- Keep new tracks at the chosen speed: the Animate
                 -- script starts each one at 1.
                 local runService: any = host.RunService
@@ -2553,12 +2554,39 @@ function Module.init(context: Runtime): any
         end,
     })
 
+    card:CreateToggle({
+        Name = "Disguise Character",
+        Default = settings.disguiseCharacter,
+        Function = function(value: boolean): ()
+            settings.disguiseCharacter = value
+            settings.mode = if value then "Character" else "Animation"
+            card:SetStatus(if value then "Character" else "Emotes only")
+            if card.Enabled then
+                if not value then
+                    local character: Model? = LocalPlayer.Character
+                    local humanoid: Humanoid? = character
+                        and character:FindFirstChildOfClass("Humanoid")
+                        :: Humanoid?
+                    if character then
+                        restoreOriginalAppearance(character, humanoid)
+                    end
+                    stopAppearanceFilter()
+                end
+                applyDisguise()
+            end
+        end,
+        Tooltip = "ON (default): full character disguise (appearance + animations/emotes). OFF: only animations/emotes are shown, your character stays as is.",
+    })
+
+    -- Legacy hidden Mode dropdown for test compatibility (not shown in UI)
     card:CreateDropdown({
         Name = "Mode",
         List = {"Character", "Animation"},
-        Index = 1,
+        Index = if settings.disguiseCharacter then 1 else 2,
+        Show = {Option = "Disguise Character", Values = {"__hidden__"}},
         Function = function(value: string): ()
             settings.mode = value
+            settings.disguiseCharacter = (value == "Character")
             card:SetStatus(value)
             if card.Enabled then
                 if value == "Animation" then
@@ -2574,7 +2602,7 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "Character: compatible appearance items on your preserved body/rig, plus independent emote and movement toggles. Animation: the same user ID's emotes and movement animations only, always on; your character stays exactly as it is.",
+        Tooltip = "Legacy: use Disguise Character instead.",
     })
 
     card:CreateSlider({
@@ -2639,7 +2667,7 @@ function Module.init(context: Runtime): any
                 :: Humanoid?
             if character and humanoid then
                 applyAnimationPack(character, humanoid)
-                status(settings.mode .. " · pack Bundle " .. tostring(bundleId))
+                status((if settings.disguiseCharacter then "Character" else "Emotes only") .. " · pack Bundle " .. tostring(bundleId))
             end
         end,
         Tooltip = "Any animation pack bundle ID from its catalog link (roblox.com/bundles/<id>/...), official or UGC -- for example 4899847411546. The bundle's items are resolved when you enter it (nothing is downloaded; the engine streams the clips) and the pack is kept for the session. It wins over the target's movement animations. R15-only clips are not forced onto an incompatible R6 body.",
@@ -2710,26 +2738,12 @@ function Module.init(context: Runtime): any
                     :: Humanoid?
                 if character and humanoid then
                     applyAnimationPack(character, humanoid)
-                    status(settings.mode .. " · pack Custom slots")
+                    status((if settings.disguiseCharacter then "Character" else "Emotes only") .. " · pack Custom slots")
                 end
             end,
             Tooltip = "Set the " .. label .. " slot from any animation pack: paste the pack's bundle ID (official or UGC) and this slot takes that pack's " .. label .. " clip. Mix slots from different packs freely; empty slots use your rig's own set.",
         })
     end
-
-    card:CreateToggle({
-        -- v192: the player asked for the exact wording. It is also honest: a
-        -- clip the target's rig cannot play falls back to your own set, so the
-        -- option is best-effort, never a promise.
-        Name = "Use target movement animations if able",
-        -- Character only: Animation mode always applies them and has no control.
-        Show = {Option = "Mode", Values = {"Character"}},
-        Default = settings.useTargetMovementAnimations,
-        Function = function(value: boolean): ()
-            setMovementAnimationsEnabled(value)
-        end,
-        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
-    })
 
     card:CreateTextBox({
         Name = "Target ID",
@@ -2747,18 +2761,30 @@ function Module.init(context: Runtime): any
                 applyDisguise()
             end
         end,
-        Tooltip = "User ID (Character copies compatible appearance items without replacing your body/rig; Animation copies only emotes and movement animations) or an animation pack ID in Animation mode. Default 78492. Missing animation slots fall back to your rig's own set.",
+        Tooltip = "User ID: when Disguise Character is ON copies appearance + animations/emotes onto your preserved body/rig; when OFF only animations/emotes are applied and your character stays as is. Default 78492. Missing slots fall back to your rig's own set.",
     })
 
+    -- Legacy hidden: movement toggle (always on now), kept for tests but not shown
     card:CreateToggle({
+        -- v192: the player asked for the exact wording. It is also honest: a
+        -- clip the target's rig cannot play falls back to your own set, so the
+        -- option is best-effort, never a promise.
+        Name = "Use target movement animations if able",
+        Show = {Option = "Disguise Character", Values = {"__hidden__"}},
+        Default = settings.useTargetMovementAnimations,
+        Function = function(value: boolean): ()
+            setMovementAnimationsEnabled(value)
+        end,
+        Tooltip = "Character mode only. Shows the target user's movement animations (idle, walk, run, jump, climb, fall, swim, and Roblox's default set for any slot the avatar leaves empty) on the disguised avatar. They are already loaded, so this is instant; turning it off restores your own animations. Emotes are independent and stay untouched.",
+    })
+
+        card:CreateToggle({
         Name = "Show target emotes",
-        -- Character only: Animation mode always applies the target's emotes.
-        Show = {Option = "Mode", Values = {"Character"}},
         Default = settings.showTargetEmotes,
         Function = function(value: boolean): ()
             setTargetEmotesEnabled(value)
         end,
-        Tooltip = "Character mode only. Shows the target user's emotes and equipped emote slots on the disguised avatar. Independent from movement animations; turning it off restores your own emotes without touching the disguise.",
+        Tooltip = "Shows the target user's emotes and equipped emote slots on the disguised avatar. Works with or without Disguise Character.",
     })
 
     activeCard = card

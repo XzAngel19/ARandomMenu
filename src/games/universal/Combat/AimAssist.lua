@@ -38,13 +38,17 @@ function Module.init(context: Runtime): any
         if not cameraObject or not target then
             return false
         end
+        local mode: string = card.Options["Mode"].Value
+        local cameraMode: string = "Auto"
+        if card.Options["Camera"] then
+            cameraMode = card.Options["Camera"].Value
+        end
         local current: CFrame = cameraObject.CFrame
         local offset: Vector3 = target.position - current.Position
         if offset.Magnitude <= 0.001 then
             return false
         end
 
-        local mode: string = card.Options["Mode"].Value
         local alpha: number = 1
         if mode ~= "Aimbot" then
             local dt = math.max(deltaTime, 0)
@@ -57,6 +61,58 @@ function Module.init(context: Runtime): any
             alpha = math.min(1 - math.exp(-strength * 10 * dt),
                 angle > 1e-6 and math.rad(speed) * dt / angle or 1)
         end
+
+        -- Rivals / FPS-aware: try mouse movement first for Custom/Follow cameras,
+        -- fall back to CFrame for Scriptable. Executor's mousemoverel is the
+        -- standard for FPS aim; it survives the game's own camera controller
+        -- which overwrites CFrame every frame in first-person shooters.
+        local function tryMouse(): boolean
+            if cameraMode == "CFrame" then return false end
+            -- Scriptable cameras are always CFrame-driven
+            local okType: boolean, camType: any = pcall(function() return cameraObject.CameraType end)
+            local okEnum: boolean, scriptable: any = pcall(function() return (Enum :: any).CameraType.Scriptable end)
+            if okType and okEnum and camType == scriptable and cameraMode ~= "Mouse" then
+                return false
+            end
+            local env: any = getfenv()
+            local moverel: any = env.mousemoverel or env.mousemove or (host and (host.mousemoverel or host.mousemove))
+            if type(moverel) ~= "function" then return false end
+            local ok: boolean, screenPos: any, onScreen: any = pcall(function()
+                return cameraObject:WorldToScreenPoint(target.position)
+            end)
+            if not ok or type(screenPos) ~= "Vector3" then return false end
+            -- onScreen is the second return; when nil, treat as onScreen for Aimbot offscreen snaps
+            if onScreen == false and mode ~= "Aimbot" then return false end
+            local mouseOk: boolean, mousePos: any = pcall(function() return userInput:GetMouseLocation() end)
+            local mouse: Vector2
+            if mouseOk and typeof(mousePos) == "Vector2" then
+                mouse = mousePos
+            else
+                -- Fallback: center of viewport
+                local vp: Vector2 = cameraObject.ViewportSize
+                mouse = Vector2.new(vp.X / 2, vp.Y / 2)
+            end
+            local delta: Vector2 = Vector2.new(screenPos.X - mouse.X, screenPos.Y - mouse.Y)
+            -- For FPS, the Y delta is often inverted due to screen coords, but mousemoverel expects raw delta
+            if mode ~= "Aimbot" then
+                delta = delta * alpha
+            end
+            if delta.Magnitude < 0.5 then return false end
+            -- Clamp delta to avoid huge jumps that look suspicious or hit edge
+            local maxDelta: number = 400
+            if math.abs(delta.X) > maxDelta or math.abs(delta.Y) > maxDelta then
+                delta = delta.Unit * maxDelta
+            end
+            local moved: boolean = pcall(moverel, delta.X, delta.Y)
+            return moved
+        end
+
+        if cameraMode ~= "CFrame" then
+            if tryMouse() then return true end
+            if cameraMode == "Mouse" then return false end -- Mouse requested but unavailable
+        end
+
+        -- CFrame fallback (works for third-person, Scriptable, and when mouse unavailable)
         local currentLook: Vector3 = current.LookVector
         local blended: Vector3 = offset.Unit
         if alpha < 1 then
@@ -69,11 +125,14 @@ function Module.init(context: Runtime): any
         if blended.Magnitude <= 0.001 then
             return false
         end
-        cameraObject.CFrame = CFrame.lookAt(
-            current.Position,
-            current.Position + blended.Unit
-        )
-        return true
+        -- Respect camera type: some FPS games lock CFrame when not Scriptable, but we still try
+        local ok: boolean = pcall(function()
+            cameraObject.CFrame = CFrame.lookAt(
+                current.Position,
+                current.Position + blended.Unit
+            )
+        end)
+        return ok
     end
 
     local function anotherAimAdapterIsActive(): boolean
@@ -187,6 +246,12 @@ function Module.init(context: Runtime): any
         end,
         Tooltip = "Aim Assist = ayuda suave dentro de FOV usando Speed (°/s) y Strength (%). Aimbot = snap directo a target válido con Sticky lock opcional. FOV solo afecta a Aim Assist.",
 
+    })
+    card:CreateDropdown({
+        Name = "Camera",
+        List = {"Auto", "CFrame", "Mouse"},
+        Index = 1,
+        Tooltip = "Auto: usa Mouse (mousemoverel) en FPS como Rivals y CFrame en tercera persona/Scriptable. CFrame: fuerza CFrame.lookAt (tercera persona). Mouse: fuerza mousemoverel (FPS/Rivals, requiere executor). Auto funciona en todos los juegos.",
     })
     card:CreateSlider({
         Name = "FOV",

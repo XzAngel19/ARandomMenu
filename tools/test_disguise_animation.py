@@ -178,11 +178,12 @@ assert 'applyAnimationDisguise(' in SOURCE.split('local function applyDisguise()
 assert '{"Character", "Animation"}' in SOURCE
 assert 'without hiding it' in SOURCE
 
-# Both Character toggles are gated to Character only.
+# Both Character toggles were gated to Character only; new UI hides movement (always on) and leaves emotes visible.
 movement_toggle = SOURCE.split('Name = "Use target movement animations if able"', 1)[1]
-assert 'Values = {"Character"}' in movement_toggle.split('Tooltip', 1)[0]
+assert '__hidden__' in movement_toggle.split('Tooltip', 1)[0], 'movement toggle should be hidden now (always on)'
 emotes_toggle = SOURCE.split('Name = "Show target emotes"', 1)[1]
-assert 'Values = {"Character"}' in emotes_toggle.split('Tooltip', 1)[0]
+# Emotes toggle is visible even when Disguise Character is OFF (emotes-only)
+assert '__hidden__' not in emotes_toggle.split('Tooltip', 1)[0]
 assert 'card:CreateButton' not in SOURCE, 'Show target emotes must be a check, not a run button'
 
 # Advanced bundles are the only pack route; the old catalog list is gone.

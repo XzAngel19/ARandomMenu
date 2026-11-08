@@ -97,16 +97,20 @@ assert 'destroyInstance(description)' in appearance
 assert '"%s · %s · %d slots"' in appearance
 assert 'rigName(humanoid)' in appearance
 
-# The two Character toggles are independent gates around separate blocks.
+# The new Disguise Character toggle is the only gate for appearance; movement is always applied (old movement toggle removed).
 marker = '-- Movement animations are cosmetic'
 assert appearance.count(marker) == 1
 emote_block, movement_tail = appearance.split(marker, 1)
 emote_block = emote_block.split('local cached: TargetCache? = targetCache', 1)[1]
 assert 'settings.showTargetEmotes' in emote_block
 assert 'settings.useTargetMovementAnimations' not in emote_block, \
-    'the emote block must not depend on the movement toggle'
+    'the emote block must not depend on the removed movement toggle'
 assert 'setHumanoidEmotes' in emote_block
-assert 'settings.useTargetMovementAnimations' in movement_tail
+# Old movement toggle removed: movement is now always applied (disguiseCharacter controls appearance only)
+assert 'settings.useTargetMovementAnimations' not in movement_tail, \
+    'the old movement toggle must be gone'
+assert 'settings.disguiseCharacter' in SOURCE or 'if true then' in movement_tail, \
+    'movement should be always-on or gated by Disguise Character'
 assert 'setHumanoidEmotes' not in movement_tail, \
     'the movement block must not depend on the emote toggle'
 assert 'applyCachedMovementAnimations' in movement_tail

@@ -129,7 +129,7 @@ local RUNTIME_SAFETY_SOURCE_URL: string = RUNTIME_RAW_BASE .. "src/Wurst.lua"
 -- product name, so bumping the stamp moves every label at once -- the player
 -- asked for "0.191" (no "Version" word) tied to the product line that used to
 -- carry a different number, and for the two to never drift apart again.
-local SOURCE_STAMP: string = "v197-20261108-wurst-rama-fixes"
+local SOURCE_STAMP: string = "v198-20261109-wurst-rama-fixes"
 
 local BUILD_NUMBER: string? = string.match(SOURCE_STAMP, "^v(%d+)")
 local BUILD_LABEL: string = if BUILD_NUMBER then "0." .. BUILD_NUMBER else "0.0"

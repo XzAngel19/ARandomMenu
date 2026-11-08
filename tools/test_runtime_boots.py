@@ -13,15 +13,15 @@ import gen_full_boot_harness as harness
 
 # v185 removes three universal cards; BedFight keeps its own Anti Void.
 CASES = [
-    # v191 adds the universal "Server Settings" card.
-    ('Universal', 1, 34, None, None),
+    # v198 adds the universal "Animations" card (World).
+    ('Universal', 1, 35, None, None),
     # v190 restores the MM2 Fling card (one more card in MM2 only).
-    ('MM2', 142823291, 48, 'MM2', 'MM2.AutoFarm'),
-    ('BedFight', 71480482338212, 44, 'BedFight', 'BedFight.AutoSwing'),
-    ('TRS', 14315258385, 45, 'TRS', 'TRS.AutoHeader'),
-    ('VD', 93978595733734, 48, 'VD', 'VD.AutoGenerator'),
-    ('X2 Legacy', 92876937625630, 39, 'X2Duels', 'MVSD.AutoFarm'),
-    ('X2', 135856908115931, 39, 'X2Duels', 'MVSD.AutoFarm'),
+    ('MM2', 142823291, 49, 'MM2', 'MM2.AutoFarm'),
+    ('BedFight', 71480482338212, 45, 'BedFight', 'BedFight.AutoSwing'),
+    ('TRS', 14315258385, 46, 'TRS', 'TRS.AutoHeader'),
+    ('VD', 93978595733734, 49, 'VD', 'VD.AutoGenerator'),
+    ('X2 Legacy', 92876937625630, 40, 'X2Duels', 'MVSD.AutoFarm'),
+    ('X2', 135856908115931, 40, 'X2Duels', 'MVSD.AutoFarm'),
 ]
 
 source = audit_menu.build(debug=True).read_text(encoding='utf-8')

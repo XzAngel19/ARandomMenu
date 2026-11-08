@@ -32,9 +32,11 @@ function Module.init(context: Runtime): any
 
     local enabled: boolean = false
     local session: number = 0
-    -- Fixed at the previous maximum (3x Infinite Yield's baseline). There is
-    -- no Power option: only an explicit ON toggle may produce this pulse.
-    local POWER: number = 30000
+    -- Fixed at a higher effective power than the old 30000 (now more reliable
+    -- for modern physics and heavier rigs). No Power option by design: only ON
+    -- produces the pulse, and the test asserts >=30000.
+    local POWER: number = 50000
+    local SPIN: number = 50000
     local savedCollision: any = setmetatable({}, {__mode = "k"})
     local walkFlingFeature: any = nil
 
@@ -119,9 +121,14 @@ function Module.init(context: Runtime): any
                 if not enabled or session ~= mySession then
                     break
                 end
-                local character: Model?, _humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
+                local character: Model?, humanoid: Humanoid?, root: BasePart? = getCharacterRoot()
                 if character and root and root.Parent then
                     local savedVelocity: Vector3 = root.AssemblyLinearVelocity
+                    local savedAngular: Vector3 = root.AssemblyAngularVelocity or Vector3.zero
+                    -- Modern technique: also use angular velocity and ensure Humanoid is in Physics for replication
+                    if humanoid and humanoid.ChangeState then
+                        pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Physics) end)
+                    end
                     pcall(function(): ()
                         rememberCollision(character)
                         for _, part: Instance in ipairs(character:GetChildren()) do
@@ -130,8 +137,12 @@ function Module.init(context: Runtime): any
                             end
                         end
                         local spike: Vector3 = savedVelocity * POWER + Vector3.new(0, POWER, 0)
+                        local spin: Vector3 = Vector3.new(SPIN, SPIN, SPIN)
                         root.Velocity = spike
                         root.AssemblyLinearVelocity = spike
+                        root.AssemblyAngularVelocity = spin
+                        -- Also set RotVelocity for older physics
+                        pcall(function() (root :: any).RotVelocity = spin end)
                     end)
                     RunService.RenderStepped:Wait()
                     -- A toggle-off that lands in the middle of an iteration must
@@ -141,6 +152,8 @@ function Module.init(context: Runtime): any
                         pcall(function(): ()
                             root.Velocity = savedVelocity
                             root.AssemblyLinearVelocity = savedVelocity
+                            root.AssemblyAngularVelocity = savedAngular
+                            pcall(function() (root :: any).RotVelocity = savedAngular end)
                         end)
                     end
                     RunService.Stepped:Wait()
@@ -150,6 +163,8 @@ function Module.init(context: Runtime): any
                             local oscillated: Vector3 = savedVelocity + Vector3.new(0, movel, 0)
                             root.Velocity = oscillated
                             root.AssemblyLinearVelocity = oscillated
+                            local spinOsc: Vector3 = Vector3.new(0, SPIN * 0.1, 0)
+                            root.AssemblyAngularVelocity = spinOsc
                             movel = -movel
                         end)
                     end
