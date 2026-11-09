@@ -140,9 +140,13 @@ function Module.init(runtime: any): any
         end
         local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
         root.CFrame = targetCFrame
-        -- WalkFling technique is the most reliable on current physics: set both
-        -- classic and assembly velocities. Keep YARHM's high base but also apply
-        -- assembly so the server replicates even with modern solver.
+        -- The pose goes through the classic body movers only. Writing
+        -- AssemblyLinearVelocity / AssemblyAngularVelocity every frame is the
+        -- regression this engine already fixed twice: the modern solver reacts to
+        -- the assembly write on the *local* body and the character reads as
+        -- fading from the owner's camera. RootPart.CFrame plus
+        -- Velocity/RotVelocity is the pair YARHM ships and the pair the suite
+        -- asserts on (tools/test_fling_skid.py: assemblyWrites must stay 0).
         pcall(function(): ()
             character:SetPrimaryPartCFrame(targetCFrame)
         end)
@@ -156,9 +160,7 @@ function Module.init(runtime: any): any
             end)
         end
         root.Velocity = vel
-        root.AssemblyLinearVelocity = vel
         root.RotVelocity = rot
-        root.AssemblyAngularVelocity = rot
         -- Extra noclip for the fling contact (like WalkFling)
         pcall(function(): ()
             for _, part: Instance in ipairs(character:GetChildren()) do

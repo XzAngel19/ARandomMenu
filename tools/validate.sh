@@ -5,10 +5,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p build
 
 # The toolchain is vendored in this branch: tools/luau/vendor holds the pinned
-# wasm package and tools/luau/setup.sh unpacks it into tools/luau/node_modules.
-# A fresh clone (or a wiped sandbox) only needs node, not npm and not network.
-if [ ! -x tools/luau/bin/luau ] && [ -f tools/luau/vendor/luau-rs-luau-0.739.0.tgz ]; then
-    bash tools/luau/setup.sh >/dev/null
+# wasm packages (Luau 739, StyLua 2.6, DarkLua 0.19, valibot) and
+# tools/luau/setup.sh unpacks them into tools/luau/node_modules. A fresh clone
+# (or a wiped sandbox) only needs node, not npm and not network.
+if [ ! -x tools/luau/bin/luau ] || [ ! -d tools/luau/node_modules/@johnnymorganz/stylua ] \
+    || [ ! -d tools/luau/node_modules/darklua-wasm ]; then
+    if [ -f tools/luau/vendor/luau-rs-luau-0.739.0.tgz ]; then
+        bash tools/luau/setup.sh >/dev/null
+    fi
 fi
 if [ -z "${LUAU:-}" ] && [ -x tools/luau/bin/luau ]; then
     LUAU="tools/luau/bin/luau"
@@ -37,6 +41,34 @@ while IFS= read -r -d '' source; do
     sources=$((sources + 1))
 done < <(find src -name '*.lua' -print0)
 echo "PASS $sources Lua sources compile"
+
+# Static analysis: the same Luau front end as luau-analyze, fed with the Roblox
+# definitions (tools/luau/definitions/core.d.luau) and the executor/host globals
+# (runtime.d.luau). Errors are the gate; lints print but never fail the build.
+if [ -x tools/luau/bin/luau-analyze ]; then
+    node tools/luau/analyze.mjs --baseline >build/analyze.txt 2>build/analyze.summary.txt || {
+        grep -v "^warn" build/analyze.summary.txt >&2 || true
+        cat build/analyze.txt
+        echo "analyze: new type errors above (see tools/luau/analyze-baseline.json)" >&2
+        exit 1
+    }
+    tail -1 build/analyze.summary.txt
+fi
+
+# Formatting is per-change, not per-tree: the sources predate StyLua and a full
+# reformat rewrites constructs the Python suites assert on as text (a table type
+# `{[string]: any}` becomes `{ [string]: any }`, and three suites match that
+# text). The gate therefore checks only the files a change passes in
+# STYLUA_FILES; a full-tree run is `tools/luau/bin/luau-format .
+if [ -x tools/luau/bin/luau-format ] && [ -n "${STYLUA_FILES:-}" ]; then
+    # shellcheck disable=SC2086
+    node tools/luau/format.mjs --check $STYLUA_FILES >build/format.txt 2>&1 || {
+        tail -20 build/format.txt
+        echo "format: run tools/luau/bin/luau-format <file> on the files above" >&2
+        exit 1
+    }
+    tail -1 build/format.txt
+fi
 
 # v138.9: one catalog. tools/card.py is the front door to it (add/remove/window)
 # and this checks the catalog against the disk before anything else runs.
@@ -91,3 +123,10 @@ if grep -q '^\- \*\*Calibration\*\*' build/menu_release.md; then
     exit 1
 fi
 echo "PASS release menu: $release_cards cards, Calibration is popup-only"
+
+# Toolchain gates: the vendored Luau/StyLua/DarkLua toolchain itself. These run
+# last because they are the ones that would explain a broken run above.
+python3 tools/luau/definitions/build_definitions.py --check
+echo 'PASS Roblox definitions: generated subset still matches the pinned dump'
+
+python3 tools/test_luau_toolchain.py

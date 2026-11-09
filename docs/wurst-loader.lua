@@ -10,7 +10,7 @@
 --
 -- Pega esto en el ejecutor (o usa directamente la URL cruda de src/Wurst.lua).
 
-getgenv().WURST_BRANCH = "arena/8723512f-arandommenu"
+getgenv().WURST_BRANCH = "arena/0ce50d99-arandommenu"
 local branch = getgenv().WURST_BRANCH
 local url = "https://raw.githubusercontent.com/XzAngel19/ARandomMenu/refs/heads/"
     .. branch

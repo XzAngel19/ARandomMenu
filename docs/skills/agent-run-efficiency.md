@@ -37,7 +37,8 @@ Fling no ve targets, ese arreglo decide si los demás cambios se pueden probar.
 ### 3. Verificar con la herramienta más barata primero
 
 ```
-node tools/luau/compile.mjs <ficheros tocados>   # segundos, sintaxis y tipos
+tools/luau/bin/luau-compile <ficheros tocados>   # segundos, sintaxis
+tools/luau/bin/luau-analyze --baseline <ficheros> # segundos, tipos y lints
 python3 tools/test_<lo tuyo>.py                  # segundos, comportamiento
 bash tools/validate.sh                           # ~3 min, todo
 ```
@@ -64,7 +65,9 @@ git push origin arena/<rama>
 
 ## Puertas de verificación
 
-- `tools/luau/compile.mjs` sin salida = sin errores.
+- `tools/luau/bin/luau-compile` sin salida = sin errores de sintaxis.
+- `tools/luau/bin/luau-analyze --baseline` termina en `0 error(s)`; cualquier
+  `NEW` es un error introducido por el cambio.
 - Cada suite nueva termina en `PASS …` con una frase que diga **qué** se probó.
 - `bash tools/validate.sh` → `EXIT=0`, con el número de fuentes y de suites.
 - El commit menciona la versión cerrada (`v192: …`) y el push sale limpio.

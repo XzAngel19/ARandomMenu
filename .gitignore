@@ -12,6 +12,11 @@ local-profiles/
 build/
 __pycache__/
 
-# Vendored Luau toolchain unpacked by tools/luau/setup.sh
+# Vendored Luau toolchain unpacked by tools/luau/setup.sh (the tarballs in
+# tools/luau/vendor/ are committed: setup.sh must work offline)
 tools/luau/bin/
 tools/luau/node_modules/
+tools/luau/definitions/.cache/
+
+# Python bytecode from the toolchain scripts
+tools/luau/definitions/__pycache__/

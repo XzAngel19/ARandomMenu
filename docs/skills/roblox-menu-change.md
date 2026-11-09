@@ -88,12 +88,17 @@ Este fue el fallo exacto que dejó el roster del Fling vacío en v191.
 ### 6. Verificar
 
 ```bash
-node tools/luau/compile.mjs src/...            # sintaxis
+tools/luau/bin/luau-compile src/...            # sintaxis (segundos)
+tools/luau/bin/luau-analyze --baseline src/... # tipos + lints, falla solo con errores nuevos
+tools/luau/bin/luau-format --check src/...     # formato del fichero tocado
 python3 tools/test_<tarjeta>.py                # comportamiento con mocks
 python3 tools/card.py check                    # catálogo de tarjetas
 python3 tools/build_bundle.py --stamp <stamp>  # bundle al día
 bash tools/validate.sh                         # todo, ~3 min
 ```
+
+Detalle de cada herramienta, definiciones de tipos y baseline:
+`docs/skills/luau-toolchain.md`.
 
 `state.listControls[key]` y `state.valueControls[key]` (`{apply, default}`) son
 lo que el harness puede inspeccionar: **no** asumir filas en `card.Options`.
