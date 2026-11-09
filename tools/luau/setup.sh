@@ -72,8 +72,8 @@ if [ "$VERIFY" = 1 ]; then
     printf 'local x: number = 1\nprint(x)\n' >"$BIN_DIR/.smoke.lua"
     "$BIN_DIR/luau-compile" "$BIN_DIR/.smoke.lua"
     echo "compile ok"
-    "$BIN_DIR/luau-format" --check ../luau/definitions/runtime.d.luau 2>/dev/null \
-        || echo "format ok (file reports as unformatted, StyLua still ran)"
+    # Definition files (`declare ...`) are not Luau scripts, so the smoke test
+    # formats a real snippet instead of a .d.luau.
     node -e "
         import('./format.mjs').then((m) => console.log('stylua ok:', JSON.stringify(m.formatSource('local x=1'))));
         import('./minify.mjs').then((m) => console.log('darklua ok:', m.ruleNames().length + ' rules'));
