@@ -28,6 +28,8 @@ function Module.init(context: Runtime): any
         target = nil,
         lockedTarget = nil,
         lastFire = -math.huge,
+        fireMode = "Hold",
+        clickPressed = false,
     }
     local card: any
 
@@ -48,39 +50,53 @@ function Module.init(context: Runtime): any
         return nil
     end
 
-    local function tryFireOnce(): boolean
-        local player: Player? = localPlayer or host.LocalPlayer
-        local tool: Tool? = getHeldTool()
-        -- If no tool in character, try backpack and equip (for games that unequip on reload)
-        if not tool and player then
-            local backpack: Instance? = player:FindFirstChild("Backpack")
-            if backpack then
-                for _, child: Instance in ipairs(backpack:GetChildren()) do
-                    if child:IsA("Tool") then
-                        tool = child :: Tool
-                        local character: Model? = player.Character
-                        local hum: Humanoid? = character and character:FindFirstChildOfClass("Humanoid") :: Humanoid?
-                        if hum then
-                            pcall(function(): () hum:EquipTool(tool :: Tool) end)
-                        end
-                        break
-                    end
-                end
-            end
+    -- Screen position of the real cursor (includes the top-bar inset), used
+    -- both to aim the virtual mouse and to place virtual clicks.
+    local function getMouseScreenPosition(cameraObject: Camera?): Vector2
+        local mouseOk: boolean, mousePos: any = pcall(function(): any
+            return userInput:GetMouseLocation()
+        end)
+        if mouseOk and typeof(mousePos) == "Vector2" then
+            return mousePos
         end
+        local vp: Vector2 = cameraObject and cameraObject.ViewportSize
+            or Vector2.new(800, 600)
+        local insetY: number = 36
+        pcall(function(): ()
+            local guiService: any = game:GetService("GuiService")
+            local inset: Vector2 = guiService:GetGuiInset()
+            if typeof(inset) == "Vector2" then insetY = inset.Y end
+        end)
+        return Vector2.new(vp.X / 2, vp.Y / 2 + insetY)
+    end
+
+    local function tryFireOnce(fireMode: string?, clickPressed: boolean?): boolean
+        -- Only a tool that is ALREADY held gets Activate(). Equipping from the
+        -- backpack mid-fight was removed on purpose: EquipTool can trigger the
+        -- game's equip/ADS logic, which switches or locks the camera exactly at
+        -- the point where the player clicked.
+        local tool: Tool? = getHeldTool()
         if tool then
             if tool.Enabled == false then return false end
+            -- Hold mode: the player's real click already activates the held tool
+            -- (Roblox fires Tool.Activated on click); an extra Activate()
+            -- double-fires semi-auto guns.
+            if fireMode == "Hold" and clickPressed == true then return true end
             local ok: boolean = pcall(function(): () (tool :: Tool):Activate() end)
             if ok then return true end
         end
-        -- Rivals / FPS without Tool (ViewModel + RemoteEvent): fallback to virtual click
-        -- Use VirtualInputManager or executor mouse1click so any semi-auto gun fires.
+        -- Rivals / FPS without Tool (ViewModel + RemoteEvent): fallback to a
+        -- virtual click. It MUST be sent at the real cursor position: sending
+        -- (0, 0) shoots at the top-left screen corner and, with a free cursor,
+        -- yanks the mouse (and any camera driven by absolute mouse position)
+        -- to that corner.
+        local mouse: Vector2 = getMouseScreenPosition(camera())
         local vimOk: boolean = pcall(function(): ()
             local vim: any = game:GetService("VirtualInputManager")
             if vim and type(vim.SendMouseButtonEvent) == "function" then
                 -- Press and release quickly; the CPS loop controls rate
-                vim:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                vim:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 0)
+                vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 0)
             else
                 error("no vim")
             end
@@ -122,15 +138,19 @@ function Module.init(context: Runtime): any
         if card.Options["Auto Fire mode"] then
             fireMode = tostring(card.Options["Auto Fire mode"].Value)
         end
+        local okHeld: boolean, isPressed: any = pcall(function(): any
+            return userInput:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+        end)
+        local clickPressed: boolean = okHeld and isPressed == true
+        -- Remembered for tryFireOnce: in Hold mode a real click already fired
+        -- the held tool, so the module must not Activate() it a second time.
+        runtime.fireMode = fireMode
+        runtime.clickPressed = clickPressed
         if fireMode == "Always" then
             runtime.lastFire = now
             return true
         end
-        local okHeld: boolean, isPressed: any = pcall(function(): any
-            return userInput:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-        end)
-        if not okHeld then return false end
-        if isPressed == true then
+        if clickPressed then
             runtime.lastFire = now
             return true
         end
@@ -208,21 +228,7 @@ function Module.init(context: Runtime): any
             if not ok or type(screenPos) ~= "Vector3" then return false end
             if onScreen == false and mode ~= "Aimbot" then return false end
             -- Always use GetMouseLocation (with inset) for delta; fallback to Viewport/2+inset
-            local mouse: Vector2? = nil
-            local mouseOk: boolean, mousePos: any = pcall(function(): any return userInput:GetMouseLocation() end)
-            if mouseOk and typeof(mousePos) == "Vector2" then
-                mouse = mousePos
-            else
-                local vp: Vector2 = cameraObject.ViewportSize
-                local insetY: number = 36
-                pcall(function(): ()
-                    local guiService: any = game:GetService("GuiService")
-                    local inset: Vector2 = guiService:GetGuiInset()
-                    if typeof(inset) == "Vector2" then insetY = inset.Y end
-                end)
-                mouse = Vector2.new(vp.X / 2, vp.Y / 2 + insetY)
-            end
-            local m: Vector2 = mouse :: Vector2
+            local m: Vector2 = getMouseScreenPosition(cameraObject)
             local delta: Vector2 = Vector2.new(screenPos.X - m.X, screenPos.Y - m.Y)
             if mode ~= "Aimbot" then
                 delta = delta * alpha
@@ -255,30 +261,17 @@ function Module.init(context: Runtime): any
                 return false
             end
             local newCFrame: CFrame = CFrame.lookAt(current.Position, current.Position + blended.Unit)
-            local runService: any = (host :: any).RunService or (services and services.runService)
-            if runService and type(runService.BindToRenderStep) == "function" then
-                local bound: boolean = false
-                pcall(function(): ()
-                    local prioOk: boolean, prio: any = pcall(function(): any
-                        return (Enum :: any).RenderPriority.Camera.Value
-                    end)
-                    local priority: number = prioOk and type(prio) == "number" and (prio + 1) or 200
-                    pcall(function(): () runService:UnbindFromRenderStep("WurstAimAssistCam") end)
-                    runService:BindToRenderStep("WurstAimAssistCam", priority, function(): ()
-                        pcall(function(): ()
-                            if cameraObject and cameraObject.Parent then
-                                cameraObject.CFrame = newCFrame
-                            end
-                        end)
-                        pcall(function(): () runService:UnbindFromRenderStep("WurstAimAssistCam") end)
-                    end)
-                    bound = true
-                end)
-                if bound then
-                    pcall(function(): () cameraObject.CFrame = newCFrame end)
-                    return true
-                end
-            end
+            -- Write directly from this frame callback. Card Render tasks run
+            -- on RenderStepped, i.e. AFTER the game's own camera update
+            -- (RenderPriority.Camera), so this write wins for the frame.
+            -- Deliberately NO BindToRenderStep here: the old one-shot binding
+            -- captured a stale newCFrame and tried to unbind itself from inside
+            -- the render step; when that unbind failed (the pcall swallowed it),
+            -- the binding re-wrote the same stale CFrame every frame and the
+            -- camera froze on the last aim point — the spot where the player
+            -- clicked. Writing only from the per-frame callback means that as
+            -- soon as there is no target, nothing writes the camera anymore and
+            -- the game owns the view again.
             local ok: boolean = pcall(function(): ()
                 cameraObject.CFrame = newCFrame
             end)
@@ -414,7 +407,7 @@ function Module.init(context: Runtime): any
                 end
                 local moved: boolean = moveCamera(selected, deltaTime)
                 if shouldAutoFire() then
-                    pcall(tryFireOnce)
+                    pcall(function(): () tryFireOnce(runtime.fireMode, runtime.clickPressed) end)
                 end
                 local targetPlayer: Player? = selected.player
                 local displayName: string = targetPlayer
