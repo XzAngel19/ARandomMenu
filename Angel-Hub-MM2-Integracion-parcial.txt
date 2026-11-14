@@ -222,6 +222,10 @@ end
 
 local UNIMPLEMENTED_TOGGLES = {
     ["Knife Tracer"] = true, ["Self HP"] = true,
+    ["Stay Under When Round Starts"] = true, ["Farm Safe Zone"] = true,
+    ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
+    ["Fling Sheriff After Full Bag"] = true, ["Auto Grab Gun And Shoot"] = true,
+    ["Auto Kill All When Full Bag"] = true,
     ["Remove Textures"] = true, ["Disable Particles"] = true, ["Disable Shadows"] = true,
     ["Simple Materials"] = true, ["Lowest Render Quality"] = true, ["Low Detail Meshes"] = true,
     ["Hide Distant Scenery"] = true, ["Simplify Terrain"] = true, ["Disable Post Effects"] = true,
@@ -1066,6 +1070,10 @@ local function installGameplay(screenGui)
     local afkElapsed = 0
     local xrayStep = function() end
     local updateItemEsp = function() end
+    local mm2FarmStep = function() end
+    local mm2KnifeStep = function() end
+    local mm2CoinAuraStep = function() end
+    local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
     local runtimeConnections = {}
@@ -1077,6 +1085,7 @@ local function installGameplay(screenGui)
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true,
         ["X-Ray"] = true, ["Anti AFK"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
+        ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1183,6 +1192,21 @@ local function installGameplay(screenGui)
             root.AssemblyLinearVelocity = Vector3.new(vel.X, V["Infinite Jump Power"], vel.Z)
         end
         xrayStep(dt, root)
+        local farmOk, farmError = pcall(mm2FarmStep, dt, character, humanoid, root)
+        if not farmOk then
+            warn("Angel Hub Farm error: " .. tostring(farmError))
+            if enabled["Auto Farm"] then AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: runtime error") end
+        end
+        local auraOk, auraError = pcall(mm2CoinAuraStep, dt, root)
+        if not auraOk then
+            warn("Angel Hub Coins Aura error: " .. tostring(auraError))
+            if enabled["Coins Aura"] then AngelHub.setters["Coins Aura"](false); message("Coins Aura stopped: runtime error") end
+        end
+        local knifeOk, knifeError = pcall(mm2KnifeStep)
+        if not knifeOk then
+            warn("Angel Hub Knife error: " .. tostring(knifeError))
+            if enabled["Knife Aura"] then AngelHub.setters["Knife Aura"](false); message("Knife Aura stopped: runtime error") end
+        end
         local espOk, espError = pcall(updateItemEsp, dt, root)
         if not espOk and not AngelHub.itemEspError then
             AngelHub.itemEspError = true
@@ -1385,6 +1409,7 @@ local function installGameplay(screenGui)
         scanGeneration += 1
         xrayToggle(false)
         if cleanupItemEsp then cleanupItemEsp() end
+        mm2Cleanup()
         restoreNoclip()
         restoreInteraction(nil)
         for name in pairs(groups) do restore(name) end
@@ -1641,6 +1666,298 @@ local function installGameplay(screenGui)
         destroyMarker(espGun); espGun = nil
         clearTrapEsp()
     end
+    local farmConnections, farmMap, farmCharacter, farmRoundMap = {}, nil, nil, nil
+    local farmWaitingMap, farmAmount, farmLimit, farmElapsed, farmTotal = nil, 0, 50, 0, 0
+    local farmTickElapsed, farmScanElapsed, farmCoins = 0, 0, {}
+    local farmMoved, farmDone, farmBagSampleKnown = false, false, false
+    local farmBlacklist = setmetatable({}, {__mode = "k"})
+    local farmTarget, farmTargetAt
+    local function farmCounter(name, value)
+        if AngelHub.setters[name] then AngelHub.setters[name](value) end
+    end
+    local function farmStopMovement()
+        if farmMoved and farmCharacter then
+            local humanoid = farmCharacter:FindFirstChildOfClass("Humanoid")
+            if humanoid then pcall(function() humanoid:Move(Vector3.new(0, 0, 0), false) end) end
+        end
+        farmMoved = false
+        restore("farmWalk")
+    end
+    local function farmStop()
+        for _, connection in ipairs(farmConnections) do connection:Disconnect() end
+        table.clear(farmConnections)
+        farmStopMovement()
+        farmMap, farmCharacter, farmRoundMap, farmWaitingMap, farmTarget = nil, nil, nil, nil, nil
+        table.clear(farmCoins); table.clear(farmBlacklist)
+    end
+    local function farmLobbyRef()
+        local lobby = workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("MainLobby") or workspace:FindFirstChild("RegularLobby")
+        if not lobby then
+            for _, object in ipairs(workspace:GetChildren()) do
+                if string.find(string.lower(object.Name), "lobby", 1, true) then lobby = object; break end
+            end
+        end
+        local spawns = lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns", true))
+        return spawnPart(spawns) or (lobby and lobby:FindFirstChildWhichIsA("SpawnLocation", true))
+    end
+    local function farmOnMap(root, map)
+        if not root or not map then return false end
+        local lobbyRef = farmLobbyRef()
+        local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
+        local reference = spawnPart(spawns)
+        -- Fail closed when either location is unknown; never move while in lobby.
+        if not lobbyRef or not reference then return false end
+        return (root.Position - lobbyRef.Position).Magnitude > 350
+            and (root.Position - reference.Position).Magnitude <= 1500
+    end
+    local function farmUsable(coin, map)
+        if not coin or not coin.Parent or not coin:IsA("BasePart") or not coin:IsDescendantOf(map) then return false end
+        if coin:GetAttribute("Collected") == true or coin:GetAttribute("Delete") == true then return false end
+        local visual = coin:FindFirstChild("CoinVisual")
+        if visual and (visual:GetAttribute("Collected") == true or visual:GetAttribute("Delete") == true) then return false end
+        return true
+    end
+    local function farmScan(map)
+        local found = {}
+        for _, object in ipairs(map:GetDescendants()) do
+            if (object.Name == "Coin_Server" or object.Name == "ServerCoinPart") and farmUsable(object, map) then
+                table.insert(found, object)
+            end
+        end
+        farmCoins = found
+    end
+    local function farmEvents()
+        local ok, storage = pcall(function() return game:GetService("ReplicatedStorage") end)
+        local remotes = ok and storage and storage:FindFirstChild("Remotes")
+        local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+        local collected = gameplay and gameplay:FindFirstChild("CoinCollected")
+        local ended = gameplay and gameplay:FindFirstChild("RoundEndFade")
+        if not collected or not collected:IsA("RemoteEvent") or not ended or not ended:IsA("RemoteEvent") then return nil end
+        return gameplay, collected, ended
+    end
+    local function farmStart(gameplay, collected, ended)
+        farmStop()
+        farmAmount, farmLimit, farmElapsed, farmTotal = 0, 50, 0, 0
+        farmBagSampleKnown = false
+        farmTickElapsed, farmScanElapsed, farmDone = 0, 0.5, false
+        farmCounter("Coins Collected", 0); farmCounter("Farm Time", "00:00")
+        table.insert(farmConnections, collected.OnClientEvent:Connect(function(_, amount, limit)
+            if not enabled["Auto Farm"] then return end
+            local character, humanoid, root = characterParts()
+            local map = mm2Map()
+            if not humanoid or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then return end
+            if farmRoundMap ~= map then farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false end
+            if farmMap ~= map or character ~= farmCharacter then
+                farmStopMovement()
+                farmMap, farmCharacter = map, character
+                farmTarget, farmScanElapsed = nil, 0.5
+                table.clear(farmCoins); table.clear(farmBlacklist)
+            end
+            if type(limit) == "number" and limit >= 50 then farmLimit = limit end
+            if type(amount) == "number" and amount >= 0 then
+                if amount > farmAmount then
+                    farmTotal += farmBagSampleKnown and (amount - farmAmount) or 1
+                    farmCounter("Coins Collected", farmTotal)
+                end
+                farmAmount, farmBagSampleKnown = amount, true
+            end
+        end))
+        table.insert(farmConnections, ended.OnClientEvent:Connect(function()
+            if not enabled["Auto Farm"] then return end
+            farmWaitingMap = farmMap or mm2Map()
+            farmStopMovement(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
+            table.clear(farmCoins)
+        end))
+        for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            local remote = gameplay:FindFirstChild(name)
+            if remote and remote:IsA("RemoteEvent") then
+                table.insert(farmConnections, remote.OnClientEvent:Connect(function(duration)
+                    if name ~= "RoundStart" or (tonumber(duration) and tonumber(duration) > 0) then farmWaitingMap = nil end
+                end))
+            end
+        end
+    end
+    mm2FarmStep = function(dt, character, humanoid, root)
+        if not enabled["Auto Farm"] then return end
+        farmElapsed += math.max(dt, 0)
+        local seconds = math.floor(farmElapsed)
+        farmCounter("Farm Time", string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60))
+        farmTickElapsed += dt
+        if farmTickElapsed < 0.1 then return end
+        local elapsed = farmTickElapsed
+        farmTickElapsed = 0
+        local map = mm2Map()
+        if not character or not humanoid or not root or root.Anchored or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then
+            farmStopMovement(); farmMap, farmCharacter, farmTarget = nil, nil, nil
+            return
+        end
+        if farmRoundMap ~= map then farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false end
+        if map ~= farmMap or character ~= farmCharacter then
+            farmStopMovement()
+            farmMap, farmCharacter = map, character
+            farmTarget, farmScanElapsed = nil, 0.5
+            table.clear(farmCoins); table.clear(farmBlacklist)
+        end
+        if farmAmount >= math.max(50, farmLimit) then
+            farmStopMovement()
+            if not farmDone then
+                farmDone = true
+                local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
+                local part = spawnPart(spawns)
+                if part and farmOnMap(root, map) then characterTeleport(part) end
+            end
+            return
+        end
+        farmScanElapsed += elapsed
+        if farmScanElapsed >= 0.5 then farmScanElapsed = 0; farmScan(map) end
+        local best, bestDistance
+        local now = os.clock()
+        for _, coin in ipairs(farmCoins) do
+            if farmUsable(coin, map) and (not farmBlacklist[coin] or farmBlacklist[coin] <= now) then
+                local distance = (coin.Position - root.Position).Magnitude
+                if not bestDistance or distance < bestDistance then best, bestDistance = coin, distance end
+            end
+        end
+        if not best then farmTarget = nil; farmStopMovement(); return end
+        if best ~= farmTarget then farmTarget, farmTargetAt = best, now end
+        if now - farmTargetAt > 6 then farmBlacklist[best] = now + 6; farmTarget = nil; farmStopMovement(); return end
+        local delta = best.Position - root.Position
+        local flat = Vector3.new(delta.X, 0, delta.Z)
+        if flat.Magnitude < 1.4 then
+            farmStopMovement()
+            if bestDistance <= 3 and type(firetouchinterest) == "function" then
+                pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
+            end
+            return
+        end
+        apply("farmWalk", humanoid, {WalkSpeed = V["Farm Speed"]})
+        humanoid:Move(flat.Unit, false)
+        farmMoved = true
+    end
+    local auraCoins, auraScanElapsed, auraTickElapsed = {}, 0, 0
+    local auraCurrent, auraState
+    local function restoreCoinAura()
+        local coin, saved = auraCurrent, auraState
+        auraCurrent, auraState = nil, nil
+        if not coin or not saved then return end
+        pcall(function() if coin.CFrame == saved.appliedCFrame then coin.CFrame = saved.cframe end end)
+        pcall(function() if coin.CanCollide == saved.appliedCollide then coin.CanCollide = saved.collide end end)
+        if saved.visual then
+            pcall(function() if saved.visual.Anchored == saved.appliedAnchored then saved.visual.Anchored = saved.anchored end end)
+        end
+        if saved.weld then
+            pcall(function() if saved.weld.Enabled == saved.appliedWeld then saved.weld.Enabled = saved.weldEnabled end end)
+        end
+    end
+    local function resetCoinAura()
+        restoreCoinAura(); table.clear(auraCoins); auraScanElapsed, auraTickElapsed = 0.5, 0
+    end
+    mm2CoinAuraStep = function(dt, root)
+        if not enabled["Coins Aura"] then return end
+        auraTickElapsed += dt
+        if auraTickElapsed < 0.08 then return end
+        local elapsed = auraTickElapsed; auraTickElapsed = 0
+        local map = mm2Map()
+        if not root or root.Anchored or not farmOnMap(root, map) then restoreCoinAura(); return end
+        auraScanElapsed += elapsed
+        if auraScanElapsed >= 0.5 then
+            auraScanElapsed = 0; table.clear(auraCoins)
+            for _, object in ipairs(map:GetDescendants()) do
+                if (object.Name == "Coin_Server" or object.Name == "ServerCoinPart") and farmUsable(object, map) then
+                    table.insert(auraCoins, object)
+                end
+            end
+        end
+        local best, nearest
+        for _, coin in ipairs(auraCoins) do
+            if farmUsable(coin, map) then
+                local position = coin == auraCurrent and auraState.cframe.Position or coin.Position
+                local distance = (position - root.Position).Magnitude
+                if distance <= 15 and (not nearest or distance < nearest) then best, nearest = coin, distance end
+            end
+        end
+        if best ~= auraCurrent then
+            restoreCoinAura()
+            if best then
+                auraCurrent = best
+                auraState = {cframe = best.CFrame, collide = best.CanCollide}
+                local visual = best:FindFirstChild("CoinVisual")
+                if visual and visual:IsA("BasePart") then
+                    auraState.visual, auraState.anchored = visual, visual.Anchored
+                    local weld = visual:FindFirstChildOfClass("WeldConstraint")
+                    if weld then auraState.weld, auraState.weldEnabled = weld, weld.Enabled end
+                end
+            end
+        end
+        if not best then return end
+        local saved = auraState
+        if saved.appliedCFrame and best.CFrame ~= saved.appliedCFrame then saved.cframe = best.CFrame end
+        if saved.appliedCollide ~= nil and best.CanCollide ~= saved.appliedCollide then saved.collide = best.CanCollide end
+        if saved.visual then saved.visual.Anchored = true; saved.appliedAnchored = true end
+        if saved.weld then saved.weld.Enabled = false; saved.appliedWeld = false end
+        best.CanCollide = false; saved.appliedCollide = false
+        best.CFrame = root.CFrame; saved.appliedCFrame = root.CFrame
+        pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
+    end
+    local knifeGeneration, knifeLastSwing = 0, -math.huge
+    local function knifeParts()
+        local character, humanoid, root = characterParts()
+        local knife = character and character:FindFirstChild("Knife")
+        if not humanoid or not root or not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+        return knife, root, character
+    end
+    local function knifeTargetValid(player, root, range)
+        if player == localPlayer or not player.Character then return nil end
+        if not localPlayer.Neutral and localPlayer.Team and player.Team == localPlayer.Team then return nil end
+        local target = player.Character
+        local humanoid, targetRoot = target:FindFirstChildOfClass("Humanoid"), target:FindFirstChild("HumanoidRootPart")
+        if not humanoid or humanoid.Health <= 0 or not targetRoot or not targetRoot:IsA("BasePart") then return nil end
+        if target:FindFirstChild("Knife") then return nil end
+        local backpack = player:FindFirstChildOfClass("Backpack")
+        if backpack and backpack:FindFirstChild("Knife") then return nil end
+        if (targetRoot.Position - root.Position).Magnitude > range then return nil end
+        return targetRoot
+    end
+    local function knifeSwing(manual)
+        if not enabled["Knife Aura"] or (V["Knife Hold Mouse"] and not manual) then return end
+        local now = os.clock()
+        if now - knifeLastSwing < (manual and 0.3 or 0.86) then return end
+        local knife, root, character = knifeParts()
+        if not knife then return end
+        local target, distance
+        for _, player in ipairs(playersService:GetPlayers()) do
+            local other = knifeTargetValid(player, root, V["Knife Aura Range"])
+            if other then
+                local d = (other.Position - root.Position).Magnitude
+                if not distance or d < distance then target, distance = player, d end
+            end
+        end
+        local handle = knife:FindFirstChild("Handle")
+        if not target or not handle or not handle:IsA("BasePart") then return end
+        local targetCharacter, generation = target.Character, knifeGeneration
+        if not pcall(function() knife:Activate() end) then return end
+        knifeLastSwing = now
+        task.delay(0.025, function()
+            if stopped or not enabled["Knife Aura"] or knifeGeneration ~= generation or localPlayer.Character ~= character or target.Character ~= targetCharacter then return end
+            local current = character:FindFirstChild("Knife")
+            local currentRoot = character:FindFirstChild("HumanoidRootPart")
+            local currentHumanoid = character:FindFirstChildOfClass("Humanoid")
+            if current ~= knife or not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 or knife:GetAttribute("Disabled") == true then return end
+            local victimRoot = knifeTargetValid(target, currentRoot, V["Knife Aura Range"])
+            local currentHandle = knife:FindFirstChild("Handle")
+            if not victimRoot or not currentHandle or not currentHandle:IsA("BasePart") then return end
+            local events = knife:FindFirstChild("Events")
+            local remote = events and events:FindFirstChild("HandleTouched")
+            local sent = remote and remote:IsA("RemoteEvent") and pcall(function() remote:FireServer(victimRoot) end)
+            if not sent and type(firetouchinterest) == "function" then
+                pcall(firetouchinterest, currentHandle, victimRoot, 0); pcall(firetouchinterest, currentHandle, victimRoot, 1)
+            end
+        end)
+    end
+    mm2KnifeStep = function()
+        if enabled["Knife Aura"] then knifeSwing(false) end
+    end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -1654,7 +1971,28 @@ local function installGameplay(screenGui)
                 if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" and V["Speed Mode"] ~= "Velocity" then
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
                 end
+                local gameplay, collected, ended
+                if value == true and name == "Coins Aura" and type(firetouchinterest) ~= "function" then
+                    old(false); message("Coins Aura: touch API unavailable"); return false
+                end
+                if value == true and name == "Auto Farm" then
+                    if V["Farm Mode"] ~= "Walk" then old(false); message("Auto Farm: Walk only for now"); return false end
+                    if enabled["Enable Speed"] then old(false); message("Auto Farm: disable Speed first"); return false end
+                    gameplay, collected, ended = farmEvents()
+                    if not gameplay then old(false); message("Auto Farm: MM2 remotes unavailable"); return false end
+                end
+                if value == true and name == "Enable Speed" and enabled["Auto Farm"] then
+                    AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: Speed enabled")
+                end
                 old(value == true); enabled[name] = value == true
+                if name == "Auto Farm" then
+                    if value then
+                        farmStart(gameplay, collected, ended)
+                        message("Bag unknown until next pickup")
+                    else farmStop() end
+                end
+                if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
+                if name == "Coins Aura" then resetCoinAura() end
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
@@ -1671,6 +2009,15 @@ local function installGameplay(screenGui)
                     scanInteractions()
                 end
                 pulse()
+            end
+        end
+    end
+    local oldFarmMode = AngelHub.setters["Farm Mode"]
+    if oldFarmMode then
+        AngelHub.setters["Farm Mode"] = function(value)
+            oldFarmMode(value)
+            if enabled["Auto Farm"] and V["Farm Mode"] ~= "Walk" then
+                AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: Walk only for now")
             end
         end
     end
@@ -1783,6 +2130,22 @@ local function installGameplay(screenGui)
             end
         end)
     end
+    listen(userInputService.InputBegan, function(input, processed)
+        if not isMM2 or not enabled["Knife Aura"] or not V["Knife Hold Mouse"] or processed or typing() then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        if input.Position then
+            local window = AngelHub.mainWindow
+            if window and window.Visible then
+                local at, size, p = window.AbsolutePosition, window.AbsoluteSize, input.Position
+                if p.X >= at.X and p.Y >= at.Y and p.X <= at.X + size.X and p.Y <= at.Y + size.Y then return end
+            end
+            local gui = localPlayer:FindFirstChildOfClass("PlayerGui")
+            local ok, elements = pcall(function() return gui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y) end)
+            if not ok then return end
+            for _, element in ipairs(elements) do if element:IsDescendantOf(screenGui) then return end end
+        end
+        knifeSwing(true)
+    end)
     listen(userInputService.JumpRequest, function()
         if not enabled["Infinite Jump"] or V["Infinite Jump Mode"] ~= "Normal" or typing() then return end
         local _, humanoid, root = characterParts()
@@ -1921,6 +2284,7 @@ local function initializeScript()
 		BorderSizePixel = 0,
 		ClipsDescendants = true,
 	}, screenGui)
+    AngelHub.mainWindow = window
 
 	create("UICorner", { CornerRadius = UDim.new(0, 8) }, window)
 	create("UIGradient", { Color = ColorSequence.new(BACKGROUND_TOP, BACKGROUND_BOTTOM), Rotation = 90 }, window)
@@ -2219,7 +2583,7 @@ local function initializeScript()
 	addCounter(extraLeft, "Coins Collected", 0)
 	addCounter(extraLeft, "Farm Time", 0)
 	addModule(extraLeft, "Auto Farm", nil, false)
-	addCycle(extraLeft, "Farm Mode", { "Below" })
+	addCycle(extraLeft, "Farm Mode", { "Walk", "Below", "Under" })
 	addSlider(extraLeft, "Farm Speed", 5, 60, 16, 0)
 	addToggle(extraLeft, "Stay Under When Round Starts", nil, false)
 	addToggle(extraLeft, "Farm Safe Zone", nil, false)

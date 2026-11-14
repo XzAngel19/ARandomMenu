@@ -16,6 +16,8 @@ const readTest = p => read(path.join(__dirname, p));
   if (start < 0 || end < 0) throw new Error('Gameplay source boundaries not found');
   const toggles = file.slice(file.indexOf('local UNIMPLEMENTED_TOGGLES ='), file.indexOf('local function addToggle('));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
+  const farmLua = await Lua.create({ sandbox: true });
+  farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
   guiLua.execute(readTest('gui-mock.luau') + '\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed to initialize")

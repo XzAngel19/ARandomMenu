@@ -8,7 +8,7 @@ local vec={};vec.__index=function(a,k) if k=='Magnitude' then return math.sqrt(a
 vec.__sub=function(a,b)return setmetatable({X=a.X-b.X,Y=a.Y-b.Y,Z=a.Z-b.Z},vec)end
 vec.__mul=function(a,n)return setmetatable({X=a.X*n,Y=a.Y*n,Z=a.Z*n},vec)end
 Vector3={new=function(x,y,z)return setmetatable({X=x,Y=y,Z=z},vec)end}
-Enum={Material={Air='air',Ground='ground'},CameraMode={Classic='classic'},HighlightDepthMode={AlwaysOnTop='ontop'},Font={SourceSansBold='bold'},KeyCode={Space='space',ButtonA='buttona'},UserInputType={Touch='touch',Keyboard='keyboard'},RaycastFilterType={Exclude='exclude'}}
+Enum={Material={Air='air',Ground='ground'},CameraMode={Classic='classic'},HighlightDepthMode={AlwaysOnTop='ontop'},Font={SourceSansBold='bold'},KeyCode={Space='space',ButtonA='buttona'},UserInputType={Touch='touch',Keyboard='keyboard',MouseButton1='mouse1'},RaycastFilterType={Exclude='exclude'}}
 RaycastParams={new=function()return {}end}
 Vector2={new=function(x,y)return {X=x,Y=y}end}
 UDim2={fromOffset=function(x,y)return {X=x,Y=y}end,fromScale=function(x,y)return {X=x,Y=y}end}
@@ -24,6 +24,7 @@ function character:PivotTo(cf) self.lastPivot=cf end
 function character:FindFirstChildOfClass(name) if name=='Humanoid' then return humanoid end end
 function character:FindFirstChild(name) if name=='HumanoidRootPart' then return root end end
 function character:GetDescendants() return self.parts end
+function humanoid:Move(direction) self.lastMove=direction end
 local isMM2=true
 local localPlayer={Idled=event(),Character=character,CameraMinZoomDistance=0.5,CameraMaxZoomDistance=128,CameraMode='lock'}
 local jumpButton={Visible=true,AbsolutePosition={X=100,Y=100},AbsoluteSize={X=50,Y=50}}
@@ -52,22 +53,28 @@ function trap:IsDescendantOf(w)return self.Parent==w end
 function trap:GetDescendants()return {} end
 table.insert(workspace.objects,trap)
 local frame=setmetatable({}, {__add=function(_,v)return v end})
-local mapSpawn={Name='Spawn',CFrame=frame,Parent=workspace}
+local mapSpawn={Name='Spawn',CFrame=frame,Parent=workspace,Position=Vector3.new(0,0,0)}
 function mapSpawn:IsA(c)return c=='BasePart' or c=='SpawnLocation'end
 function mapSpawn:IsDescendantOf(w)return w==workspace end
 local spawns={};function spawns:IsA()return false end
 function spawns:FindFirstChildWhichIsA(c)return mapSpawn end
 local map={Name='Hospital'};function map:IsA(c)return c=='Model'end
 function map:FindFirstChild(n)if n=='Spawns' then return spawns end end
+function map:GetDescendants() return self.descendants or {} end
+local lobbySpawn={Name='Spawn',CFrame=frame,Parent=workspace,Position=Vector3.new(1000,0,0)}
+function lobbySpawn:IsA(c)return c=='BasePart' or c=='SpawnLocation'end
+function lobbySpawn:IsDescendantOf(w)return w==workspace end
+local lobbySpawns={};function lobbySpawns:IsA()return false end
+function lobbySpawns:FindFirstChildWhichIsA(c)return lobbySpawn end
 local lobby={Name='Lobby'};function lobby:IsA(c)return c=='Model'end
-function lobby:FindFirstChild(n)if n=='Spawns'then return spawns end end
+function lobby:FindFirstChild(n)if n=='Spawns'then return lobbySpawns end end
 function lobby:FindFirstChildWhichIsA()return mapSpawn end
 table.insert(workspace.objects,map);table.insert(workspace.objects,lobby)
 function workspace:FindFirstChild(n)if n=='GunDrop' then return gun elseif n=='Lobby'then return lobby end end
 local touches={};firetouchinterest=function(a,b,phase)table.insert(touches,{a,b,phase})end
 workspace.hitWall=false;workspace.castCount=0
 function workspace:Blockcast()self.castCount+=1;if self.hitWall then return {} end end
-task={spawn=function(f) f() end,wait=function()end}
+task={spawn=function(f) f() end,wait=function()end,delay=function(_,f) f() end}
 local heartbeat=event();local run={Heartbeat=heartbeat}
 local userInputService={JumpRequest=event(), InputBegan=event(), InputEnded=event(), WindowFocusReleased=event(), TextBoxFocused=event()}
 function userInputService:GetFocusedTextBox()return nil end
