@@ -30,6 +30,8 @@ const readTest = p => read(path.join(__dirname, p));
   winCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-counter-checks.luau'));
   const winSheriffLua = await Lua.create({ sandbox: true });
   winSheriffLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-sheriff-checks.luau'));
+  const winMurderLua = await Lua.create({ sandbox: true });
+  winMurderLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-murder-checks.luau'));
   const unboxLua = await Lua.create({ sandbox: true });
   unboxLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}; local require = function(module) return module.data end\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('unbox-checks.luau'));
   const unboxYieldLua = await Lua.create({ sandbox: true });
@@ -52,6 +54,12 @@ const readTest = p => read(path.join(__dirname, p));
   hpLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('hp-checks.luau'));
   const notificationYieldLua = await Lua.create({ sandbox: true });
   notificationYieldLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('notifications-yield-checks.luau'));
+  const markersLua = await Lua.create({ sandbox: true });
+  markersLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('markers-checks.luau'));
+  const teleportSearchLua = await Lua.create({ sandbox: true });
+  teleportSearchLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('teleport-search-checks.luau'));
+  const teleportGlideLua = await Lua.create({ sandbox: true });
+  teleportGlideLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('teleport-glide-checks.luau'));
   const voteLua = await Lua.create({ sandbox: true });
   voteLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
@@ -62,6 +70,11 @@ assert(hub.values["Auto Farm"] == false and hub.values["Auto Win"] == false and 
 assert(hub.setters["Auto Farm"](true) == false and hub.values["Auto Farm"] == false)
 assert(hub.values["Select Map"] == "Waiting for maps")
 assert(hub.values["Box To Open"] == "Waiting for boxes" and hub.values["Reveal Animation"] == "Off")
+assert(hub.values["Marker Point"] == nil and hub.values["Teleport Point"] == nil)
+hub.listOptions["Marker Point"]({"Home", "Roof"});assert(hub.values["Marker Point"] == "Home")
+hub.setters["Marker Point"]("Roof");assert(hub.values["Marker Point"] == "Roof")
+hub.listOptions["Marker Point"]({"Roof", "Hill"});assert(hub.values["Marker Point"] == "Roof")
+hub.listOptions["Marker Point"]({});assert(hub.values["Marker Point"] == nil)
 for _,card in ipairs(hub.searchables) do
  if card.Name == "Insta Kill As Sheriff" or card.Name == "Win Sheriff WallCheck" then assert(card:GetAttribute("GroupHidden")) end
 end
@@ -99,8 +112,10 @@ end
 ` + file + `
 local h=shared.AngelHub
 local cards={};for _,card in ipairs(h.searchables)do cards[card.Name]=card end
-assert(not cards['Insta Kill As Sheriff'].Visible and not cards['Win Sheriff WallCheck'].Visible)
+assert(not cards['Insta Kill As Sheriff'].Visible and not cards['Insta Kill As Murder'].Visible and not cards['Win Sheriff WallCheck'].Visible)
 h.setters['Auto Win'](true)
+assert(cards['Insta Kill As Murder'].Visible)
+h.setters['Insta Kill As Murder'](true);assert(h.values['Insta Kill As Murder'])
 assert(h.values['Auto Win'] and cards['Insta Kill As Sheriff'].Visible and not cards['Win Sheriff WallCheck'].Visible)
 h.setters['Insta Kill As Sheriff'](true);assert(cards['Win Sheriff WallCheck'].Visible)
 h.setters['Auto Win'](false)

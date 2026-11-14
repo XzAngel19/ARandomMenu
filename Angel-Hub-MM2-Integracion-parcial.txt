@@ -60,6 +60,7 @@ local AngelHub = {
 	sectionBoxes = {},
 	setters = {},
     cycleOptions = {},
+    listOptions = {},
 	connections = {},
 	keybinds = {},
 	keyLabels = {},
@@ -852,39 +853,37 @@ local function addList(parent, text, items, height)
 	create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, scroller)
 	create("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2), PaddingRight = UDim.new(0, 2) }, scroller)
 
-	local rows = {}
-	AngelHub.values[text] = items[1]
-	AngelHub.defaults[text] = items[1]
-
-	local function selectItem(name)
-		AngelHub.values[text] = name
-		for itemName, row in rows do
-			row.BackgroundTransparency = itemName == name and 0.5 or 1
-		end
-	end
-
-	for _, itemName in items do
-		local row = create("TextButton", {
-			Size = UDim2.new(1, -4, 0, 20),
-			BackgroundColor3 = ACCENT_A,
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-			Text = itemName,
-			TextColor3 = TEXT_COLOR,
-			TextSize = 12,
-			Font = TEXT_FONT,
-			AutoButtonColor = false,
-		}, scroller)
-
-		create("UICorner", { CornerRadius = UDim.new(0, 3) }, row)
-		rows[itemName] = row
-
-		row.Activated:Connect(function()
-			selectItem(itemName)
-		end)
-	end
-
-	AngelHub.setters[text] = selectItem
+    local rows = {}
+    AngelHub.values[text] = items[1]
+    AngelHub.defaults[text] = items[1]
+    local function selectItem(name)
+        if name ~= nil and not rows[name] then return false end
+        AngelHub.values[text] = name
+        for itemName, row in pairs(rows) do row.BackgroundTransparency = itemName == name and 0.5 or 1 end
+    end
+    local function refresh(itemsNow)
+        if type(itemsNow) ~= "table" then return end
+        local selected = AngelHub.values[text]
+        for _, row in pairs(rows) do row:Destroy() end
+        table.clear(rows)
+        local first
+        for _, itemName in ipairs(itemsNow) do
+            if type(itemName) == "string" and itemName ~= "" and not rows[itemName] then
+                local row = create("TextButton", {
+                    Size = UDim2.new(1, -4, 0, 20), BackgroundColor3 = ACCENT_A, BackgroundTransparency = 1,
+                    BorderSizePixel = 0, Text = itemName, TextColor3 = TEXT_COLOR, TextSize = 12,
+                    Font = TEXT_FONT, AutoButtonColor = false,
+                }, scroller)
+                create("UICorner", { CornerRadius = UDim.new(0, 3) }, row)
+                rows[itemName] = row; first = first or itemName
+                row.Activated:Connect(function() selectItem(itemName) end)
+            end
+        end
+        selectItem(rows[selected] and selected or first)
+    end
+    AngelHub.setters[text] = selectItem
+    AngelHub.listOptions[text] = refresh
+    refresh(items)
 	table.insert(AngelHub.searchables, holder)
 	return holder
 end
@@ -1095,6 +1094,7 @@ local function installGameplay(screenGui)
     local chamsStep = function() end
     local nametagsStep = function() end
     local playerHealthStep = function() end
+    local markersStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1109,7 +1109,7 @@ local function installGameplay(screenGui)
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
-        ["Insta Kill As Sheriff"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true, ["Coin ESP"] = true,
+        ["Insta Kill As Sheriff"] = true, ["Insta Kill As Murder"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true, ["Coin ESP"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1235,6 +1235,10 @@ local function installGameplay(screenGui)
             if enabled["Gun Aura"] then AngelHub.setters["Gun Aura"](false) end
             if enabled["Auto Get Gun"] then AngelHub.setters["Auto Get Gun"](false) end
             message("Gun assist stopped: runtime error")
+        end
+        local markersOk, markersError = pcall(markersStep, dt, root)
+        if not markersOk and not AngelHub.markersError then
+            AngelHub.markersError = true; warn("Angel Hub markers error: " .. tostring(markersError))
         end
         local notificationOk, notificationError = pcall(mm2NotificationsStep, dt, root)
         if not notificationOk and not AngelHub.notificationError then
@@ -2901,6 +2905,20 @@ local function installGameplay(screenGui)
         local connectionList, gameplayBound = {}, nil
         local roundCounted, roundBlocked = false, false
         local safe, accumulator = nil, 0
+        local murderGeneration, murderBusy, murderCooldown = 0, false, {}
+        local victims = {}
+        local function restoreVictim(part, snapshot)
+            if victims[part] ~= snapshot then return end
+            victims[part] = nil
+            pcall(function() if part.CFrame == snapshot.appliedFrame then part.CFrame = snapshot.frame end end)
+            pcall(function() if part.CanCollide == false then part.CanCollide = snapshot.collide end end)
+            pcall(function() if part.Anchored == true then part.Anchored = snapshot.anchored end end)
+        end
+        local function stopMurder()
+            murderGeneration += 1
+            for part, snapshot in pairs(victims) do restoreVictim(part, snapshot) end
+            table.clear(murderCooldown)
+        end
         local reasons = {
             Innocent = {Time = true, MurdererDied = true, MurdererLeft = true, InnocentsEscaped = true},
             Hero = {Time = true, MurdererDied = true, MurdererLeft = true},
@@ -2932,13 +2950,13 @@ local function installGameplay(screenGui)
                 local previous = tonumber(V[counter]) or 0
                 if AngelHub.setters[counter] then AngelHub.setters[counter](math.max(0, math.floor(previous)) + 1) end
             end))
-            table.insert(connectionList, ended.OnClientEvent:Connect(function() roundBlocked = true end))
+            table.insert(connectionList, ended.OnClientEvent:Connect(function() roundBlocked = true; stopMurder() end))
             for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew"}) do
                 local remote = gameplay:FindFirstChild(name)
                 if remote and remote:IsA("RemoteEvent") then
                     table.insert(connectionList, remote.OnClientEvent:Connect(function(duration)
                         if name == "RoundStart" and (not tonumber(duration) or tonumber(duration) <= 0) then return end
-                        roundCounted, roundBlocked = false, false
+                        stopMurder(); roundCounted, roundBlocked = false, false
                     end))
                 end
             end
@@ -2966,14 +2984,86 @@ local function installGameplay(screenGui)
             pcall(function() parked.part:Destroy() end)
             return true
         end
+        local function murderStep(character, humanoid, root)
+            if not enabled["Auto Win"] or not enabled["Insta Kill As Murder"] or roundBlocked or murderBusy
+                or not safe or safe.character ~= character or safe.map ~= mm2Map() or safe.part.Parent ~= workspace
+                or (root.Position - safe.position).Magnitude > 30 then return end
+            local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+            local knife = character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+            if not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+            local selected, selectedRoot
+            local now = os.clock()
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local targetRoot = knifeTargetValid(player, root, math.huge)
+                if targetRoot and farmOnMap(targetRoot, safe.map) and now >= (murderCooldown[player] or 0) then
+                    selected, selectedRoot = player, targetRoot; break
+                end
+            end
+            if not selected then return end
+            murderBusy = true
+            local generation, parked, targetCharacter = murderGeneration, safe, selected.Character
+            murderCooldown[selected] = now + 0.9
+            task.spawn(function()
+                local function stillValid()
+                    return not stopped and enabled["Auto Win"] and enabled["Insta Kill As Murder"] and not roundBlocked
+                        and generation == murderGeneration and safe == parked and parked.part.Parent == workspace and parked.map == mm2Map()
+                        and localPlayer.Character == character and humanoid.Health > 0 and not root.Anchored
+                        and (root.Position - parked.position).Magnitude <= 30 and selected.Character == targetCharacter
+                        and knifeTargetValid(selected, root, math.huge) == selectedRoot and farmOnMap(selectedRoot, parked.map)
+                end
+                local ok, err = pcall(function()
+                    if not stillValid() then return end
+                    if knife.Parent ~= character then
+                        if not backpack or knife.Parent ~= backpack then return end
+                        humanoid:EquipTool(knife)
+                    end
+                    if not stillValid() or knife.Parent ~= character or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+                    local handle = knife:FindFirstChild("Handle")
+                    local events = knife:FindFirstChild("Events")
+                    local touched = events and events:FindFirstChild("HandleTouched")
+                    if not handle or not handle:IsA("BasePart") or not (touched and touched:IsA("RemoteEvent")) and type(firetouchinterest) ~= "function" then return end
+                    knife:Activate()
+                    if not stillValid() or knife.Parent ~= character or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+                    if selectedRoot.Anchored then return end
+                    local snapshot = {frame = selectedRoot.CFrame, anchored = selectedRoot.Anchored,
+                        collide = selectedRoot.CanCollide, appliedFrame = handle.CFrame}
+                    victims[selectedRoot] = snapshot
+                    local sent, sendError = pcall(function()
+                        selectedRoot.Anchored = true; selectedRoot.CanCollide = false; selectedRoot.CFrame = snapshot.appliedFrame
+                        if touched and touched:IsA("RemoteEvent") then
+                            touched:FireServer(selectedRoot)
+                        else
+                            firetouchinterest(handle, selectedRoot, 0)
+                            if stillValid() then firetouchinterest(handle, selectedRoot, 1) end
+                        end
+                    end)
+                    restoreVictim(selectedRoot, snapshot)
+                    if not sent then
+                        warn("Angel Hub Murder attack uncertain: " .. tostring(sendError))
+                        if generation == murderGeneration and enabled["Insta Kill As Murder"] then
+                            AngelHub.setters["Insta Kill As Murder"](false); message("Auto Win Murder stopped: attack uncertain")
+                        end
+                    end
+                end)
+                murderBusy = false
+                if not ok then
+                    warn("Angel Hub Murder attack stopped: " .. tostring(err))
+                    if generation == murderGeneration and enabled["Insta Kill As Murder"] then
+                        AngelHub.setters["Insta Kill As Murder"](false); message("Auto Win Murder stopped: runtime error")
+                    end
+                end
+            end)
+        end
+        function autoWin.murderToggle() stopMurder() end
         function autoWin.canStart()
             if safe and not releaseSafe() then return false end
             return bind()
         end
         function autoWin.toggle(value)
+            stopMurder()
             if not value then releaseSafe(); return end
             accumulator = 0
-            message("Auto Win: safe platform; Sheriff uses basic CFrame; other combat options pending")
+            message("Auto Win: safe platform; Murder and Sheriff attacks are unverified; Fling pending")
         end
         function autoWin.step(dt, character, humanoid, root)
             if not enabled["Auto Win"] then return end
@@ -2985,7 +3075,10 @@ local function installGameplay(screenGui)
                     or (root.Position - safe.position).Magnitude > 100 then
                     releaseSafe()
                 end
-                if safe then return end
+                if safe then
+                    if not roundBlocked and character and humanoid and root then murderStep(character, humanoid, root) end
+                    return
+                end
             end
             if roundBlocked or not character or not humanoid or not root or root.Anchored then return end
             local map = mm2Map()
@@ -3026,6 +3119,7 @@ local function installGameplay(screenGui)
             end)
         end
         function autoWin.cleanup()
+            stopMurder()
             disconnect()
             releaseSafe()
         end
@@ -3784,7 +3878,339 @@ local function installGameplay(screenGui)
         end
         function playerHealth.cleanup() playerHealth.toggle(false) end
     end
+    local markers = {}
+    do
+        local storageKey, placeKey = "Marker Points by Place", tostring(game.PlaceId or 0)
+        local store, visuals, pick, lastPosition, elapsed, travelGeneration, glide = {}, {}, nil, nil, 0, 0, nil
+        local function validNumber(value)
+            value = tonumber(value)
+            if not value or value ~= value or math.abs(value) >= 10000000 then return nil end
+            return value
+        end
+        local function refreshLists()
+            local names = {}
+            for name in pairs(store[placeKey] or {}) do table.insert(names, name) end
+            table.sort(names)
+            if AngelHub.listOptions then
+                for _, list in ipairs({"Marker Point", "Teleport Point"}) do
+                    if AngelHub.listOptions[list] then AngelHub.listOptions[list](names) end
+                end
+            end
+        end
+        local function removeVisual(name)
+            local visual = visuals[name]; visuals[name] = nil
+            if visual then
+                pcall(function() visual.gui:Destroy() end)
+                pcall(function() visual.part:Destroy() end)
+            end
+        end
+        local function clearVisuals()
+            for name in pairs(visuals) do removeVisual(name) end
+        end
+        local function validName(value)
+            local name = string.match(tostring(value or ""), "^%s*(.-)%s*$") or ""
+            return string.sub(name, 1, 48)
+        end
+        local function nextName()
+            local base = validName(V["Marker Name"])
+            if base ~= "" then return base end
+            local n = 1
+            while (store[placeKey] or {})["Point " .. n] do n += 1 end
+            return "Point " .. n
+        end
+        local function nextPickName()
+            local base = nextName()
+            if not (store[placeKey] or {})[base] then return base end
+            local index = 1
+            while true do
+                local suffix = " #" .. tostring(index)
+                local candidate = string.sub(base, 1, 48 - #suffix) .. suffix
+                if not (store[placeKey] or {})[candidate] then return candidate end
+                index += 1
+            end
+        end
+        local function restoreMenu()
+            if pick and pick.reopen and AngelHub.mainWindow then AngelHub.mainWindow.Visible = true end
+            pick = nil
+        end
+        local function save(position, surface, name)
+            local x, y, z = validNumber(position and position.X), validNumber(position and position.Y), validNumber(position and position.Z)
+            name = validName(name)
+            if not x or not y or not z or name == "" then message("Markers: invalid name or coordinates"); return false end
+            store[placeKey] = store[placeKey] or {}
+            local points, count = store[placeKey], 0
+            for _ in pairs(points) do count += 1 end
+            if count >= 128 and not points[name] then message("Markers: limit reached (128)"); return false end
+            points[name] = {x, y, z, surface == true and "surface" or nil}
+            V[storageKey] = store
+            removeVisual(name); refreshLists()
+            if AngelHub.setters["Marker Point"] then AngelHub.setters["Marker Point"](name) end
+            if AngelHub.setters["Teleport Point"] then AngelHub.setters["Teleport Point"](name) end
+            elapsed = 1
+            message("Marker saved: " .. name .. " (save config to keep it)")
+            return true
+        end
+        AngelHub.setters[storageKey] = function(value)
+            if type(value) ~= "table" then return false end
+            local cleaned, places = {}, 0
+            for key, group in pairs(value) do
+                if places >= 32 then break end
+                if type(key) == "string" and key:match("^%d+$") and type(group) == "table" then
+                    local out, count = {}, 0
+                    for name, coords in pairs(group) do
+                        if count >= 128 then break end
+                        if type(name) == "string" and validName(name) == name and name ~= "" and type(coords) == "table" then
+                            local x, y, z = validNumber(coords[1]), validNumber(coords[2]), validNumber(coords[3])
+                            if x and y and z then out[name] = {x, y, z, coords[4] == "surface" and "surface" or nil}; count += 1 end
+                        end
+                    end
+                    cleaned[key] = out; places += 1
+                end
+            end
+            store = cleaned; V[storageKey] = store; clearVisuals(); refreshLists(); elapsed = 1
+        end
+        V[storageKey] = store
+        function markers.saveHere()
+            local _, human, root = characterParts()
+            if not human or not root then message("Markers: character unavailable"); return end
+            save(root.Position, false, nextName())
+        end
+        function markers.saveCoordinates()
+            if V["Manual Coordinates"] ~= true then message("Markers: enable Manual Coordinates first"); return end
+            local x, y, z = tostring(V["Coordinates"] or ""):match("^%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*,%s*([%+%-%.%deE]+)%s*$")
+            x, y, z = validNumber(x), validNumber(y), validNumber(z)
+            if not x or not y or not z then message("Markers: enter X, Y, Z"); return end
+            save(Vector3.new(x, y, z), false, nextName())
+        end
+        function markers.delete()
+            local name = V["Marker Point"]
+            if not name or not store[placeKey] or not store[placeKey][name] then message("Markers: select a saved point"); return end
+            store[placeKey][name] = nil; removeVisual(name); refreshLists(); message("Marker deleted: " .. name .. " (save config to keep it)")
+        end
+        local function travel(position, surface)
+            local character, human, root = characterParts()
+            if not character or not human or not root or root.Anchored then message("Teleport: character unavailable or anchored"); return end
+            if enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"] then message("Teleport: disable Auto Win, Auto Farm and Air Walk first"); return end
+            if V["Teleport Movement"] ~= "Instant" and V["Teleport Movement"] ~= "Glide" then message("Teleport: unknown movement"); return end
+            local x, y, z = validNumber(position and position.X), validNumber(position and position.Y), validNumber(position and position.Z)
+            if not x or not y or not z then message("Teleport: invalid destination"); return end
+            local before = root.Position
+            local height = surface and math.clamp(tonumber(V["Teleport Height Offset"]) or 3, 0, 12) or 0
+            local destination = Vector3.new(x, y + height, z)
+            if V["Teleport Movement"] == "Glide" then
+                local speed = tonumber(V["Teleport Glide Speed"]) or 100
+                if speed ~= speed or speed <= 0 then message("Teleport: Glide speed must be positive"); return end
+                glide = {character=character, humanoid=human, root=root, target=destination,
+                    speed=math.clamp(speed, 1, 500), ticket=travelGeneration}
+                lastPosition = before
+                return
+            end
+            local ok = pcall(function()
+                character:PivotTo(root.CFrame + (destination - root.Position))
+                if not V["Teleport Keep Momentum"] then
+                    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0); root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end)
+            if ok then lastPosition = before else message("Teleport failed") end
+        end
+        local function startPick(mode)
+            if pick then restoreMenu(); message("Point selection cancelled"); return end
+            local window = AngelHub.mainWindow
+            pick = {mode=mode, name=nextPickName(), reopen=window and window.Visible == true,
+                deadline=os.clock() + (mode == "teleport" and math.clamp(tonumber(V["Teleport Arm Window"]) or 5, 1, 15) or 30)}
+            if window then window.Visible = false end
+            message("Tap/click a surface; Escape cancels")
+        end
+        function markers.touch() travelGeneration += 1; glide = nil; startPick("marker") end
+        local function searchDestination(mode, ticket)
+            local character, human, root = characterParts()
+            if not character or not human or not root then message("Teleport: character unavailable"); return end
+            local origin = root.Position
+            local range = math.clamp(tonumber(V["Teleport Search Range"]) or 500, 50, 5000)
+            local needle = string.lower(string.match(tostring(V[mode == "Item" and "Teleport Item" or "Teleport Player"] or ""), "^%s*(.-)%s*$"))
+            if mode ~= "Nearest Player" and needle == "" then message("Teleport: enter a name"); return end
+            local best, bestDistance, exact, ambiguous = nil, nil, nil, false
+            if mode == "Item" then
+                local visited = 0
+                for _, object in ipairs(workspace:GetDescendants()) do
+                    if stopped or ticket ~= travelGeneration then return end
+                    visited += 1
+                    if visited > 20000 then break end
+                    if visited % 500 == 0 then task.wait(); if stopped or ticket ~= travelGeneration then return end end
+                    if object:IsA("BasePart") and object:IsDescendantOf(workspace) then
+                        local parent = object.Parent
+                        local text = string.lower(object.Name)
+                        local parentText = parent and (parent:IsA("Model") or parent:IsA("Tool")) and string.lower(parent.Name) or ""
+                        local match = string.find(text, needle, 1, true) or string.find(parentText, needle, 1, true)
+                        local ancestor, insideCharacter = parent, false
+                        while match and ancestor and ancestor ~= workspace do
+                            if ancestor:FindFirstChildOfClass("Humanoid") then insideCharacter = true; break end
+                            ancestor = ancestor.Parent
+                        end
+                        if match and not insideCharacter then
+                            local distance = (object.Position - origin).Magnitude
+                            if distance <= range and (not bestDistance or distance < bestDistance) then best, bestDistance = object, distance end
+                        end
+                    end
+                end
+            else
+                for _, player in ipairs(playersService:GetPlayers()) do
+                    if stopped or ticket ~= travelGeneration then return end
+                    if player ~= localPlayer then
+                        local model = player.Character
+                        local targetHuman = model and model:FindFirstChildOfClass("Humanoid")
+                        local target = model and model:FindFirstChild("HumanoidRootPart")
+                        local name, display = string.lower(player.Name), string.lower(player.DisplayName)
+                        local isExact = name == needle
+                        local match = mode == "Nearest Player" or isExact or string.sub(name, 1, #needle) == needle or string.sub(display, 1, #needle) == needle
+                        local allowed = match and model and model.Parent and model:IsDescendantOf(workspace)
+                            and targetHuman and targetHuman.Health > 0 and target and target:IsA("BasePart")
+                        if allowed and V["Teleport Skip Friends"] then
+                            local ok, friend = pcall(function() return player:IsFriendsWith(localPlayer.UserId) end)
+                            if stopped or ticket ~= travelGeneration then return end
+                            allowed = ok and friend == false
+                        end
+                        if allowed then
+                            local distance = (target.Position - origin).Magnitude
+                            if distance <= range then
+                                if mode == "Nearest Player" then
+                                    if not bestDistance or distance < bestDistance then best, bestDistance = player, distance end
+                                elseif isExact then exact = player
+                                elseif best then ambiguous = true else best = player end
+                            end
+                        end
+                    end
+                end
+                if mode == "Named Player" then
+                    if exact then best = exact elseif ambiguous then message("Teleport: player name is ambiguous"); return end
+                end
+            end
+            if stopped or ticket ~= travelGeneration or localPlayer.Character ~= character then return end
+            if not best then message("Teleport: destination not found in range"); return end
+            if mode == "Item" then
+                if not best:IsDescendantOf(workspace) or (best.Position - root.Position).Magnitude > range then return end
+                travel(best.Position, true)
+            else
+                local model = best.Character
+                local targetHuman = model and model:FindFirstChildOfClass("Humanoid")
+                local target = model and model:FindFirstChild("HumanoidRootPart")
+                if not model or not model.Parent or not model:IsDescendantOf(workspace)
+                    or not targetHuman or targetHuman.Health <= 0 or not target or not target:IsA("BasePart")
+                    or (target.Position - root.Position).Magnitude > range then return end
+                local look = target.CFrame.LookVector
+                local flat = Vector3.new(look.X, 0, look.Z)
+                local offset = math.clamp(tonumber(V["Teleport Player Offset"]) or 4, 0, 20)
+                local position = target.Position - (flat.Magnitude > 0.01 and flat.Unit * offset or Vector3.new(0, 0, 0))
+                travel(position, true)
+            end
+        end
+        function markers.teleport()
+            travelGeneration += 1; glide = nil
+            local ticket, destination = travelGeneration, V["Teleport Destination"]
+            if destination == "Tap Point" then startPick("teleport")
+            elseif destination == "Waypoint" then
+                if pick then restoreMenu() end
+                local point = store[placeKey] and store[placeKey][V["Teleport Point"]]
+                if not point then message("Teleport: select a saved point"); return end
+                travel(Vector3.new(point[1], point[2], point[3]), point[4] == "surface")
+            elseif destination == "Last Position" then
+                if pick then restoreMenu() end
+                if not lastPosition then message("Teleport: no previous point teleport"); return end
+                travel(lastPosition, false)
+            elseif destination == "Nearest Player" or destination == "Named Player" or destination == "Item" then
+                if pick then restoreMenu() end
+                task.spawn(function()
+                    local ok, err = pcall(searchDestination, destination, ticket)
+                    if not ok then warn("Angel Hub Teleport search error: " .. tostring(err)); if not stopped and ticket == travelGeneration then message("Teleport: search failed") end end
+                end)
+            else message("Teleport: destination not implemented: " .. tostring(destination)) end
+        end
+        function markers.input(input, processed)
+            if not pick then return end
+            if input.KeyCode == Enum.KeyCode.Escape then restoreMenu(); message("Point selection cancelled"); return end
+            if processed or userInputService:GetFocusedTextBox() or not input.Position
+                or (input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1) then return end
+            local camera = workspace.CurrentCamera
+            if not camera then return end
+            local ok, hit = pcall(function()
+                local ray = camera:ScreenPointToRay(input.Position.X, input.Position.Y)
+                local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = localPlayer.Character and {localPlayer.Character} or {}
+                params.IgnoreWater = true; params.RespectCanCollide = true
+                return workspace:Raycast(ray.Origin, ray.Direction * 5000, params)
+            end)
+            if not ok or not hit or not hit.Position then message("No surface found; try again"); return end
+            local current = pick
+            restoreMenu()
+            if current.mode == "marker" then save(hit.Position, true, current.name) else travel(hit.Position, true) end
+        end
+        function markers.step(dt, root)
+            if glide then
+                local trip = glide
+                if stopped or trip.ticket ~= travelGeneration or V["Teleport Movement"] ~= "Glide"
+                    or enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"]
+                    or localPlayer.Character ~= trip.character or trip.humanoid.Health <= 0
+                    or not root or root ~= trip.root or root.Anchored then
+                    glide = nil
+                elseif dt > 0 then
+                    local delta = trip.target - root.Position
+                    local distance = delta.Magnitude
+                    local step = math.min(trip.speed * math.clamp(dt, 0, 0.1), distance)
+                    local ok = pcall(function()
+                        if distance > 0.0001 then trip.character:PivotTo(root.CFrame + delta.Unit * step) end
+                        if not V["Teleport Keep Momentum"] then
+                            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0); root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                        end
+                    end)
+                    if not ok then glide = nil; message("Teleport: Glide stopped")
+                    elseif distance <= step + 0.001 then glide = nil end
+                end
+            end
+            if pick and os.clock() >= pick.deadline then restoreMenu(); message("Point selection timed out") end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.25 then return end
+            elapsed = 0
+            local points = store[placeKey] or {}
+            for name, coords in pairs(points) do
+                local visual = visuals[name]
+                if visual and (not visual.part.Parent or not visual.gui.Parent) then removeVisual(name); visual = nil end
+                if not visual then
+                    local part = Instance.new("Part"); part.Name = "AngelHubMarker"
+                    part.Anchored = true; part.CanCollide = false; part.CanQuery = false; part.CanTouch = false
+                    part.Transparency = 1; part.Size = Vector3.new(0.1, 0.1, 0.1)
+                    part.CFrame = CFrame.new(Vector3.new(coords[1], coords[2], coords[3])); part.Parent = workspace
+                    local gui = Instance.new("BillboardGui"); gui.Name = "AngelHubMarkerLabel"; gui.Adornee = part
+                    gui.Size = UDim2.fromOffset(200, 30); gui.AlwaysOnTop = true; gui.Parent = screenGui
+                    local label = Instance.new("TextLabel"); label.Size = UDim2.fromScale(1, 1); label.BackgroundTransparency = 1
+                    label.Font = Enum.Font.SourceSansBold; label.TextSize = 14; label.TextStrokeTransparency = 0.2; label.Parent = gui
+                    visual = {part=part, gui=gui, label=label}; visuals[name] = visual
+                end
+                local distance = root and (root.Position - Vector3.new(coords[1], coords[2], coords[3])).Magnitude
+                visual.label.Text = name .. (V["Marker Distance"] and distance and (" [" .. tostring(math.floor(distance + 0.5)) .. "]") or "")
+                visual.label.TextColor3 = V["Marker Colour"]
+            end
+            for name in pairs(visuals) do if not points[name] then removeVisual(name) end end
+        end
+        for _, name in ipairs({"Teleport Destination", "Teleport Movement", "Teleport Player", "Teleport Item", "Teleport Point",
+            "Teleport Search Range", "Teleport Skip Friends", "Teleport Player Offset", "Teleport Height Offset"}) do
+            local old = AngelHub.setters[name]
+            if old then
+                AngelHub.setters[name] = function(value)
+                    local previous = V[name]
+                    local result = old(value)
+                    if V[name] ~= previous then
+                        travelGeneration += 1; glide = nil
+                        if name == "Teleport Destination" or name == "Teleport Movement" then restoreMenu() end
+                    end
+                    return result
+                end
+            end
+        end
+        function markers.cancelTravel() travelGeneration += 1; glide = nil; restoreMenu() end
+        function markers.cleanup() markers.cancelTravel(); clearVisuals() end
+    end
     airWalkStep = airWalk.step
+    markersStep = markers.step
     playerHealthStep = playerHealth.step
     chamsStep = chams.step
     nametagsStep = nametags.step
@@ -3792,7 +4218,7 @@ local function installGameplay(screenGui)
     mm2CoinEspStep = coinEsp.step
     mm2NotificationsStep = notifications.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -3851,6 +4277,7 @@ local function installGameplay(screenGui)
                 if value == true and enabled["Auto Farm"] and (name == "Enable Speed" or (name == "Noclip" and V["Farm Mode"] == "Below")) then
                     AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: conflicting module")
                 end
+                if value == true and (name == "Auto Win" or name == "Auto Farm" or name == "Air Walk") then markers.cancelTravel() end
                 local shootingBefore = shooter.active()
                 old(value == true); enabled[name] = value == true
                 if name == "Auto Farm" then
@@ -3865,6 +4292,7 @@ local function installGameplay(screenGui)
                 if name == "Auto Shoot" and value then message("Auto Shoot: basic prediction") end
                 if name == "Auto Unbox" then unbox.toggle(value) end
                 if name == "Auto Win" then autoWin.toggle(value) end
+                if name == "Insta Kill As Murder" then autoWin.murderToggle() end
                 if name == "Gun Aura" or name == "Auto Get Gun" then gunAssist.toggle() end
                 if name == "Coin ESP" then coinEsp.toggle(value == true) end
                 if name == "Air Walk" then airWalk.toggle(value == true) end
@@ -3982,6 +4410,11 @@ local function installGameplay(screenGui)
             root.AssemblyLinearVelocity = Vector3.new(direction.X, velocity.Y, direction.Z)
         end,
     }
+    AngelHub.actions["Save Here"] = markers.saveHere
+    AngelHub.actions["Save Coordinates"] = markers.saveCoordinates
+    AngelHub.actions["Delete Marker"] = markers.delete
+    AngelHub.actions["Touch"] = markers.touch
+    AngelHub.actions["Teleport To Point"] = markers.teleport
     local function typing()
         return userInputService:GetFocusedTextBox() ~= nil
     end
@@ -3994,6 +4427,7 @@ local function installGameplay(screenGui)
         return p.X >= at.X and p.X <= at.X + size.X and p.Y >= at.Y and p.Y <= at.Y + size.Y
     end
     listen(userInputService.InputBegan, function(input, processed)
+        markers.input(input, processed)
         airWalk.inputBegan(input, processed)
         if not enabled["Infinite Jump"] or typing() then return end
         if (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA) and not processed then
@@ -4528,7 +4962,9 @@ local function initializeScript()
 	end
 	for _, name in ipairs({"Auto Win", "Insta Kill As Sheriff"}) do
 		local previous = AngelHub.setters[name]
-		AngelHub.setters[name] = function(value) previous(value); refreshWinCards() end
+		AngelHub.setters[name] = function(value)
+            local result = previous(value); refreshWinCards(); return result
+        end
 	end
 	refreshWinCards()
 
@@ -4633,7 +5069,7 @@ local function initializeScript()
 	addCycle(extraRight, "Teleport Destination", { "Tap Point", "Nearest Player", "Named Player", "Item", "Waypoint", "Last Position" })
 	addText(extraRight, "Teleport Player", "Player name")
 	addText(extraRight, "Teleport Item", "Item name")
-	addList(extraRight, "Teleport Point", { "Point 1", "Point 2" }, 60)
+	addList(extraRight, "Teleport Point", {}, 60)
 	addButton(extraRight, "Teleport To Point")
 	addSlider(extraRight, "Teleport Arm Window", 1, 15, 5, 0)
 	addSlider(extraRight, "Teleport Search Range", 50, 5000, 500, 0)
@@ -4792,7 +5228,8 @@ local function initializeScript()
 	addText(visualsRight, "Marker Name", "Marker name")
 	addButton(visualsRight, "Save Here")
 	addButton(visualsRight, "Touch")
-	addList(visualsRight, "Marker Point", { "Marker 1" }, 60)
+	addList(visualsRight, "Marker Point", {}, 60)
+	addButton(visualsRight, "Delete Marker")
 	addToggle(visualsRight, "Manual Coordinates", nil, false)
 	addText(visualsRight, "Coordinates", "X, Y, Z")
 	addButton(visualsRight, "Save Coordinates")
@@ -4938,8 +5375,13 @@ local function initializeScript()
 	end
 
 	local function applyConfig(data)
+        -- Restore point lists before the saved list selections, regardless of JSON key order.
+        if type(data["Marker Points by Place"]) == "table" and AngelHub.setters["Marker Points by Place"] then
+            pcall(AngelHub.setters["Marker Points by Place"], data["Marker Points by Place"])
+        end
 		for pass = 1, 2 do
 		for name, value in data do
+            if name == "Marker Points by Place" then continue end
 			if (AngelHub.moduleNames[name] == true) ~= (pass == 2) then continue end
 			local setter = AngelHub.setters[name]
 			if not setter then
