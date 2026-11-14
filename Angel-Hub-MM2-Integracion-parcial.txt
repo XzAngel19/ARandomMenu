@@ -47,6 +47,7 @@ local COLOR_PRESETS = {
 }
 
 local localPlayer = playersService.LocalPlayer
+local isMM2 = game.PlaceId == 142823291
 
 local AngelHub = {
 	values = {},
@@ -219,8 +220,20 @@ local function addSection(parent, text)
 	table.insert(AngelHub.sections, holder)
 end
 
+local UNIMPLEMENTED_TOGGLES = {
+    ["Knife Tracer"] = true, ["Self HP"] = true,
+    ["Remove Textures"] = true, ["Disable Particles"] = true, ["Disable Shadows"] = true,
+    ["Simple Materials"] = true, ["Lowest Render Quality"] = true, ["Low Detail Meshes"] = true,
+    ["Hide Distant Scenery"] = true, ["Simplify Terrain"] = true, ["Disable Post Effects"] = true,
+    ["Simple Lighting"] = true, ["Disable Local Lights"] = true, ["Simplify Game UI"] = true,
+    ["Hide World UI"] = true, ["Hide Game UI"] = true, ["Hide Roblox Panels"] = true,
+    ["Instant Roles"] = true, ["Gun Notification"] = true, ["Murder Close"] = true,
+    ["Sheriff Down"] = true, ["Your Role"] = true, ["Round Events"] = true, ["Murderer Defeated"] = true,
+    ["Don't Show Again"] = true,
+}
+
 local function addToggle(parent, text, keybind, default)
-	local startState = default == true
+	local startState = default == true and not UNIMPLEMENTED_TOGGLES[text]
 	local holder, stroke = createCard("TextButton", parent, text, 28)
 	holder.Text = ""
 	holder.AutoButtonColor = false
@@ -389,6 +402,12 @@ local function addModule(parent, text, keybind, default)
 end
 
 local function addSlider(parent, text, minValue, maxValue, default, decimals)
+    local manualMovement = ({
+        ["Speed Value"] = true, ["Jump Power"] = true, ["High Jump Velocity"] = true,
+        ["Long Jump Speed"] = true, ["Infinite Jump Power"] = true,
+        ["Fly Horizontal Speed"] = true, ["Fly Vertical Speed"] = true,
+        ["Wall Crawl Speed"] = true,
+    })[text] == true
 	local holder = createCard("Frame", parent, text, 44)
 	local startAlpha = (default - minValue) / (maxValue - minValue)
 
@@ -403,7 +422,7 @@ local function addSlider(parent, text, minValue, maxValue, default, decimals)
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, holder)
 
-	local valueLabel = create("TextLabel", {
+	local valueLabel = create(manualMovement and "TextBox" or "TextLabel", {
 		Size = UDim2.fromOffset(56, 20),
 		Position = UDim2.new(1, -66, 0, 3),
 		BackgroundTransparency = 1,
@@ -449,8 +468,10 @@ local function addSlider(parent, text, minValue, maxValue, default, decimals)
 
 	local function setValue(value)
 		local factor = 10 ^ decimals
-		value = math.floor(math.clamp(value, minValue, maxValue) * factor + 0.5) / factor
-		local snapped = (value - minValue) / (maxValue - minValue)
+        if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then return end
+        if manualMovement then value = math.clamp(value, -10000, maxValue) else value = math.clamp(value, minValue, maxValue) end
+		value = math.floor(value * factor + 0.5) / factor
+		local snapped = math.clamp((value - minValue) / (maxValue - minValue), 0, 1)
 
 		tween(fill, SLIDE_TWEEN, { Size = UDim2.fromScale(snapped, 1) })
 		tween(knob, SLIDE_TWEEN, { Position = UDim2.new(snapped, 0, 0.5, 0) })
@@ -459,6 +480,13 @@ local function addSlider(parent, text, minValue, maxValue, default, decimals)
 	end
 
 	AngelHub.setters[text] = setValue
+    if manualMovement then
+        valueLabel.ClearTextOnFocus = false
+        valueLabel.FocusLost:Connect(function()
+            local number = tonumber(valueLabel.Text)
+            if number then AngelHub.setters[text](number) else valueLabel.Text = tostring(AngelHub.values[text]) end
+        end)
+    end
 
 	local function updateFromX(positionX)
 		local alpha = math.clamp((positionX - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
@@ -670,6 +698,7 @@ local function addText(parent, text, placeholder, default)
 end
 
 local function addKeybind(parent, text, default)
+    if userInputService.TouchEnabled and not userInputService.KeyboardEnabled then return nil end
 	local holder = createCard("Frame", parent, text, 28)
 
 	create("TextLabel", {
@@ -1032,7 +1061,10 @@ local function installGameplay(screenGui)
     local groups = {}
     local noclipParts = setmetatable({}, {__mode = "k"})
     local noclipCharacter
-    local lastJump = 0
+    local lastJump = -math.huge
+    local jumpHeld, jumpTouch, jumpKey = false, nil, nil
+    local afkElapsed = 0
+    local xrayStep = function() end
     local stopped = false
     local runtimeConnections = {}
     local supportedModules = {
@@ -1041,6 +1073,7 @@ local function installGameplay(screenGui)
         ["Fullbright"] = true, ["Time Changer"] = true, ["Fast Time"] = true,
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true,
+        ["X-Ray"] = true, ["Anti AFK"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1106,12 +1139,51 @@ local function installGameplay(screenGui)
     local fastTime
     local function update(dt)
         if stopped then return end
-        local character, humanoid = characterParts()
+        local character, humanoid, root = characterParts()
         updateNoclip(character)
         if enabled["Enable Gravity"] then apply("gravity", workspace, {Gravity = V["Gravity Value"]}) else restore("gravity") end
-        if enabled["Enable Speed"] and V["Speed Mode"] == "WalkSpeed" and humanoid then
+        if enabled["Enable Speed"] and V["Speed Mode"] == "WalkSpeed" and V["Speed Value"] >= 0 and humanoid then
             apply("speed", humanoid, {WalkSpeed = V["Speed Value"]})
         else restore("speed") end
+        if dt > 0 and enabled["Enable Speed"] and (V["Speed Mode"] == "Velocity" or (V["Speed Mode"] == "WalkSpeed" and V["Speed Value"] < 0)) and humanoid and root and not root.Anchored and not humanoid.Sit then
+            local move = humanoid.MoveDirection
+            local vel = root.AssemblyLinearVelocity
+            local desiredX, desiredZ = move.X * V["Speed Value"], move.Z * V["Speed Value"]
+            local alpha = math.clamp(V["Speed Response"] * dt * 12, 0, 1)
+            if V["Speed Response"] >= 1 then alpha = 1 end
+            local x = vel.X + (desiredX - vel.X) * alpha
+            local z = vel.Z + (desiredZ - vel.Z) * alpha
+            if move.Magnitude < 0.01 then
+                local brake = math.clamp((1 - V["Speed Braking"]) * dt * 10, 0, 1)
+                x, z = x * (1 - brake), z * (1 - brake)
+            end
+            if V["Speed Wall Check"] then
+                local ok, hit = pcall(function()
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {character}
+                    params.RespectCanCollide = true
+                    params.IgnoreWater = true
+                    local step = Vector3.new(x * math.min(dt, 0.1), 0, z * math.min(dt, 0.1))
+                    if step.Magnitude < 0.001 then return nil end
+                    if workspace.Blockcast then
+                        return workspace:Blockcast(root.CFrame, root.Size * 0.9, step, params)
+                    end
+                    return workspace:Raycast(root.Position, step, params)
+                end)
+                if not ok or hit then x, z = 0, 0 end
+            end
+            root.AssemblyLinearVelocity = Vector3.new(x, V["Speed Keep Vertical"] and vel.Y or 0, z)
+        end
+        if enabled["Infinite Jump"] and V["Infinite Jump Mode"] == "Rise" and jumpHeld and humanoid and root and not root.Anchored then
+            local vel = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(vel.X, V["Infinite Jump Power"], vel.Z)
+        end
+        xrayStep(dt, root)
+        if enabled["Anti AFK"] and dt > 0 then
+            afkElapsed += dt
+            if afkElapsed >= 150 then afkElapsed = 0; task.spawn(AngelHub.pokeAfk) end
+        end
         if enabled["Custom Jump Power"] and humanoid then
             apply("jump", humanoid, {UseJumpPower = true, JumpPower = V["Jump Power"]})
         else restore("jump") end
@@ -1189,8 +1261,121 @@ local function installGameplay(screenGui)
     listen(workspace.DescendantAdded, function(object)
         if not stopped then updateInteraction(object) end
     end)
+    -- Local-only map fading. Characters and held tools are excluded.
+    local xrayRecords = setmetatable({}, {__mode = "k"})
+    local xrayIndexed = setmetatable({}, {__mode = "k"})
+    local xrayParts, xrayCursor, xrayPause, xrayGeneration = {}, 1, 0, 0
+    local function xrayRestore(part)
+        local record = xrayRecords[part]
+        if not record then return end
+        pcall(function()
+            if part.LocalTransparencyModifier == record.applied then part.LocalTransparencyModifier = record.base end
+        end)
+        xrayRecords[part] = nil
+    end
+    local function xrayClear()
+        for part in pairs(xrayRecords) do xrayRestore(part) end
+    end
+    local function xrayAdd(part)
+        if part:IsA("BasePart") and not xrayIndexed[part] then
+            xrayIndexed[part] = true
+            table.insert(xrayParts, part)
+        end
+    end
+    local function xrayToggle(on)
+        xrayGeneration += 1
+        xrayClear()
+        table.clear(xrayParts); table.clear(xrayIndexed)
+        xrayCursor, xrayPause = 1, 0
+        if not on then return end
+        local generation = xrayGeneration
+        task.spawn(function()
+            for index, part in ipairs(workspace:GetDescendants()) do
+                if stopped or generation ~= xrayGeneration then return end
+                xrayAdd(part)
+                if index % 200 == 0 then task.wait() end
+            end
+        end)
+    end
+    listen(workspace.DescendantAdded, function(part)
+        if enabled["X-Ray"] then xrayAdd(part) end
+    end)
+    local function parseNames(value)
+        local found = {}
+        for name in string.gmatch(string.lower(value or ""), "[^,]+") do
+            name = string.match(name, "^%s*(.-)%s*$")
+            if name ~= "" then found[name] = true end
+        end
+        return found
+    end
+    xrayStep = function(dt, root)
+        if not enabled["X-Ray"] then return end
+        xrayPause = math.max(0, xrayPause - dt)
+        if xrayPause > 0 then return end
+        local named, kept = parseNames(V["XRay Part Names"]), parseNames(V["XRay Keep Visible"])
+        local camera = workspace.CurrentCamera
+        local origin = camera and camera.CFrame.Position or root and root.Position
+        for _ = 1, 200 do
+            local part = xrayParts[xrayCursor]
+            if not part then xrayCursor = 1; xrayPause = 0.2; break end
+            if not part.Parent or not part:IsDescendantOf(workspace) then
+                xrayRestore(part); xrayIndexed[part] = nil
+                xrayParts[xrayCursor] = xrayParts[#xrayParts]; xrayParts[#xrayParts] = nil
+            else
+                local name = string.lower(part.Name)
+                local floor = part.Size.Y <= math.min(part.Size.X, part.Size.Z) * 0.35
+                local valid = part.Transparency < 0.98 and not kept[name]
+                    and (V["XRay Include Unanchored"] or part.Anchored)
+                    and (not V["XRay Collidable Only"] or part.CanCollide)
+                    and not (V["XRay Keep Floors"] and floor and root and part.Position.Y <= root.Position.Y)
+                if valid and V["XRay Limit Range"] and origin then
+                    valid = (part.Position - origin).Magnitude <= V["XRay Range"] + part.Size.Magnitude * 0.5
+                end
+                local ancestor = part.Parent
+                while valid and ancestor and ancestor ~= workspace do
+                    if ancestor:IsA("Tool") or (ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid")) then valid = false end
+                    ancestor = ancestor.Parent
+                end
+                local scope = V["XRay Scope"]
+                if scope == "Named Parts" then valid = valid and named[name] == true end
+                if scope == "Walls" then valid = valid and not floor and part.Size.Y > math.min(part.Size.X, part.Size.Z) * 1.5 end
+                if valid then
+                    local current = part.LocalTransparencyModifier
+                    local record = xrayRecords[part]
+                    if not record then record = {base = current}; xrayRecords[part] = record
+                    elseif current ~= record.applied then record.base = current end
+                    record.applied = math.max(record.base, V["XRay Transparency"])
+                    if current ~= record.applied then part.LocalTransparencyModifier = record.applied end
+                else xrayRestore(part) end
+                xrayCursor += 1
+            end
+        end
+    end
+    AngelHub.pokeAfk = function()
+        if stopped or not enabled["Anti AFK"] then return end
+        local camera = workspace.CurrentCamera
+        local position = camera and camera.ViewportSize and camera.ViewportSize / 2 or Vector2.new(400, 300)
+        local ok = pcall(function()
+            local input = game:GetService("VirtualUser")
+            input:CaptureController()
+            input:Button2Down(position, camera and camera.CFrame)
+            input:Button2Up(position, camera and camera.CFrame)
+        end)
+        if not ok then
+            ok = pcall(function()
+                local input = game:GetService("VirtualInputManager")
+                input:SendMouseButtonEvent(position.X, position.Y, 0, true, game, false)
+                input:SendMouseButtonEvent(position.X, position.Y, 0, false, game, false)
+            end)
+        end
+        if not ok then message("Anti AFK: input unavailable") end
+    end
+    listen(localPlayer.Idled, function()
+        if enabled["Anti AFK"] then task.spawn(AngelHub.pokeAfk) end
+    end)
     local function restoreAll()
         scanGeneration += 1
+        xrayToggle(false)
         restoreNoclip()
         restoreInteraction(nil)
         for name in pairs(groups) do restore(name) end
@@ -1205,13 +1390,13 @@ local function installGameplay(screenGui)
                     message("Not implemented: " .. name)
                     return false
                 end
-                if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" then
-                    old(false); enabled[name] = nil; message("Speed: WalkSpeed only in this build"); return false
-                end
-                if value == true and name == "Infinite Jump" and V["Infinite Jump Mode"] ~= "Normal" then
-                    old(false); enabled[name] = nil; message("Infinite Jump: Normal only in this build"); return false
+                if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" and V["Speed Mode"] ~= "Velocity" then
+                    old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
                 end
                 old(value == true); enabled[name] = value == true
+                if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
+                if name == "Anti AFK" then afkElapsed = 0 end
+                if name == "X-Ray" then xrayToggle(value == true) end
                 if name == "Instant Prompts" or name == "Proximity Prompts" or name == "Click Detectors" then
                     if not enabled[name] then restoreInteraction(name) end
                     scanInteractions()
@@ -1227,6 +1412,15 @@ local function installGameplay(screenGui)
             scanInteractions()
         end
     end
+    for name in pairs(UNIMPLEMENTED_TOGGLES) do
+        local old = AngelHub.setters[name]
+        if old then
+            AngelHub.setters[name] = function(value)
+                old(false)
+                if value then message("Not implemented: " .. name); return false end
+            end
+        end
+    end
     -- Unsupported sub-options must not imply that these paths work.
     for _, name in ipairs({"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}) do
         local old = AngelHub.setters[name]
@@ -1235,13 +1429,15 @@ local function installGameplay(screenGui)
         end end
     end
     -- Turning to an unsupported mode safely disables the running module.
-    for _, item in ipairs({{"Speed Mode", "Enable Speed", "WalkSpeed"}, {"Infinite Jump Mode", "Infinite Jump", "Normal"}}) do
+    for _, item in ipairs({{"Speed Mode", "Enable Speed", "WalkSpeed"}}) do
         local setting, feature, allowed = item[1], item[2], item[3]
         local old = AngelHub.setters[setting]
         AngelHub.setters[setting] = function(value)
             old(value)
-            if enabled[feature] and V[setting] ~= allowed then
+            if enabled[feature] and V[setting] ~= allowed and V[setting] ~= "Velocity" then
                 AngelHub.setters[feature](false); message(feature .. " disabled: unsupported mode")
+            else
+                pulse()
             end
         end
     end
@@ -1267,10 +1463,58 @@ local function installGameplay(screenGui)
             root.AssemblyLinearVelocity = Vector3.new(direction.X, velocity.Y, direction.Z)
         end,
     }
+    local function typing()
+        return userInputService:GetFocusedTextBox() ~= nil
+    end
+    local function jumpButtonTouch(input)
+        local gui = localPlayer:FindFirstChildOfClass("PlayerGui")
+        local touchGui = gui and gui:FindFirstChild("TouchGui")
+        local button = touchGui and touchGui:FindFirstChild("JumpButton", true)
+        if not button or not input.Position or not button.Visible then return false end
+        local p, at, size = input.Position, button.AbsolutePosition, button.AbsoluteSize
+        return p.X >= at.X and p.X <= at.X + size.X and p.Y >= at.Y and p.Y <= at.Y + size.Y
+    end
+    listen(userInputService.InputBegan, function(input, processed)
+        if not enabled["Infinite Jump"] or typing() then return end
+        if (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA) and not processed then
+            jumpHeld, jumpKey = true, input.KeyCode
+        elseif input.UserInputType == Enum.UserInputType.Touch and jumpButtonTouch(input) then
+            jumpHeld, jumpTouch = true, input
+        end
+    end)
+    listen(userInputService.InputEnded, function(input)
+        if (jumpKey and input.KeyCode == jumpKey) or (jumpTouch and input == jumpTouch) then
+            jumpHeld, jumpTouch, jumpKey = false, nil, nil
+        end
+    end)
+    listen(userInputService.WindowFocusReleased, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    listen(userInputService.TextBoxFocused, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    if isMM2 then
+        AngelHub.actions["Get Gun"] = function()
+            if type(firetouchinterest) ~= "function" then message("Get Gun: touch API unavailable"); return end
+            local _, humanoid, root = characterParts()
+            if not humanoid or not root then message("Get Gun: character unavailable"); return end
+            local drop = workspace:FindFirstChild("GunDrop", true)
+            if not drop then message("Get Gun: dropped gun not found"); return end
+            local part = drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle", true) or drop:FindFirstChildWhichIsA("BasePart", true)
+            if not part or not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then
+                message("Get Gun: dropped gun has no touch part"); return
+            end
+            local ok1 = pcall(firetouchinterest, root, part, 0)
+            local ok2 = pcall(firetouchinterest, root, part, 1)
+            if not ok1 or not ok2 then message("Get Gun: touch failed") end
+        end
+        listen(userInputService.InputBegan, function(input, processed)
+            if processed or AngelHub.listening or typing() or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if V["Get Gun Key Value"] and input.KeyCode.Name == V["Get Gun Key Value"] then
+                AngelHub.actions["Get Gun"]()
+            end
+        end)
+    end
     listen(userInputService.JumpRequest, function()
-        if not enabled["Infinite Jump"] or V["Infinite Jump Mode"] ~= "Normal" then return end
+        if not enabled["Infinite Jump"] or V["Infinite Jump Mode"] ~= "Normal" or typing() then return end
         local _, humanoid, root = characterParts()
-        if not humanoid or not root or humanoid.FloorMaterial ~= Enum.Material.Air then return end
+        if not humanoid or not root or root.Anchored or humanoid.FloorMaterial ~= Enum.Material.Air then return end
         local now = os.clock()
         if now - lastJump < V["Infinite Jump Interval"] then return end
         lastJump = now
@@ -1287,6 +1531,7 @@ local function installGameplay(screenGui)
         table.clear(runtimeConnections)
         restoreAll()
         AngelHub.actions = nil
+        AngelHub.pokeAfk = nil
     end)
 end
 
@@ -1641,6 +1886,7 @@ local function initializeScript()
 		targetPlayerHolder.Visible = not hidden
 	end
 
+	if isMM2 then
 	addSection(mainLeft, "Gun Aimbot")
 	addModule(mainLeft, "Gun Aimbot", nil, false)
 	addCycle(mainLeft, "Aim Method", { "Normal", "Silent AIM" })
@@ -1686,6 +1932,8 @@ local function initializeScript()
 	addSlider(mainRight, "Fling Power", 1, 12, 6, 0)
 	addSlider(mainRight, "Fling Retries", 0, 3, 1, 0)
 
+	end
+
 	addSection(mainRight, "Anti Fling")
 	addModule(mainRight, "Player Shield", nil, false)
 	addModule(mainRight, "Impact Shield", nil, false)
@@ -1694,6 +1942,7 @@ local function initializeScript()
 	local extraLeft = createColumn(AngelHub.pages.Extra, UDim2.fromOffset(0, 0))
 	local extraRight = createColumn(AngelHub.pages.Extra, UDim2.new(0.5, 6, 0, 0))
 
+	if isMM2 then
 	addSection(extraLeft, "Auto Farm")
 	addCounter(extraLeft, "Coins Collected", 0)
 	addCounter(extraLeft, "Farm Time", 0)
@@ -1749,6 +1998,8 @@ local function initializeScript()
 	addButton(extraLeft, "Play Emote")
 	addButton(extraLeft, "Get All Emotes")
 
+	end
+
 	addSection(extraRight, "Fly")
 	addModule(extraRight, "Enable Fly", nil, false)
 	addCycle(extraRight, "Fly Method", { "Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed" })
@@ -1764,12 +2015,12 @@ local function initializeScript()
 
 	addSection(extraRight, "Speed Settings")
 	addModule(extraRight, "Enable Speed", nil, false)
-	addCycle(extraRight, "Speed Mode", { "WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport" })
+	addCycle(extraRight, "Speed Mode", { "Velocity", "WalkSpeed", "Impulse", "CFrame", "Teleport" })
 	addSlider(extraRight, "Speed Value", 1, 250, 16, 0)
 	addSlider(extraRight, "Speed Response", 0.2, 2, 1, 2)
 	addSlider(extraRight, "Speed Braking", 0, 1, 0.2, 2)
 	addSlider(extraRight, "Speed Vehicle Multiplier", 0.5, 3, 1, 2)
-	addToggle(extraRight, "Speed Keep Vertical", nil, false)
+	addToggle(extraRight, "Speed Keep Vertical", nil, true)
 	addToggle(extraRight, "Speed Wall Check", nil, true)
 	addSlider(extraRight, "Speed Burst Delay", 0.05, 1, 0.1, 2)
 	addToggle(extraRight, "Speed Auto Jump", nil, false)
@@ -1804,6 +2055,7 @@ local function initializeScript()
 	addSection(extraRight, "Teleport")
 
 	-- MM2 options first, universal options below.
+	if isMM2 then
 	beginGroup(extraRight, "MM2 Teleport", true)
 	addButton(extraRight, "Teleport To Map")
 	addButton(extraRight, "Teleport To Lobby")
@@ -1813,6 +2065,8 @@ local function initializeScript()
 	addKeybind(extraRight, "Get Gun Key", "G")
 	addModule(extraRight, "Auto Get Gun", nil, false)
 	endGroup()
+
+	end
 
 	addCycle(extraRight, "Teleport Destination", { "Tap Point", "Nearest Player", "Named Player", "Item", "Waypoint", "Last Position" })
 	addText(extraRight, "Teleport Player", "Player name")
@@ -1900,6 +2154,7 @@ local function initializeScript()
 	addToggle(visualsLeft, "Pointer Teammates", nil, false)
 	addToggle(visualsLeft, "Pointer Team Colours", nil, false)
 
+	if isMM2 then
 	addSection(visualsLeft, "Role Colours")
 	addToggle(visualsLeft, "Role Colours", nil, true)
 	addColor(visualsLeft, "Murderer Colour", Color3.fromRGB(255, 70, 70))
@@ -1918,6 +2173,8 @@ local function initializeScript()
 	addCycle(visualsLeft, "Coin In Use", { "Auto (Server)", "Coin", "Candy", "SnowToken", "BeachBall", "Egg", "Heart", "All" })
 	addColor(visualsLeft, "Coin Colour", Color3.fromRGB(255, 210, 70))
 	addSlider(visualsLeft, "Coin Transparency", 0, 1, 0, 2)
+
+	end
 
 	addSection(visualsLeft, "Disguise")
 	addModule(visualsLeft, "Disguise Character", nil, false)
@@ -1957,6 +2214,7 @@ local function initializeScript()
 	addToggle(visualsLeft, "Hide Roblox Panels", nil, false)
 
 	-- MM2 only item ESP.
+	if isMM2 then
 	addSection(visualsRight, "Item ESP")
 	addModule(visualsRight, "Gun ESP", nil, true)
 	addModule(visualsRight, "Trap ESP", nil, false)
@@ -1965,6 +2223,8 @@ local function initializeScript()
 	addSlider(visualsRight, "Item Max Distance", 50, 5000, 1000, 0)
 	addSlider(visualsRight, "Item Text Size", 8, 22, 13, 0)
 	addColor(visualsRight, "Item Colour", Color3.fromRGB(255, 255, 255))
+
+	end
 
 	addSection(visualsRight, "Markers")
 	addText(visualsRight, "Marker Name", "Marker name")
@@ -2014,6 +2274,7 @@ local function initializeScript()
 	addToggle(visualsRight, "FreeCam Spectate", nil, false)
 	addList(visualsRight, "Spectate Player", { "Player1", "Player2" }, 60)
 
+	if isMM2 then
 	addSection(visualsRight, "Notifications")
 	addToggle(visualsRight, "Instant Roles", nil, true)
 	addToggle(visualsRight, "Gun Notification", nil, false)
@@ -2024,6 +2285,8 @@ local function initializeScript()
 	addToggle(visualsRight, "Your Role", nil, true)
 	addToggle(visualsRight, "Round Events", nil, false)
 	addToggle(visualsRight, "Murderer Defeated", nil, false)
+
+	end
 
 	-- Config tab.
 	local configLeft = createColumn(AngelHub.pages.Config, UDim2.fromOffset(0, 0))

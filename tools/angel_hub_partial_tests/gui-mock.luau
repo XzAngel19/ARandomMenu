@@ -34,9 +34,9 @@ function methods:IsA(n)return self._class==n end
 function methods:Destroy()if self._props.Destroying then self.Destroying:Fire()end;self.Parent=nil end
 Instance={new=function(c)return setmetatable({_class=c,_children={},_props={AbsoluteSize=Vector2.new(400,400),AbsolutePosition=Vector2.new(0,0)},_attrs={},_changes={}},mt)end}
 local gui=Instance.new('PlayerGui');gui.Name='PlayerGui'
-local player=Instance.new('Player');gui.Parent=player;player.Character=nil
+local player=Instance.new('Player');gui.Parent=player;player.Character=nil;player.Idled=event()
 local players={LocalPlayer=player}
-local uis={TouchEnabled=false,KeyboardEnabled=true,InputBegan=event(),InputChanged=event(),InputEnded=event(),JumpRequest=event()}
+local uis={TouchEnabled=false,KeyboardEnabled=true,InputBegan=event(),InputChanged=event(),InputEnded=event(),JumpRequest=event(),WindowFocusReleased=event(),TextBoxFocused=event()}
 function uis:GetFocusedTextBox()return nil end
 local tw={};function tw:Create(object,info,goal)local t={Completed=event()};function t:Play()for k,v in goal do object[k]=v end end;return t end
 local lighting={Brightness=2,ClockTime=12};local run={Heartbeat=event()}
