@@ -1096,6 +1096,7 @@ local function installGameplay(screenGui)
     local nametagsStep = function() end
     local playerHealthStep = function() end
     local pointerStep = function() end
+    local extensionSteps = {esp=function() end, shield=function() end, wall=function() end, swim=function() end, knife=function() end}
     local markersStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
@@ -1107,7 +1108,7 @@ local function installGameplay(screenGui)
         ["Fullbright"] = true, ["Time Changer"] = true, ["Fast Time"] = true,
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true, ["Enable Fly"] = true, ["Walk Fling"] = true,
-        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true,
+        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true, ["Player ESP"] = true, ["Player Shield"] = true, ["Impact Shield"] = true, ["Wall Crawl State"] = true, ["Air Swim"] = true, ["Auto Knife Throw"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Blurt"] = true, ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
@@ -1251,6 +1252,33 @@ local function installGameplay(screenGui)
             warn("Angel Hub Blurt error: " .. tostring(blurtError))
             if enabled["Auto Blurt"] then AngelHub.setters["Auto Blurt"](false) end
             message("Blurt Roles stopped: runtime error")
+        end
+        local autoKnifeOk, autoKnifeError = pcall(extensionSteps.knife)
+        if not autoKnifeOk then
+            warn("Angel Hub Auto Knife Throw error: " .. tostring(autoKnifeError))
+            if enabled["Auto Knife Throw"] then AngelHub.setters["Auto Knife Throw"](false); message("Auto Knife Throw stopped: runtime error") end
+        end
+        local swimOk, swimError = pcall(extensionSteps.swim, dt, character, humanoid, root)
+        if not swimOk then
+            warn("Angel Hub Air Swim error: " .. tostring(swimError))
+            if enabled["Air Swim"] then AngelHub.setters["Air Swim"](false); message("Air Swim stopped: terrain error") end
+        end
+        local wallOk, wallError = pcall(extensionSteps.wall, dt, character, humanoid, root)
+        if not wallOk then
+            warn("Angel Hub Wall Crawl error: " .. tostring(wallError))
+            if enabled["Wall Crawl State"] then AngelHub.setters["Wall Crawl State"](false); message("Wall Crawl stopped: runtime error") end
+        end
+        local shieldOk, shieldError = pcall(extensionSteps.shield, dt, character, humanoid, root)
+        if not shieldOk then
+            warn("Angel Hub Anti Fling error: " .. tostring(shieldError))
+            if enabled["Player Shield"] then AngelHub.setters["Player Shield"](false) end
+            if enabled["Impact Shield"] then AngelHub.setters["Impact Shield"](false) end
+            message("Anti Fling stopped: runtime error")
+        end
+        local playerEspOk, playerEspError = pcall(extensionSteps.esp, dt, root)
+        if not playerEspOk then
+            warn("Angel Hub Player ESP error: " .. tostring(playerEspError))
+            if enabled["Player ESP"] then AngelHub.setters["Player ESP"](false); message("Player ESP stopped: runtime error") end
         end
         local pointerOk, pointerError = pcall(pointerStep, dt, root)
         if not pointerOk then
@@ -3494,7 +3522,7 @@ local function installGameplay(screenGui)
         local trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
         local gunAnnounced, lastClose = false, -math.huge
         local function wanted()
-            if enabled["Auto Blurt"] or blurtWanted or enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
+            if enabled["Auto Knife Throw"] or enabled["Player ESP"] or enabled["Auto Blurt"] or blurtWanted or enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
             for _, name in ipairs({"Instant Roles", "Gun Notification", "Murder Close", "Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do
                 if V[name] == true then return true end
             end
@@ -4543,8 +4571,526 @@ local function installGameplay(screenGui)
         end
         function pointers.cleanup() pointers.toggle(false) end
     end
+    local playerEsp = {}
+    do
+        local items, elapsed = {}, 0
+        local r6 = {{"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},{"Torso","Left Leg"},{"Torso","Right Leg"}}
+        local r15 = {{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+            {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+            {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+            {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"}}
+        local function remove(player)
+            local item = items[player]; items[player] = nil
+            if item then pcall(function() item.layer:Destroy() end) end
+        end
+        local function clear() for player in pairs(items) do remove(player) end end
+        function playerEsp.toggle(value) clear(); elapsed = value and 1 or 0 end
+        local function part(layer, name)
+            local frame = Instance.new("Frame"); frame.Name = name; frame.BorderSizePixel = 0
+            frame.BackgroundTransparency = 0; frame.Visible = false; frame.Parent = layer
+            return frame
+        end
+        local function makeItem()
+            local layer = Instance.new("Frame"); layer.Name = "AngelHubPlayerESP"
+            layer.BackgroundTransparency = 1; layer.Size = UDim2.fromScale(1, 1); layer.Parent = screenGui
+            local item = {layer=layer, edges={}, bones={}}
+            item.fill = part(layer, "Fill"); item.fill.BackgroundTransparency = 0.82
+            for i = 1, 8 do item.edges[i] = part(layer, "Edge" .. i) end
+            for i = 1, 14 do item.bones[i] = part(layer, "Bone" .. i) end
+            item.tracer = part(layer, "Tracer")
+            return item
+        end
+        local function line(frame, x1, y1, x2, y2, thickness, colour)
+            local dx, dy = x2 - x1, y2 - y1
+            local length = math.sqrt(dx * dx + dy * dy)
+            frame.AnchorPoint = Vector2.new(0.5, 0.5)
+            frame.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+            frame.Size = UDim2.fromOffset(length, thickness)
+            frame.Rotation = math.deg(math.atan2(dy, dx)); frame.BackgroundColor3 = colour
+            frame.Visible = length > 0.1
+        end
+        local function finite(n) return type(n) == "number" and n == n and math.abs(n) < 100000 end
+        local function project(camera, position)
+            local p = camera:WorldToViewportPoint(position)
+            if p and finite(p.X) and finite(p.Y) and finite(p.Z) and p.Z > 0.1 then return p end
+        end
+        local function rectangle(camera, character, viewport)
+            local ok, cf, size = pcall(function() return character:GetBoundingBox() end)
+            if not ok or not cf or not size then return end
+            local left, top, right, bottom = math.huge, math.huge, -math.huge, -math.huge
+            for _, x in ipairs({-1, 1}) do for _, y in ipairs({-1, 1}) do for _, z in ipairs({-1, 1}) do
+                local p = project(camera, cf:PointToWorldSpace(Vector3.new(size.X*x/2, size.Y*y/2, size.Z*z/2)))
+                if not p then return end
+                left, top, right, bottom = math.min(left,p.X), math.min(top,p.Y), math.max(right,p.X), math.max(bottom,p.Y)
+            end end end
+            if right < 0 or bottom < 0 or left > viewport.X or top > viewport.Y or right-left < 1 or bottom-top < 1 then return end
+            return left, top, right, bottom
+        end
+        local function drawEdges(item, mode, l, t, r, b, thickness, colour)
+            local width, height = r-l, b-t
+            local w, h = mode == "Full" and width or width/4, mode == "Full" and height or height/4
+            local points = {{l,t,l+w,t},{l,t,l,t+h},{r,t,r-w,t},{r,t,r,t+h},
+                {l,b,l+w,b},{l,b,l,b-h},{r,b,r-w,b},{r,b,r,b-h}}
+            for i, edge in ipairs(item.edges) do
+                if mode ~= "Off" and (mode ~= "Full" or i <= 4) then
+                    local p = points[i]
+                    if mode == "Full" then p = ({{l,t,r,t},{r,t,r,b},{r,b,l,b},{l,b,l,t}})[i] end
+                    line(edge,p[1],p[2],p[3],p[4],thickness,colour)
+                else edge.Visible = false end
+            end
+        end
+        function playerEsp.step(dt, root)
+            if not enabled["Player ESP"] then return end
+            elapsed += math.max(dt, 0); if elapsed < 1/30 then return end; elapsed = 0
+            local camera = workspace.CurrentCamera
+            local viewport = camera and camera.ViewportSize
+            if not camera or not viewport or viewport.X < 1 or viewport.Y < 1 or not root then clear(); return end
+            local seen = {}
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local character = player.Character
+                if player ~= localPlayer and character and character.Parent and character:IsDescendantOf(workspace) then
+                    local human = character:FindFirstChildOfClass("Humanoid")
+                    local target = character:FindFirstChild("HumanoidRootPart")
+                    local role = isMM2 and notifications.role(player) or nil
+                    if human and human.Health <= 0 and role then role = "Dead" end
+                    local sameTeam = localPlayer.Team and player.Team == localPlayer.Team and not localPlayer.Neutral and not player.Neutral
+                    local allowed = (isMM2 or not V["ESP Team Check"] or not sameTeam) and (not role or V[role .. " ESP"] == true)
+                    local distance = target and (target.Position - root.Position).Magnitude or math.huge
+                    local limit = math.clamp(tonumber(V["ESP Max Distance"]) or 1000, 0, 5000)
+                    if allowed and human and (human.Health > 0 or role == "Dead") and target and target:IsA("BasePart") and distance <= limit then
+                        local ok, l, t, r, b = pcall(rectangle, camera, character, viewport)
+                        if ok and l then
+                            seen[player] = true
+                            local item = items[player] or makeItem(); items[player] = item
+                            local roleColour = isMM2 and role and V["Role Colours"] and V[role .. " Colour"] or nil
+                            local teamColour = not isMM2 and V["ESP Team Colours"] and player.Team and player.Team.TeamColor.Color or nil
+                            local colour = roleColour or teamColour or V["ESP Colour"]
+                            if V["ESP Visibility Check"] then
+                                local rayOk, hit = pcall(function()
+                                    local origin = camera.CFrame.Position
+                                    local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                                    params.FilterDescendantsInstances = localPlayer.Character and {localPlayer.Character} or {}
+                                    params.IgnoreWater = true
+                                    return workspace:Raycast(origin, target.Position-origin, params)
+                                end)
+                                if rayOk and hit and hit.Instance and not hit.Instance:IsDescendantOf(character) then colour = colour:Lerp(Color3.new(0,0,0), 0.45) end
+                            end
+                            local mode = V["ESP Boxes"] or "Corner"
+                            item.fill.Visible = V["Filled Box"] == true and mode ~= "Off"
+                            item.fill.Position = UDim2.fromOffset(l,t); item.fill.Size = UDim2.fromOffset(r-l,b-t); item.fill.BackgroundColor3 = colour
+                            drawEdges(item, mode, l,t,r,b, math.clamp(tonumber(V["Box Thickness"]) or 1,1,5), colour)
+                            local bones = character:FindFirstChild("UpperTorso") and r15 or r6
+                            for i, frame in ipairs(item.bones) do
+                                local pair = V["Skeleton"] and bones[i]
+                                local a = pair and character:FindFirstChild(pair[1]); local bpart = pair and character:FindFirstChild(pair[2])
+                                local aPoint = a and a:IsA("BasePart") and project(camera,a.Position)
+                                local bPoint = bpart and bpart:IsA("BasePart") and project(camera,bpart.Position)
+                                if aPoint and bPoint then line(frame,aPoint.X,aPoint.Y,bPoint.X,bPoint.Y,1,colour) else frame.Visible = false end
+                            end
+                            local tracer = V["Tracers"] or "Off"
+                            if tracer ~= "Off" then
+                                local x, y = viewport.X/2, viewport.Y/2
+                                if tracer == "Bottom" then y = viewport.Y
+                                elseif tracer == "Cursor" then
+                                    local mouseOk, mouse = pcall(function() return userInputService:GetMouseLocation() end)
+                                    if mouseOk and mouse then x,y = mouse.X,mouse.Y end
+                                end
+                                line(item.tracer,x,y,(l+r)/2,b,1,colour)
+                            else item.tracer.Visible = false end
+                        end
+                    end
+                end
+            end
+            for player in pairs(items) do if not seen[player] then remove(player) end end
+        end
+        function playerEsp.cleanup() clear() end
+    end
+    local antiFling = {}
+    do
+        local links, hazards, tracked, elapsed, dangerUntil = {}, {}, nil, 0, 0
+        local warnedOverlap = false
+        local function clear()
+            for _, perLocal in pairs(links) do for _, link in pairs(perLocal) do pcall(function() link:Destroy() end) end end
+            table.clear(links); table.clear(hazards); dangerUntil = 0
+        end
+        local function tool(part)
+            local ok, ancestor = pcall(function() return part:FindFirstAncestorOfClass("Tool") end)
+            return ok and ancestor ~= nil
+        end
+        local function parts(model, collidable)
+            local out = {}
+            if not model or not model.Parent then return out end
+            for _, part in ipairs(model:GetDescendants()) do
+                if part:IsA("BasePart") and not tool(part) and (not collidable or part.CanCollide) then table.insert(out, part) end
+            end
+            return out
+        end
+        local function fast(part, scale)
+            local ok, result = pcall(function()
+                local radius = math.min(part.Size.Magnitude * 0.5, 20)
+                return part.AssemblyLinearVelocity.Magnitude > 80 * scale or part.AssemblyAngularVelocity.Magnitude * radius > 70 * scale
+            end)
+            return ok and result == true
+        end
+        local function scan(owner, human, root, now)
+            local own, desired, roster, candidates = parts(owner, true), {}, playersService:GetPlayers(), {}
+            local characterModels = {}
+            for _, player in ipairs(roster) do
+                local model = player ~= localPlayer and player.Character or nil
+                if model and model ~= owner and model.Parent then
+                    characterModels[model] = true
+                    local theirRoot = model:FindFirstChild("HumanoidRootPart")
+                    local distance = theirRoot and (theirRoot.Position-root.Position).Magnitude or math.huge
+                    table.insert(candidates, {model=model, distance=distance, parts=enabled["Player Shield"] and parts(model, false) or {}})
+                end
+            end
+            table.sort(candidates, function(a,b) return a.distance < b.distance end)
+            if enabled["Player Shield"] then
+                for _, candidate in ipairs(candidates) do for _, part in ipairs(candidate.parts) do
+                    desired[part] = true
+                    if candidate.distance <= 30 and fast(part, 1) then dangerUntil = math.max(dangerUntil, now + .75) end
+                end end
+            end
+            if enabled["Impact Shield"] and not human.Sit and not human.SeatPart then
+                local ok, nearby = pcall(function()
+                    local params = OverlapParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {owner}; params.MaxParts = 200; params.RespectCanCollide = true
+                    return workspace:GetPartBoundsInRadius(root.Position, 30, params)
+                end)
+                if ok and type(nearby) == "table" then
+                    local floorOk, floorHit = pcall(function()
+                        local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                        params.FilterDescendantsInstances = {owner}; params.IgnoreWater = true; params.RespectCanCollide = true
+                        return workspace:Raycast(root.Position, Vector3.new(0,-math.max(4,(tonumber(human.HipHeight) or 2)+root.Size.Y*.5+2),0), params)
+                    end)
+                    if not floorOk then table.clear(hazards) end
+                    local floor = floorHit and floorHit.Instance
+                    local floorAssembly = floor and (floor.AssemblyRootPart or floor)
+                    for _, part in ipairs(floorOk and nearby or {}) do
+                        if part:IsA("BasePart") then
+                            local isCharacter, ancestor = false, part.Parent
+                            while ancestor and ancestor ~= workspace do
+                                if characterModels[ancestor] then isCharacter = true; break end
+                                ancestor = ancestor.Parent
+                            end
+                            local isTool = tool(part)
+                            if part.Parent and part.CanCollide and not part.Anchored and not part:IsDescendantOf(owner)
+                                and (not isCharacter or isTool) and (not floorAssembly or (part.AssemblyRootPart or part) ~= floorAssembly)
+                                and fast(part, isTool and 3 or 1) then
+                                hazards[part] = now; dangerUntil = math.max(dangerUntil,now + .75)
+                            end
+                        end
+                    end
+                elseif not warnedOverlap then
+                    warnedOverlap = true; message("Impact Shield: moving-object scan unavailable")
+                end
+                for part, seen in pairs(hazards) do
+                    if not part.Parent or now-seen > .75 then hazards[part] = nil else desired[part] = true end
+                end
+            else table.clear(hazards) end
+            local ordered, included = {}, {}
+            local function include(part)
+                if desired[part] and part.Parent and not included[part] then included[part] = true; table.insert(ordered, part) end
+            end
+            local dangerous = {}; for part in pairs(hazards) do table.insert(dangerous,part) end
+            table.sort(dangerous,function(a,b) return (a.Position-root.Position).Magnitude < (b.Position-root.Position).Magnitude end)
+            for _,part in ipairs(dangerous) do include(part) end
+            for _,candidate in ipairs(candidates) do for _,part in ipairs(candidate.parts) do include(part) end end
+            local accepted, count = {}, 0
+            for _,other in ipairs(ordered) do
+                if count >= 2048 then break end
+                local perLocal = {}
+                for _,part in ipairs(own) do
+                    if count >= 2048 then break end
+                    if part ~= other then perLocal[part] = true; count += 1 end
+                end
+                if next(perLocal) then accepted[other] = perLocal end
+            end
+            for other, perLocal in pairs(links) do
+                for part, link in pairs(perLocal) do
+                    if not accepted[other] or not accepted[other][part] or not part.Parent or not other.Parent then
+                        pcall(function() link:Destroy() end); perLocal[part] = nil
+                    end
+                end
+                if not next(perLocal) then links[other] = nil end
+            end
+            for other, perLocal in pairs(accepted) do
+                links[other] = links[other] or {}
+                for part in pairs(perLocal) do
+                    if not links[other][part] then
+                        local link = Instance.new("NoCollisionConstraint")
+                        links[other][part] = link
+                        link.Part0,link.Part1,link.Parent = part,other,part
+                    end
+                end
+            end
+        end
+        function antiFling.toggle() clear(); tracked = nil; elapsed = 1 end
+        function antiFling.cleanup() clear(); tracked = nil end
+        function antiFling.step(dt, owner, human, root)
+            if not enabled["Player Shield"] and not enabled["Impact Shield"] then return end
+            if not owner or not owner.Parent or not human or not root or enabled["Walk Fling"] then
+                clear(); tracked = nil; return
+            end
+            if owner ~= tracked then clear(); tracked = owner; elapsed = 1 end
+            elapsed += math.max(dt,0)
+            local now = os.clock()
+            if elapsed >= .15 then
+                elapsed = 0
+                local ok, err = pcall(scan, owner, human, root, now)
+                if not ok then clear(); warn("Angel Hub Anti Fling scan: " .. tostring(err)); return end
+            end
+            if now > dangerUntil or root.Anchored or human.Sit or human.SeatPart or enabled["Enable Fly"]
+                or enabled["Enable Speed"] or enabled["Auto Farm"] or enabled["Auto Win"] then return end
+            local ok = pcall(function()
+                local velocity = root.AssemblyLinearVelocity
+                local planar = Vector3.new(velocity.X,0,velocity.Z)
+                local walk = math.max(16,tonumber(human.WalkSpeed) or 16)
+                local rise = math.max(180,(tonumber(human.JumpPower) or 50)*4)
+                local x,z,y = velocity.X,velocity.Z,math.min(velocity.Y,rise)
+                if planar.Magnitude > math.max(120,walk*4) then
+                    local move = human.MoveDirection
+                    local direction = move.Magnitude > .05 and move.Unit * walk or Vector3.new(0,0,0)
+                    x,z = direction.X,direction.Z
+                end
+                if x ~= velocity.X or y ~= velocity.Y or z ~= velocity.Z then root.AssemblyLinearVelocity = Vector3.new(x,y,z) end
+                if root.AssemblyAngularVelocity.Magnitude > 25 then root.AssemblyAngularVelocity = Vector3.new(0,0,0) end
+            end)
+        end
+    end
+    local wallCrawl = {}
+    do
+        local climbing, impulseElapsed, params, ignoredCharacter, refresh = nil, math.huge, nil, nil, 0
+        local function release()
+            local human = climbing; climbing = nil
+            if human then pcall(function()
+                if human.Parent and human.Health > 0 and human:GetState() == Enum.HumanoidStateType.Climbing then
+                    human:ChangeState(human.FloorMaterial == Enum.Material.Air and Enum.HumanoidStateType.Freefall or Enum.HumanoidStateType.Running)
+                end
+            end) end
+        end
+        function wallCrawl.toggle() release(); impulseElapsed = math.huge; params, ignoredCharacter, refresh = nil,nil,0 end
+        function wallCrawl.cleanup() wallCrawl.toggle() end
+        function wallCrawl.step(dt, character, human, root)
+            if not enabled["Wall Crawl State"] then return end
+            impulseElapsed += math.max(0,dt)
+            if not character or not character.Parent or not human or not root or human.Sit or human.SeatPart or root.Anchored then release(); return end
+            local move = human.MoveDirection
+            if move.Magnitude < 0.05 then release(); return end
+            if climbing and climbing ~= human then release() end
+            if not params then params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude; params.RespectCanCollide = true; params.IgnoreWater = true end
+            refresh -= math.max(0,dt)
+            if ignoredCharacter ~= character or refresh <= 0 then
+                local ignore = {character}
+                for _, player in ipairs(playersService:GetPlayers()) do
+                    if player ~= localPlayer and player.Character then table.insert(ignore,player.Character) end
+                end
+                params.FilterDescendantsInstances = ignore; ignoredCharacter = character; refresh = .5
+            end
+            params.CollisionGroup = root.CollisionGroup
+            local hip = tonumber(human.HipHeight) or 2; if hip <= 0 then hip = 2 end
+            local wall = workspace:Raycast(root.Position - Vector3.new(0,math.max(hip-.5,0),0),move.Unit*2.5,params)
+            if not wall or math.abs(wall.Normal.Y) >= .35 or move:Dot(wall.Normal) > -.1 then release(); return end
+            climbing = human; human:ChangeState(Enum.HumanoidStateType.Climbing)
+            local velocity = root.AssemblyLinearVelocity
+            local speed = tonumber(V["Wall Crawl Speed"]) or 16
+            local mode = V["Wall Crawl Mode"]
+            if mode == "CFrame" then
+                local rise = speed * math.clamp(dt,0,.1)
+                if rise > 0 then
+                    local ceiling = workspace:Raycast(root.Position,Vector3.new(0,rise+hip+1,0),params)
+                    if ceiling then rise = math.min(rise,math.max(0,ceiling.Distance-hip-1)) end
+                end
+                root.AssemblyLinearVelocity = Vector3.new(velocity.X,0,velocity.Z)
+                root.CFrame = root.CFrame + Vector3.new(0,rise,0)
+            elseif mode == "Impulse" then
+                local interval = math.clamp(tonumber(V["Wall Crawl Impulse Interval"]) or .1,.05,.5)
+                if impulseElapsed >= interval then
+                    impulseElapsed = 0
+                    local delta = math.max(0,speed-velocity.Y)
+                    if delta > 0 then root:ApplyImpulse(Vector3.new(0,delta,0)*root.AssemblyMass) end
+                end
+            elseif mode == "Velocity" then root.AssemblyLinearVelocity = Vector3.new(velocity.X,speed,velocity.Z)
+            else release() end
+        end
+    end
+    local airSwim = {}
+    do
+        local terrain, active, tracked, lastKey, elapsed = nil, nil, nil, nil, 0
+        local function restore()
+            local old = active
+            if not old then return true end
+            local ok = pcall(function()
+                local materials, occupancy = old.terrain:ReadVoxels(old.region,4)
+                local changed = false
+                for _, cell in ipairs(old.cells) do
+                    local x,y,z = cell[1],cell[2],cell[3]
+                    if materials[x][y][z] == Enum.Material.Water and occupancy[x][y][z] == 1 then
+                        materials[x][y][z] = Enum.Material.Air; occupancy[x][y][z] = 0; changed = true
+                    end
+                end
+                if changed then old.terrain:WriteVoxels(old.region,4,materials,occupancy) end
+            end)
+            if ok then active = nil; return true end
+            return false
+        end
+        function airSwim.available()
+            local ok, result = pcall(function() return workspace:FindFirstChildOfClass("Terrain") end)
+            if not ok or not result then return false end
+            terrain = result; return true
+        end
+        function airSwim.toggle()
+            tracked, lastKey, elapsed = nil,nil,1
+            if not restore() then message("Air Swim: could not restore previous local terrain") end
+        end
+        function airSwim.cleanup()
+            tracked, lastKey = nil,nil
+            if not restore() then warn("Angel Hub Air Swim: could not restore local terrain") end
+        end
+        function airSwim.step(dt, character, human, root)
+            if not enabled["Air Swim"] then return end
+            if not character or not character.Parent or not human or not root or root.Anchored or human.Sit or human.SeatPart then
+                tracked, lastKey = nil,nil
+                if not restore() then error("terrain restoration failed") end
+                return
+            end
+            elapsed += math.max(0,dt); if elapsed < .2 then return end; elapsed = 0
+            local pos = root.Position - Vector3.new(0,1,0)
+            local size = 6
+            local gx,gy,gz = math.floor(pos.X/4),math.floor(pos.Y/4),math.floor(pos.Z/4)
+            local key = tostring(gx)..":"..tostring(gy)..":"..tostring(gz)..":"..tostring(size)
+            if character == tracked and key == lastKey then return end
+            if not restore() then error("terrain restoration failed") end
+            if not terrain or not terrain.Parent then error("terrain unavailable") end
+            local center = Vector3.new(gx*4,gy*4,gz*4)
+            local extent = Vector3.new(size,size,size)
+            local region = Region3.new(center-extent,center+extent):ExpandToGrid(4)
+            local materials, occupancy = terrain:ReadVoxels(region,4)
+            local cells = {}
+            for x, plane in ipairs(materials) do for y, row in ipairs(plane) do for z, material in ipairs(row) do
+                if material == Enum.Material.Air and occupancy[x][y][z] == 0 then
+                    table.insert(cells,{x,y,z}); materials[x][y][z] = Enum.Material.Water; occupancy[x][y][z] = 1
+                end
+            end end end
+            if #cells > 0 then
+                active = {terrain=terrain,region=region,cells=cells}
+                terrain:WriteVoxels(region,4,materials,occupancy)
+            end
+            tracked,lastKey = character,key
+        end
+    end
+    local autoKnife = {}
+    do
+        local lastAttempt, equipAt, equipTool = -math.huge, -math.huge, nil
+        function autoKnife.toggle() lastAttempt, equipAt, equipTool = -math.huge, -math.huge, nil end
+        local function clearRay(origin, destination, own, target, requireBody)
+            local ok, result = pcall(function()
+                local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                params.FilterDescendantsInstances = requireBody and {own} or {own,target}
+                params.IgnoreWater = true; params.RespectCanCollide = not requireBody
+                local hit = workspace:Raycast(origin,destination-origin,params)
+                if requireBody then return hit and hit.Instance and hit.Instance:IsDescendantOf(target) end
+                return hit == nil
+            end)
+            return ok and result == true
+        end
+        local function aim(origin, target, speed)
+            local pos, vel = target.Position, target.AssemblyLinearVelocity
+            for _, n in ipairs({pos.X,pos.Y,pos.Z,vel.X,vel.Y,vel.Z}) do
+                if n ~= n or math.abs(n) > 1000000 then return end
+            end
+            local horizontal = Vector3.new(vel.X,0,vel.Z)
+            local latency = .06
+            local observed = pos + horizontal*latency
+            local rel = observed-origin
+            local a = horizontal:Dot(horizontal)-speed*speed
+            local b = 2*rel:Dot(horizontal)
+            local c = rel:Dot(rel)
+            local time
+            if c < .0025 then time = 0
+            elseif math.abs(a) < 1e-6 then if b < -1e-6 then time = -c/b end
+            else
+                local disc = b*b-4*a*c
+                if disc >= 0 then
+                    local t1,t2 = (-b-math.sqrt(disc))/(2*a),(-b+math.sqrt(disc))/(2*a)
+                    if t1 > 0 then time = t1 end
+                    if t2 > 0 and (not time or t2 < time) then time = t2 end
+                end
+            end
+            if not time or time ~= time then time = math.sqrt(c)/speed end
+            time = math.clamp(time,0,1.5)
+            local vertical = math.clamp(vel.Y*math.min(latency+time,.28),-2,4)
+            local predicted = observed+horizontal*time+Vector3.new(0,vertical,0)
+            return predicted,(predicted-origin).Magnitude/speed
+        end
+        function autoKnife.step()
+            if not isMM2 or not enabled["Auto Knife Throw"] or stopped then return end
+            local character, human, root = characterParts()
+            if not human or not root or notifications.role(localPlayer) ~= "Murderer" then return end
+            local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+            local knife = character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+            if not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+            local now = os.clock()
+            if now-lastAttempt < math.max(.1,math.clamp(tonumber(V["Throw Delay"]) or 1,0,10)) then return end
+            if knife.Parent ~= character then
+                local candidate, map = false, mm2Map()
+                for _, player in ipairs(playersService:GetPlayers()) do
+                    local targetChar = player ~= localPlayer and player.Character or nil
+                    local role = targetChar and notifications.role(player)
+                    local targetHuman = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+                    local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+                    if role and role ~= "Murderer" and role ~= "Dead" and targetChar.Parent and targetChar:IsDescendantOf(workspace)
+                        and targetHuman and targetHuman.Health > 0 and not targetChar:FindFirstChildOfClass("ForceField") and targetRoot and targetRoot:IsA("BasePart") and farmOnMap(targetRoot,map) then candidate = true; break end
+                end
+                if candidate and knife.Parent == backpack and (equipTool ~= knife or now-equipAt >= .25) then
+                    equipTool,equipAt = knife,now; pcall(function() human:EquipTool(knife) end)
+                end
+                return
+            end
+            if equipTool == knife and now-equipAt < .15 then return end
+            local handle = knife:FindFirstChild("Handle")
+            local events = knife:FindFirstChild("Events")
+            local remote = events and events:FindFirstChild("KnifeThrown")
+            if not handle or not handle:IsA("BasePart") or not remote or not remote:IsA("RemoteEvent") then return end
+            local origin = handle.CFrame
+            local speed = knife:GetAttribute("ThrowSpeed")
+            if type(speed) ~= "number" or speed ~= speed or speed < 24 or speed > 300 then speed = 96 end
+            local map = mm2Map()
+            local best, bestTime, bestAim
+            for _, player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer then
+                    local targetChar = player.Character
+                    local role = notifications.role(player)
+                    local targetHuman = targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+                    local targetRoot = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+                    if role and role ~= "Murderer" and role ~= "Dead" and targetChar and targetChar.Parent
+                        and targetChar:IsDescendantOf(workspace) and targetHuman and targetHuman.Health > 0
+                        and not targetChar:FindFirstChildOfClass("ForceField") and targetRoot and targetRoot:IsA("BasePart")
+                        and farmOnMap(targetRoot,map) then
+                        -- Never spend a throw on a currently hidden body, even with prediction-path WallCheck disabled.
+                        local visible = clearRay(origin.Position,targetRoot.Position,character,targetChar,true)
+                        if visible then
+                            local predicted, flight = aim(origin.Position,targetRoot,speed)
+                            if predicted and (not bestTime or flight < bestTime)
+                                and (not V["Throw WallCheck"] or clearRay(origin.Position,predicted,character,targetChar,false)) then
+                                best,bestTime,bestAim = player,flight,predicted
+                            end
+                        end
+                    end
+                end
+            end
+            if not best or (bestAim-origin.Position).Magnitude < .05 then return end
+            lastAttempt = now
+            pcall(function() remote:FireServer(origin,CFrame.new(bestAim)) end)
+        end
+    end
     airWalkStep = airWalk.step
     pointerStep = pointers.step
+    extensionSteps.esp = playerEsp.step
+    extensionSteps.shield = antiFling.step
+    extensionSteps.wall = wallCrawl.step
+    extensionSteps.swim = airSwim.step
+    extensionSteps.knife = autoKnife.step
     flyStep = fly.step
     markersStep = markers.step
     playerHealthStep = playerHealth.step
@@ -4555,7 +5101,7 @@ local function installGameplay(screenGui)
     mm2NotificationsStep = notifications.step
     mm2BlurtStep = blurt.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -4571,6 +5117,24 @@ local function installGameplay(screenGui)
                 end
                 if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" and V["Speed Mode"] ~= "Velocity" then
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
+                end
+                if value == true and ((name == "Auto Win" and enabled["Auto Knife Throw"]) or (name == "Auto Knife Throw" and enabled["Auto Win"])) then
+                    old(false); message("Auto Win and Auto Knife Throw cannot run together"); return false
+                end
+                if value == true and name == "Air Swim" then
+                    if enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Enable Fly"] or enabled["Air Walk"] or enabled["Walk Fling"] or enabled["Wall Crawl State"] then
+                        old(false); message("Air Swim: disable other movement modules first"); return false
+                    end
+                    if not airSwim.available() then old(false); message("Air Swim: terrain unavailable"); return false end
+                end
+                if value == true and enabled["Air Swim"] and (name == "Auto Win" or name == "Auto Farm" or name == "Enable Fly" or name == "Air Walk" or name == "Walk Fling" or name == "Wall Crawl State") then
+                    old(false); message(name .. ": disable Air Swim first"); return false
+                end
+                if value == true and name == "Wall Crawl State" and (enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Enable Fly"] or enabled["Air Walk"] or enabled["Walk Fling"]) then
+                    old(false); message("Wall Crawl: disable Auto Win, Farm, Fly, Air Walk and Walk Fling first"); return false
+                end
+                if value == true and enabled["Wall Crawl State"] and (name == "Auto Win" or name == "Auto Farm" or name == "Enable Fly" or name == "Air Walk" or name == "Walk Fling") then
+                    old(false); message(name .. ": disable Wall Crawl first"); return false
                 end
                 local gameplay, collected, ended
                 if value == true and name == "Auto Win" then
@@ -4660,6 +5224,12 @@ local function installGameplay(screenGui)
                 if name == "Nametags" then nametags.toggle(value == true) end
                 if name == "HP Players" then playerHealth.toggle(value == true) end
                 if name == "Player Pointers" then pointers.toggle(value == true) end
+                if name == "Player ESP" then playerEsp.toggle(value == true) end
+                if name == "Wall Crawl State" then wallCrawl.toggle() end
+                if name == "Air Swim" then airSwim.toggle() end
+                if name == "Auto Knife Throw" then autoKnife.toggle(); if value then message("Auto Knife Throw: basic prediction; manual throws unchanged") end end
+                if name == "Player Shield" or name == "Impact Shield" then antiFling.toggle() end
+                if name == "Walk Fling" and value then antiFling.toggle() end
                 if name == "Insta Kill As Sheriff" and value then message("Auto Win Sheriff: basic CFrame; separate WallCheck option") end
                 if shootingBefore ~= shooter.active() then
                     if shooter.active() then shooter.start() else shooter.stop() end
