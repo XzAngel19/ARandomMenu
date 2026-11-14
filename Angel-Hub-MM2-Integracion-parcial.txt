@@ -223,8 +223,8 @@ local function addSection(parent, text)
 end
 
 local UNIMPLEMENTED_TOGGLES = {
-    ["Knife Tracer"] = true, ["Chams Show Perk"] = true, ["Show Target Emotes"] = true,
-    ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
+    ["Chams Show Perk"] = true, ["Show Target Emotes"] = true,
+    ["Fling Murder After Full Bag"] = true,
     ["Fling Sheriff After Full Bag"] = true,
     ["Auto Kill All When Full Bag"] = true,
 }
@@ -1104,7 +1104,7 @@ local function installGameplay(screenGui)
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true, ["Enable Fly"] = true, ["Walk Fling"] = true,
         ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true, ["Player ESP"] = true, ["Player Shield"] = true, ["Impact Shield"] = true, ["Wall Crawl State"] = true, ["Air Swim"] = true, ["Auto Knife Throw"] = true, ["FreeCam"] = true, ["Disguise Character"] = true,
-        ["Gun ESP"] = true, ["Trap ESP"] = true, ["Gun Aimbot"] = true,
+        ["Gun ESP"] = true, ["Trap ESP"] = true, ["Gun Aimbot"] = true, ["Auto Fling Selected Target"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Blurt"] = true, ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
         ["Insta Kill As Sheriff"] = true, ["Insta Kill As Murder"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true, ["Coin ESP"] = true,
@@ -1206,6 +1206,11 @@ local function installGameplay(screenGui)
         if stopped then return end
         extensionSteps.playerLists(dt)
         extensionSteps.fps.step(dt)
+        local flingOk,flingError = pcall(extensionSteps.fling.step)
+        if not flingOk then
+            extensionSteps.fling.cancel(); warn("Angel Hub MM2 Fling error: "..tostring(flingError))
+            if enabled["Auto Fling Selected Target"] then AngelHub.setters["Auto Fling Selected Target"](false) end
+        end
         local character, humanoid, root = characterParts()
         updateNoclip(character)
         if enabled["Enable Gravity"] then apply("gravity", workspace, {Gravity = V["Gravity Value"]}) else restore("gravity") end
@@ -1281,7 +1286,7 @@ local function installGameplay(screenGui)
             if enabled["Auto Blurt"] then AngelHub.setters["Auto Blurt"](false) end
             message("Blurt Roles stopped: runtime error")
         end
-        local autoKnifeOk, autoKnifeError = pcall(extensionSteps.knife)
+        local autoKnifeOk, autoKnifeError = pcall(extensionSteps.knife, dt)
         if not autoKnifeOk then
             warn("Angel Hub Auto Knife Throw error: " .. tostring(autoKnifeError))
             if enabled["Auto Knife Throw"] then AngelHub.setters["Auto Knife Throw"](false); message("Auto Knife Throw stopped: runtime error") end
@@ -1844,6 +1849,7 @@ local function installGameplay(screenGui)
     local farmWaitingMap, farmAmount, farmLimit, farmElapsed, farmTotal = nil, 0, 50, 0, 0
     local farmTickElapsed, farmScanElapsed, farmCoins = 0, 0, {}
     local farmMoved, farmDone, farmBagSampleKnown = false, false, false
+    extensionSteps.farmFull = {resetDone=false}
     local farmBelowEngaged, farmHomeCFrame, farmHoverTarget = false, nil, nil
     local farmCollision = setmetatable({}, {__mode = "k"})
     local farmOnMap = function() return false end
@@ -2033,6 +2039,7 @@ local function installGameplay(screenGui)
     local function farmStart(gameplay, collected, ended)
         farmStop()
         farmAmount, farmLimit = 0, 50
+        extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
         farmBagSampleKnown = false
         farmTickElapsed, farmScanElapsed, farmDone = 0, 0.5, false
         farmCounter("Coins Collected", farmTotal)
@@ -2058,12 +2065,16 @@ local function installGameplay(screenGui)
                     farmTarget, farmScanElapsed = nil, 0.5
                 end
                 farmAmount, farmBagSampleKnown = amount, true
-                if amount < math.max(50, farmLimit) then farmDone = false end
+                if amount < math.max(50, farmLimit) then
+                    farmDone = false
+                    extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
+                end
             end
         end))
         table.insert(farmConnections, ended.OnClientEvent:Connect(function()
             if not enabled["Auto Farm"] then return end
             farmWaitingMap = farmMap or mm2Map()
+            extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
             farmStopMovement(); leaveFarmPark(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
             table.clear(farmCoins)
         end))
@@ -2105,6 +2116,17 @@ local function installGameplay(screenGui)
         if farmAmount >= math.max(50, farmLimit) then
             local wasBelow, belowHome = farmBelowEngaged, farmHomeCFrame
             farmStopMovement()
+            if V["Reset When Full Coin Bag"] == true and not extensionSteps.farmFull.resetDone then
+                local full = extensionSteps.farmFull
+                if not full.resetAt then full.resetAt = os.clock() + (V["Auto Grab Gun And Shoot"] == true and 2.2 or 0) end
+                if os.clock() >= full.resetAt and enabled["Auto Farm"] and localPlayer.Character == character then
+                    full.resetDone = true
+                    pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Dead) end)
+                    pcall(function() humanoid.Health = 0 end)
+                    pcall(function() if humanoid.Health > 0 then character:BreakJoints() end end)
+                end
+                return
+            end
             if not farmDone then
                 farmDone = true
                 local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
@@ -2292,15 +2314,38 @@ local function installGameplay(screenGui)
         best.CFrame = root.CFrame; saved.appliedCFrame = root.CFrame
         pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
     end
+    do
+    local vote = {}; extensionSteps.vote = vote
     local voteElapsed, voteSignature, voteConnections = 0, nil, {}
     local voteRoundBlocked, previousBoardActive, lastVotePad = false, false, nil
+    local voteState = {saved = {}}
     local function voteLobby()
+        local function valid(candidate)
+            if not candidate then return false end
+            local ok, found = pcall(function()
+                return candidate:FindFirstChild("VotePad1",true) or candidate:FindFirstChild("VotePads",true)
+                    or candidate:FindFirstChild("VoteIcons",true)
+            end)
+            return ok and found ~= nil
+        end
         for _, name in ipairs({"RegularLobby", "Lobby", "MainLobby", "HalloweenLobby"}) do
             local lobby = workspace:FindFirstChild(name)
-            if lobby then return lobby end
+            if valid(lobby) then return lobby end
         end
-        for _, object in ipairs(workspace:GetChildren()) do
-            if string.find(string.lower(object.Name), "lobby", 1, true) then return object end
+        for _, object in ipairs(workspace:GetChildren()) do if valid(object) then return object end end
+        local ok, tagged = pcall(function() return game:GetService("CollectionService"):GetTagged("VotePad") end)
+        if ok and type(tagged) == "table" then
+            for _, part in ipairs(tagged) do
+                if part and part.Parent and part:IsDescendantOf(workspace) then
+                    local parent = part.Parent
+                    return parent.Name == "VoteIcons" and parent.Parent or parent
+                end
+            end
+        end
+        local nested = workspace:FindFirstChild("VotePads",true) or workspace:FindFirstChild("VotePad1",true) or workspace:FindFirstChild("VoteIcons",true)
+        if nested and nested:IsDescendantOf(workspace) then
+            local parent = nested.Parent
+            return parent and parent.Name == "VoteIcons" and parent.Parent or parent
         end
     end
     local function cleanVoteTitle(value)
@@ -2333,15 +2378,26 @@ local function installGameplay(screenGui)
             local pad = model and model:FindFirstChild("Pad", true)
             if pad and not pad:IsA("BasePart") then pad = nil end
             if detector and not detector:IsA("BasePart") then detector = nil end
-            local surface = model and (model:FindFirstChild("VoteInfoGui") or model:FindFirstChild("MapInfoGui"))
+            local surface = model and model:FindFirstChild("VoteInfoGui")
+            local mapSurface = model and model:FindFirstChild("MapInfoGui")
             local iconSurface = icon and icon:FindFirstChild("Surface")
             local iconFlag = icon and icon:FindFirstChild("Voting")
+            local mapInfo = icon and icon:FindFirstChild("MapInfo")
+            local mapInfoSurface = mapInfo and mapInfo:FindFirstChild("Surface")
             if (surface and surface:IsA("SurfaceGui") and surface.Enabled)
+                or (mapSurface and mapSurface:IsA("SurfaceGui") and mapSurface.Enabled)
                 or (iconSurface and iconSurface:IsA("SurfaceGui") and iconSurface.Enabled)
-                or (iconFlag and iconFlag:IsA("BoolValue") and iconFlag.Value) then boardActive = true end
+                or (iconFlag and iconFlag:IsA("BoolValue") and iconFlag.Value)
+                or (mapInfoSurface and mapInfoSurface:IsA("SurfaceGui") and mapInfoSurface.Enabled) then boardActive = true end
             if name then
                 table.insert(names, name)
-                slots[slot] = {name = name, pad = pad, detector = detector}
+                local votes = icon and icon:FindFirstChild("Votes")
+                local count = votes and votes:IsA("IntValue") and votes.Value or nil
+                if count == nil and model then
+                    local label = model:FindFirstChild("Votes",true)
+                    if label and label:IsA("TextLabel") then count = tonumber(string.match(label.Text,"%d+")) end
+                end
+                slots[slot] = {name = name, pad = pad, detector = detector, count = count}
             end
         end
         return slots, names, boardActive
@@ -2350,14 +2406,22 @@ local function installGameplay(screenGui)
         local ok, storage = pcall(function() return game:GetService("ReplicatedStorage") end)
         local remotes = ok and storage and storage:FindFirstChild("Remotes")
         local gameplay = remotes and remotes:FindFirstChild("Gameplay")
-        local started = gameplay and gameplay:FindFirstChild("RoundStart")
-        local ended = gameplay and gameplay:FindFirstChild("RoundEndFade")
-        if not started or not started:IsA("RemoteEvent") or not ended or not ended:IsA("RemoteEvent") then return nil end
         return gameplay
     end
-    local function resetAutoVote(on)
+    local function restoreVotePads()
+        for part, entry in pairs(voteState.saved) do
+            pcall(function()
+                if part.CFrame == entry.appliedFrame then part.CFrame = entry.frame end
+                if part.CanCollide == entry.appliedCollide then part.CanCollide = entry.collide end
+            end)
+        end
+        table.clear(voteState.saved)
+    end
+    function vote.reset(on)
         for _, connection in ipairs(voteConnections) do connection:Disconnect() end
         table.clear(voteConnections)
+        restoreVotePads()
+        voteState.character, voteState.first, voteState.before, voteState.lastReset = nil,nil,nil,nil
         voteElapsed, lastVotePad, voteRoundBlocked, previousBoardActive = 1, nil, false, false
         if not on then return end
         local gameplay = voteGameplay()
@@ -2366,7 +2430,9 @@ local function installGameplay(screenGui)
             local remote = gameplay:FindFirstChild(name)
             if remote and remote:IsA("RemoteEvent") then
                 table.insert(voteConnections, remote.OnClientEvent:Connect(function()
-                    voteRoundBlocked, lastVotePad = true, nil
+                    voteRoundBlocked, previousBoardActive, lastVotePad = true, true, nil
+                    voteState.character, voteState.first = nil,nil
+                    restoreVotePads()
                 end))
             end
         end
@@ -2387,27 +2453,70 @@ local function installGameplay(screenGui)
             voteSignature = signature
             if AngelHub.cycleOptions and AngelHub.cycleOptions["Select Map"] then AngelHub.cycleOptions["Select Map"](names) end
         end
-        if boardActive and not previousBoardActive then voteRoundBlocked = false end
+        if boardActive and not previousBoardActive then voteRoundBlocked = false
+        elseif not boardActive and previousBoardActive then voteRoundBlocked = true end
         previousBoardActive = boardActive
-        if not enabled["Auto Vote"] or voteRoundBlocked or not boardActive or not character or not humanoid or not root or root.Anchored then
-            lastVotePad = nil; return
-        end
         local timer = workspace:FindFirstChild("RoundTimerPart")
         local time = timer and timer:GetAttribute("Time")
-        if type(time) == "number" and time > 0 then lastVotePad = nil; return end
-        local selection = V["Select Map"]
-        local chosen
+        local selection, chosen = V["Select Map"], nil
         for _, data in pairs(slots) do if data.name == selection then chosen = data; break end end
         local pad = chosen and (chosen.pad or chosen.detector)
-        if not pad or not pad:IsDescendantOf(workspace) or (root.Position - pad.Position).Magnitude > 250 then return end
-        if lastVotePad ~= pad or (root.Position - pad.Position).Magnitude > 6 then
+        local original = pad and voteState.saved[pad]
+        local position = original and original.frame and original.frame.Position or (pad and pad.Position)
+        local near = root and position and (root.Position-position).Magnitude <= 250
+        -- Some servers do not replicate billboard Enabled. Only fall back when a
+        -- non-positive round timer and actual map labels establish intermission.
+        local active = boardActive or (type(time) == "number" and time <= 0 and #names > 0)
+        if not enabled["Auto Vote"] or voteRoundBlocked or not active or not character or not humanoid or not root
+            or root.Anchored or not near or not pad or not pad:IsDescendantOf(workspace)
+            or (type(time) == "number" and time > 0) then
+            restoreVotePads(); lastVotePad = nil
+            voteState.character, voteState.first, voteState.before, voteState.lastReset = nil,nil,nil,nil
+            return
+        end
+        if voteState.character ~= character or lastVotePad ~= pad then
+            restoreVotePads(); voteState.character, voteState.first = character,nil
+            voteState.before, voteState.lastReset = chosen.count,nil
+            lastVotePad = nil
+        end
+        if lastVotePad ~= pad or (root.Position-position).Magnitude > 6 then
             if not characterTeleport(pad) then return end
             lastVotePad = pad
         end
-        if chosen.pad then pcall(firetouchinterest, root, chosen.pad, 0); pcall(firetouchinterest, root, chosen.pad, 1) end
-        if chosen.detector and chosen.detector ~= chosen.pad then
-            pcall(firetouchinterest, root, chosen.detector, 0); pcall(firetouchinterest, root, chosen.detector, 1)
+        local touched = false
+        local firstPart = chosen.pad or chosen.detector
+        for index, part in ipairs({firstPart, chosen.detector or firstPart}) do
+            if part and (index == 1 or part ~= firstPart) then
+                local entry = voteState.saved[part]
+                if not entry then
+                    entry = {frame=part.CFrame, collide=part.CanCollide}
+                    voteState.saved[part] = entry
+                end
+                pcall(function()
+                    part.CanCollide = false; entry.appliedCollide = false
+                    part.CFrame = root.CFrame; entry.appliedFrame = root.CFrame
+                end)
+                if type(firetouchinterest) == "function" then
+                    local ok = pcall(firetouchinterest,root,part,0)
+                    pcall(firetouchinterest,root,part,1)
+                    touched = touched or ok
+                else touched = true end -- physical contact after teleport
+            end
         end
+        local now = os.clock()
+        if touched and not voteState.first then voteState.first = now end
+        local incremented = type(chosen.count) == "number" and type(voteState.before) == "number"
+            and chosen.count > voteState.before
+        if voteState.first and (incremented or now-voteState.first >= .22)
+            and (not voteState.lastReset or now-voteState.lastReset >= .25)
+            and enabled["Auto Vote"] and not voteRoundBlocked and localPlayer.Character == character
+            and (type(time) ~= "number" or time <= 0) then
+            restoreVotePads(); voteState.lastReset = now
+            pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Dead) end)
+            pcall(function() humanoid.Health = 0 end)
+            pcall(function() if humanoid.Health > 0 then character:BreakJoints() end end)
+        end
+    end
     end
     local knifeGeneration, knifeLastSwing = 0, -math.huge
     local function knifeParts()
@@ -3712,7 +3821,7 @@ local function installGameplay(screenGui)
         local trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
         local gunAnnounced, lastClose = false, -math.huge
         local function wanted()
-            if enabled["Auto Knife Throw"] or enabled["Player ESP"] or enabled["Auto Blurt"] or blurtWanted or enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
+            if enabled["Auto Knife Throw"] or V["Knife Tracer"] == true or enabled["Player ESP"] or enabled["Auto Blurt"] or blurtWanted or enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] or (extensionSteps.fling and extensionSteps.fling.needsRoles()) then return true end
             for _, name in ipairs({"Instant Roles", "Gun Notification", "Murder Close", "Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do
                 if V[name] == true then return true end
             end
@@ -5019,7 +5128,7 @@ local function installGameplay(screenGui)
         function antiFling.cleanup() clear(); tracked = nil end
         function antiFling.step(dt, owner, human, root)
             if not enabled["Player Shield"] and not enabled["Impact Shield"] then return end
-            if not owner or not owner.Parent or not human or not root or enabled["Walk Fling"] then
+            if not owner or not owner.Parent or not human or not root or enabled["Walk Fling"] or (extensionSteps.fling and extensionSteps.fling.active()) then
                 clear(); tracked = nil; return
             end
             if owner ~= tracked then clear(); tracked = owner; elapsed = 1 end
@@ -5172,7 +5281,45 @@ local function installGameplay(screenGui)
     local autoKnife = {}
     do
         local lastAttempt, equipAt, equipTool = -math.huge, -math.huge, nil
-        function autoKnife.toggle() lastAttempt, equipAt, equipTool = -math.huge, -math.huge, nil end
+        local tracer, dot, tracePoint, traceAim, traceTarget, opacity, lastTraceScan = nil,nil,nil,nil,nil,0,-math.huge
+        local function hideTrace(destroy)
+            tracePoint,traceAim,traceTarget,opacity = nil,nil,nil,0
+            if destroy then
+                lastTraceScan = -math.huge
+                if tracer then pcall(function() tracer:Destroy() end) end
+                if dot then pcall(function() dot:Destroy() end) end
+                tracer,dot = nil,nil
+            else
+                if tracer then pcall(function() tracer.Transparency=1 end) end
+                if dot then pcall(function() dot.Transparency=1 end) end
+            end
+        end
+        local function showTrace(origin,point,target,dt)
+            if not origin or not point or not target or (point-origin).Magnitude < .25 or (point-origin).Magnitude > 400 then hideTrace(false); return end
+            local alpha = 1-math.exp(-26*math.clamp(dt or 0,0,.25))
+            if not tracePoint or traceTarget ~= target or (point-tracePoint).Magnitude > 20 then tracePoint,opacity = point,0
+            else tracePoint = tracePoint+(point-tracePoint)*alpha end
+            traceTarget,traceAim = target,point; opacity = opacity+(1-opacity)*alpha
+            if not tracer or not tracer.Parent then
+                tracer = Instance.new("Part"); tracer.Name="AngelHubKnifeTracer"; tracer.Anchored=true
+                tracer.CanCollide=false; tracer.CanQuery=false; tracer.CanTouch=false
+                tracer.Material=Enum.Material.Neon; tracer.Color=Color3.fromRGB(255,65,65); tracer.Parent=workspace
+            end
+            if not dot or not dot.Parent then
+                dot = Instance.new("Part"); dot.Name="AngelHubKnifeAimDot"; dot.Shape=Enum.PartType.Ball
+                dot.Anchored=true; dot.CanCollide=false; dot.CanQuery=false; dot.CanTouch=false
+                dot.Material=Enum.Material.Neon; dot.Color=Color3.fromRGB(255,220,60)
+                dot.Size=Vector3.new(1.1,1.1,1.1); dot.Parent=workspace
+            end
+            local delta = tracePoint-origin
+            tracer.Size=Vector3.new(.14,.14,delta.Magnitude); tracer.CFrame=CFrame.lookAt(origin+delta*.5,tracePoint)
+            dot.CFrame=CFrame.new(tracePoint); tracer.Transparency=1-.75*opacity; dot.Transparency=1-.85*opacity
+        end
+        function autoKnife.toggle()
+            lastAttempt, equipAt, equipTool = -math.huge, -math.huge, nil
+            hideTrace(true)
+        end
+        autoKnife.cleanup = function() hideTrace(true) end
         local function clearRay(origin, destination, own, target, requireBody)
             local ok, result = pcall(function()
                 local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
@@ -5213,16 +5360,21 @@ local function installGameplay(screenGui)
             local predicted = observed+horizontal*time+Vector3.new(0,vertical,0)
             return predicted,(predicted-origin).Magnitude/speed
         end
-        function autoKnife.step()
-            if not isMM2 or not enabled["Auto Knife Throw"] or stopped then return end
+        function autoKnife.step(dt)
+            local show = V["Knife Tracer"] == true
+            if not show and (tracer or dot) then hideTrace(true) end
+            if not isMM2 or (not enabled["Auto Knife Throw"] and not show) or stopped then return end
             local character, human, root = characterParts()
-            if not human or not root or notifications.role(localPlayer) ~= "Murderer" then return end
+            if not human or not root or notifications.role(localPlayer) ~= "Murderer" then hideTrace(false); return end
             local backpack = localPlayer:FindFirstChildOfClass("Backpack")
             local knife = character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
-            if not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
+            if not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then hideTrace(false); return end
             local now = os.clock()
-            if now-lastAttempt < math.max(.1,math.clamp(tonumber(V["Throw Delay"]) or 1,0,10)) then return end
+            local ready = now-lastAttempt >= math.max(.1,math.clamp(tonumber(V["Throw Delay"]) or 1,0,10))
+            if not ready and not show then return end
             if knife.Parent ~= character then
+                hideTrace(false)
+                if not enabled["Auto Knife Throw"] then return end
                 local candidate, map = false, mm2Map()
                 for _, player in ipairs(playersService:GetPlayers()) do
                     local targetChar = player ~= localPlayer and player.Character or nil
@@ -5241,8 +5393,17 @@ local function installGameplay(screenGui)
             local handle = knife:FindFirstChild("Handle")
             local events = knife:FindFirstChild("Events")
             local remote = events and events:FindFirstChild("KnifeThrown")
-            if not handle or not handle:IsA("BasePart") or not remote or not remote:IsA("RemoteEvent") then return end
+            if not handle or not handle:IsA("BasePart") or not remote or not remote:IsA("RemoteEvent") then hideTrace(false); return end
             local origin = handle.CFrame
+            -- Bound raycasts: while the previously selected body remains valid,
+            -- smooth its last verified point between scans instead of rescanning every frame.
+            if show and now-lastTraceScan < .1 then
+                if tracePoint and traceTarget and traceTarget.Character and traceTarget.Character.Parent then
+                    pcall(showTrace,origin.Position,traceAim,traceTarget,dt)
+                else hideTrace(false) end
+                return
+            end
+            lastTraceScan = now
             local speed = knife:GetAttribute("ThrowSpeed")
             if type(speed) ~= "number" or speed ~= speed or speed < 24 or speed > 300 then speed = 96 end
             local map = mm2Map()
@@ -5269,7 +5430,9 @@ local function installGameplay(screenGui)
                     end
                 end
             end
-            if not best or (bestAim-origin.Position).Magnitude < .05 then return end
+            if not best or (bestAim-origin.Position).Magnitude < .05 then hideTrace(false); return end
+            if show then pcall(showTrace,origin.Position,bestAim,best,dt) end
+            if not enabled["Auto Knife Throw"] or not ready then return end
             lastAttempt = now
             pcall(function() remote:FireServer(origin,CFrame.new(bestAim)) end)
         end
@@ -5986,7 +6149,161 @@ local function installGameplay(screenGui)
         end
         setupFps()
     end
-    mm2Cleanup = function() extensionSteps.fps.cleanup(); farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); shooter.clearButton(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    do
+        -- MM2-only contact engine, adapted from the SkidFling poses in FlingEngine/YARHM.
+        local fling = {}; extensionSteps.fling = fling
+        local current, pendingRole, pendingAt, queue, nextAuto = nil,nil,0,{},0
+        local roundEnded, boundGameplay, nextBind, roundConnections = false,nil,0,{}
+        local function bindRound()
+            if os.clock() < nextBind then return end
+            nextBind = os.clock()+1
+            local gameplay = shooter.gameplay()
+            if gameplay == boundGameplay then return end
+            for _, connection in ipairs(roundConnections) do connection:Disconnect() end
+            table.clear(roundConnections); boundGameplay = gameplay; roundEnded = false
+            if not gameplay then return end
+            local roundEnd = gameplay:FindFirstChild("RoundEndFade")
+            if roundEnd and roundEnd:IsA("RemoteEvent") then
+                table.insert(roundConnections,roundEnd.OnClientEvent:Connect(function() roundEnded=true; fling.cancel() end))
+            end
+            for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew"}) do
+                local remote = gameplay:FindFirstChild(name)
+                if remote and remote:IsA("RemoteEvent") then table.insert(roundConnections,remote.OnClientEvent:Connect(function(duration)
+                    if name ~= "RoundStart" or (tonumber(duration) and tonumber(duration)>0) then roundEnded=false end
+                end)) end
+            end
+        end
+        local function conflict()
+            return enabled["Auto Farm"] or enabled["Auto Win"] or enabled["Walk Fling"] or enabled["Enable Fly"]
+                or enabled["Air Walk"] or enabled["Air Swim"] or enabled["Wall Crawl State"] or enabled["FreeCam"]
+                or enabled["Enable Speed"] or enabled["Noclip"] or enabled["Auto Vote"]
+        end
+        function fling.active() return current ~= nil end
+        function fling.needsRoles() return pendingRole ~= nil end
+        local function cleanup()
+            local state = current; current = nil
+            if not state then return end
+            if state.pin then pcall(function() state.pin:Destroy() end) end
+            if state.human and state.seated ~= nil then
+                pcall(function() state.human:SetStateEnabled(Enum.HumanoidStateType.Seated,state.seated) end)
+            end
+            if localPlayer.Character == state.character and state.root and state.root.Parent then
+                pcall(function()
+                    state.root.Velocity=Vector3.new(0,0,0); state.root.RotVelocity=Vector3.new(0,0,0)
+                    state.root.AssemblyLinearVelocity=Vector3.new(0,0,0); state.root.AssemblyAngularVelocity=Vector3.new(0,0,0)
+                    if state.human.Health > 0 and state.map == mm2Map() then state.character:PivotTo(state.home) end
+                end)
+            end
+        end
+        function fling.cancel()
+            pendingRole=nil; table.clear(queue); cleanup(); nextAuto=os.clock()+.7
+        end
+        local function selected()
+            for _,player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer and player.Name == V["Fling Target"] then return player end
+            end
+        end
+        local function start(player, automatic)
+            bindRound()
+            if stopped or not isMM2 or roundEnded or conflict() or current or not player or player == localPlayer then return false end
+            local character,human,root = characterParts()
+            local target = player.Character
+            local victim = target and target:FindFirstChildOfClass("Humanoid")
+            local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+            local map = mm2Map()
+            if not human or not root or root.Anchored or human.Sit or not target or not target.Parent or not victim
+                or victim.Health <= 0 or victim.Sit or not targetRoot or not targetRoot:IsA("BasePart")
+                or not farmOnMap(root,map) or not farmOnMap(targetRoot,map) then return false end
+            local destroyY = workspace.FallenPartsDestroyHeight
+            if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1e6 then destroyY = -500 end
+            if root.Position.Y <= destroyY+40 or targetRoot.Position.Y <= destroyY+40 then return false end
+            local velocity = root.AssemblyLinearVelocity
+            if velocity and velocity.Magnitude >= 50 then return false end
+            local pin
+            local ok,err = pcall(function()
+                pin=Instance.new("BodyVelocity"); pin.Name="EpixVel"
+                local power=math.clamp(tonumber(V["Fling Power"]) or 6,1,12)/3
+                pin.Velocity=Vector3.new(9e8*power,9e8*power,9e8*power)
+                pin.MaxForce=Vector3.new(9e9,9e9,9e9); pin.Parent=root
+                local seated
+                pcall(function() seated=human:GetStateEnabled(Enum.HumanoidStateType.Seated) end)
+                current={character=character,human=human,root=root,home=root.CFrame,map=map,player=player,
+                    target=target,targetRoot=targetRoot,victim=victim,pin=pin,seated=seated,
+                    start=os.clock(),phase=0,automatic=automatic,power=power,
+                    retries=math.clamp(math.floor(tonumber(V["Fling Retries"]) or 1),0,3)}
+                pcall(function() human:SetStateEnabled(Enum.HumanoidStateType.Seated,false) end)
+                antiFling.toggle()
+            end)
+            if not ok then if pin then pcall(function() pin:Destroy() end) end; cleanup(); warn("Angel Hub fling: "..tostring(err)); return false end
+            return true
+        end
+        function fling.selected()
+            if current or pendingRole or #queue>0 then message("Fling already running"); return end
+            if not start(selected(),false) then message("Fling: select a live player in the map and disable movement modules") end
+        end
+        function fling.role(role)
+            if current or pendingRole or #queue>0 then message("Fling already running"); return end
+            bindRound()
+            if roundEnded or conflict() then message("Fling: round unavailable or movement module active"); return end
+            pendingRole,pendingAt=role,os.clock()
+        end
+        local offsets={{0,1.5,0},{0,-1.5,0},{2.25,1.5,-2.25},{-2.25,-1.5,2.25},{0,1.5,0},{0,-1.5,0}}
+        function fling.step()
+            if stopped then fling.cancel(); return end
+            bindRound()
+            if pendingRole then
+                local role = pendingRole
+                for _,p in ipairs(playersService:GetPlayers()) do
+                    local found = p ~= localPlayer and notifications.role(p)
+                    if found == role or (role == "Sheriff" and found == "Hero") then table.insert(queue,p) end
+                end
+                if #queue > 0 or os.clock()-pendingAt >= 3 or conflict() then
+                    pendingRole=nil
+                    if #queue==0 then message("Fling: role unavailable or no eligible player") end
+                else return end
+            end
+            if current then
+                local state=current
+                local player,targetRoot,victim=state.player,state.targetRoot,state.victim
+                local now=os.clock()
+                if roundEnded or conflict() or localPlayer.Character~=state.character or not state.root.Parent or state.human.Health<=0
+                    or player.Character~=state.target or not state.target.Parent or victim.Health<=0 or victim.Sit
+                    or not targetRoot.Parent or state.map~=mm2Map() or not farmOnMap(targetRoot,state.map)
+                    or (state.automatic and (not enabled["Auto Fling Selected Target"] or selected()~=player)) then
+                    cleanup(); nextAuto=now+.7; return
+                end
+                local velocity=targetRoot.AssemblyLinearVelocity
+                if velocity and velocity.Magnitude>500 then cleanup(); nextAuto=now+1; return end
+                if now-state.start >= 3 then
+                    if state.retries<=0 then cleanup(); nextAuto=now+.7; return end
+                    state.retries-=1; state.start=now
+                end
+                local destroyY=workspace.FallenPartsDestroyHeight
+                if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1e6 then destroyY=-500 end
+                if targetRoot.Position.Y<=destroyY+40 then cleanup(); nextAuto=now+1; return end
+                state.phase+=1
+                local offset=offsets[(state.phase-1)%#offsets+1]
+                local lead = velocity and Vector3.new(velocity.X,0,velocity.Z)*.15 or Vector3.new(0,0,0)
+                local frame=CFrame.new(targetRoot.Position+lead)*CFrame.new(offset[1],offset[2],offset[3])*CFrame.Angles(math.rad(state.phase*100),0,0)
+                state.root.CFrame=frame
+                pcall(function() state.character:SetPrimaryPartCFrame(frame) end)
+                local scale=state.power
+                state.root.Velocity=Vector3.new(9e7*scale,9e8*scale,9e7*scale)
+                state.root.RotVelocity=Vector3.new(9e8*scale,9e8*scale,9e8*scale)
+                return
+            end
+            while #queue>0 do local target=table.remove(queue,1); if start(target,false) then return end end
+            if enabled["Auto Fling Selected Target"] and os.clock()>=nextAuto and not conflict() then
+                nextAuto=os.clock()+1; start(selected(),true)
+            end
+        end
+        function fling.destroy()
+            fling.cancel()
+            for _,connection in ipairs(roundConnections) do connection:Disconnect() end
+            table.clear(roundConnections); boundGameplay=nil
+        end
+    end
+    mm2Cleanup = function() extensionSteps.fling.destroy(); autoKnife.cleanup(); extensionSteps.fps.cleanup(); farmStop(); resetCoinAura(); extensionSteps.vote.reset(false); shooter.stop(); shooter.clearButton(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -5999,6 +6316,13 @@ local function installGameplay(screenGui)
                     old(false); enabled[name] = nil
                     message("Not implemented: " .. name)
                     return false
+                end
+                if value == true and name == "Auto Fling Selected Target" and (enabled["Auto Farm"] or enabled["Auto Win"] or enabled["Walk Fling"] or enabled["Enable Fly"] or enabled["Air Walk"] or enabled["Air Swim"] or enabled["Wall Crawl State"] or enabled["FreeCam"] or enabled["Enable Speed"] or enabled["Noclip"] or enabled["Auto Vote"]) then
+                    old(false); message("Fling: disable movement modules first"); return false
+                end
+                if value == true and name ~= "Auto Fling Selected Target" and (name == "Auto Farm" or name == "Auto Win" or name == "Walk Fling" or name == "Enable Fly" or name == "Air Walk" or name == "Air Swim" or name == "Wall Crawl State" or name == "FreeCam" or name == "Enable Speed" or name == "Noclip" or name == "Auto Vote") then
+                    if enabled["Auto Fling Selected Target"] then AngelHub.setters["Auto Fling Selected Target"](false) end
+                    extensionSteps.fling.cancel()
                 end
                 if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" and V["Speed Mode"] ~= "Velocity" then
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
@@ -6044,10 +6368,6 @@ local function installGameplay(screenGui)
                 end
                 if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Normal" and V["Shoot Mode"] ~= "Instakill" then
                     old(false); message("Auto Shoot: unsupported mode"); return false
-                end
-                if value == true and name == "Auto Vote" then
-                    if type(firetouchinterest) ~= "function" then old(false); message("Auto Vote: touch API unavailable"); return false end
-                    if not voteGameplay() then old(false); message("Auto Vote: round remotes unavailable"); return false end
                 end
                 if value == true and (name == "Gun Aura" or name == "Auto Get Gun") and type(firetouchinterest) ~= "function" then
                     old(false); message(name .. ": touch API unavailable"); return false
@@ -6105,7 +6425,7 @@ local function installGameplay(screenGui)
                 end
                 if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
                 if name == "Coins Aura" then resetCoinAura() end
-                if name == "Auto Vote" then resetAutoVote(value == true) end
+                if name == "Auto Vote" then extensionSteps.vote.reset(value == true) end
                 if name == "Auto Blurt" then blurt.toggle(); if value then message("Auto Blurt: announces roles in public chat") end end
                 if name == "Auto Shoot" and value then message("Auto Shoot: basic prediction") end
                 if name == "Auto Unbox" then unbox.toggle(value) end
@@ -6138,6 +6458,7 @@ local function installGameplay(screenGui)
                         end
                     else extensionSteps.freecam.cleanup() end
                 end
+                if name == "Auto Fling Selected Target" and not value then extensionSteps.fling.cancel() end
                 if name == "Auto Knife Throw" then autoKnife.toggle(); if value then message("Auto Knife Throw: basic prediction; manual throws unchanged") end end
                 if name == "Player Shield" or name == "Impact Shield" then antiFling.toggle() end
                 if name == "Walk Fling" and value then antiFling.toggle() end
@@ -6179,6 +6500,11 @@ local function installGameplay(screenGui)
             end
         end
     end
+    local oldKnifeTracer = AngelHub.setters["Knife Tracer"]
+    if oldKnifeTracer then AngelHub.setters["Knife Tracer"] = function(value)
+        oldKnifeTracer(value == true)
+        if value ~= true then autoKnife.cleanup() end
+    end end
     local oldFarmSafeZone = AngelHub.setters["Farm Safe Zone"]
     if oldFarmSafeZone then
         AngelHub.setters["Farm Safe Zone"] = function(value)
@@ -6324,6 +6650,10 @@ local function installGameplay(screenGui)
                 end
             end
         end
+        AngelHub.actions["Fling"] = extensionSteps.fling.selected
+        AngelHub.actions["Fling Murderer"] = function() extensionSteps.fling.role("Murderer") end
+        AngelHub.actions["Fling Sheriff"] = function() extensionSteps.fling.role("Sheriff") end
+        AngelHub.actions["Fling All Innocents"] = function() extensionSteps.fling.role("Innocent") end
         AngelHub.actions["Blurt Roles"] = blurt.manual
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
@@ -7283,7 +7613,7 @@ local function initializeScript()
         end
 		for pass = 1, 2 do
 		for name, value in data do
-            if name == "Marker Points by Place" or ((name == "Walk Fling" or name == "Auto Blurt" or name == "FreeCam" or name == "Disguise Character" or name == "Gun Aimbot") and value == true) then continue end
+            if name == "Marker Points by Place" or ((name == "Walk Fling" or name == "Auto Blurt" or name == "FreeCam" or name == "Disguise Character" or name == "Gun Aimbot" or name == "Auto Fling Selected Target") and value == true) then continue end
 			if (AngelHub.moduleNames[name] == true) ~= (pass == 2) then continue end
 			local setter = AngelHub.setters[name]
 			if not setter then

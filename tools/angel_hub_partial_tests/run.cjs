@@ -17,23 +17,22 @@ const readTest = p => read(path.join(__dirname, p));
   const supportBlock = file.slice(file.indexOf('local supportedModules ='), file.indexOf('    local function message(text)', file.indexOf('local supportedModules =')));
   const supported = new Set([...supportBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]));
   const pending = moduleNames.filter(name => !supported.has(name));
-  const expectedPending = ['Auto Fling Selected Target',
-    'Fling Sheriff And Get Gun', 'Fling Murder If Dead'];
+  const expectedPending = ['Fling Sheriff And Get Gun', 'Fling Murder If Dead'];
   assert.equal(moduleNames.length, 49); assert.equal(new Set(moduleNames).size, 49);
-  assert.equal(moduleNames.filter(name => supported.has(name)).length, 46);
+  assert.equal(moduleNames.filter(name => supported.has(name)).length, 47);
   assert.deepEqual(pending, expectedPending);
   assert.equal([...supported].filter(name => !moduleNames.includes(name)).length, 0);
   const buttons = [...file.matchAll(/addButton\([^\n]+?,\s*"([^"]+)"/g)].map(match => match[1]);
-  const pendingButtons = ['Fling Murderer', 'Fling Sheriff', 'Fling All Innocents', 'Fling'];
-  assert.equal(buttons.length, 27); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 4);
+  const pendingButtons = [];
+  assert.equal(buttons.length, 27); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 0);
   const boundActions = new Set([...file.matchAll(/AngelHub\.actions\["([^"]+)"\]\s*=/g)].map(match => match[1]));
   for (const name of ['High Jump', 'Long Jump', 'Create', 'Load', 'Save', 'Rejoin Server', 'Reset Settings', 'Unload']) boundActions.add(name);
   for (const name of buttons) assert.equal(boundActions.has(name), !pendingButtons.includes(name), `Action status: ${name}`);
   const blockedBlock = file.slice(file.indexOf('local UNIMPLEMENTED_TOGGLES ='), file.indexOf('local function addToggle('));
   const blockedOptions = [...blockedBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]);
-  assert.equal(blockedOptions.length, 7);
+  assert.equal(blockedOptions.length, 5);
   assert.ok(file.includes('{"Zoom Through Walls"}'));
-  console.log(`Inventory: ${moduleNames.length} module switches, 46 connected, ${pending.length} blocked; 27 buttons, 23 connected, 4 pending; 8 explicitly blocked options`);
+  console.log(`Inventory: ${moduleNames.length} module switches, 47 connected, ${pending.length} blocked; 27 buttons, 27 connected, 0 pending; 6 explicitly blocked options`);
   const start = file.indexOf('local function installGameplay(screenGui)');
   const end = file.indexOf('\nlocal function initializeScript()', start);
   if (start < 0 || end < 0) throw new Error('Gameplay source boundaries not found');
@@ -46,6 +45,8 @@ const readTest = p => read(path.join(__dirname, p));
     const gunAimbotLua = await Lua.create({ sandbox: true });
     gunAimbotLua.execute(readTest('gameplay-mock.luau') + `\nlocal mobile = ${mobile}; local fakeNow = 100; local os = {clock = function() return fakeNow end}\n` + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('gun-aimbot-checks.luau'));
   }
+  const farmResetLua = await Lua.create({ sandbox: true });
+  farmResetLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-reset-checks.luau'));
   const farmShootLua = await Lua.create({ sandbox: true });
   farmShootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('farm-shoot-checks.luau'));
   const farmCounterLua = await Lua.create({ sandbox: true });
@@ -110,6 +111,8 @@ const readTest = p => read(path.join(__dirname, p));
   teleportGlideLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('teleport-glide-checks.luau'));
   const flyLua = await Lua.create({ sandbox: true });
   flyLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('fly-checks.luau'));
+  const mm2FlingLua = await Lua.create({ sandbox: true });
+  mm2FlingLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('mm2-fling-checks.luau'));
   const walkFlingLua = await Lua.create({ sandbox: true });
   walkFlingLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('walkfling-checks.luau'));
   for (const mobile of [false, true]) {
@@ -133,7 +136,7 @@ const readTest = p => read(path.join(__dirname, p));
   const pointerRolesLua = await Lua.create({ sandbox: true });
   pointerRolesLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('pointers-role-checks.luau'));
   const voteLua = await Lua.create({ sandbox: true });
-  voteLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
+  voteLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
   guiLua.execute(readTest('gui-mock.luau') + '\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed to initialize")

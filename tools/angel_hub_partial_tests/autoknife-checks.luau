@@ -1,5 +1,8 @@
 AngelHub.moduleNames['Auto Knife Throw']=true;V['Auto Knife Throw']=false;AngelHub.setters['Auto Knife Throw']=function(v)V['Auto Knife Throw']=v end
 V['Throw WallCheck']=true;V['Throw Delay']=1
+V['Knife Tracer']=false;AngelHub.setters['Knife Tracer']=function(v)V['Knife Tracer']=v end
+Enum.Material.Neon='neon';Enum.PartType={Ball='ball'};Color3={fromRGB=function(r,g,b)return {r,g,b}end}
+function CFrame.lookAt(a,b)return {Position=a,LookAt=b}end
 function vec:Dot(b)return self.X*b.X+self.Y*b.Y+self.Z*b.Z end
 localPlayer.Name='Me';localPlayer.UserId=1;other.UserId=2
 local enemyHuman={Health=100};local enemyRoot={Position=Vector3.new(20,0,0),AssemblyLinearVelocity=Vector3.new(0,0,10)}
@@ -60,4 +63,12 @@ knife.Parent=backpack;fakeNow+=1;heartbeat:Fire(.21);assert(#sent==4 and humanoi
 fakeNow+=.1;heartbeat:Fire(.21);assert(#sent==4)
 fakeNow+=.1;heartbeat:Fire(.21);assert(#sent==5)
 AngelHub.setters['Auto Knife Throw'](false);fakeNow+=2;heartbeat:Fire(.21);assert(#sent==5)
+-- Tracer is local, requires the equipped Knife and never sends a throw on its own.
+AngelHub.setters['Knife Tracer'](true);fakeNow+=.2;heartbeat:Fire(.21)
+local tracer,dot
+for _,v in ipairs(created)do if v.Name=='AngelHubKnifeTracer'then tracer=v elseif v.Name=='AngelHubKnifeAimDot'then dot=v end end
+assert(tracer and dot and tracer.Parent==workspace and dot.Parent==workspace and tracer.Transparency<1 and #sent==5)
+blocked=true;fakeNow+=.2;heartbeat:Fire(.21);assert(tracer.Transparency==1 and dot.Transparency==1 and #sent==5)
+blocked=false;fakeNow+=.2;heartbeat:Fire(.21);assert(tracer.Transparency<1)
+AngelHub.setters['Knife Tracer'](false);assert(tracer.destroyed and dot.destroyed)
 screenGui.Destroying:Fire()
