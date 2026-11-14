@@ -223,15 +223,10 @@ local function addSection(parent, text)
 end
 
 local UNIMPLEMENTED_TOGGLES = {
-    ["Knife Tracer"] = true, ["Chams Show Perk"] = true, ["Show Target Emotes"] = true, ["Aimbot Macro"] = true,
+    ["Knife Tracer"] = true, ["Chams Show Perk"] = true, ["Show Target Emotes"] = true,
     ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
-    ["Fling Sheriff After Full Bag"] = true, ["Auto Grab Gun And Shoot"] = true,
+    ["Fling Sheriff After Full Bag"] = true,
     ["Auto Kill All When Full Bag"] = true,
-    ["Remove Textures"] = true, ["Disable Particles"] = true, ["Disable Shadows"] = true,
-    ["Simple Materials"] = true, ["Lowest Render Quality"] = true, ["Low Detail Meshes"] = true,
-    ["Hide Distant Scenery"] = true, ["Simplify Terrain"] = true, ["Disable Post Effects"] = true,
-    ["Simple Lighting"] = true, ["Disable Local Lights"] = true, ["Simplify Game UI"] = true,
-    ["Hide World UI"] = true, ["Hide Game UI"] = true, ["Hide Roblox Panels"] = true,
 }
 
 local function addToggle(parent, text, keybind, default)
@@ -1175,9 +1170,42 @@ local function installGameplay(screenGui)
             end
         end
     end
+    do
+        local function setupPlayerLists()
+            local signature, elapsed = nil, 0
+            local function refresh()
+                if not isMM2 or not AngelHub.listOptions then return end
+                local ok, players = pcall(function() return playersService:GetPlayers() end)
+                if not ok or type(players) ~= "table" then return end
+                local names = {}
+                for _, player in ipairs(players) do
+                    if player ~= localPlayer and type(player.Name) == "string" and player.Name ~= "" then table.insert(names,player.Name) end
+                end
+                table.sort(names)
+                local current = table.concat(names,"\0")
+                if current == signature then return end
+                signature = current
+                for _, key in ipairs({"Kill Player","Fling Target"}) do
+                    if AngelHub.listOptions[key] then AngelHub.listOptions[key](names) end
+                end
+            end
+            extensionSteps.playerLists = function(dt)
+                elapsed += math.max(0,dt)
+                if elapsed >= 1 then elapsed = 0; refresh() end
+            end
+            if isMM2 then
+                if playersService.PlayerAdded then listen(playersService.PlayerAdded,refresh) end
+                if playersService.PlayerRemoving then listen(playersService.PlayerRemoving,function() signature=nil end) end
+                refresh()
+            end
+        end
+        setupPlayerLists()
+    end
     local fastTime
     local function update(dt)
         if stopped then return end
+        extensionSteps.playerLists(dt)
+        extensionSteps.fps.step(dt)
         local character, humanoid, root = characterParts()
         updateNoclip(character)
         if enabled["Enable Gravity"] then apply("gravity", workspace, {Gravity = V["Gravity Value"]}) else restore("gravity") end
@@ -1353,6 +1381,11 @@ local function installGameplay(screenGui)
         if enabled["Anti AFK"] and dt > 0 then
             afkElapsed += dt
             if afkElapsed >= 150 then afkElapsed = 0; task.spawn(AngelHub.pokeAfk) end
+        end
+        if dt > 0 and humanoid and (enabled["Enable Speed"] and V["Speed Auto Jump"] == true
+            or enabled["Custom Jump Power"] and V["Jump Auto Jump"] == true)
+            and humanoid.MoveDirection.Magnitude > 0.01 and humanoid.FloorMaterial ~= Enum.Material.Air then
+            pcall(function() humanoid.Jump = true end)
         end
         if enabled["Custom Jump Power"] and humanoid then
             apply("jump", humanoid, {UseJumpPower = true, JumpPower = V["Jump Power"]})
@@ -2395,15 +2428,15 @@ local function installGameplay(screenGui)
         if (targetRoot.Position - root.Position).Magnitude > range then return nil end
         return targetRoot
     end
-    local function knifeSwing(manual)
-        if not enabled["Knife Aura"] or (V["Knife Hold Mouse"] and not manual) then return end
+    local function knifeSwing(manual, requested, oneShot)
+        if not oneShot and (not enabled["Knife Aura"] or (V["Knife Hold Mouse"] and not manual)) then return end
         local now = os.clock()
         if now - knifeLastSwing < (manual and 0.3 or 0.86) then return end
         local knife, root, character = knifeParts()
         if not knife then return end
         local target, distance
         for _, player in ipairs(playersService:GetPlayers()) do
-            local other = knifeTargetValid(player, root, V["Knife Aura Range"])
+            local other = (not requested or requested == player) and knifeTargetValid(player, root, V["Knife Aura Range"])
             if other then
                 local d = (other.Position - root.Position).Magnitude
                 if not distance or d < distance then target, distance = player, d end
@@ -2415,7 +2448,7 @@ local function installGameplay(screenGui)
         if not pcall(function() knife:Activate() end) then return end
         knifeLastSwing = now
         task.delay(0.025, function()
-            if stopped or not enabled["Knife Aura"] or knifeGeneration ~= generation or localPlayer.Character ~= character or target.Character ~= targetCharacter then return end
+            if stopped or (not oneShot and not enabled["Knife Aura"]) or knifeGeneration ~= generation or localPlayer.Character ~= character or target.Character ~= targetCharacter then return end
             local current = character:FindFirstChild("Knife")
             local currentRoot = character:FindFirstChild("HumanoidRootPart")
             local currentHumanoid = character:FindFirstChildOfClass("Humanoid")
@@ -2443,11 +2476,15 @@ local function installGameplay(screenGui)
     local function winSheriffActive()
         return enabled["Auto Win"] == true and enabled["Insta Kill As Sheriff"] == true
     end
+    local function farmShootActive()
+        return enabled["Auto Farm"] == true and V["Auto Grab Gun And Shoot"] == true
+            and farmAmount >= math.max(50,farmLimit)
+    end
     local function shootingActive()
-        return enabled["Auto Shoot"] == true or winSheriffActive()
+        return enabled["Auto Shoot"] == true or farmShootActive() or winSheriffActive()
     end
     local function rolesActive()
-        return shootingActive() or enabled["Gun Aimbot"] == true
+        return shootingActive() or enabled["Auto Farm"] == true or enabled["Gun Aimbot"] == true
     end
     local function disconnectShoot(list)
         for _, connection in ipairs(list) do connection:Disconnect() end
@@ -2597,7 +2634,7 @@ local function installGameplay(screenGui)
         return false
     end
     local function selectedGunTarget(root)
-        if V["Aimbot Target"] ~= "Custom" then return shootMurderer(root, true, nil, V["Aim Method"] == "Silent AIM") end
+        if V["Aimbot Target"] ~= "Custom" then return shootMurderer(root, true, nil, V["Aim Method"] == "Instakill") end
         local query = string.lower(string.match(tostring(V["Target Player"] or ""), "^%s*(.-)%s*$") or "")
         if query == "" then return nil end
         local exact, matches = nil, {}
@@ -2610,35 +2647,76 @@ local function installGameplay(screenGui)
             end
         end
         local selected = exact or (#matches == 1 and matches[1] or nil)
-        return selected and shootMurderer(root,true,selected,V["Aim Method"] == "Silent AIM") or nil
+        return selected and shootMurderer(root,true,selected,V["Aim Method"] == "Instakill") or nil
+    end
+    -- Small standalone adaptation of Prediction's torso/latency fallback and Shoot's
+    -- Through CFrame segment. It does not reproduce the full history/echo model.
+    local pingSamples, lastPingAt = {}, -math.huge
+    local function gunHorizon()
+        local now = os.clock()
+        if now-lastPingAt >= .2 then
+            lastPingAt = now
+            local measured
+            pcall(function()
+                local stats = game:GetService("Stats")
+                local network = stats and stats:FindFirstChild("Network")
+                local items = network and network:FindFirstChild("ServerStatsItem")
+                local dataPing = items and items:FindFirstChild("Data Ping")
+                local ms = dataPing and tonumber(dataPing:GetValue())
+                if ms and ms == ms and ms >= 10 and ms <= 2000 then measured = ms/1000 end
+            end)
+            if not measured then pcall(function()
+                local value = localPlayer:GetNetworkPing()
+                if type(value) == "number" and value == value and value > .001 and value <= 2 then measured = value end
+            end) end
+            if measured then
+                table.insert(pingSamples,math.clamp(measured,.02,.6))
+                if #pingSamples > 7 then table.remove(pingSamples,1) end
+            end
+        end
+        if #pingSamples == 0 then return .08 end
+        local sorted = table.clone(pingSamples); table.sort(sorted)
+        return sorted[math.floor((#sorted+1)/2)]
+    end
+    local function predictGun(targetCharacter,targetRoot)
+        local aim = targetCharacter:FindFirstChild("UpperTorso") or targetCharacter:FindFirstChild("Torso") or targetRoot
+        if not aim:IsA("BasePart") then aim = targetRoot end
+        local velocity = targetRoot.AssemblyLinearVelocity
+        local captured = aim.Position
+        return captured + velocity * gunHorizon(), captured, velocity
+    end
+    local function gunFrames(character, targetCharacter, targetRoot, origin, mode, wallCheck)
+        local point, captured, velocity = predictGun(targetCharacter,targetRoot)
+        for _, n in ipairs({origin.Position.X,origin.Position.Y,origin.Position.Z,point.X,point.Y,point.Z}) do
+            if n ~= n or math.abs(n) > 1000000 then return end
+        end
+        if (point-origin.Position).Magnitude < .05 then return end
+        if wallCheck then
+            local ok, clear = pcall(bulletPathClear,origin.Position,point,character,targetCharacter)
+            if not ok or not clear then return end
+        end
+        local startPoint, endPoint = origin.Position,point
+        if mode == "Instakill" then
+            local movement = Vector3.new(velocity.X,0,velocity.Z)
+            local line = Vector3.new(point.X-origin.Position.X,0,point.Z-origin.Position.Z)
+            local axis = movement.Magnitude > 1.5 and movement.Unit or (line.Magnitude > .05 and line.Unit or nil)
+            if axis then startPoint,endPoint = captured-axis,point+axis
+            else startPoint,endPoint = point+Vector3.new(0,1.6,0),point end
+            if (endPoint-startPoint).Magnitude < .2 then startPoint,endPoint=point+Vector3.new(0,1.6,0),point end
+        end
+        return CFrame.lookAt(startPoint,endPoint),CFrame.new(endPoint)
     end
     local function gunAimFrames(character, root, gun)
         if stopped or shootRoundBlocked then return end
-        if V["Aim Method"] ~= "Normal" and V["Aim Method"] ~= "Silent AIM" then return end
+        local mode = V["Aim Method"]
+        if mode ~= "Normal" and mode ~= "Instakill" then return end
         local target = selectedGunTarget(root)
         local targetCharacter = target and target.Character
         local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
         if not targetRoot or not targetRoot:IsA("BasePart") then return end
         local origin = gunOrigin(character,root,gun)
         if not origin then return end
-        local point = targetRoot.Position + targetRoot.AssemblyLinearVelocity * 0.08
-        for _, n in ipairs({origin.Position.X,origin.Position.Y,origin.Position.Z,point.X,point.Y,point.Z}) do
-            if n ~= n or math.abs(n) > 1000000 then return end
-        end
-        if (point-origin.Position).Magnitude < .05 then return end
-        if V["Aim Method"] == "Normal" and V["Normal WallCheck"] == true then
-            local ok, clear = pcall(bulletPathClear,origin.Position,point,character,targetCharacter)
-            if not ok or not clear then return end
-        end
-        local startPoint, endPoint = origin.Position, point
-        if V["Aim Method"] == "Silent AIM" then
-            local movement = Vector3.new(point.X-targetRoot.Position.X,0,point.Z-targetRoot.Position.Z)
-            local line = Vector3.new(point.X-origin.Position.X,0,point.Z-origin.Position.Z)
-            local axis = movement.Magnitude > .15 and movement.Unit or (line.Magnitude > .05 and line.Unit or Vector3.new(0,0,-1))
-            startPoint, endPoint = targetRoot.Position-axis*1.5, point+axis*1.5
-            if (endPoint-startPoint).Magnitude < .2 then startPoint,endPoint=point+Vector3.new(0,2,-1.5),point end
-        end
-        return CFrame.lookAt(startPoint,endPoint), CFrame.new(endPoint)
+        return gunFrames(character,targetCharacter,targetRoot,origin,mode,mode == "Normal" and V["WallCheck"] == true)
     end
     local fireGeneration = 0
     function shooter.manual(requireEnabled)
@@ -2664,7 +2742,14 @@ local function installGameplay(screenGui)
                 shootBusy=true; lastGunShot=os.clock()
                 local sent, problem = pcall(function() remote:FireServer(a,b) end)
                 shootBusy=false
-                if not sent then warn("Angel Hub Gun Aimbot dispatch uncertain: "..tostring(problem)) end
+                if not sent then warn("Angel Hub Gun Aimbot dispatch uncertain: "..tostring(problem))
+                elseif V["Macro"] == true then
+                    task.delay(.01,function()
+                        if stopped or V["Macro"] ~= true or localPlayer.Character ~= current or gun.Parent ~= current then return end
+                        local pack = localPlayer:FindFirstChildOfClass("Backpack")
+                        if pack then pcall(function() gun.Parent = pack end) end
+                    end)
+                end
             end)
             if not ok then shootBusy=false; warn("Angel Hub Gun Aimbot: "..tostring(err)); message("Gun Aimbot: request failed") end
         end)
@@ -2689,7 +2774,7 @@ local function installGameplay(screenGui)
                 if enabled["Gun Aimbot"] then shooter.manual(true) end
             end)
         end)
-        if not ok then shooter.clearButton(); warn("Angel Hub fire button: "..tostring(err)); message("Gun Aimbot: use Fire Gun in the menu") end
+        if not ok then shooter.clearButton(); warn("Angel Hub fire button: "..tostring(err)); message("Gun Aimbot: touch button unavailable") end
     end
     local function updateShootRadius(root)
         if not enabled["Auto Shoot"] or not V["Shoot Proximity"] or not root then
@@ -2711,17 +2796,28 @@ local function installGameplay(screenGui)
     local function tryAutoShoot()
         if stopped or not shootingActive() or shootRoundBlocked or shootBusy then return end
         local forceWin = winSheriffActive()
-        local mode = forceWin and "CFrame" or V["Shoot Mode"]
-        if mode ~= "Bullet" and mode ~= "CFrame" then return end
+        local forceFarm = farmShootActive() and readShootRole(localPlayer) == "Innocent"
+        if not forceWin and not forceFarm and not enabled["Auto Shoot"] then return end
+        local mode = (forceWin or forceFarm) and "Instakill" or V["Shoot Mode"]
+        if mode ~= "Normal" and mode ~= "Instakill" then return end
         local character, humanoid, root = characterParts()
         if not humanoid or not root then return end
-        if forceWin and not farmOnMap(root, mm2Map()) then return end
+        if (forceWin or forceFarm) and not farmOnMap(root, mm2Map()) then return end
         local backpack = localPlayer:FindFirstChildOfClass("Backpack")
         if getTool(character, "Knife") or getTool(backpack, "Knife") then return end
-        local gun = getTool(character, "Gun") or getTool(backpack, "Gun")
-        if not gun then return end
-        local target = shootMurderer(root, forceWin)
+        local target = shootMurderer(root, forceWin or forceFarm)
         if not target or not target.Character then return end
+        local gun = getTool(character, "Gun") or getTool(backpack, "Gun")
+        if not gun and forceFarm and type(firetouchinterest) == "function" and os.clock()-(shooter.lastFarmGrab or -math.huge) >= .5 then
+            local drop = findDroppedGun()
+            local part = drop and markerPart(drop)
+            local map = mm2Map()
+            if part and map and part:IsA("BasePart") and part:IsDescendantOf(map) then
+                shooter.lastFarmGrab = os.clock()
+                pcall(firetouchinterest,root,part,0); pcall(firetouchinterest,root,part,1)
+            end
+        end
+        if not gun then return end
         if gun.Parent ~= character then
             pcall(function() humanoid:EquipTool(gun) end)
             if gun.Parent ~= character then return end
@@ -2735,29 +2831,13 @@ local function installGameplay(screenGui)
         if now - lastGunShot < 0.22 then return end
         local origin = gunOrigin(character, root, gun)
         if not origin then return end
-        local velocity = targetRoot.AssemblyLinearVelocity
-        local endpoint = targetRoot.Position + velocity * 0.08
-        for _, number in ipairs({origin.Position.X, origin.Position.Y, origin.Position.Z, endpoint.X, endpoint.Y, endpoint.Z}) do
-            if number ~= number or math.abs(number) > 1000000 then return end
-        end
-        if (endpoint - origin.Position).Magnitude < 0.05 then return end
-        local wallCheck = forceWin and V["Win Sheriff WallCheck"] == true or (not forceWin and V["Shoot WallCheck"] == true)
-        if wallCheck then
-            local ok, clear = pcall(bulletPathClear, origin.Position, endpoint, character, target.Character)
-            if not ok or not clear then return end
-        end
-        local startPoint, endPoint = origin.Position, endpoint
-        if mode == "CFrame" then
-            -- Approximation of the reference's immediate Silent fallback, not the full predictor.
-            local chord = Vector3.new(endpoint.X - targetRoot.Position.X, 0, endpoint.Z - targetRoot.Position.Z)
-            local line = Vector3.new(endpoint.X - origin.Position.X, 0, endpoint.Z - origin.Position.Z)
-            local axis = chord.Magnitude > 0.15 and chord.Unit or (line.Magnitude > 0.05 and line.Unit or Vector3.new(0, 0, -1))
-            startPoint, endPoint = targetRoot.Position - axis * 1.5, endpoint + axis * 1.5
-            if (endPoint - startPoint).Magnitude < 0.2 then startPoint, endPoint = endpoint + Vector3.new(0, 2, -1.5), endpoint end
-        end
+        local wallCheck = forceWin and V["Win Sheriff WallCheck"] == true
+            or (not forceWin and not forceFarm and mode == "Normal" and V["Shoot WallCheck"] == true)
+        local shotOrigin,shotEnd = gunFrames(character,target.Character,targetRoot,origin,mode,wallCheck)
+        if not shotOrigin or not shotEnd then return end
         shootBusy = true
         lastGunShot = now
-        local ok, err = pcall(function() remote:FireServer(CFrame.lookAt(startPoint, endPoint), CFrame.new(endPoint)) end)
+        local ok, err = pcall(function() remote:FireServer(shotOrigin, shotEnd) end)
         shootBusy = false
         if not ok then warn("Angel Hub Auto Shoot dispatch uncertain: " .. tostring(err)) end
     end
@@ -5451,8 +5531,10 @@ local function installGameplay(screenGui)
             extensionSteps.disguise = disguise
             local generation, seen, seenCharacter, scheduled, elapsed, appearance, animations, tracks = 0,nil,nil,nil,0,nil,{},{}
             local fields = {
-                {"idle","IdleAnimation"},{"walk","WalkAnimation"},{"run","RunAnimation"},{"jump","JumpAnimation"},
-                {"fall","FallAnimation"},{"climb","ClimbAnimation"},{"swim","SwimAnimation"},{"swimidle","SwimIdleAnimation"},
+                {"idle","IdleAnimation","Idle Bundle ID"},{"walk","WalkAnimation","Walk Bundle ID"},
+                {"run","RunAnimation","Run Bundle ID"},{"jump","JumpAnimation","Jump Bundle ID"},
+                {"fall","FallAnimation","Fall Bundle ID"},{"climb","ClimbAnimation","Climb Bundle ID"},
+                {"swim","SwimAnimation","Swim Bundle ID"},{"swimidle","SwimIdleAnimation","Swim Idle Bundle ID"},
             }
             local function safeDestroy(object) if object then pcall(function() object:Destroy() end) end end
             local function restoreAnimations()
@@ -5542,8 +5624,10 @@ local function installGameplay(screenGui)
                 return count
             end
             local function signature()
-                return table.concat({tostring(localPlayer.Character),tostring(V["Disguise Target ID"]),
-                    tostring(V["Disguise Mode"]),tostring(V["Use Target Movement Animations"])},"\0")
+                local values = {tostring(localPlayer.Character),tostring(V["Disguise Target ID"]),
+                    tostring(V["Disguise Mode"]),tostring(V["Use Target Movement Animations"])}
+                for _,field in ipairs(fields) do table.insert(values,tostring(V[field[3]] or "")) end
+                return table.concat(values,"\0")
             end
             local function current(ticket, character)
                 return not stopped and enabled["Disguise Character"] and generation == ticket
@@ -5584,14 +5668,24 @@ local function installGameplay(screenGui)
                     message("Disguise: enter a positive numeric UserId"); return
                 end
                 local ticket, mode = generation,V["Disguise Mode"]
-                local withAnimations = mode == "Animation" or V["Use Target Movement Animations"] == true
+                local withTargetAnimations = mode == "Animation" or V["Use Target Movement Animations"] == true
                 task.spawn(function()
                     if not current(ticket,character) then return end
                     local description = fetchDescription(userId,ticket,character)
                     if not description then if current(ticket,character) then message("Disguise: avatar lookup unavailable or failed") end; return end
                     if not current(ticket,character) then safeDestroy(description); return end
-                    local values = {}
-                    for _, field in ipairs(fields) do pcall(function() values[field[2]] = description[field[2]] end) end
+                    local values, withAnimations, invalidOverride = {},withTargetAnimations,false
+                    for _, field in ipairs(fields) do
+                        if withTargetAnimations then pcall(function() values[field[2]] = description[field[2]] end) end
+                        local text = tostring(V[field[3]] or "")
+                        if text ~= "" then
+                            local id = tonumber(text)
+                            if id and id == id and id > 0 and id % 1 == 0 and id <= 9007199254740991 then
+                                values[field[2]] = id; withAnimations = true
+                            else invalidOverride = true end
+                        end
+                    end
+                    if invalidOverride and current(ticket,character) then message("Disguise: animation overrides require numeric asset IDs") end
                     local model
                     if mode == "Character" then model = createModel(description,human.RigType,ticket,character) end
                     safeDestroy(description)
@@ -5610,7 +5704,7 @@ local function installGameplay(screenGui)
                         if current(ticket,character) then message("Disguise: failed to apply local appearance") end
                         warn("Angel Hub Disguise: " .. tostring(err))
                     elseif current(ticket,character) then
-                        message("Disguise applied locally; bundle and emote options are pending")
+                        message("Disguise applied locally; pack and emotes are pending")
                     end
                 end)
             end
@@ -5706,7 +5800,193 @@ local function installGameplay(screenGui)
     mm2NotificationsStep = notifications.step
     mm2BlurtStep = blurt.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); shooter.clearButton(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    do
+        local function setupFps()
+            local fps = {}
+            extensionSteps.fps = fps
+            local names = {
+                "Remove Textures","Disable Particles","Disable Shadows","Simple Materials","Lowest Render Quality",
+                "Low Detail Meshes","Hide Distant Scenery","Simplify Terrain","Disable Post Effects","Simple Lighting",
+                "Disable Local Lights","Simplify Game UI","Hide World UI","Hide Game UI","Hide Roblox Panels",
+            }
+            local enabledOptions, saved, jobs, scenery, coreSaved = {}, {}, {}, {}, {}
+            local sequence, elapsed = 0, 0
+            local function own(option,object,property,value)
+                if not object then return end
+                pcall(function()
+                    local records = saved[option] or {}; saved[option] = records
+                    local entry = records[object] or {}; records[object] = entry
+                    if not entry[property] then entry[property] = {original=object[property],applied=value}
+                    elseif object[property] ~= entry[property].applied then entry[property].original = object[property] end
+                    object[property] = value; entry[property].applied = value
+                end)
+            end
+            local function restoreProperty(option,object,property)
+                local records = saved[option]; local entry = records and records[object]; local record = entry and entry[property]
+                if not record then return end
+                pcall(function() if object[property] == record.applied then object[property] = record.original end end)
+                entry[property] = nil
+                if not next(entry) then records[object] = nil end
+            end
+            local function restore(option)
+                local records = saved[option]; saved[option] = nil
+                if records then for object,entry in pairs(records) do for property,record in pairs(entry) do
+                    pcall(function() if object[property] == record.applied then object[property] = record.original end end)
+                end end end
+            end
+            local function protected(object)
+                local cur = object
+                while cur do
+                    if cur == screenGui or cur.Name == "TouchGui" or cur.Name == "Chat" or cur.Name == "BubbleChat" then return true end
+                    cur = cur.Parent
+                end
+                return false
+            end
+            local function staticMapPart(part)
+                if not part.Anchored or not part.CanCollide then return false end
+                local cur = part.Parent
+                while cur and cur ~= workspace do
+                    if cur:IsA("Tool") or cur:IsA("Accessory") or cur:FindFirstChildOfClass("Humanoid") then return false end
+                    cur = cur.Parent
+                end
+                return cur == workspace
+            end
+            local function sceneryUpdate(part)
+                if not enabledOptions["Hide Distant Scenery"] then return end
+                local _,human,root = characterParts()
+                if part.Parent and human and root and staticMapPart(part) and (part.Position-root.Position).Magnitude > 350 then
+                    own("Hide Distant Scenery",part,"LocalTransparencyModifier",1)
+                else restoreProperty("Hide Distant Scenery",part,"LocalTransparencyModifier") end
+            end
+            local function applyOne(option,object)
+                if not enabledOptions[option] or not object then return end
+                pcall(function()
+                    if object ~= workspace and object ~= lighting and object.Parent == nil then return end
+                    if option == "Remove Textures" then
+                        if object:IsA("Decal") or object:IsA("Texture") then own(option,object,"Transparency",1)
+                        elseif object:IsA("MeshPart") then own(option,object,"TextureID","")
+                        elseif object:IsA("SpecialMesh") then own(option,object,"TextureId","") end
+                    elseif option == "Disable Particles" and (object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam") or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles")) then
+                        own(option,object,"Enabled",false)
+                    elseif option == "Disable Shadows" then
+                        if object == lighting then own(option,object,"GlobalShadows",false)
+                        elseif object:IsA("BasePart") then own(option,object,"CastShadow",false) end
+                    elseif option == "Simple Materials" and object:IsA("BasePart") then
+                        own(option,object,"Material",Enum.Material.SmoothPlastic); own(option,object,"Reflectance",0)
+                    elseif option == "Low Detail Meshes" and (object:IsA("MeshPart") or object:IsA("PartOperation")) then
+                        own(option,object,"RenderFidelity",Enum.RenderFidelity.Performance)
+                    elseif option == "Hide Distant Scenery" and object:IsA("BasePart") then
+                        scenery[object] = true; sceneryUpdate(object)
+                    elseif option == "Simplify Terrain" and object:IsA("Terrain") then
+                        own(option,object,"Decoration",false); own(option,object,"WaterWaveSize",0)
+                        own(option,object,"WaterWaveSpeed",0); own(option,object,"WaterReflectance",0)
+                    elseif option == "Disable Post Effects" and object:IsA("PostEffect") then own(option,object,"Enabled",false)
+                    elseif option == "Simple Lighting" and object == lighting then
+                        own(option,object,"EnvironmentDiffuseScale",0); own(option,object,"EnvironmentSpecularScale",0)
+                    elseif option == "Disable Local Lights" and object:IsA("Light") then own(option,object,"Enabled",false)
+                    elseif not protected(object) then
+                        if option == "Simplify Game UI" then
+                            if object:IsA("UIStroke") or object:IsA("UIGradient") then own(option,object,"Enabled",false)
+                            elseif object:IsA("ViewportFrame") then own(option,object,"Visible",false) end
+                        elseif option == "Hide World UI" and (object:IsA("BillboardGui") or object:IsA("SurfaceGui")) then own(option,object,"Enabled",false)
+                        elseif option == "Hide Game UI" and object:IsA("ScreenGui") then own(option,object,"Enabled",false) end
+                    end
+                end)
+            end
+            local function containers()
+                local out = {workspace,lighting}
+                local gui = localPlayer:FindFirstChildOfClass("PlayerGui")
+                if gui then table.insert(out,gui) end
+                return out
+            end
+            local function queue(option)
+                sequence += 1; local token = sequence
+                local items = {}
+                for _, container in ipairs(containers()) do
+                    table.insert(items,container)
+                    local ok, descendants = pcall(function() return container:GetDescendants() end)
+                    if ok and type(descendants) == "table" then for _,object in ipairs(descendants) do table.insert(items,object) end end
+                end
+                jobs[option] = {items=items,index=1,token=token}
+            end
+            local function restorePanels()
+                local starter = coreSaved.service
+                if starter then for kind,value in pairs(coreSaved) do if kind ~= "service" then
+                    pcall(function() if starter:GetCoreGuiEnabled(kind) == false then starter:SetCoreGuiEnabled(kind,value) end end)
+                end end end
+                table.clear(coreSaved)
+            end
+            function fps.toggle(option,on)
+                if not on then
+                    enabledOptions[option] = nil; jobs[option] = nil
+                    if option == "Hide Roblox Panels" then restorePanels() end
+                    if option == "Hide Distant Scenery" then table.clear(scenery) end
+                    restore(option); return true
+                end
+                if enabledOptions[option] then return true end
+                if option == "Lowest Render Quality" then
+                    local ok, rendering = pcall(function() return settings().Rendering end)
+                    if not ok or not rendering then return false end
+                    local okRead, original = pcall(function() return rendering.QualityLevel end)
+                    local okWrite = okRead and pcall(function() rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+                    if not okWrite then return false end
+                    saved[option] = {[rendering]={QualityLevel={original=original,applied=Enum.QualityLevel.Level01}}}
+                elseif option == "Hide Roblox Panels" then
+                    local ok, starter = pcall(function() return game:GetService("StarterGui") end)
+                    if not ok or not starter then return false end
+                    coreSaved.service = starter
+                    local successes = 0
+                    for _,kind in ipairs({Enum.CoreGuiType.PlayerList,Enum.CoreGuiType.Backpack,Enum.CoreGuiType.Chat,Enum.CoreGuiType.EmotesMenu}) do
+                        local good, original = pcall(function() return starter:GetCoreGuiEnabled(kind) end)
+                        if good and type(original) == "boolean" then
+                            local changed = pcall(function() starter:SetCoreGuiEnabled(kind,false) end)
+                            if changed then coreSaved[kind] = original; successes += 1 end
+                        end
+                    end
+                    if successes == 0 then table.clear(coreSaved); return false end
+                else
+                    enabledOptions[option] = true; queue(option)
+                end
+                enabledOptions[option] = true; return true
+            end
+            function fps.step(dt)
+                local budget = 200
+                for option,job in pairs(jobs) do
+                    while budget > 0 and job.index <= #job.items do
+                        applyOne(option,job.items[job.index]); job.index += 1; budget -= 1
+                    end
+                    if job.index > #job.items then jobs[option] = nil end
+                    if budget == 0 then break end
+                end
+                elapsed += math.max(0,dt)
+                if elapsed >= 1 then
+                    elapsed = 0
+                    if enabledOptions["Hide Distant Scenery"] and not jobs["Hide Distant Scenery"] then
+                        local items = {}; for part in pairs(scenery) do table.insert(items,part) end
+                        jobs["Hide Distant Scenery"] = {items=items,index=1}
+                    end
+                end
+            end
+            function fps.cleanup()
+                for _,name in ipairs(names) do fps.toggle(name,false) end
+            end
+            for _,container in ipairs(containers()) do
+                if container.DescendantAdded then listen(container.DescendantAdded,function(object)
+                    for option in pairs(enabledOptions) do applyOne(option,object) end
+                end) end
+            end
+            for _,name in ipairs(names) do
+                local old = AngelHub.setters[name]
+                if old then AngelHub.setters[name] = function(value)
+                    local on = value == true
+                    if not fps.toggle(name,on) then old(false); message(name..": unavailable on this client"); return false end
+                    old(on)
+                end end
+            end
+        end
+        setupFps()
+    end
+    mm2Cleanup = function() extensionSteps.fps.cleanup(); farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); shooter.clearButton(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -5762,8 +6042,8 @@ local function installGameplay(screenGui)
                 if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip" or name == "Air Walk" or name == "Enable Fly" or name == "Walk Fling") then
                     old(false); message(name .. ": disable Auto Win first"); return false
                 end
-                if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame" then
-                    old(false); message("Auto Shoot: Experimental not implemented"); return false
+                if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Normal" and V["Shoot Mode"] ~= "Instakill" then
+                    old(false); message("Auto Shoot: unsupported mode"); return false
                 end
                 if value == true and name == "Auto Vote" then
                     if type(firetouchinterest) ~= "function" then old(false); message("Auto Vote: touch API unavailable"); return false end
@@ -5846,7 +6126,7 @@ local function installGameplay(screenGui)
                 if name == "Disguise Character" then extensionSteps.disguise.toggle(value == true) end
                 if name == "Gun Aimbot" then
                     shooter.toggleButton(value == true)
-                    if value then message("Gun Aimbot: use Fire Gun or FIRE; basic prediction") end
+                    if value then message("Gun Aimbot: use FIRE or the assigned key; basic prediction") end
                 end
                 if name == "FreeCam" then
                     if value then
@@ -5865,7 +6145,7 @@ local function installGameplay(screenGui)
                 if shootingBefore ~= shooter.active() then
                     if shooter.active() then shooter.start() else shooter.stop() end
                 elseif name == "Auto Shoot" and not value then shooter.hideRadius()
-                elseif value and (name == "Auto Shoot" or name == "Auto Win" or name == "Insta Kill As Sheriff") then shooter.attempt() end
+                elseif value and (name == "Auto Shoot" or name == "Auto Farm" or name == "Auto Win" or name == "Insta Kill As Sheriff") then shooter.attempt() end
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
@@ -5894,8 +6174,8 @@ local function installGameplay(screenGui)
     if oldShootMode then
         AngelHub.setters["Shoot Mode"] = function(value)
             oldShootMode(value)
-            if enabled["Auto Shoot"] and V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame" then
-                AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: Experimental not implemented")
+            if enabled["Auto Shoot"] and V["Shoot Mode"] ~= "Normal" and V["Shoot Mode"] ~= "Instakill" then
+                AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: unsupported mode")
             end
         end
     end
@@ -5946,7 +6226,7 @@ local function installGameplay(screenGui)
         end end
     end
     -- Unsupported sub-options must not imply that these paths work.
-    for _, name in ipairs({"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}) do
+    for _, name in ipairs({"Zoom Through Walls"}) do
         local old = AngelHub.setters[name]
         if old then AngelHub.setters[name] = function(value)
             if value then old(false); message("Not implemented: " .. name); return false else old(false) end
@@ -6024,7 +6304,26 @@ local function installGameplay(screenGui)
     listen(userInputService.WindowFocusReleased, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     listen(userInputService.TextBoxFocused, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
-        AngelHub.actions["Fire Gun"] = shooter.manual
+        AngelHub.actions["Kill Selected"] = function()
+            local selected = V["Kill Player"]
+            for _, player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer and player.Name == selected then knifeSwing(true,player,true); return end
+            end
+            message("Knife Stab: select a player")
+        end
+        AngelHub.actions["Kill All"] = function()
+            local character = localPlayer.Character
+            local generation = knifeGeneration
+            local index = 0
+            for _, player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer then
+                    local victim = player; local waitTime = index*.9; index += 1
+                    task.delay(waitTime,function()
+                        if not stopped and localPlayer.Character == character and knifeGeneration == generation then knifeSwing(true,victim,true) end
+                    end)
+                end
+            end
+        end
         AngelHub.actions["Blurt Roles"] = blurt.manual
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
@@ -6463,19 +6762,17 @@ local function initializeScript()
 	if isMM2 then
 	addSection(mainLeft, "Gun Aimbot")
 	addModule(mainLeft, "Gun Aimbot", nil, false)
-	addCycle(mainLeft, "Aim Method", { "Normal", "Silent AIM" })
+	addCycle(mainLeft, "Aim Method", { "Normal", "Instakill" })
 	addCycle(mainLeft, "Aimbot Target", { "Murder", "Custom" }, updateTargetVisibility)
 	targetPlayerHolder = addText(mainLeft, "Target Player", "Player name")
 	updateTargetVisibility()
 	addKeybind(mainLeft, "Aimbot Keybind", "")
-	addToggle(mainLeft, "Normal WallCheck", nil, true)
-	addButton(mainLeft, "Fire Gun")
-	addToggle(mainLeft, "Aimbot Macro", nil, false)
+	addToggle(mainLeft, "WallCheck", nil, true)
+	addToggle(mainLeft, "Macro", nil, false)
 
 	addSection(mainLeft, "Auto Shoot")
 	addModule(mainLeft, "Auto Shoot", nil, false)
-	addCycle(mainLeft, "Shoot Mode", userInputService.TouchEnabled and not userInputService.KeyboardEnabled
-        and { "Bullet", "CFrame", "Experimental" } or { "Bullet", "CFrame" })
+	addCycle(mainLeft, "Shoot Mode", { "Normal", "Instakill" })
 	addToggle(mainLeft, "Shoot WallCheck", nil, true)
 	addToggle(mainLeft, "Shoot Proximity", nil, false)
 	addSlider(mainLeft, "Shoot Proximity Aura", 5, 150, 30, 0)
@@ -6490,7 +6787,8 @@ local function initializeScript()
 	addSlider(mainRight, "Knife Aura Range", 7, 30, 15, 0)
 	addToggle(mainRight, "Knife Hold Mouse", nil, false)
 	addButton(mainRight, "Kill All")
-	addList(mainRight, "Kill Player", { "Player1", "Player2", "Player3" }, 70)
+	addList(mainRight, "Kill Player", {}, 70)
+	addButton(mainRight, "Kill Selected")
 
 	addSection(mainRight, "Knife Throw")
 	addToggle(mainRight, "Throw WallCheck", nil, true)
@@ -6502,7 +6800,7 @@ local function initializeScript()
 	addButton(mainRight, "Fling Murderer")
 	addButton(mainRight, "Fling Sheriff")
 	addButton(mainRight, "Fling All Innocents")
-	addList(mainRight, "Fling Target", { "Player1", "Player2", "Player3" }, 70)
+	addList(mainRight, "Fling Target", {}, 70)
 	addButton(mainRight, "Fling")
 	addModule(mainRight, "Auto Fling Selected Target", nil, false)
 	addSlider(mainRight, "Fling Power", 1, 12, 6, 0)
@@ -6776,7 +7074,7 @@ local function initializeScript()
 	addToggle(visualsLeft, "Use Target Movement Animations", nil, false)
 	addToggle(visualsLeft, "Show Target Emotes", nil, false)
 
-	beginGroup(visualsLeft, "Advanced (Pending)", false)
+	beginGroup(visualsLeft, "Advanced (Pack Pending)", false)
 	addText(visualsLeft, "Pack Bundle ID", "Bundle Id")
 	addText(visualsLeft, "Idle Bundle ID", "Animation Id")
 	addText(visualsLeft, "Walk Bundle ID", "Animation Id")
@@ -6969,10 +7267,16 @@ local function initializeScript()
 	end
 
 	local function applyConfig(data)
-        -- Preserve the previous Gun Aimbot option after renaming it to clarify its scope.
-        if data["Normal WallCheck"] == nil and data["Aimbot WallCheck"] ~= nil then
-            data["Normal WallCheck"] = data["Aimbot WallCheck"]
+        -- Keep earlier settings when migrating the display names.
+        if data["WallCheck"] == nil then
+            if data["Normal WallCheck"] ~= nil then data["WallCheck"] = data["Normal WallCheck"]
+            elseif data["Aimbot WallCheck"] ~= nil then data["WallCheck"] = data["Aimbot WallCheck"] end
         end
+        if data["Macro"] == nil and data["Aimbot Macro"] ~= nil then data["Macro"] = data["Aimbot Macro"] end
+        if data["Aim Method"] == "Silent AIM" or data["Aim Method"] == "CFrame" then data["Aim Method"] = "Instakill" end
+        if data["Shoot Mode"] == "Bullet" then data["Shoot Mode"] = "Normal"
+        elseif data["Shoot Mode"] == "CFrame" or data["Shoot Mode"] == "Silent AIM" then data["Shoot Mode"] = "Instakill"
+        elseif data["Shoot Mode"] == "Experimental" then data["Shoot Mode"] = "Normal" end
         -- Restore point lists before the saved list selections, regardless of JSON key order.
         if type(data["Marker Points by Place"]) == "table" and AngelHub.setters["Marker Points by Place"] then
             pcall(AngelHub.setters["Marker Points by Place"], data["Marker Points by Place"])

@@ -24,16 +24,16 @@ const readTest = p => read(path.join(__dirname, p));
   assert.deepEqual(pending, expectedPending);
   assert.equal([...supported].filter(name => !moduleNames.includes(name)).length, 0);
   const buttons = [...file.matchAll(/addButton\([^\n]+?,\s*"([^"]+)"/g)].map(match => match[1]);
-  const pendingButtons = ['Kill All', 'Fling Murderer', 'Fling Sheriff', 'Fling All Innocents', 'Fling'];
-  assert.equal(buttons.length, 27); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 5);
+  const pendingButtons = ['Fling Murderer', 'Fling Sheriff', 'Fling All Innocents', 'Fling'];
+  assert.equal(buttons.length, 27); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 4);
   const boundActions = new Set([...file.matchAll(/AngelHub\.actions\["([^"]+)"\]\s*=/g)].map(match => match[1]));
   for (const name of ['High Jump', 'Long Jump', 'Create', 'Load', 'Save', 'Rejoin Server', 'Reset Settings', 'Unload']) boundActions.add(name);
   for (const name of buttons) assert.equal(boundActions.has(name), !pendingButtons.includes(name), `Action status: ${name}`);
   const blockedBlock = file.slice(file.indexOf('local UNIMPLEMENTED_TOGGLES ='), file.indexOf('local function addToggle('));
   const blockedOptions = [...blockedBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]);
-  assert.equal(blockedOptions.length, 24);
-  assert.ok(file.includes('{"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}'));
-  console.log(`Inventory: ${moduleNames.length} module switches, 46 connected, ${pending.length} blocked; 27 buttons, 22 connected, 5 pending; 27 explicitly blocked options`);
+  assert.equal(blockedOptions.length, 7);
+  assert.ok(file.includes('{"Zoom Through Walls"}'));
+  console.log(`Inventory: ${moduleNames.length} module switches, 46 connected, ${pending.length} blocked; 27 buttons, 23 connected, 4 pending; 8 explicitly blocked options`);
   const start = file.indexOf('local function installGameplay(screenGui)');
   const end = file.indexOf('\nlocal function initializeScript()', start);
   if (start < 0 || end < 0) throw new Error('Gameplay source boundaries not found');
@@ -46,12 +46,16 @@ const readTest = p => read(path.join(__dirname, p));
     const gunAimbotLua = await Lua.create({ sandbox: true });
     gunAimbotLua.execute(readTest('gameplay-mock.luau') + `\nlocal mobile = ${mobile}; local fakeNow = 100; local os = {clock = function() return fakeNow end}\n` + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('gun-aimbot-checks.luau'));
   }
+  const farmShootLua = await Lua.create({ sandbox: true });
+  farmShootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('farm-shoot-checks.luau'));
   const farmCounterLua = await Lua.create({ sandbox: true });
   farmCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-counter-checks.luau'));
   const farmProgressLua = await Lua.create({ sandbox: true });
   farmProgressLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-progress-checks.luau'));
   const shootLua = await Lua.create({ sandbox: true });
   shootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-checks.luau'));
+  const gunPredictionLua = await Lua.create({ sandbox: true });
+  gunPredictionLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('gun-prediction-checks.luau'));
   const shootRoleLua = await Lua.create({ sandbox: true });
   shootRoleLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-role-checks.luau'));
   const aimRoleLua = await Lua.create({ sandbox: true });
@@ -86,6 +90,10 @@ const readTest = p => read(path.join(__dirname, p));
   const disguiseYieldLua = await Lua.create({ sandbox: true });
   const disguiseFixture = readTest('disguise-checks.luau').split('installGameplay(screenGui);heartbeat')[0];
   disguiseYieldLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + disguiseFixture + '\n' + readTest('disguise-yield-checks.luau'));
+  const fpsLua = await Lua.create({ sandbox: true });
+  fpsLua.execute(readTest('gameplay-mock.luau') + '\nlocal rendering={QualityLevel="auto"};local settings=function()return {Rendering=rendering}end\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('fps-checks.luau'));
+  const fpsBatchLua = await Lua.create({ sandbox: true });
+  fpsBatchLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('fps-batch-checks.luau'));
   const selfHpLua = await Lua.create({ sandbox: true });
   selfHpLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('selfhp-checks.luau'));
   const hpLua = await Lua.create({ sandbox: true });
@@ -168,9 +176,11 @@ assert(hub.values["Farm Mode"] == "Walk")
 hub.setters["Farm Mode"]("Under"); assert(hub.values["Farm Mode"] == "Walk")
 hub.setters["Farm Mode"]("Below"); assert(hub.values["Farm Mode"] == "Below")
 assert(hub.values["Stay Under When Round Starts"] == nil)
-assert(hub.values["Shoot Mode"] == "Bullet")
-hub.setters["Shoot Mode"]("Experimental"); assert(hub.values["Shoot Mode"] == "Bullet")
-hub.setters["Shoot Mode"]("CFrame"); assert(hub.values["Shoot Mode"] == "CFrame")
+assert(hub.values["Shoot Mode"] == "Normal" and hub.values["Aim Method"] == "Normal")
+hub.setters["Shoot Mode"]("Experimental"); assert(hub.values["Shoot Mode"] == "Normal")
+hub.setters["Shoot Mode"]("Instakill"); assert(hub.values["Shoot Mode"] == "Instakill")
+hub.setters["Aim Method"]("Instakill"); assert(hub.values["Aim Method"] == "Instakill")
+assert(hub.values["WallCheck"] == true and hub.values["Macro"] == false and not hub.actions["Fire Gun"])
 assert(hub.values["Speed Mode"] == "Velocity")
 hub.setters["Speed Value"](-12);assert(hub.values["Speed Value"] == -12)
 hub.setters["Speed Value"](0);assert(hub.values["Speed Value"] == 0)
@@ -184,6 +194,24 @@ hub.setters["Enable Gravity"](false)
 assert(workspace.Gravity == 196.2)
 shared.AngelHubGui:Destroy()
 assert(not hub.actions)
+`);
+  const playerListsGui = await Lua.create({ sandbox: true });
+  playerListsGui.execute(readTest('gui-mock.luau') + `
+local alice={Name='Alice'};local bob={Name='Bob'};local members={player,alice,bob}
+function players:GetPlayers()return table.clone(members)end
+players.PlayerAdded=event();players.PlayerRemoving=event()
+` + file + `
+local h=shared.AngelHub
+assert(h.values['Kill Player']=='Alice' and h.values['Fling Target']=='Alice')
+h.setters['Kill Player']('Bob');h.setters['Fling Target']('Bob')
+local carl={Name='Carl'};table.insert(members,carl);players.PlayerAdded:Fire(carl)
+assert(h.values['Kill Player']=='Bob' and h.values['Fling Target']=='Bob')
+players.PlayerRemoving:Fire(bob);table.remove(members,3);run.Heartbeat:Fire(1)
+assert(h.values['Kill Player']=='Alice' and h.values['Fling Target']=='Alice')
+table.remove(members,3);table.remove(members,2);run.Heartbeat:Fire(1)
+assert(h.values['Kill Player']==nil and h.values['Fling Target']==nil)
+shared.AngelHubGui:Destroy()
+for _,c in ipairs(players.PlayerAdded.callbacks)do assert(not c.alive)end
 `);
   const winGui = await Lua.create({ sandbox: true });
   winGui.execute(readTest('gui-mock.luau') + `
@@ -213,7 +241,7 @@ isfile=function()return true end;readfile=function()return "saved" end
 function services.HttpService:JSONDecode()return {Autoload=true,["Walk Fling"]=true,["Auto Blurt"]=true,["FreeCam"]=true,["Disguise Character"]=true,["Gun Aimbot"]=true,["Aimbot WallCheck"]=false}end
 ` + file + `
 assert(shared.AngelHub.values["Autoload"]==true and shared.AngelHub.values["Walk Fling"]==false and shared.AngelHub.values["Auto Blurt"]==false and shared.AngelHub.values["FreeCam"]==false and shared.AngelHub.values["Disguise Character"]==false and shared.AngelHub.values["Gun Aimbot"]==false)
-assert(shared.AngelHub.values["Normal WallCheck"] == false)
+assert(shared.AngelHub.values["WallCheck"] == false)
 shared.AngelHubGui:Destroy()
 `);
   const outside = await Lua.create({ sandbox: true });
@@ -227,17 +255,16 @@ shared.AngelHubGui:Destroy()
   mobile.execute(readTest('gui-mock.luau') + '\nuis.TouchEnabled=true;uis.KeyboardEnabled=false\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed on mobile")
 assert(shared.AngelHub.values["Aimbot Keybind Value"] == nil)
-assert(shared.AngelHub.values["Normal WallCheck"] == true and shared.AngelHub.actions["Fire Gun"])
+assert(shared.AngelHub.values["WallCheck"] == true and not shared.AngelHub.actions["Fire Gun"])
 shared.AngelHub.setters["Gun Aimbot"](true)
 local fire = shared.AngelHubGui:FindFirstChild("AngelHubGunFire")
 assert(fire and fire.Parent == shared.AngelHubGui)
 shared.AngelHub.setters["Gun Aimbot"](false); assert(fire.Parent == nil)
 assert(shared.AngelHub.values["Fly Up Key Value"] == nil)
 shared.AngelHub.setters["Shoot Mode"]("Experimental")
-assert(shared.AngelHub.values["Shoot Mode"] == "Experimental")
-assert(shared.AngelHub.setters["Auto Shoot"](true) == false)
+assert(shared.AngelHub.values["Shoot Mode"] == "Normal")
 assert(shared.AngelHub.values["Remove Textures"] == false)
-assert(shared.AngelHub.setters["Remove Textures"](true) == false)
+shared.AngelHub.setters["Remove Textures"](true); assert(shared.AngelHub.values["Remove Textures"] == true)
 shared.AngelHubGui:Destroy()
 `);
   console.log('PASS compile, gameplay, PC/mobile MM2/non-MM2 GUI and unload (mocks only)');

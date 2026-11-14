@@ -63,6 +63,13 @@ V['Disguise Mode']='Animation';AngelHub.setters['Disguise Character'](true);hear
 assert(shirt.Parent==owner and owner:FindFirstChild('NewShirt')==nil and anim.AnimationId=='rbxassetid://456')
 V['Disguise Animation Speed']=1.5;heartbeat:Fire(.21);assert(track.Speed==1.5)
 track.Speed=1.2;AngelHub.setters['Disguise Character'](false);assert(anim.AnimationId=='rbxassetid://external' and track.Speed==1.2)
+-- Numeric animation asset overrides work independently of target-animation cloning.
+V['Disguise Mode']='Character';V['Use Target Movement Animations']=false;V['Walk Bundle ID']='789'
+AngelHub.setters['Disguise Character'](true);heartbeat:Fire(.21);assert(anim.AnimationId=='rbxassetid://789')
+V['Walk Bundle ID']='987';heartbeat:Fire(.21);assert(anim.AnimationId=='rbxassetid://external')
+fakeNow+=.8;heartbeat:Fire(.21);assert(anim.AnimationId=='rbxassetid://987')
+AngelHub.setters['Disguise Character'](false);assert(anim.AnimationId=='rbxassetid://external')
+V['Walk Bundle ID']='';V['Use Target Movement Animations']=true
 -- A target change is debounced and the old appearance is restored immediately.
 V['Disguise Mode']='Character';AngelHub.setters['Disguise Character'](true);heartbeat:Fire(.21);assert(shirt.Parent==nil)
 V['Disguise Target ID']='999';heartbeat:Fire(.21);assert(shirt.Parent==owner)

@@ -2,7 +2,7 @@ local function setting(name, value)
  V[name]=value;AngelHub.setters[name]=function(newValue)V[name]=newValue end
 end
 AngelHub.moduleNames['Auto Shoot']=true
-setting('Auto Shoot',false);setting('Shoot Mode','Bullet');setting('Shoot WallCheck',true)
+setting('Auto Shoot',false);setting('Shoot Mode','Normal');setting('Shoot WallCheck',true)
 setting('Shoot Proximity',false);setting('Shoot Proximity Aura',30)
 localPlayer.ChildAdded=event();localPlayer.CharacterAdded=event();character.ChildAdded=event()
 local backpack={ChildAdded=event()};local tools={}
@@ -49,7 +49,7 @@ local function drain()local list=pending;pending={};for _,f in ipairs(list)do f(
 installGameplay(screenGui)
 AngelHub.setters['Shoot Mode']('Experimental')
 assert(AngelHub.setters['Auto Shoot'](true)==false and not V['Auto Shoot'])
-AngelHub.setters['Shoot Mode']('Bullet')
+AngelHub.setters['Shoot Mode']('Normal')
 AngelHub.setters['Auto Shoot'](true);assert(V['Auto Shoot'] and #remote.shots==0)
 tools.Gun=gunTool;backpack.ChildAdded:Fire(gunTool);drain()
 assert(#remote.shots==1 and humanoid.equips==1)
@@ -69,10 +69,9 @@ fakeNow+=.11;gunTool.Reloading=false;enemy.knife=nil;heartbeat:Fire(.1);assert(#
 fakeNow+=.11;enemy.knife=knife;heartbeat:Fire(.1);assert(#remote.shots==4)
 AngelHub.setters['Shoot Mode']('Experimental');assert(not V['Auto Shoot'] and radius.destroyed)
 fakeNow+=1;heartbeat:Fire(.1);assert(#remote.shots==4)
-AngelHub.setters['Shoot Mode']('CFrame');V['Shoot WallCheck']=true;workspace.rayMode='wall'
-AngelHub.setters['Auto Shoot'](true);assert(#remote.shots==4)
-workspace.rayMode='clear';fakeNow+=.23;heartbeat:Fire(.1);assert(#remote.shots==5)
-assert(math.abs(remote.shots[5][1].Position.X-18.5)<0.0001)
-assert(math.abs(remote.shots[5][2].Position.X-22.3)<0.0001)
+AngelHub.setters['Shoot Mode']('Instakill');V['Shoot WallCheck']=true;workspace.rayMode='wall'
+AngelHub.setters['Auto Shoot'](true);assert(#remote.shots==5)
+assert(math.abs(remote.shots[5][1].Position.X-19)<0.0001)
+assert(math.abs(remote.shots[5][2].Position.X-21.8)<0.0001)
 screenGui.Destroying:Fire();fakeNow+=1;heartbeat:Fire(.1);assert(#remote.shots==5)
 for _,connection in ipairs(backpack.ChildAdded.callbacks) do assert(not connection.alive) end

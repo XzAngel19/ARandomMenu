@@ -162,5 +162,10 @@ AngelHub.setters['Knife Aura'](false);enemyRoot.Position=Vector3.new(5,0,0)
 function remote:FireServer()error('mock remote denied')end
 local touchCount=#touches;AngelHub.setters['Knife Aura'](true);heartbeat:Fire(0.1);drain()
 assert(#touches==touchCount+2 and touches[#touches][1]==handle and touches[#touches][2]==enemyRoot)
-AngelHub.setters['Knife Aura'](false);screenGui.Destroying:Fire()
+AngelHub.setters['Knife Aura'](false)
+function remote:FireServer(target)assert(target==enemyRoot);self.hits+=1 end
+V['Kill Player']='Victim';local before=remote.hits;AngelHub.actions['Kill Selected']();drain();assert(remote.hits==before+1)
+AngelHub.setters['Knife Aura'](false);before=remote.hits;AngelHub.actions['Kill All']();drain();drain();assert(remote.hits==before+1)
+AngelHub.setters['Knife Aura'](false);enemy.Team='A';before=remote.hits;AngelHub.actions['Kill Selected']();drain();assert(remote.hits==before)
+screenGui.Destroying:Fire()
 print('farm/combat mock PASS')

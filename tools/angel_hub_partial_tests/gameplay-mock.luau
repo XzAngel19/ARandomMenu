@@ -76,7 +76,7 @@ function workspace:FindFirstChild(n)if n=='GunDrop' then return gun elseif n=='L
 local touches={};firetouchinterest=function(a,b,phase)table.insert(touches,{a,b,phase})end
 workspace.hitWall=false;workspace.castCount=0
 function workspace:Blockcast()self.castCount+=1;if self.hitWall then return {} end end
-task={spawn=function(f) f() end,wait=function()end,delay=function(_,f) f() end}
+task={spawn=function(f) f() end,defer=function(f) f() end,wait=function()end,delay=function(_,f) f() end}
 local heartbeat=event();local run={Heartbeat=heartbeat}
 local userInputService={JumpRequest=event(), InputBegan=event(), InputEnded=event(), WindowFocusReleased=event(), TextBoxFocused=event()}
 function userInputService:GetFocusedTextBox()return nil end

@@ -1,6 +1,6 @@
 local function setting(n,v)V[n]=v;AngelHub.setters[n]=function(x)V[n]=x end end
 AngelHub.moduleNames['Auto Shoot']=true
-for n,v in pairs({['Auto Shoot']=false,['Shoot Mode']='Bullet',['Shoot WallCheck']=false,
+for n,v in pairs({['Auto Shoot']=false,['Shoot Mode']='Normal',['Shoot WallCheck']=false,
  ['Shoot Proximity']=false,['Shoot Proximity Aura']=30})do setting(n,v)end
 localPlayer.Name='Me';localPlayer.UserId=1;localPlayer.ChildAdded=event();localPlayer.CharacterAdded=event();character.ChildAdded=event()
 local enemyRoot={Position=Vector3.new(20,0,0),AssemblyLinearVelocity=Vector3.new(0,0,0)}
