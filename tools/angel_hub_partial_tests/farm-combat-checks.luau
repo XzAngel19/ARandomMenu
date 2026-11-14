@@ -1,3 +1,4 @@
+run.PreSimulation=event()
 local pending={};task.delay=function(_,fn)table.insert(pending,fn)end
 local function drain()local now=pending;pending={};for _,fn in ipairs(now)do fn()end end
 local function setting(name, value)
@@ -6,7 +7,7 @@ end
 AngelHub.moduleNames['Knife Aura']=true;setting('Knife Aura',false)
 AngelHub.moduleNames['Coins Aura']=true;setting('Coins Aura',false)
 setting('Knife Aura Range',15);setting('Knife Hold Mouse',false)
-setting('Farm Mode','Below');setting('Farm Speed',22)
+setting('Farm Mode','Below');setting('Farm Speed',22);setting('Farm Safe Zone',false)
 setting('Coins Collected',0);setting('Farm Time',0)
 local collected={OnClientEvent=event()};function collected:IsA(c)return c=='RemoteEvent'end
 local ended={OnClientEvent=event()};function ended:IsA(c)return c=='RemoteEvent'end
@@ -54,6 +55,57 @@ AngelHub.setters['Farm Mode']('Below');assert(not V['Auto Farm'] and humanoid.la
 AngelHub.setters['Farm Mode']('Walk');AngelHub.setters['Auto Farm'](true)
 heartbeat:Fire(0.11);AngelHub.setters['Enable Speed'](true);assert(not V['Auto Farm'])
 AngelHub.setters['Enable Speed'](false)
+local originalRootSize=root.Size
+humanoid.PlatformStand=false;humanoid.AutoRotate=true;humanoid.FloorMaterial=Enum.Material.Ground
+root.Position=Vector3.new(0,0,0);root.CFrame={Position=root.Position};local homeFrame=root.CFrame
+AngelHub.setters['Farm Mode']('Below');AngelHub.setters['Auto Farm'](true);assert(V['Auto Farm'])
+heartbeat:Fire(0.11)
+assert(not root.CanCollide and not head.CanCollide and root.Size.Y==8 and humanoid.PlatformStand and not humanoid.AutoRotate)
+run.PreSimulation:Fire();assert(root.AssemblyLinearVelocity.X==22 and root.AssemblyLinearVelocity.Y<0)
+root.Position=Vector3.new(3,-2,0);map.descendants={};heartbeat:Fire(0.6);run.PreSimulation:Fire()
+assert(root.AssemblyLinearVelocity.Y<0)
+map.descendants={coin};root.Position=Vector3.new(3,-3,0);character.lastPivot=nil;AngelHub.setters['Auto Farm'](false)
+assert(root.CanCollide and head.CanCollide and root.Size==originalRootSize and not humanoid.PlatformStand and humanoid.AutoRotate and character.lastPivot==homeFrame)
+root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11);assert(not root.CanCollide)
+character.lastPivot=nil;root.Position=Vector3.new(1000,0,0);AngelHub.setters['Auto Farm'](false)
+assert(character.lastPivot==nil and root.CanCollide and root.Size==originalRootSize)
+root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11)
+root.Position=Vector3.new(0,-500,0);character.lastPivot=nil;run.PreSimulation:Fire()
+assert(not V['Auto Farm'] and root.CanCollide and character.lastPivot==homeFrame)
+root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11);AngelHub.setters['Noclip'](true)
+assert(not V['Auto Farm']);AngelHub.setters['Noclip'](false);assert(root.CanCollide)
+AngelHub.setters['Farm Mode']('Under');assert(AngelHub.setters['Auto Farm'](true)==false)
+AngelHub.setters['Farm Mode']('Walk')
+root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Farm Safe Zone'](true);AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11)
+collected.OnClientEvent:Fire('Coins',50,50);character.lastPivot=nil;heartbeat:Fire(0.11)
+local platform=created[#created]
+assert(platform.class=='Part' and not platform.destroyed and character.lastPivot.Position.Y==385)
+root.Position=character.lastPivot.Position;character.lastPivot=nil
+AngelHub.setters['Farm Safe Zone'](false)
+assert(platform.destroyed and character.lastPivot.Y==3)
+character.lastPivot=nil;AngelHub.setters['Farm Safe Zone'](false);assert(character.lastPivot==nil)
+AngelHub.setters['Auto Farm'](false);root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Farm Safe Zone'](true);AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11)
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(0.11)
+local platform2=created[#created];root.Position=character.lastPivot.Position;character.lastPivot=nil
+AngelHub.setters['Auto Farm'](false);assert(platform2.destroyed and character.lastPivot.Y==3)
+AngelHub.setters['Farm Safe Zone'](false);root.Position=Vector3.new(0,0,0)
+AngelHub.setters['Farm Mode']('Below');root.CFrame=homeFrame
+AngelHub.setters['Farm Safe Zone'](true);AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11)
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(0.11)
+local platform3=created[#created];root.Position=character.lastPivot.Position;character.lastPivot=nil
+AngelHub.setters['Farm Safe Zone'](false);assert(platform3.destroyed and character.lastPivot==homeFrame)
+AngelHub.setters['Auto Farm'](false);root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
+AngelHub.setters['Farm Mode']('Walk');AngelHub.setters['Farm Safe Zone'](true);AngelHub.setters['Auto Farm'](true)
+heartbeat:Fire(0.11);collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(0.11)
+local platform4=created[#created];root.Position=character.lastPivot.Position;character.lastPivot=nil;map.Parent=nil
+AngelHub.setters['Auto Farm'](false);assert(not platform4.destroyed and character.lastPivot==nil)
+map.Parent=workspace;AngelHub.setters['Farm Safe Zone'](false);assert(platform4.destroyed and character.lastPivot.Y==3)
+root.Position=Vector3.new(0,0,0)
 local previous=#touches;AngelHub.setters['Coins Aura'](true);heartbeat:Fire(0.1)
 assert(coin.CFrame==root.CFrame and not coin.CanCollide and visual.Anchored and not weld.Enabled)
 assert(#touches==previous+2 and touches[#touches][2]==coin)

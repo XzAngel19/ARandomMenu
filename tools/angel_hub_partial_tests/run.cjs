@@ -18,12 +18,19 @@ const readTest = p => read(path.join(__dirname, p));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
   const farmLua = await Lua.create({ sandbox: true });
   farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
+  const voteLua = await Lua.create({ sandbox: true });
+  voteLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
   guiLua.execute(readTest('gui-mock.luau') + '\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed to initialize")
 local hub = shared.AngelHub
 assert(hub.values["Auto Farm"] == false and hub.values["Gun ESP"] == false and hub.values["Anti AFK"] == false)
 assert(hub.setters["Auto Farm"](true) == false and hub.values["Auto Farm"] == false)
+assert(hub.values["Select Map"] == "Waiting for maps")
+hub.cycleOptions["Select Map"]({"Hospital", "Factory"})
+assert(hub.values["Select Map"] == "Hospital")
+hub.setters["Select Map"]("Factory");assert(hub.values["Select Map"] == "Factory")
+hub.cycleOptions["Select Map"]({"Bank", "Factory"});assert(hub.values["Select Map"] == "Factory")
 assert(hub.values["Speed Mode"] == "Velocity")
 hub.setters["Speed Value"](-12);assert(hub.values["Speed Value"] == -12)
 hub.setters["Speed Value"](0);assert(hub.values["Speed Value"] == 0)

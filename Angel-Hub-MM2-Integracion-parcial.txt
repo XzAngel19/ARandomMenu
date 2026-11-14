@@ -59,6 +59,7 @@ local AngelHub = {
 	boxes = {},
 	sectionBoxes = {},
 	setters = {},
+    cycleOptions = {},
 	connections = {},
 	keybinds = {},
 	keyLabels = {},
@@ -222,7 +223,7 @@ end
 
 local UNIMPLEMENTED_TOGGLES = {
     ["Knife Tracer"] = true, ["Self HP"] = true,
-    ["Stay Under When Round Starts"] = true, ["Farm Safe Zone"] = true,
+    ["Stay Under When Round Starts"] = true,
     ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
     ["Fling Sheriff After Full Bag"] = true, ["Auto Grab Gun And Shoot"] = true,
     ["Auto Kill All When Full Bag"] = true,
@@ -575,6 +576,19 @@ local function addCycle(parent, text, options, onChange)
 			onChange(options[index])
 		end
 	end
+
+    AngelHub.cycleOptions[text] = function(items)
+        if type(items) ~= "table" then return end
+        local nextOptions = {}
+        for _, item in ipairs(items) do
+            if type(item) == "string" and item ~= "" and not table.find(nextOptions, item) then table.insert(nextOptions, item) end
+        end
+        if #nextOptions == 0 then nextOptions = {"Waiting for maps"} end
+        local selected = AngelHub.values[text]
+        options = nextOptions
+        index = table.find(options, selected) or 1
+        AngelHub.setters[text](options[index])
+    end
 
 	button.MouseEnter:Connect(function()
 		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
@@ -1073,6 +1087,7 @@ local function installGameplay(screenGui)
     local mm2FarmStep = function() end
     local mm2KnifeStep = function() end
     local mm2CoinAuraStep = function() end
+    local mm2VoteStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1086,6 +1101,7 @@ local function installGameplay(screenGui)
         ["X-Ray"] = true, ["Anti AFK"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
+        ["Auto Vote"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1196,6 +1212,11 @@ local function installGameplay(screenGui)
         if not farmOk then
             warn("Angel Hub Farm error: " .. tostring(farmError))
             if enabled["Auto Farm"] then AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: runtime error") end
+        end
+        local voteOk, voteError = pcall(mm2VoteStep, dt, character, humanoid, root)
+        if not voteOk then
+            warn("Angel Hub Auto Vote error: " .. tostring(voteError))
+            if enabled["Auto Vote"] then AngelHub.setters["Auto Vote"](false); message("Auto Vote stopped: runtime error") end
         end
         local auraOk, auraError = pcall(mm2CoinAuraStep, dt, root)
         if not auraOk then
@@ -1670,12 +1691,33 @@ local function installGameplay(screenGui)
     local farmWaitingMap, farmAmount, farmLimit, farmElapsed, farmTotal = nil, 0, 50, 0, 0
     local farmTickElapsed, farmScanElapsed, farmCoins = 0, 0, {}
     local farmMoved, farmDone, farmBagSampleKnown = false, false, false
+    local farmBelowEngaged, farmHomeCFrame, farmHoverTarget = false, nil, nil
+    local farmCollision = setmetatable({}, {__mode = "k"})
+    local farmOnMap = function() return false end
+    local leaveFarmPark = function() return true end
     local farmBlacklist = setmetatable({}, {__mode = "k"})
     local farmTarget, farmTargetAt
     local function farmCounter(name, value)
         if AngelHub.setters[name] then AngelHub.setters[name](value) end
     end
     local function farmStopMovement()
+        local wasBelow, previousCharacter, home = farmBelowEngaged, farmCharacter, farmHomeCFrame
+        farmBelowEngaged, farmHoverTarget, farmHomeCFrame = false, nil, nil
+        restore("farmBody"); restore("farmSize")
+        for part, original in pairs(farmCollision) do
+            pcall(function() if part.CanCollide == false then part.CanCollide = original end end)
+            farmCollision[part] = nil
+        end
+        if wasBelow and previousCharacter == localPlayer.Character and home then
+            local _, humanoid, root = characterParts()
+            if humanoid and root and not root.Anchored and farmOnMap(root, farmMap) and mm2Map() == farmMap then
+                pcall(function()
+                    previousCharacter:PivotTo(home)
+                    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+            end
+        end
         if farmMoved and farmCharacter then
             local humanoid = farmCharacter:FindFirstChildOfClass("Humanoid")
             if humanoid then pcall(function() humanoid:Move(Vector3.new(0, 0, 0), false) end) end
@@ -1687,6 +1729,7 @@ local function installGameplay(screenGui)
         for _, connection in ipairs(farmConnections) do connection:Disconnect() end
         table.clear(farmConnections)
         farmStopMovement()
+        leaveFarmPark()
         farmMap, farmCharacter, farmRoundMap, farmWaitingMap, farmTarget = nil, nil, nil, nil, nil
         table.clear(farmCoins); table.clear(farmBlacklist)
     end
@@ -1700,7 +1743,7 @@ local function installGameplay(screenGui)
         local spawns = lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns", true))
         return spawnPart(spawns) or (lobby and lobby:FindFirstChildWhichIsA("SpawnLocation", true))
     end
-    local function farmOnMap(root, map)
+    farmOnMap = function(root, map)
         if not root or not map then return false end
         local lobbyRef = farmLobbyRef()
         local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
@@ -1709,6 +1752,66 @@ local function installGameplay(screenGui)
         if not lobbyRef or not reference then return false end
         return (root.Position - lobbyRef.Position).Magnitude > 350
             and (root.Position - reference.Position).Magnitude <= 1500
+    end
+    local farmPark
+    leaveFarmPark = function()
+        local parked = farmPark
+        if not parked then return true end
+        local character, humanoid, root = characterParts()
+        local nearPlatform = character == parked.character and humanoid and root
+            and (root.Position - parked.position).Magnitude <= 120
+        if nearPlatform then
+            if root.Anchored or not parked.map or parked.map.Parent ~= workspace then
+                message("Safe Zone: map return unavailable; platform kept")
+                return false
+            end
+            local ok = pcall(function() character:PivotTo(parked.returnFrame) end)
+            if not ok then message("Safe Zone: return failed; platform kept"); return false end
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+        end
+        farmPark = nil
+        pcall(function() parked.part:Destroy() end)
+        return true
+    end
+    local function parkFarmCharacter(character, root, map, returnFrame)
+        if not returnFrame or not map or map.Parent ~= workspace or not farmOnMap(root, map) then return false end
+        if farmPark and not leaveFarmPark() then return false end
+        local original = returnFrame.Position
+        local destroyY = workspace.FallenPartsDestroyHeight
+        if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1000000 then destroyY = -500 end
+        local safeY = math.max(original.Y + 280, 380, destroyY + 80)
+        local platformPosition = Vector3.new(original.X + 650, safeY, original.Z + 650)
+        local lobbyRef = farmLobbyRef()
+        if lobbyRef and (platformPosition - lobbyRef.Position).Magnitude < 400 then
+            platformPosition = Vector3.new(original.X - 650, safeY, original.Z - 650)
+        end
+        if lobbyRef and (platformPosition - lobbyRef.Position).Magnitude < 400 then return false end
+        local part
+        local ok = pcall(function()
+            part = Instance.new("Part")
+            part.Name = "AngelHub_FarmSafeZone"
+            part.Anchored = true; part.CanCollide = true; part.CanQuery = false; part.CanTouch = false
+            part.CastShadow = false; part.Size = Vector3.new(64, 4, 64)
+            part.Material = Enum.Material.SmoothPlastic; part.Transparency = 0.15
+            part.CFrame = CFrame.new(platformPosition)
+            part.Parent = workspace
+        end)
+        if not ok or not part or not part.Parent then
+            if part then pcall(function() part:Destroy() end) end
+            message("Safe Zone: could not create platform")
+            return false
+        end
+        local moved = pcall(function() character:PivotTo(CFrame.new(platformPosition + Vector3.new(0, 5, 0))) end)
+        if not moved then pcall(function() part:Destroy() end); message("Safe Zone: move failed"); return false end
+        farmPark = {character = character, map = map, part = part, returnFrame = returnFrame, position = platformPosition}
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+        return true
     end
     local function farmUsable(coin, map)
         if not coin or not coin.Parent or not coin:IsA("BasePart") or not coin:IsDescendantOf(map) then return false end
@@ -1765,7 +1868,7 @@ local function installGameplay(screenGui)
         table.insert(farmConnections, ended.OnClientEvent:Connect(function()
             if not enabled["Auto Farm"] then return end
             farmWaitingMap = farmMap or mm2Map()
-            farmStopMovement(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
+            farmStopMovement(); leaveFarmPark(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
             table.clear(farmCoins)
         end))
         for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
@@ -1787,6 +1890,11 @@ local function installGameplay(screenGui)
         local elapsed = farmTickElapsed
         farmTickElapsed = 0
         local map = mm2Map()
+        if farmPark then
+            if V["Farm Safe Zone"] and character == farmPark.character and humanoid and root
+                and farmPark.map == map and (root.Position - farmPark.position).Magnitude <= 120 then return end
+            if not leaveFarmPark() then return end
+        end
         if not character or not humanoid or not root or root.Anchored or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then
             farmStopMovement(); farmMap, farmCharacter, farmTarget = nil, nil, nil
             return
@@ -1799,12 +1907,18 @@ local function installGameplay(screenGui)
             table.clear(farmCoins); table.clear(farmBlacklist)
         end
         if farmAmount >= math.max(50, farmLimit) then
+            local wasBelow, belowHome = farmBelowEngaged, farmHomeCFrame
             farmStopMovement()
             if not farmDone then
                 farmDone = true
                 local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
                 local part = spawnPart(spawns)
-                if part and farmOnMap(root, map) then characterTeleport(part) end
+                if V["Farm Safe Zone"] then
+                    local returnFrame = belowHome or (part and (part.CFrame + Vector3.new(0, 3, 0)))
+                    if not parkFarmCharacter(character, root, map, returnFrame) then message("Safe Zone unavailable") end
+                elseif not wasBelow and part and farmOnMap(root, map) then
+                    characterTeleport(part)
+                end
             end
             return
         end
@@ -1818,9 +1932,46 @@ local function installGameplay(screenGui)
                 if not bestDistance or distance < bestDistance then best, bestDistance = coin, distance end
             end
         end
-        if not best then farmTarget = nil; farmStopMovement(); return end
+        if not best then
+            farmTarget = nil
+            if farmBelowEngaged then
+                local y = farmHoverTarget and farmHoverTarget.Y or root.Position.Y
+                farmHoverTarget = Vector3.new(root.Position.X, y, root.Position.Z)
+            else farmStopMovement() end
+            return
+        end
         if best ~= farmTarget then farmTarget, farmTargetAt = best, now end
-        if now - farmTargetAt > 6 then farmBlacklist[best] = now + 6; farmTarget = nil; farmStopMovement(); return end
+        if now - farmTargetAt > 6 then
+            farmBlacklist[best] = now + 6; farmTarget = nil
+            if farmBelowEngaged then
+                local y = farmHoverTarget and farmHoverTarget.Y or root.Position.Y
+                farmHoverTarget = Vector3.new(root.Position.X, y, root.Position.Z)
+            else farmStopMovement() end
+            return
+        end
+        if V["Farm Mode"] == "Below" then
+            if not farmBelowEngaged then
+                if humanoid.FloorMaterial == Enum.Material.Air then return end
+                farmHomeCFrame, farmBelowEngaged = root.CFrame, true
+            end
+            for _, object in ipairs(character:GetDescendants()) do
+                if object:IsA("BasePart") then
+                    if farmCollision[object] == nil then farmCollision[object] = object.CanCollide end
+                    object.CanCollide = false
+                end
+            end
+            apply("farmBody", humanoid, {PlatformStand = true, AutoRotate = false})
+            apply("farmSize", root, {Size = Vector3.new(4, 8, 4)})
+            local destroyY = workspace.FallenPartsDestroyHeight
+            if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1000000 then destroyY = -500 end
+            local low = math.max(destroyY + 40, farmHomeCFrame.Position.Y - 90)
+            local high = math.max(low, farmHomeCFrame.Position.Y + 80)
+            farmHoverTarget = Vector3.new(best.Position.X, math.clamp(best.Position.Y - 3, low, high), best.Position.Z)
+            if bestDistance <= 5 and type(firetouchinterest) == "function" then
+                pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
+            end
+            return
+        end
         local delta = best.Position - root.Position
         local flat = Vector3.new(delta.X, 0, delta.Z)
         if flat.Magnitude < 1.4 then
@@ -1833,6 +1984,36 @@ local function installGameplay(screenGui)
         apply("farmWalk", humanoid, {WalkSpeed = V["Farm Speed"]})
         humanoid:Move(flat.Unit, false)
         farmMoved = true
+    end
+    local physicsOk, farmPhysicsSignal = pcall(function() return run.PreSimulation end)
+    if not physicsOk or not farmPhysicsSignal then
+        local ok, signal = pcall(function() return run.Stepped end)
+        farmPhysicsSignal = ok and signal or nil
+    end
+    if farmPhysicsSignal then
+        listen(farmPhysicsSignal, function()
+            if stopped or not enabled["Auto Farm"] or not farmBelowEngaged or not farmHoverTarget then return end
+            local ok, err = pcall(function()
+            local character, humanoid, root = characterParts()
+            if character ~= farmCharacter or not humanoid or not root or root.Anchored then return end
+            if not farmOnMap(root, farmMap) then farmStopMovement(); return end
+            local destroyY = workspace.FallenPartsDestroyHeight
+            if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1000000 then destroyY = -500 end
+            if root.Position.Y <= math.max(destroyY + 40, farmHomeCFrame.Position.Y - 130) then
+                AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: void guard"); return
+            end
+            local delta = farmHoverTarget - root.Position
+            local flat = Vector3.new(delta.X, 0, delta.Z)
+            local speed = math.clamp(V["Farm Speed"], 5, 60)
+            local direction = flat.Magnitude > 0.35 and flat.Unit or Vector3.new(0, 0, 0)
+            root.AssemblyLinearVelocity = Vector3.new(direction.X * speed, math.clamp(delta.Y * 10, -speed, speed), direction.Z * speed)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+            if not ok then
+                warn("Angel Hub Below physics error: " .. tostring(err))
+                if enabled["Auto Farm"] then AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: physics error") end
+            end
+        end)
     end
     local auraCoins, auraScanElapsed, auraTickElapsed = {}, 0, 0
     local auraCurrent, auraState
@@ -1899,6 +2080,123 @@ local function installGameplay(screenGui)
         best.CFrame = root.CFrame; saved.appliedCFrame = root.CFrame
         pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
     end
+    local voteElapsed, voteSignature, voteConnections = 0, nil, {}
+    local voteRoundBlocked, previousBoardActive, lastVotePad = false, false, nil
+    local function voteLobby()
+        for _, name in ipairs({"RegularLobby", "Lobby", "MainLobby", "HalloweenLobby"}) do
+            local lobby = workspace:FindFirstChild(name)
+            if lobby then return lobby end
+        end
+        for _, object in ipairs(workspace:GetChildren()) do
+            if string.find(string.lower(object.Name), "lobby", 1, true) then return object end
+        end
+    end
+    local function cleanVoteTitle(value)
+        local text = string.match(tostring(value or ""), "^%s*(.-)%s*$")
+        local upper = string.upper(text)
+        if upper == "" or upper == "MAP NAME" or upper == "LOADING" or upper == "NONE"
+            or upper == "MAP 1" or upper == "MAP 2" or upper == "MAP 3" then return nil end
+        return text
+    end
+    local function voteTitle(label)
+        if not label or not label:IsA("TextLabel") then return nil end
+        return cleanVoteTitle(label.Text)
+    end
+    local function votingSlots(lobby)
+        local slots, names, boardActive = {}, {}, false
+        if not lobby then return slots, names, false end
+        local pads = lobby:FindFirstChild("VotePads", true)
+        local icons = lobby:FindFirstChild("VoteIcons", true)
+        for slot = 1, 3 do
+            local model = lobby:FindFirstChild("VotePad" .. slot, true)
+            if model and model.Parent and model.Parent.Name == "VoteIcons" then model = nil end
+            local icon = icons and icons:FindFirstChild("VotePad" .. slot)
+            local label = model and model:FindFirstChild("MapName", true)
+            local name = voteTitle(label) or voteTitle(icon and icon:FindFirstChild("MapName", true))
+            if not name and icon then
+                local map = icon:FindFirstChild("Map")
+                if map and map:IsA("ObjectValue") and map.Value then name = cleanVoteTitle(map.Value.Name) end
+            end
+            local detector = pads and pads:FindFirstChild("Detector" .. slot, true)
+            local pad = model and model:FindFirstChild("Pad", true)
+            if pad and not pad:IsA("BasePart") then pad = nil end
+            if detector and not detector:IsA("BasePart") then detector = nil end
+            local surface = model and (model:FindFirstChild("VoteInfoGui") or model:FindFirstChild("MapInfoGui"))
+            local iconSurface = icon and icon:FindFirstChild("Surface")
+            local iconFlag = icon and icon:FindFirstChild("Voting")
+            if (surface and surface:IsA("SurfaceGui") and surface.Enabled)
+                or (iconSurface and iconSurface:IsA("SurfaceGui") and iconSurface.Enabled)
+                or (iconFlag and iconFlag:IsA("BoolValue") and iconFlag.Value) then boardActive = true end
+            if name then
+                table.insert(names, name)
+                slots[slot] = {name = name, pad = pad, detector = detector}
+            end
+        end
+        return slots, names, boardActive
+    end
+    local function voteGameplay()
+        local ok, storage = pcall(function() return game:GetService("ReplicatedStorage") end)
+        local remotes = ok and storage and storage:FindFirstChild("Remotes")
+        local gameplay = remotes and remotes:FindFirstChild("Gameplay")
+        local started = gameplay and gameplay:FindFirstChild("RoundStart")
+        local ended = gameplay and gameplay:FindFirstChild("RoundEndFade")
+        if not started or not started:IsA("RemoteEvent") or not ended or not ended:IsA("RemoteEvent") then return nil end
+        return gameplay
+    end
+    local function resetAutoVote(on)
+        for _, connection in ipairs(voteConnections) do connection:Disconnect() end
+        table.clear(voteConnections)
+        voteElapsed, lastVotePad, voteRoundBlocked, previousBoardActive = 1, nil, false, false
+        if not on then return end
+        local gameplay = voteGameplay()
+        if not gameplay then return end
+        for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
+            local remote = gameplay:FindFirstChild(name)
+            if remote and remote:IsA("RemoteEvent") then
+                table.insert(voteConnections, remote.OnClientEvent:Connect(function()
+                    voteRoundBlocked, lastVotePad = true, nil
+                end))
+            end
+        end
+        local roundEnd = gameplay:FindFirstChild("RoundEndFade")
+        if roundEnd and roundEnd:IsA("RemoteEvent") then
+            table.insert(voteConnections, roundEnd.OnClientEvent:Connect(function() voteRoundBlocked = false end))
+        end
+    end
+    mm2VoteStep = function(dt, character, humanoid, root)
+        if not isMM2 then return end
+        voteElapsed += dt
+        if voteElapsed < (enabled["Auto Vote"] and 0.25 or 1) then return end
+        voteElapsed = 0
+        local lobby = voteLobby()
+        local slots, names, boardActive = votingSlots(lobby)
+        local signature = table.concat(names, "\0")
+        if signature ~= voteSignature then
+            voteSignature = signature
+            if AngelHub.cycleOptions and AngelHub.cycleOptions["Select Map"] then AngelHub.cycleOptions["Select Map"](names) end
+        end
+        if boardActive and not previousBoardActive then voteRoundBlocked = false end
+        previousBoardActive = boardActive
+        if not enabled["Auto Vote"] or voteRoundBlocked or not boardActive or not character or not humanoid or not root or root.Anchored then
+            lastVotePad = nil; return
+        end
+        local timer = workspace:FindFirstChild("RoundTimerPart")
+        local time = timer and timer:GetAttribute("Time")
+        if type(time) == "number" and time > 0 then lastVotePad = nil; return end
+        local selection = V["Select Map"]
+        local chosen
+        for _, data in pairs(slots) do if data.name == selection then chosen = data; break end end
+        local pad = chosen and (chosen.pad or chosen.detector)
+        if not pad or not pad:IsDescendantOf(workspace) or (root.Position - pad.Position).Magnitude > 250 then return end
+        if lastVotePad ~= pad or (root.Position - pad.Position).Magnitude > 6 then
+            if not characterTeleport(pad) then return end
+            lastVotePad = pad
+        end
+        if chosen.pad then pcall(firetouchinterest, root, chosen.pad, 0); pcall(firetouchinterest, root, chosen.pad, 1) end
+        if chosen.detector and chosen.detector ~= chosen.pad then
+            pcall(firetouchinterest, root, chosen.detector, 0); pcall(firetouchinterest, root, chosen.detector, 1)
+        end
+    end
     local knifeGeneration, knifeLastSwing = 0, -math.huge
     local function knifeParts()
         local character, humanoid, root = characterParts()
@@ -1957,7 +2255,7 @@ local function installGameplay(screenGui)
     mm2KnifeStep = function()
         if enabled["Knife Aura"] then knifeSwing(false) end
     end
-    mm2Cleanup = function() farmStop(); resetCoinAura(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -1972,17 +2270,25 @@ local function installGameplay(screenGui)
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
                 end
                 local gameplay, collected, ended
+                if value == true and name == "Auto Vote" then
+                    if type(firetouchinterest) ~= "function" then old(false); message("Auto Vote: touch API unavailable"); return false end
+                    if not voteGameplay() then old(false); message("Auto Vote: round remotes unavailable"); return false end
+                end
                 if value == true and name == "Coins Aura" and type(firetouchinterest) ~= "function" then
                     old(false); message("Coins Aura: touch API unavailable"); return false
                 end
                 if value == true and name == "Auto Farm" then
-                    if V["Farm Mode"] ~= "Walk" then old(false); message("Auto Farm: Walk only for now"); return false end
+                    if farmPark and not leaveFarmPark() then old(false); message("Auto Farm: Safe Zone return pending"); return false end
+                    if V["Farm Mode"] ~= "Walk" and V["Farm Mode"] ~= "Below" then old(false); message("Auto Farm: Under not implemented"); return false end
+                    if V["Farm Mode"] == "Below" and (not farmPhysicsSignal or enabled["Noclip"]) then
+                        old(false); message("Below needs physics and Noclip OFF"); return false
+                    end
                     if enabled["Enable Speed"] then old(false); message("Auto Farm: disable Speed first"); return false end
                     gameplay, collected, ended = farmEvents()
                     if not gameplay then old(false); message("Auto Farm: MM2 remotes unavailable"); return false end
                 end
-                if value == true and name == "Enable Speed" and enabled["Auto Farm"] then
-                    AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: Speed enabled")
+                if value == true and enabled["Auto Farm"] and (name == "Enable Speed" or (name == "Noclip" and V["Farm Mode"] == "Below")) then
+                    AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: conflicting module")
                 end
                 old(value == true); enabled[name] = value == true
                 if name == "Auto Farm" then
@@ -1993,6 +2299,7 @@ local function installGameplay(screenGui)
                 end
                 if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
                 if name == "Coins Aura" then resetCoinAura() end
+                if name == "Auto Vote" then resetAutoVote(value == true) end
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
@@ -2012,12 +2319,24 @@ local function installGameplay(screenGui)
             end
         end
     end
+    local oldFarmSafeZone = AngelHub.setters["Farm Safe Zone"]
+    if oldFarmSafeZone then
+        AngelHub.setters["Farm Safe Zone"] = function(value)
+            oldFarmSafeZone(value)
+            if value ~= true then
+                leaveFarmPark()
+            elseif enabled["Auto Farm"] and farmAmount >= math.max(50, farmLimit) then
+                farmDone = false
+            end
+        end
+    end
     local oldFarmMode = AngelHub.setters["Farm Mode"]
     if oldFarmMode then
         AngelHub.setters["Farm Mode"] = function(value)
+            local previous = V["Farm Mode"]
             oldFarmMode(value)
-            if enabled["Auto Farm"] and V["Farm Mode"] ~= "Walk" then
-                AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: Walk only for now")
+            if enabled["Auto Farm"] and V["Farm Mode"] ~= previous then
+                AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: mode changed")
             end
         end
     end
@@ -2608,7 +2927,7 @@ local function initializeScript()
 
 	addSection(extraLeft, "Auto Vote")
 	addModule(extraLeft, "Auto Vote", nil, false)
-	addCycle(extraLeft, "Select Map", { "Map 1", "Map 2", "Map 3" })
+	addCycle(extraLeft, "Select Map", { "Waiting for maps" })
 
 	addSection(extraLeft, "Auto Unbox")
 	addModule(extraLeft, "Auto Unbox", nil, false)
