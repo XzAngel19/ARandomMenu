@@ -1,6 +1,6 @@
 # Angel Hub: pruebas parciales
 
-Estas pruebas simulan objetos Roblox: no comprueban comportamiento real en Roblox, la aceptación del servidor ni la compatibilidad con ejecutores. Incluyen arranque PC/móvil y fuera de MM2, Speed, Rise, X-Ray, Anti AFK, Get Gun por touch, teletransporte MM2, Gun/Trap ESP, Auto Farm Walk/Below y Safe Zone (incluidos lobby, bolsa y recuperación), Coins Aura, Knife Aura (objetivos/equipo/cancelación), Auto Vote sin reset y mapas del tablero y restauración y bloqueo de módulos pendientes.
+Estas pruebas simulan objetos Roblox: no comprueban comportamiento real en Roblox, la aceptación del servidor ni la compatibilidad con ejecutores. Incluyen arranque PC/móvil y fuera de MM2, Speed, Rise, X-Ray, Anti AFK, Get Gun por touch, teletransporte MM2, Gun/Trap ESP, Auto Farm Walk/Below y Safe Zone (incluidos lobby, bolsa y recuperación), Coins Aura, Knife Aura (objetivos/equipo/cancelación), Auto Vote sin reset y mapas del tablero, Auto Shoot Bullet básico (selección por Knife visible, WallCheck, radio, equipar, intervalo, errores y limpieza) y restauración y bloqueo de módulos pendientes. Auto Shoot CFrame y Experimental, el predictor completo y la identificación de roles sin Knife visible siguen pendientes.
 
 ```sh
 npm install --prefix /tmp/angel-test-deps @luau-rs/luau@0.739.0

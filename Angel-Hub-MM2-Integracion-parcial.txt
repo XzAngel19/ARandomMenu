@@ -1088,6 +1088,7 @@ local function installGameplay(screenGui)
     local mm2KnifeStep = function() end
     local mm2CoinAuraStep = function() end
     local mm2VoteStep = function() end
+    local mm2ShootStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1101,7 +1102,7 @@ local function installGameplay(screenGui)
         ["X-Ray"] = true, ["Anti AFK"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
-        ["Auto Vote"] = true,
+        ["Auto Vote"] = true, ["Auto Shoot"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1212,6 +1213,11 @@ local function installGameplay(screenGui)
         if not farmOk then
             warn("Angel Hub Farm error: " .. tostring(farmError))
             if enabled["Auto Farm"] then AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: runtime error") end
+        end
+        local shotOk, shotError = pcall(mm2ShootStep, dt, character, humanoid, root)
+        if not shotOk then
+            warn("Angel Hub Auto Shoot error: " .. tostring(shotError))
+            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: runtime error") end
         end
         local voteOk, voteError = pcall(mm2VoteStep, dt, character, humanoid, root)
         if not voteOk then
@@ -2255,7 +2261,171 @@ local function installGameplay(screenGui)
     mm2KnifeStep = function()
         if enabled["Knife Aura"] then knifeSwing(false) end
     end
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); knifeGeneration += 1 end
+    -- Based on AutoShoot's documented Bullet fallback; no advanced predictor/hook.
+    local shootConnections, shootContainers = {}, {}
+    local lastGunShot, shootBusy, shootVisual, shootPollAt = -math.huge, false, nil, 0
+    local function disconnectShoot(list)
+        for _, connection in ipairs(list) do connection:Disconnect() end
+        table.clear(list)
+    end
+    local function stopAutoShoot()
+        disconnectShoot(shootConnections); disconnectShoot(shootContainers)
+        if shootVisual then pcall(function() shootVisual:Destroy() end); shootVisual = nil end
+        shootBusy = false
+    end
+    local function getTool(container, name)
+        local tool = container and container:FindFirstChild(name)
+        if tool and tool:IsA("Tool") then return tool end
+        return nil
+    end
+    local function shootMurderer(root)
+        local nearest, distance
+        for _, player in ipairs(playersService:GetPlayers()) do
+            if player ~= localPlayer then
+                local character = player.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                local targetRoot = character and character:FindFirstChild("HumanoidRootPart")
+                local backpack = player:FindFirstChildOfClass("Backpack")
+                local hasKnife = getTool(character, "Knife") or getTool(backpack, "Knife")
+                local hasGun = getTool(character, "Gun") or getTool(backpack, "Gun")
+                if humanoid and humanoid.Health > 0 and targetRoot and targetRoot:IsA("BasePart") and hasKnife and not hasGun then
+                    local d = (targetRoot.Position - root.Position).Magnitude
+                    if (not V["Shoot Proximity"] or d <= V["Shoot Proximity Aura"]) and (not distance or d < distance) then
+                        nearest, distance = player, d
+                    end
+                end
+            end
+        end
+        return nearest
+    end
+    local function gunOrigin(character, root, gun)
+        local attachment = root:FindFirstChild("GunRaycastAttachment")
+        if attachment and attachment:IsA("Attachment") then return attachment.WorldCFrame end
+        for _, name in ipairs({"Muzzle", "Handle"}) do
+            local part = gun:FindFirstChild(name)
+            if part and part:IsA("BasePart") then return part.CFrame end
+        end
+        for _, name in ipairs({"RightHand", "Right Arm", "Head"}) do
+            local part = character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then return part.CFrame end
+        end
+        return root.CFrame
+    end
+    local function bulletPathClear(origin, endpoint, character, target)
+        local direction = endpoint - origin
+        if direction.Magnitude < 0.05 then return false end
+        local ignored = {character}
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.IgnoreWater = true
+        for _ = 1, 32 do
+            params.FilterDescendantsInstances = ignored
+            local hit = workspace:Raycast(origin, direction, params)
+            if not hit then return true end
+            local object = hit.Instance
+            if object and object:IsDescendantOf(target) then return true end
+            if not object or not object:IsA("BasePart") or object.Transparency < 1 then return false end
+            table.insert(ignored, object)
+        end
+        return false
+    end
+    local function updateShootRadius(root)
+        if not enabled["Auto Shoot"] or not V["Shoot Proximity"] or not root then
+            if shootVisual then shootVisual:Destroy(); shootVisual = nil end
+            return
+        end
+        if not shootVisual then
+            shootVisual = Instance.new("SphereHandleAdornment")
+            shootVisual.Name = "AngelHubShootRadius"
+            shootVisual.Color3 = Color3.fromRGB(255, 255, 255)
+            shootVisual.Transparency = 0.93
+            shootVisual.AlwaysOnTop = true
+            shootVisual.ZIndex = 1
+            shootVisual.Parent = screenGui
+        end
+        shootVisual.Adornee = root
+        shootVisual.Radius = V["Shoot Proximity Aura"]
+    end
+    local function tryAutoShoot()
+        if stopped or not enabled["Auto Shoot"] or V["Shoot Mode"] ~= "Bullet" or shootBusy then return end
+        local character, humanoid, root = characterParts()
+        if not humanoid or not root then return end
+        local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+        if getTool(character, "Knife") or getTool(backpack, "Knife") then return end
+        local gun = getTool(character, "Gun") or getTool(backpack, "Gun")
+        if not gun then return end
+        local target = shootMurderer(root)
+        if not target or not target.Character then return end
+        if gun.Parent ~= character then
+            pcall(function() humanoid:EquipTool(gun) end)
+            if gun.Parent ~= character then return end
+        end
+        if gun.Enabled == false or gun:GetAttribute("Disabled") == true or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then return end
+        local remote = gun:FindFirstChild("Shoot")
+        if not remote or not remote:IsA("RemoteEvent") then return end
+        local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+        if not targetRoot or not targetRoot:IsA("BasePart") then return end
+        local now = os.clock()
+        if now - lastGunShot < 0.22 then return end
+        local origin = gunOrigin(character, root, gun)
+        if not origin then return end
+        local velocity = targetRoot.AssemblyLinearVelocity
+        local endpoint = targetRoot.Position + velocity * 0.08
+        for _, number in ipairs({origin.Position.X, origin.Position.Y, origin.Position.Z, endpoint.X, endpoint.Y, endpoint.Z}) do
+            if number ~= number or math.abs(number) > 1000000 then return end
+        end
+        if (endpoint - origin.Position).Magnitude < 0.05 then return end
+        if V["Shoot WallCheck"] then
+            local ok, clear = pcall(bulletPathClear, origin.Position, endpoint, character, target.Character)
+            if not ok or not clear then return end
+        end
+        shootBusy = true
+        lastGunShot = now
+        local ok, err = pcall(function() remote:FireServer(CFrame.lookAt(origin.Position, endpoint), CFrame.new(endpoint)) end)
+        shootBusy = false
+        if not ok then warn("Angel Hub Auto Shoot dispatch uncertain: " .. tostring(err)) end
+    end
+    local function safelyTryAutoShoot()
+        local ok, err = pcall(tryAutoShoot)
+        if not ok then
+            warn("Angel Hub Auto Shoot error: " .. tostring(err))
+            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: runtime error") end
+        end
+    end
+    local function watchShootContainers()
+        disconnectShoot(shootContainers)
+        local function watch(container)
+            if not container or not container.ChildAdded then return end
+            table.insert(shootContainers, container.ChildAdded:Connect(function(child)
+                if child.Name == "Gun" and enabled["Auto Shoot"] then task.defer(safelyTryAutoShoot) end
+            end))
+        end
+        watch(localPlayer.Character)
+        watch(localPlayer:FindFirstChildOfClass("Backpack"))
+    end
+    local function startAutoShoot()
+        stopAutoShoot()
+        lastGunShot, shootPollAt = -math.huge, 0
+        watchShootContainers()
+        if localPlayer.CharacterAdded then
+            table.insert(shootConnections, localPlayer.CharacterAdded:Connect(function()
+                watchShootContainers(); task.defer(safelyTryAutoShoot)
+            end))
+        end
+        if localPlayer.ChildAdded then
+            table.insert(shootConnections, localPlayer.ChildAdded:Connect(function(child)
+                if child:IsA("Backpack") then watchShootContainers(); task.defer(safelyTryAutoShoot) end
+            end))
+        end
+        safelyTryAutoShoot()
+    end
+    mm2ShootStep = function(_, _, _, root)
+        if not enabled["Auto Shoot"] or os.clock() < shootPollAt then return end
+        shootPollAt = os.clock() + 0.1
+        updateShootRadius(root)
+        safelyTryAutoShoot()
+    end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); stopAutoShoot(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -2270,6 +2440,9 @@ local function installGameplay(screenGui)
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
                 end
                 local gameplay, collected, ended
+                if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Bullet" then
+                    old(false); message("Auto Shoot: Bullet only for now"); return false
+                end
                 if value == true and name == "Auto Vote" then
                     if type(firetouchinterest) ~= "function" then old(false); message("Auto Vote: touch API unavailable"); return false end
                     if not voteGameplay() then old(false); message("Auto Vote: round remotes unavailable"); return false end
@@ -2300,6 +2473,9 @@ local function installGameplay(screenGui)
                 if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
                 if name == "Coins Aura" then resetCoinAura() end
                 if name == "Auto Vote" then resetAutoVote(value == true) end
+                if name == "Auto Shoot" then
+                    if value then startAutoShoot(); message("Auto Shoot: basic Bullet prediction") else stopAutoShoot() end
+                end
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
@@ -2316,6 +2492,15 @@ local function installGameplay(screenGui)
                     scanInteractions()
                 end
                 pulse()
+            end
+        end
+    end
+    local oldShootMode = AngelHub.setters["Shoot Mode"]
+    if oldShootMode then
+        AngelHub.setters["Shoot Mode"] = function(value)
+            oldShootMode(value)
+            if enabled["Auto Shoot"] and V["Shoot Mode"] ~= "Bullet" then
+                AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: Bullet only for now")
             end
         end
     end
@@ -2854,7 +3039,8 @@ local function initializeScript()
 
 	addSection(mainLeft, "Auto Shoot")
 	addModule(mainLeft, "Auto Shoot", nil, false)
-	addCycle(mainLeft, "Shoot Mode", { "Normal", "Silent AIM" })
+	addCycle(mainLeft, "Shoot Mode", userInputService.TouchEnabled and not userInputService.KeyboardEnabled
+        and { "Bullet", "CFrame", "Experimental" } or { "Bullet", "CFrame" })
 	addToggle(mainLeft, "Shoot WallCheck", nil, true)
 	addToggle(mainLeft, "Shoot Proximity", nil, false)
 	addSlider(mainLeft, "Shoot Proximity Aura", 5, 150, 30, 0)

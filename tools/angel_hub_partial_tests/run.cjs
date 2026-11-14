@@ -18,6 +18,8 @@ const readTest = p => read(path.join(__dirname, p));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
   const farmLua = await Lua.create({ sandbox: true });
   farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
+  const shootLua = await Lua.create({ sandbox: true });
+  shootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-checks.luau'));
   const voteLua = await Lua.create({ sandbox: true });
   voteLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
