@@ -1065,6 +1065,8 @@ local function installGameplay(screenGui)
     local jumpHeld, jumpTouch, jumpKey = false, nil, nil
     local afkElapsed = 0
     local xrayStep = function() end
+    local updateItemEsp = function() end
+    local cleanupItemEsp = function() end
     local stopped = false
     local runtimeConnections = {}
     local supportedModules = {
@@ -1074,6 +1076,7 @@ local function installGameplay(screenGui)
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true,
         ["X-Ray"] = true, ["Anti AFK"] = true,
+        ["Gun ESP"] = true, ["Trap ESP"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1180,6 +1183,11 @@ local function installGameplay(screenGui)
             root.AssemblyLinearVelocity = Vector3.new(vel.X, V["Infinite Jump Power"], vel.Z)
         end
         xrayStep(dt, root)
+        local espOk, espError = pcall(updateItemEsp, dt, root)
+        if not espOk and not AngelHub.itemEspError then
+            AngelHub.itemEspError = true
+            warn("Angel Hub Item ESP error: " .. tostring(espError))
+        end
         if enabled["Anti AFK"] and dt > 0 then
             afkElapsed += dt
             if afkElapsed >= 150 then afkElapsed = 0; task.spawn(AngelHub.pokeAfk) end
@@ -1376,9 +1384,262 @@ local function installGameplay(screenGui)
     local function restoreAll()
         scanGeneration += 1
         xrayToggle(false)
+        if cleanupItemEsp then cleanupItemEsp() end
         restoreNoclip()
         restoreInteraction(nil)
         for name in pairs(groups) do restore(name) end
+    end
+    local function mm2Map()
+        for _, model in ipairs(workspace:GetChildren()) do
+            local name = string.lower(model.Name)
+            if model:IsA("Model") and not string.find(name, "lobby", 1, true)
+                and (model:FindFirstChild("CoinContainer") or model:FindFirstChild("CoinAreas")
+                    or model:FindFirstChild("Coins") or model:FindFirstChild("Spawns")) then
+                return model
+            end
+        end
+        return nil
+    end
+    local function gunCandidate(object)
+        if not object or not object:IsDescendantOf(workspace) then return nil end
+        local ancestor = object.Parent
+        while ancestor and ancestor ~= workspace do
+            if ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid") then return nil end
+            ancestor = ancestor.Parent
+        end
+        if object:IsA("BasePart") or object:IsA("Model") then return object end
+        if object:IsA("Tool") then
+            local parent = object.Parent
+            if parent and parent:FindFirstChildOfClass("Humanoid") then return nil end
+            local part = object:FindFirstChild("Handle") or object:FindFirstChildWhichIsA("BasePart", true)
+            if part and part:IsA("BasePart") then return part end
+        end
+        return nil
+    end
+    local nextGunSweep, cachedGun = 0, nil
+    local function findDroppedGun()
+        if cachedGun and gunCandidate(cachedGun) then return cachedGun end
+        cachedGun = nil
+        local map = mm2Map()
+        local candidate = (map and map:FindFirstChild("GunDrop")) or workspace:FindFirstChild("GunDrop")
+        cachedGun = gunCandidate(candidate)
+        if cachedGun then return cachedGun end
+        local ok, collection = pcall(function() return game:GetService("CollectionService") end)
+        if ok and collection then
+            for _, tag in ipairs({"GunDrop", "Weapon_Gun"}) do
+                for _, tagged in ipairs(collection:GetTagged(tag)) do
+                    if tag ~= "Weapon_Gun" or tagged:IsA("Tool") then
+                        cachedGun = gunCandidate(tagged)
+                        if cachedGun then return cachedGun end
+                    end
+                end
+            end
+        end
+        for _, object in ipairs(workspace:GetChildren()) do
+            if object:IsA("Model") or object:IsA("Folder") then
+                cachedGun = gunCandidate(object:FindFirstChild("GunDrop"))
+                if cachedGun then return cachedGun end
+            end
+        end
+        local now = os.clock()
+        if now >= nextGunSweep then
+            nextGunSweep = now + 1.5
+            cachedGun = gunCandidate(workspace:FindFirstChild("GunDrop", true))
+        end
+        return cachedGun
+    end
+    local function characterTeleport(destination)
+        local character, humanoid, root = characterParts()
+        if not humanoid or not root or root.Anchored then message("Teleport: character unavailable or anchored"); return false end
+        if not destination or not destination:IsA("BasePart") or not destination:IsDescendantOf(workspace) then
+            message("Teleport: destination unavailable"); return false
+        end
+        local ok = pcall(function()
+            character:PivotTo(destination.CFrame + Vector3.new(0, 3, 0))
+            root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end)
+        if not ok then message("Teleport failed") end
+        return ok
+    end
+    local function spawnPart(container)
+        if not container then return nil end
+        if container:IsA("BasePart") then return container end
+        return container:FindFirstChildWhichIsA("SpawnLocation", true)
+            or container:FindFirstChildWhichIsA("BasePart", true)
+    end
+    local function mapTeleport()
+        local map = mm2Map()
+        local spawns = map and (map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true))
+        local part = spawnPart(spawns)
+        if not part then message("Teleport: map spawn not found"); return end
+        characterTeleport(part)
+    end
+    local function lobbyTeleport()
+        local lobby = workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("MainLobby") or workspace:FindFirstChild("RegularLobby")
+        if not lobby then
+            for _, model in ipairs(workspace:GetChildren()) do
+                if string.find(string.lower(model.Name), "lobby", 1, true) then lobby = model; break end
+            end
+        end
+        local spawns = lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns", true))
+        local part = spawnPart(spawns) or (lobby and lobby:FindFirstChildWhichIsA("SpawnLocation", true))
+        if not part then message("Teleport: lobby spawn not found"); return end
+        characterTeleport(part)
+    end
+    local function playerTeleport()
+        local needle = string.lower(string.match(tostring(V["Teleport Player Name"] or ""), "^%s*(.-)%s*$"))
+        if needle == "" then message("Teleport: enter a player name"); return end
+        local match, exact, ambiguous
+        for _, player in ipairs(playersService:GetPlayers()) do
+            if player ~= localPlayer then
+                local name, display = string.lower(player.Name), string.lower(player.DisplayName)
+                if name == needle then exact = player; break end
+                if string.sub(name, 1, #needle) == needle or string.sub(display, 1, #needle) == needle then
+                    if match then ambiguous = true else match = player end
+                end
+            end
+        end
+        local target = exact or (not ambiguous and match)
+        if not target then message(ambiguous and "Teleport: name is ambiguous" or "Teleport: player not found"); return end
+        local part = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+        characterTeleport(part)
+    end
+    local espGun, espTraps = nil, {}
+    local espElapsed, trapGeneration = 0, 0
+    local function markerPart(object)
+        if object:IsA("BasePart") then return object end
+        local handle = object:FindFirstChild("Handle", true)
+        if handle and handle:IsA("BasePart") then return handle end
+        return object:FindFirstChildWhichIsA("BasePart", true)
+    end
+    local function destroyMarker(marker)
+        if not marker then return end
+        pcall(function() marker.highlight:Destroy() end)
+        pcall(function() marker.billboard:Destroy() end)
+        for part, entry in pairs(marker.revealed) do
+            pcall(function()
+                if part.Transparency == entry.applied then part.Transparency = entry.original end
+            end)
+        end
+        table.clear(marker.revealed)
+    end
+    local function createMarker(object, title)
+        local part = markerPart(object)
+        if not part or not part:IsA("BasePart") then return nil end
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "AngelHubItemOutline"
+        highlight.Adornee = object
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillTransparency = 1
+        highlight.Parent = screenGui
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "AngelHubItemLabel"
+        billboard.Adornee = part
+        billboard.Size = UDim2.fromOffset(160, 30)
+        billboard.StudsOffset = Vector3.new(0, 2, 0)
+        billboard.AlwaysOnTop = true
+        billboard.Parent = screenGui
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.SourceSansBold
+        label.TextStrokeTransparency = 0.3
+        label.Parent = billboard
+        return {object = object, part = part, title = title, highlight = highlight, billboard = billboard, label = label, revealed = {}}
+    end
+    local function revealTrap(marker, part)
+        if not part:IsA("BasePart") or marker.revealed[part] then return end
+        pcall(function()
+            if part.Transparency >= 0.95 then
+                marker.revealed[part] = {original = part.Transparency, applied = 0.35}
+                part.Transparency = 0.35
+            end
+        end)
+    end
+    local function addTrap(object)
+        if not enabled["Trap ESP"] or espTraps[object] then return end
+        if (object.Name ~= "Trap" and object.Name ~= "TrapVisual") or not (object:IsA("BasePart") or object:IsA("Model")) then return end
+        local parent = object.Parent
+        while parent and parent ~= workspace do
+            if espTraps[parent] then return end
+            parent = parent.Parent
+        end
+        local marker = createMarker(object, "Trap")
+        if not marker then return end
+        espTraps[object] = marker
+        revealTrap(marker, object)
+        for _, child in ipairs(object:GetDescendants()) do revealTrap(marker, child) end
+    end
+    local function clearTrapEsp()
+        trapGeneration += 1
+        for object, marker in pairs(espTraps) do destroyMarker(marker); espTraps[object] = nil end
+    end
+    local function startTrapEsp()
+        clearTrapEsp()
+        local generation = trapGeneration
+        task.spawn(function()
+            for i, object in ipairs(workspace:GetDescendants()) do
+                if stopped or not enabled["Trap ESP"] or generation ~= trapGeneration then return end
+                addTrap(object)
+                if i % 200 == 0 then task.wait() end
+            end
+        end)
+    end
+    listen(workspace.DescendantAdded, function(object)
+        local parent = object.Parent
+        if enabled["Gun ESP"] and (object.Name == "GunDrop" or (parent and parent.Name == "GunDrop")) then
+            espElapsed = 0.25
+            local _, _, root = characterParts()
+            local ok, err = pcall(updateItemEsp, 0, root)
+            if not ok then warn("Angel Hub Item ESP error: " .. tostring(err)) end
+        end
+        if not enabled["Trap ESP"] then return end
+        while parent and parent ~= workspace do
+            if not espTraps[parent] and (parent.Name == "Trap" or parent.Name == "TrapVisual") then addTrap(parent) end
+            local marker = espTraps[parent]
+            if marker then revealTrap(marker, object); return end
+            parent = parent.Parent
+        end
+        addTrap(object)
+    end)
+    local function refreshMarker(marker, root)
+        local distance = root and (marker.part.Position - root.Position).Magnitude
+        local visible = distance ~= nil and distance <= V["Item Max Distance"]
+        local color = V["Item Colour"]
+        marker.highlight.OutlineColor = color
+        marker.highlight.OutlineTransparency = 0
+        marker.highlight.Enabled = visible and V["Item Outline"] == true
+        marker.billboard.Enabled = visible
+        marker.billboard.MaxDistance = V["Item Max Distance"]
+        marker.label.TextColor3 = color
+        marker.label.TextSize = V["Item Text Size"]
+        marker.label.Text = marker.title .. ((visible and V["Item Show Distance"]) and (" [" .. math.floor(distance + 0.5) .. "]") or "")
+    end
+    updateItemEsp = function(dt, root)
+        if not isMM2 or (not enabled["Gun ESP"] and not enabled["Trap ESP"]) then return end
+        espElapsed += dt
+        if espElapsed < 0.25 then return end
+        espElapsed = 0
+        if enabled["Gun ESP"] then
+            local gun = findDroppedGun()
+            if espGun and (espGun.object ~= gun or not espGun.part:IsDescendantOf(workspace)) then
+                destroyMarker(espGun); espGun = nil
+            end
+            if gun and not espGun then espGun = createMarker(gun, "Gun") end
+            if espGun then refreshMarker(espGun, root) end
+        end
+        for object, marker in pairs(espTraps) do
+            if not object.Parent or not object:IsDescendantOf(workspace) or not marker.part:IsDescendantOf(workspace) then
+                destroyMarker(marker); espTraps[object] = nil
+            else
+                refreshMarker(marker, root)
+            end
+        end
+    end
+    cleanupItemEsp = function()
+        destroyMarker(espGun); espGun = nil
+        clearTrapEsp()
     end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
@@ -1397,6 +1658,14 @@ local function installGameplay(screenGui)
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
+                if name == "Gun ESP" then
+                    espElapsed = 0.25
+                    if not value then destroyMarker(espGun); espGun = nil end
+                end
+                if name == "Trap ESP" then
+                    espElapsed = 0.25
+                    if value then startTrapEsp() else clearTrapEsp() end
+                end
                 if name == "Instant Prompts" or name == "Proximity Prompts" or name == "Click Detectors" then
                     if not enabled[name] then restoreInteraction(name) end
                     scanInteractions()
@@ -1490,13 +1759,16 @@ local function installGameplay(screenGui)
     listen(userInputService.WindowFocusReleased, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     listen(userInputService.TextBoxFocused, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
+        AngelHub.actions["Teleport To Map"] = mapTeleport
+        AngelHub.actions["Teleport To Lobby"] = lobbyTeleport
+        AngelHub.actions["Teleport To Player"] = playerTeleport
         AngelHub.actions["Get Gun"] = function()
             if type(firetouchinterest) ~= "function" then message("Get Gun: touch API unavailable"); return end
             local _, humanoid, root = characterParts()
             if not humanoid or not root then message("Get Gun: character unavailable"); return end
-            local drop = workspace:FindFirstChild("GunDrop", true)
+            local drop = findDroppedGun()
             if not drop then message("Get Gun: dropped gun not found"); return end
-            local part = drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle", true) or drop:FindFirstChildWhichIsA("BasePart", true)
+            local part = markerPart(drop)
             if not part or not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then
                 message("Get Gun: dropped gun has no touch part"); return
             end

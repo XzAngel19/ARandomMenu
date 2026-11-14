@@ -35,6 +35,42 @@ root.AssemblyLinearVelocity=Vector3.new(0,0,0);heartbeat:Fire(0.1);assert(root.A
 userInputService.InputEnded:Fire(touch)
 root.AssemblyLinearVelocity=Vector3.new(0,0,0);heartbeat:Fire(0.1);assert(root.AssemblyLinearVelocity.Y==0)
 AngelHub.setters['Infinite Jump'](false)
+AngelHub.setters['Gun ESP'](true)
+assert(#created==3 and created[1].class=='Highlight' and created[1].Adornee==gun)
+assert(created[2].class=='BillboardGui' and created[2].Enabled and created[3].Text=='Gun [12]')
+V['Item Max Distance']=5;heartbeat:Fire(0.3);assert(not created[2].Enabled and not created[1].Enabled)
+V['Item Max Distance']=100;V['Item Outline']=false;heartbeat:Fire(0.3);assert(created[2].Enabled and not created[1].Enabled)
+AngelHub.setters['Gun ESP'](false);assert(created[1].destroyed and created[2].destroyed)
+AngelHub.setters['Trap ESP'](true);heartbeat:Fire(0.3);assert(trap.Transparency==0.35 and created[4].Adornee==trap)
+local trap2={Name='TrapVisual',Parent=workspace,Position=Vector3.new(3,0,0),Transparency=1,Size=Vector3.new(1,1,1)}
+function trap2:IsA(c)return c=='BasePart'end
+function trap2:IsDescendantOf(w)return self.Parent==w end
+function trap2:GetDescendants()return {}end
+workspace.DescendantAdded:Fire(trap2);assert(trap2.Transparency==0.35)
+trap2.Transparency=0.8
+AngelHub.setters['Trap ESP'](false);assert(trap.Transparency==1 and trap2.Transparency==0.8 and created[4].destroyed and created[5].destroyed and created[7].destroyed)
+AngelHub.setters['Trap ESP'](true);assert(trap.Transparency==0.35)
+local model={Name='Trap',Parent=workspace};function model:IsA(c)return c=='Model'end
+function model:IsDescendantOf(w)return self.Parent==w end
+function model:FindFirstChild()return nil end
+function model:FindFirstChildWhichIsA()return self.child end
+function model:GetDescendants()return self.child and {self.child} or {}end
+workspace.DescendantAdded:Fire(model);assert(#created==12)
+local late={Name='Handle',Parent=model,Position=Vector3.new(4,0,0),Transparency=1}
+function late:IsA(c)return c=='BasePart'end
+function late:IsDescendantOf(w)return w==workspace end
+function late:GetDescendants()return {}end
+model.child=late;workspace.DescendantAdded:Fire(late)
+assert(#created==15 and created[13].Adornee==model and late.Transparency==0.35)
+AngelHub.actions['Teleport To Map']();assert(character.lastPivot.Y==3)
+character.lastPivot=nil;AngelHub.actions['Teleport To Lobby']();assert(character.lastPivot.Y==3)
+character.lastPivot=nil;AngelHub.actions['Teleport To Player']();assert(character.lastPivot.Y==3)
+character.lastPivot=nil;V['Teleport Player Name']='Nobody';AngelHub.actions['Teleport To Player']();assert(character.lastPivot==nil)
+V['Teleport Player Name']='Ali';local another={Name='Alison',DisplayName='Alison'}
+function playersService:GetPlayers()return {localPlayer,other,another}end
+AngelHub.actions['Teleport To Player']();assert(character.lastPivot==nil)
+V['Teleport Player Name']='Alice';AngelHub.actions['Teleport To Player']();assert(character.lastPivot.Y==3)
+character.lastPivot=nil;root.Anchored=true;AngelHub.actions['Teleport To Map']();assert(character.lastPivot==nil);root.Anchored=false
 AngelHub.actions['Get Gun']();assert(#touches==2 and touches[1][1]==root and touches[1][2]==gun and touches[1][3]==0 and touches[2][3]==1)
 userInputService.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyboard,KeyCode={Name='G'}},false);assert(#touches==4)
 userInputService.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyboard,KeyCode={Name='G'}},true);assert(#touches==4)
@@ -60,6 +96,6 @@ AngelHub.setters['Anti AFK'](false);localPlayer.Idled:Fire();assert(fakeUser.cou
 AngelHub.setters['X-Ray'](true);heartbeat:Fire(0.3);assert(wall.LocalTransparencyModifier==0.5)
 AngelHub.setters['Noclip'](true);AngelHub.setters['Enable Gravity'](true)
 screenGui.Destroying:Fire();assert(root.CanCollide and head.CanCollide and workspace.Gravity==196.2)
-assert(detector.MaxActivationDistance==15 and wall.LocalTransparencyModifier==0)
+assert(detector.MaxActivationDistance==15 and wall.LocalTransparencyModifier==0 and trap.Transparency==1 and created[10].destroyed and created[13].destroyed and late.Transparency==1)
 assert(lighting.Brightness==2 and localPlayer.CameraMinZoomDistance==0.5 and localPlayer.CameraMaxZoomDistance==128)
 print('mock runtime PASS')
