@@ -1,0 +1,94 @@
+MM2 / LEANSHOOT: DATOS DE DISPAROS HISTORICOS, NO SCRIPT EJECUTABLE
+Complemento NUEVO a Info-MM2-Shoot-19KB.txt. Son muestras reales registradas, no resultados inventados. Sin AutoShoot ni GUI. Son observaciones historicas del cliente del menu, no pruebas autoritativas ni del MM2 actual.
+
+FUENTES INTEGRALES (TestingStuff, commit b0da7a819bed03c1d7ea23132465eac600f05417):
+A. Datos v111 schema 4: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/MM2_Trajectory_Calibration.json
+B. Datos v105 schema 4: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/MM2_Trajectory_Calibration_v105_2026-10-23.json
+C. Datos v18: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/Place_142823291_Game_Learning.json
+D. XML de cliente: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/place%2C%20source.rbxlx
+E. Captura del menu: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/Shoot..txt
+F. Place binario: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/Place_142823291_Murder%20Mystery%202_05-10-2026_19-35-36.rbxl
+
+LIMITES IMPORTANTES
+- Se recorrieron D y F: no se encontro script GunClient ni Tool Gun en esas capturas. En F WeaponService y GunBeams dicen "decompilation panicked"; D si tiene fuentes decompiladas. Una captura puede omitir instancias dinamicas o fuentes. No tenemos el GunClient nativo, ni reglas del servidor; no se puede determinar si la bala real es hitscan o proyectil fisico. No confundir beam visual o raycast de mira con el metodo de hit servidor. Los eventos projectile-observed de A/B son knife, no bala Gun.
+- E registra Shoot:FireServer(CFrame,CFrame), atribuido al codigo de menu fireGunAtTarget, no al cliente nativo. GunFired y GunBeam son RemoteEvent de visualizacion/evento; una senal GunFired no demuestra daño. El WeaponService completo, inventario de remotes/hooks y diagnostico previo estan en Info-MM2-Shoot-19KB.txt.
+- A dice 6 gunAttempts, 6 gunConfirmed y 3 gunHitTarget para esa sesion. B: 31 intentos, 17 confirmaciones y 6 targetHits; C: 93, 29 y 7. Contadores como estan registrados, sin prometer precision ni significacion estadistica.
+- No ejecutar Gun Probe ni hooks de diagnostico: antes produjo BAC-1583. No hay base para inventar velocidad de bala, cooldown, rewind, hitbox, daño, alcance ni validaciones.
+
+EXTRACTO NUEVO A: 4 PARES authored/confirmation, 2 con hitTarget=true y 2 false, seleccionados intencionalmente (no muestra aleatoria). Cada JSON conserva los valores de origen sin redondear; se omitieron campos, identidades de jugadores y la mayor parte del historial. shotId permite localizar los eventos completos en A. settings procede de authored; pre procede de authored.targetHistory y post de confirmation.targetTrajectory: hasta 3 puntos cercanos a -0.30/-0.15/-0.02 s y 0/0.10/0.15 s, seleccionados por proximidad; si el historial termina antes, se usa el mas cercano aun no elegido. No interpolados. dt es relativo a la activacion, en segundos; posiciones [x,y,z] en studs, velocidades en studs/s; pingMs, latencyMs y serverEchoMs en ms; RTT/leadSeconds en segundos. serverActivatedAt/serverConfirmedAt son relojes de servidor leidos por el cliente, NO timestamps de procesamiento autoritativo. rootAtConfirmation es posicion observada por cliente. endpointErrorStuds es una metrica del propio registrador, no prueba de rewind, trayectoria de bala ni causa del fallo. A describe confirmation como GunFired emparejado, hitTarget como rayo que alcanzo al objetivo y died como salud llegando a cero; son criterios del registrador y no prueban reglas o daño del servidor. died/health son observaciones separadas. Post contiene datos futuros respecto al disparo: servirian para evaluar, no para predecir causalmente.
+JSON:
+[{"shotId":"744BE679-E229-4109-A2C4-3EE317BF5527:7","authored":{"phase":"authored","buildStamp":"v111-20261023-farm-teleport-map-grab","pingMs":112.14888957079975,"clock":14962.3453736,"serverTime":1792785011.196605},"settings":{"mode":"Normal","wallCheck":true,"rtt":0.11214888957079976,"rttEngine":0.0860000029206276,"rttData":0.11214888957079976,"sampleAge":0.0012694999986706535,"sampledVelocity":[3.975961208343506,0,-15.714123725891114],"leadSeconds":0.13841838956947043,"leadCorrection":0,"motionSource":"history","turnRate":-1.3085865825329,"referencePoint":[22.328536987304689,216.4112091064453,8958.8916015625],"predictedPoint":[23.199077606201173,216.4112091064453,8956.6982421875],"samples":37,"model":"kinematic-v51","echoSamples":0},"confirmation":{"phase":"confirmation","shotMode":"Normal","pingMs":112.14888957079975,"serverActivatedAt":1792785011.196653,"serverConfirmedAt":1792785011.315509,"serverEchoMs":118.85619163513184,"latencyMs":118.91719999948691,"evaluationSeconds":0.11891719999948691,"origin":[28.268505096435548,229.35276794433595,9018.1708984375],"serverOrigin":[28.268505096435548,229.35276794433595,9018.1708984375],"aim":[23.199077606201173,216.4112091064453,8956.6982421875],"endpoint":[22.069433212280275,213.52737426757813,8943],"hitPart":"Smooth Block Model","hitTarget":false,"healthAtAim":100,"healthAtConfirmation":100,"died":false,"endpointErrorStuds":2.402303566344618,"leadErrorSeconds":-0.10589958549811829,"horizontalLeadSeconds":0.06761111479723174,"targetState":"Running","targetJumped":false,"rootAtConfirmation":{"state":"Running","velocity":[-14.487845420837403,0.0007993094041012228,-4.511312484741211],"position":[21.24544906616211,216.25,8958.0869140625]},"trajectoryPoints":34,"trajectorySpanSeconds":0.6185303999991447,"trajectoryCapped":false},"pre":[{"dt":-0.3030231000011554,"position":[21.569772720336915,216.25,8964.0458984375],"velocity":[0.212110236287117,0.0003586947568692267,-16.368785858154298]},{"dt":-0.15203900000051363,"position":[21.720430374145509,216.25,8961.708984375],"velocity":[2.276825428009033,0,-15.847128868103028]},{"dt":-0.017694899999696646,"position":[22.235605239868165,216.25,8959.5859375],"velocity":[2.6654176712036135,0,-15.779095649719239]}],"post":[{"dt":0.00011529999937920365,"position":[22.278968811035158,216.24998474121095,8959.337890625],"velocity":[2.3958487510681154,0.0000024680994101800026,-15.825628280639649]},{"dt":0.08955129999958445,"position":[21.6158447265625,216.25,8958.169921875],"velocity":[-12.550935745239258,0.0008458965457975864,-9.55715560913086]},{"dt":0.15222319999884349,"position":[20.54978370666504,216.24998474121095,8958.1064453125],"velocity":[-16.763925552368165,0.0007636724039912224,1.707619071006775]}]},{"shotId":"744BE679-E229-4109-A2C4-3EE317BF5527:8","authored":{"phase":"authored","buildStamp":"v111-20261023-farm-teleport-map-grab","pingMs":111.84207894844599,"clock":14965.990491399998,"serverTime":1792785014.840743},"settings":{"mode":"Normal","wallCheck":true,"rtt":0.11184207894844599,"rttEngine":0.0860000029206276,"rttData":0.11184207894844599,"sampleAge":0.015958099998897525,"sampledVelocity":[-3.8728816509246828,14.072491645812989,-16.250465393066408],"leadSeconds":0.15280017894734353,"leadCorrection":0,"motionSource":"history","turnRate":0.5844088497870941,"referencePoint":[4.18941068649292,234.33795166015626,8967.69921875],"predictedPoint":[3.402453899383545,234.1977996826172,8964.966796875],"samples":37,"model":"kinematic-v51","echoSamples":1},"confirmation":{"phase":"confirmation","shotMode":"Normal","pingMs":111.84207894844599,"serverActivatedAt":1792785014.840792,"serverConfirmedAt":1792785014.961095,"serverEchoMs":120.30315399169922,"latencyMs":120.41710000085004,"evaluationSeconds":0.12041710000085004,"origin":[12.536754608154297,234.70814514160157,9002.6796875],"serverOrigin":[12.536754608154297,234.70814514160157,9002.6796875],"aim":[3.402453899383545,234.1977996826172,8964.966796875],"endpoint":[3.412733793258667,234.19837951660157,8965.0087890625],"hitPart":"Handle","hitTarget":true,"healthAtAim":100,"healthAtConfirmation":0,"died":true,"endpointErrorStuds":1.1923215729253403,"leadErrorSeconds":-0.06669794441210593,"horizontalLeadSeconds":0.10177074258577929,"targetState":"Freefall","targetJumped":true,"rootAtConfirmation":{"state":"Freefall","velocity":[-7.804401397705078,-10.34950065612793,-13.971733093261719],"position":[3.3158175945281984,234.48367309570313,8966.12109375]},"trajectoryPoints":6,"trajectorySpanSeconds":0.10471240000151738,"trajectoryCapped":false},"pre":[{"dt":-0.2923812999997608,"position":[4.947548866271973,225.84353637695313,8971.4296875],"velocity":[-6.700821399688721,-2.3531274795532228,-11.163985252380371]},{"dt":-0.14433020000069519,"position":[4.655492782592773,230.9851531982422,8969.9951171875],"velocity":[-1.3714818954467774,40.39321517944336,-14.29968547821045]},{"dt":-0.0267452999996749,"position":[4.298414707183838,234.27012634277345,8968.0732421875],"velocity":[-5.09243631362915,16.483430862426759,-15.159290313720704]}],"post":[{"dt":0.0001353999996354105,"position":[4.131389617919922,234.6020965576172,8967.66796875],"velocity":[-6.195877552032471,9.998154640197754,-14.698765754699707]},{"dt":0.07914760000130627,"position":[3.5471584796905519,234.75198364257813,8966.5361328125],"velocity":[-7.706568241119385,-6.708480358123779,-14.024280548095704]},{"dt":0.10484780000115279,"position":[3.37385892868042,234.565185546875,8966.2255859375],"velocity":[-7.818500518798828,-9.945971488952637,-13.96496868133545]}]},{"shotId":"744BE679-E229-4109-A2C4-3EE317BF5527:21","authored":{"phase":"authored","buildStamp":"v111-20261023-farm-teleport-map-grab","pingMs":109.40974112742558,"clock":15506.064624999999,"serverTime":1792785554.919887},"settings":{"mode":"Silent","wallCheck":true,"rtt":0.10940974112742558,"rttEngine":0.0860000029206276,"rttData":0.10940974112742558,"sampleAge":0.022361700001056307,"sampledVelocity":[-7.594600200653076,0,-14.458340644836426],"leadSeconds":0.15677144112848188,"leadCorrection":0,"motionSource":"history","turnRate":0.8144201694900559,"referencePoint":[-38.923805236816409,273.6265869140625,8948.7978515625],"predictedPoint":[-40.28522491455078,273.6265869140625,8946.736328125],"samples":37,"model":"kinematic-v51","spawn":"Front","sweep":0.5,"echoSamples":2},"confirmation":{"phase":"confirmation","shotMode":"Silent","pingMs":109.40974112742558,"serverActivatedAt":1792785554.919934,"serverConfirmedAt":1792785555.073145,"serverEchoMs":153.21087837219239,"latencyMs":153.3342000002449,"evaluationSeconds":0.1533342000002449,"origin":[-37.55293273925781,273.6265869140625,8947.2119140625],"serverOrigin":[-37.55293273925781,273.6265869140625,8947.2119140625],"aim":[-40.517738342285159,273.6265869140625,8946.2939453125],"endpoint":[-41.39995574951172,273.6265869140625,8946.0205078125],"hitPart":"RightLowerArm","hitTarget":true,"healthAtAim":100,"healthAtConfirmation":0,"died":true,"endpointErrorStuds":0.961235280462335,"leadErrorSeconds":-0.04941608601309634,"horizontalLeadSeconds":0.11656824780920514,"targetState":"Running","targetJumped":false,"rootAtConfirmation":{"state":"Running","velocity":[-12.193009376525879,0.0015220923814922572,-0.39432376623153689],"position":[-40.47948455810547,273.79656982421877,8947.2392578125]},"trajectoryPoints":8,"trajectorySpanSeconds":0.13692880000053266,"trajectoryCapped":false},"pre":[{"dt":-0.30354780000016037,"position":[-37.1182975769043,273.7891845703125,8953.3583984375],"velocity":[-2.6312403678894045,-0.11906399577856064,-17.088407516479493]},{"dt":-0.15475770000011836,"position":[-37.75411605834961,273.7965393066406,8950.9560546875],"velocity":[-7.05857515335083,0.0006982608465477824,-15.633684158325196]},{"dt":-0.03696270000000368,"position":[-38.64449691772461,273.7965087890625,8949.2021484375],"velocity":[-8.305908203125,0.00000580741243538796,-14.943256378173829]}],"post":[{"dt":0.0001432999997632578,"position":[-38.93013000488281,273.7965087890625,8948.728515625],"velocity":[-9.53427505493164,0.00005366519690142013,-14.159587860107422]},{"dt":0.09520549999979267,"position":[-39.88109588623047,273.7965393066406,8947.6123046875],"velocity":[-11.181580543518067,0.0005939686088822782,-8.672550201416016]},{"dt":0.1370721000002959,"position":[-40.3622932434082,273.79656982421877,8947.2939453125],"velocity":[-11.994625091552735,0.0013308145571500064,-2.0288822650909426]}]},{"shotId":"744BE679-E229-4109-A2C4-3EE317BF5527:22","authored":{"phase":"authored","buildStamp":"v111-20261023-farm-teleport-map-grab","pingMs":113.31357582609724,"clock":15717.7382845,"serverTime":1792785766.594516},"settings":{"mode":"Silent","wallCheck":true,"rtt":0.11214888957079976,"rttEngine":0.0860000029206276,"rttData":0.11331357582609723,"sampleAge":0.029419099999358879,"sampledVelocity":[10.519513130187989,47.651756286621097,-12.378791809082032],"leadSeconds":0.10656798957015865,"leadCorrection":-0.06,"motionSource":"history","turnRate":0,"referencePoint":[-70.31343841552735,289.00408935546877,9087.6328125],"predictedPoint":[-69.19977569580078,292.9681396484375,9086.322265625],"samples":37,"model":"kinematic-v51","spawn":"Front","sweep":0.5,"echoSamples":1},"confirmation":{"phase":"confirmation","shotMode":"Silent","pingMs":113.31357582609724,"serverActivatedAt":1792785766.594568,"serverConfirmedAt":1792785766.722037,"serverEchoMs":127.46906280517578,"latencyMs":127.5311999997939,"evaluationSeconds":0.1275311999997939,"origin":[-67.67305755615235,292.9681396484375,9087.3662109375],"serverOrigin":[-67.67305755615235,292.9681396484375,9087.3662109375],"aim":[-68.22843170166016,292.9681396484375,9085.1796875],"endpoint":[-72.6987533569336,292.9681396484375,9067.580078125],"hitPart":"Part","hitTarget":false,"healthAtAim":100,"healthAtConfirmation":100,"died":false,"endpointErrorStuds":2.380110983893312,"leadErrorSeconds":-0.11917144404514496,"horizontalLeadSeconds":0.07702887078297358,"targetState":"Freefall","targetJumped":true,"rootAtConfirmation":{"state":"Freefall","velocity":[-10.386589050292969,19.89948272705078,-6.595946788787842],"position":[-70.41870880126953,293.445556640625,9085.9794921875]},"trajectoryPoints":31,"trajectorySpanSeconds":0.6220466000013403,"trajectoryCapped":false},"pre":[{"dt":-0.3043758000003436,"position":[-73.18156433105469,286.9164123535156,9091.1650390625],"velocity":[9.213833808898926,-24.537609100341798,-14.259056091308594]},{"dt":-0.14649610000014946,"position":[-71.48539733886719,284.1086120605469,9089.14453125],"velocity":[11.66148567199707,17.02589988708496,-12.248791694641114]},{"dt":-0.04193500000110362,"position":[-70.34503936767578,287.6874084472656,9087.8232421875],"velocity":[8.22386360168457,49.021568298339847,-13.091029167175293]}],"post":[{"dt":0.00011779999840655364,"position":[-70.05484008789063,289.4822082519531,9087.357421875],"velocity":[5.877908229827881,45.94159698486328,-13.149431228637696]},{"dt":0.10928049999893119,"position":[-70.30540466308594,293.1925354003906,9086.0703125],"velocity":[-8.67660903930664,23.38298225402832,-8.376255989074707]},{"dt":0.15143859999989218,"position":[-70.7742919921875,293.9856872558594,9085.806640625],"velocity":[-13.330452919006348,13.857691764831543,-3.439030170440674]}]}]
+
+CODIGO VISUAL REAL DE D (cliente decompilado, no GunClient ni codigo del servidor):
+-- StarterPlayer.StarterPlayerScripts.WeaponVisuals.GunBeams [LocalScript]
+-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw
+
+-- Decompiled with Potassium's decompiler.
+
+local l__CreateBeam__1 = require(script.CreateBeam);
+require(game:GetService("ReplicatedStorage"):WaitForChild("ClientServices"):WaitForChild("WeaponService")).GunFired.OnClientEvent:Connect(l__CreateBeam__1);
+-- StarterPlayer.StarterPlayerScripts.WeaponVisuals.GunBeams.CreateBeam [ModuleScript]
+-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw
+
+-- Decompiled with Potassium's decompiler.
+
+local function u3(p1) --[[ Line: 1 ]]
+    local v2 = Instance.new("Part");
+    v2.Transparency = 1;
+    v2.Anchored = true;
+    v2.Size = Vector3.new(1, 1, 1);
+    v2.CanCollide = false;
+    v2.CanQuery = false;
+    v2.CFrame = CFrame.new(p1);
+    Instance.new("Attachment", v2);
+    game.Debris:AddItem(v2, 1);
+    v2.Parent = game.Workspace;
+    return v2;
+end;
+local u4 = TweenInfo.new(0.1, Enum.EasingStyle.Linear, Enum.EasingDirection.Out);
+local u5 = TweenInfo.new(0.2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out);
+local l__TweenService__1 = game:GetService("TweenService");
+return function(p6, p7, p8, p9) --[[ Line: 23 ]]
+    -- upvalues: u3 (copy), l__TweenService__1 (copy), u4 (copy), u5 (copy)
+    if typeof(p7) ~= "Vector3" then
+        if p7:IsA("BasePart") then
+            p7 = p7.Position;
+        else
+            if not p7:IsA("Attachment") then
+                return;
+            end;
+            p7 = p7.WorldPosition;
+        end;
+    end;
+    local v10 = u3(p7);
+    local v11 = u3(p8);
+    local v12 = p6:FindFirstChild("CustomBeam");
+    local v13;
+    if v12 then
+        v13 = v12:Clone();
+    else
+        v13 = Instance.new("Beam");
+        v13.Width0 = 0.2;
+        v13.Width1 = 0.2;
+        v13.LightEmission = 0.5;
+        v13.LightInfluence = 0;
+        v13.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.202, 0.95), NumberSequenceKeypoint.new(1, 0.6) });
+    end;
+    v13.Attachment0 = v10.Attachment;
+    v13.Attachment1 = v11.Attachment;
+    v13.FaceCamera = true;
+    v13.Parent = v10;
+    if p9 then
+        local v14 = script:WaitForChild("Sparks"):Clone();
+        v14.Color = ColorSequence.new(p9.Color);
+        v14.Parent = v11;
+        v14:Emit(7);
+    end;
+    wait(0.03);
+    l__TweenService__1:Create(v13, u4, {
+        Width0 = 0
+    }):Play();
+    l__TweenService__1:Create(v13, u5, {
+        Width1 = 0
+    }):Play();
+end;
