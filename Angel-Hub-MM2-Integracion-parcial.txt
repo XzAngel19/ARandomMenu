@@ -1091,9 +1091,11 @@ local function installGameplay(screenGui)
     local mm2CoinEspStep = function() end
     local mm2NotificationsStep = function() end
     local airWalkStep = function() end
+    local flyStep = function() end
     local chamsStep = function() end
     local nametagsStep = function() end
     local playerHealthStep = function() end
+    local pointerStep = function() end
     local markersStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
@@ -1104,8 +1106,8 @@ local function installGameplay(screenGui)
         ["Custom Jump Power"] = true, ["Infinite Jump"] = true,
         ["Fullbright"] = true, ["Time Changer"] = true, ["Fast Time"] = true,
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
-        ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true,
-        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true,
+        ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true, ["Enable Fly"] = true, ["Walk Fling"] = true,
+        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
@@ -1244,6 +1246,11 @@ local function installGameplay(screenGui)
         if not notificationOk and not AngelHub.notificationError then
             AngelHub.notificationError = true; warn("Angel Hub notifications error: " .. tostring(notificationError))
         end
+        local pointerOk, pointerError = pcall(pointerStep, dt, root)
+        if not pointerOk then
+            warn("Angel Hub Pointers error: " .. tostring(pointerError))
+            if enabled["Player Pointers"] then AngelHub.setters["Player Pointers"](false); message("Player Pointers stopped: runtime error") end
+        end
         local hpOk, hpError = pcall(playerHealthStep, dt, root)
         if not hpOk then
             warn("Angel Hub HP error: " .. tostring(hpError))
@@ -1258,6 +1265,11 @@ local function installGameplay(screenGui)
         if not chamsOk then
             warn("Angel Hub Chams error: " .. tostring(chamsError))
             if enabled["Chams"] then AngelHub.setters["Chams"](false); message("Chams stopped: runtime error") end
+        end
+        local flyOk, flyError = pcall(flyStep, dt, character, humanoid, root)
+        if not flyOk then
+            warn("Angel Hub Fly error: " .. tostring(flyError))
+            if enabled["Enable Fly"] then AngelHub.setters["Enable Fly"](false); message("Fly stopped: runtime error") end
         end
         local airOk, airError = pcall(airWalkStep, dt, character, humanoid, root)
         if not airOk then
@@ -3474,7 +3486,7 @@ local function installGameplay(screenGui)
         local trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
         local gunAnnounced, lastClose = false, -math.huge
         local function wanted()
-            if enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] then return true end
+            if enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
             for _, name in ipairs({"Instant Roles", "Gun Notification", "Murder Close", "Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do
                 if V[name] == true then return true end
             end
@@ -3698,6 +3710,158 @@ local function installGameplay(screenGui)
         end
         function airWalk.clearInput() clearInput() end
         function airWalk.cleanup() airWalk.toggle(false) end
+    end
+    local fly = {}
+    do
+        local controls, controlConnections = nil, {}
+        local heldUp, heldDown = {}, {}
+        local lastRoot, lastVelocity = nil, nil
+        local function clearInput() table.clear(heldUp); table.clear(heldDown) end
+        local function stopVelocity()
+            local root, applied = lastRoot, lastVelocity
+            lastRoot, lastVelocity = nil, nil
+            if root and applied then pcall(function()
+                if root.AssemblyLinearVelocity == applied then
+                    root.AssemblyLinearVelocity = Vector3.new(0, math.min(0, applied.Y), 0)
+                end
+            end) end
+        end
+        local function removeControls()
+            for _, connection in ipairs(controlConnections) do connection:Disconnect() end
+            table.clear(controlConnections)
+            if controls then pcall(function() controls:Destroy() end); controls = nil end
+        end
+        function fly.toggle(value)
+            stopVelocity(); removeControls(); clearInput()
+            if not value or not userInputService.TouchEnabled then return end
+            controls = Instance.new("Frame"); controls.Name = "AngelHubFlyControls"
+            controls.Size = UDim2.fromScale(1, 1); controls.BackgroundTransparency = 1; controls.Parent = screenGui
+            for _, spec in ipairs({{"Up", "+", -152, heldUp}, {"Down", "−", -96, heldDown}}) do
+                local button = Instance.new("TextButton")
+                button.Name = spec[1]; button.Text = spec[2]; button.Size = UDim2.fromOffset(48, 48)
+                button.Position = UDim2.new(1, -70, 1, spec[3]); button.TextSize = 18
+                button.TextColor3 = Color3.new(1, 1, 1); button.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+                button.BackgroundTransparency = 0.3; button.ZIndex = 31; button.Parent = controls
+                local bucket = spec[4]
+                table.insert(controlConnections, button.InputBegan:Connect(function(input)
+                    if enabled["Enable Fly"] and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then bucket[input] = true end
+                end))
+                table.insert(controlConnections, button.InputEnded:Connect(function(input) bucket[input] = nil end))
+            end
+        end
+        function fly.step(dt, character, humanoid, root)
+            if not enabled["Enable Fly"] or dt <= 0 then return end
+            if not character or not character.Parent or not humanoid or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then stopVelocity(); clearInput(); return end
+            if root ~= lastRoot then stopVelocity() end
+            local move = humanoid.MoveDirection
+            local horizontal = Vector3.new(move.X, 0, move.Z)
+            if horizontal.Magnitude > 1 then horizontal = horizontal.Unit end
+            local vertical = (next(heldUp) and 1 or 0) - (next(heldDown) and 1 or 0)
+            local speed = tonumber(V["Fly Horizontal Speed"]) or 60
+            local lift = tonumber(V["Fly Vertical Speed"]) or 60
+            if speed ~= speed or lift ~= lift or math.abs(speed) > 10000 or math.abs(lift) > 10000 then error("invalid fly speed") end
+            local target = horizontal * speed + Vector3.new(0, vertical * lift, 0)
+            local current = root.AssemblyLinearVelocity
+            local response = math.clamp(tonumber(V["Fly Response Multiplier"]) or 1, 0.5, 2)
+            local alpha = math.clamp(dt * 12 * response, 0, 1)
+            local velocity = current + (target - current) * alpha
+            if V["Fly Wall Check"] and velocity.Magnitude > 0.001 then
+                local ok, hit = pcall(function()
+                    local params = RaycastParams.new(); params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = {character}; params.RespectCanCollide = true; params.IgnoreWater = true
+                    local step = velocity * math.min(dt, 0.1)
+                    if workspace.Blockcast then return workspace:Blockcast(root.CFrame, root.Size * 0.9, step, params) end
+                    return workspace:Raycast(root.Position, step, params)
+                end)
+                if not ok or hit then velocity = Vector3.new(0, 0, 0) end
+            end
+            root.AssemblyLinearVelocity = velocity; lastRoot, lastVelocity = root, velocity
+            if V["Fly Face Camera"] and workspace.CurrentCamera then
+                local look = workspace.CurrentCamera.CFrame.LookVector
+                local flat = Vector3.new(look.X, 0, look.Z)
+                if flat.Magnitude > 0.001 then root.CFrame = CFrame.lookAt(root.Position, root.Position + flat) end
+            end
+        end
+        function fly.inputBegan(input, processed)
+            if not enabled["Enable Fly"] or processed or AngelHub.listening or userInputService:GetFocusedTextBox()
+                or input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            local key = input.KeyCode and input.KeyCode.Name
+            if key and key == (V["Fly Up Key Value"] or "Space") then heldUp[input.KeyCode] = true end
+            if key and key == (V["Fly Down Key Value"] or "LeftControl") then heldDown[input.KeyCode] = true end
+        end
+        function fly.inputEnded(input)
+            heldUp[input], heldDown[input] = nil, nil
+            if input.KeyCode then heldUp[input.KeyCode], heldDown[input.KeyCode] = nil, nil end
+        end
+        function fly.clearInput() clearInput() end
+        function fly.cleanup() fly.toggle(false) end
+    end
+    local walkFling = {}
+    do
+        local collisions = setmetatable({}, {__mode = "k"})
+        local trackedCharacter, pulse = nil, nil
+        local oscillation = 0.1
+        local function restorePulse()
+            local state = pulse; pulse = nil
+            if not state then return end
+            pcall(function()
+                local value = state.root.AssemblyLinearVelocity
+                if value == state.spike or value == state.oscillated then
+                    state.root.AssemblyLinearVelocity = state.velocity
+                    state.root.Velocity = state.velocity
+                end
+            end)
+        end
+        local function restoreCollisions()
+            for part, original in pairs(collisions) do
+                pcall(function() if part.CanCollide == false then part.CanCollide = original end end)
+                collisions[part] = nil
+            end
+            trackedCharacter = nil
+        end
+        function walkFling.cleanup()
+            restorePulse(); restoreCollisions(); oscillation = 0.1
+        end
+        function walkFling.heartbeat(character, humanoid, root)
+            if not enabled["Walk Fling"] then return end
+            restorePulse()
+            if not character or not character.Parent or not humanoid or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then
+                restoreCollisions(); return
+            end
+            if trackedCharacter ~= character then restoreCollisions(); trackedCharacter = character end
+            for _, part in ipairs(character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    if collisions[part] == nil then collisions[part] = part.CanCollide end
+                    part.CanCollide = false
+                end
+            end
+            local velocity = root.AssemblyLinearVelocity
+            local spike = velocity * 30000 + Vector3.new(0, 30000, 0)
+            pulse = {character=character, root=root, velocity=velocity, spike=spike}
+            root.Velocity = spike; root.AssemblyLinearVelocity = spike
+        end
+        function walkFling.render()
+            local state = pulse
+            if not enabled["Walk Fling"] or not state or state.character ~= localPlayer.Character then return end
+            pcall(function()
+                if state.root.AssemblyLinearVelocity == state.spike then
+                    state.root.Velocity = state.velocity; state.root.AssemblyLinearVelocity = state.velocity
+                    state.restored = true
+                end
+            end)
+        end
+        function walkFling.stepped()
+            local state = pulse
+            if not enabled["Walk Fling"] or not state or not state.restored or state.character ~= localPlayer.Character then return end
+            pcall(function()
+                if state.root.AssemblyLinearVelocity == state.velocity then
+                    local motion = state.velocity + Vector3.new(0, oscillation, 0)
+                    state.oscillated = motion
+                    state.root.Velocity = motion; state.root.AssemblyLinearVelocity = motion
+                    oscillation = -oscillation
+                end
+            end)
+        end
     end
     local chams = {}
     do
@@ -3990,7 +4154,7 @@ local function installGameplay(screenGui)
         local function travel(position, surface)
             local character, human, root = characterParts()
             if not character or not human or not root or root.Anchored then message("Teleport: character unavailable or anchored"); return end
-            if enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"] then message("Teleport: disable Auto Win, Auto Farm and Air Walk first"); return end
+            if enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"] or enabled["Enable Fly"] or enabled["Walk Fling"] then message("Teleport: disable Auto Win, Auto Farm, Air Walk, Fly and Walk Fling first"); return end
             if V["Teleport Movement"] ~= "Instant" and V["Teleport Movement"] ~= "Glide" then message("Teleport: unknown movement"); return end
             local x, y, z = validNumber(position and position.X), validNumber(position and position.Y), validNumber(position and position.Z)
             if not x or not y or not z then message("Teleport: invalid destination"); return end
@@ -4148,7 +4312,7 @@ local function installGameplay(screenGui)
             if glide then
                 local trip = glide
                 if stopped or trip.ticket ~= travelGeneration or V["Teleport Movement"] ~= "Glide"
-                    or enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"]
+                    or enabled["Auto Win"] or enabled["Auto Farm"] or enabled["Air Walk"] or enabled["Enable Fly"] or enabled["Walk Fling"]
                     or localPlayer.Character ~= trip.character or trip.humanoid.Health <= 0
                     or not root or root ~= trip.root or root.Anchored then
                     glide = nil
@@ -4209,7 +4373,88 @@ local function installGameplay(screenGui)
         function markers.cancelTravel() travelGeneration += 1; glide = nil; restoreMenu() end
         function markers.cleanup() markers.cancelTravel(); clearVisuals() end
     end
+    local pointers = {}
+    do
+        local items, elapsed = {}, 0
+        local function remove(player)
+            local item = items[player]; items[player] = nil
+            if item then pcall(function() item.frame:Destroy() end) end
+        end
+        function pointers.toggle(value)
+            for player in pairs(items) do remove(player) end
+            elapsed = value and 1 or 0
+        end
+        function pointers.step(dt, localRoot)
+            if not enabled["Player Pointers"] then return end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.05 then return end
+            elapsed = 0
+            local camera = workspace.CurrentCamera
+            local size = camera and camera.ViewportSize
+            if not camera or not size or size.X <= 80 or size.Y <= 80 or not localRoot then
+                for player in pairs(items) do remove(player) end
+                return
+            end
+            local seen = {}
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local character = player.Character
+                if player ~= localPlayer and character and character.Parent and character:IsDescendantOf(workspace) then
+                    local human = character:FindFirstChildOfClass("Humanoid")
+                    local target = character:FindFirstChild("HumanoidRootPart")
+                    local role = isMM2 and notifications.role(player) or nil
+                    local sameTeam = localPlayer.Team ~= nil and player.Team == localPlayer.Team and not localPlayer.Neutral and not player.Neutral
+                    local allowed = (isMM2 or V["Pointer Teammates"] == true or not sameTeam)
+                        and (not role or V[role .. " ESP"] == true)
+                    if allowed and human and human.Health > 0 and target and target:IsA("BasePart") then
+                        local distance = (target.Position - localRoot.Position).Magnitude
+                        local limit = math.clamp(tonumber(V["Pointer Max Distance"]) or 500, 0, 2000)
+                        if distance <= limit then
+                            local ok, screenPoint = pcall(function() return camera:WorldToViewportPoint(target.Position) end)
+                            if ok and screenPoint and type(screenPoint.X) == "number" and type(screenPoint.Y) == "number" and type(screenPoint.Z) == "number"
+                                and screenPoint.X == screenPoint.X and screenPoint.Y == screenPoint.Y and screenPoint.Z == screenPoint.Z
+                                and math.abs(screenPoint.X) < 10000000 and math.abs(screenPoint.Y) < 10000000 and math.abs(screenPoint.Z) < 10000000 then
+                                local dx, dy = screenPoint.X - size.X / 2, screenPoint.Y - size.Y / 2
+                                if screenPoint.Z < 0 then dx, dy = -dx, -dy end
+                                if math.abs(dx) + math.abs(dy) < 0.001 then dy = screenPoint.Z < 0 and 1 or -1 end
+                                local halfX, halfY = size.X / 2 - 36, size.Y / 2 - 36
+                                local scaleX = math.abs(dx) > 0.001 and halfX / math.abs(dx) or math.huge
+                                local scaleY = math.abs(dy) > 0.001 and halfY / math.abs(dy) or math.huge
+                                local scale = math.min(scaleX, scaleY)
+                                seen[player] = true
+                                local item = items[player]
+                                if not item then
+                                    local frame = Instance.new("Frame"); frame.Name = "AngelHubPointer"
+                                    frame.BackgroundTransparency = 1; frame.Size = UDim2.fromOffset(60, 48)
+                                    frame.AnchorPoint = Vector2.new(0.5, 0.5); frame.Parent = screenGui
+                                    local arrow = Instance.new("TextLabel"); arrow.Name = "Arrow"; arrow.Text = "▲"
+                                    arrow.Size = UDim2.fromOffset(28, 28); arrow.Position = UDim2.fromOffset(16, 0)
+                                    arrow.BackgroundTransparency = 1; arrow.Font = Enum.Font.SourceSansBold; arrow.TextSize = 26
+                                    arrow.TextStrokeTransparency = 0.2; arrow.Parent = frame
+                                    local label = Instance.new("TextLabel"); label.Name = "Distance"; label.Size = UDim2.fromOffset(60, 18)
+                                    label.Position = UDim2.fromOffset(0, 27); label.BackgroundTransparency = 1
+                                    label.Font = Enum.Font.SourceSansBold; label.TextSize = 13; label.TextStrokeTransparency = 0.2; label.Parent = frame
+                                    item = {frame=frame, arrow=arrow, label=label}; items[player] = item
+                                end
+                                local roleColour = isMM2 and role and V["Role Colours"] and V[role .. " Colour"] or nil
+                                local teamColour = not isMM2 and V["Pointer Team Colours"] and player.Team and player.Team.TeamColor.Color or nil
+                                local colour = roleColour or teamColour or V["Pointer Colour"]
+                                item.frame.Position = UDim2.fromOffset(size.X / 2 + dx * scale, size.Y / 2 + dy * scale)
+                                item.arrow.Rotation = math.deg(math.atan2(dy, dx)) + 90
+                                item.arrow.TextColor3 = colour; item.label.TextColor3 = colour
+                                item.label.Visible = V["Pointer Distance"] == true
+                                item.label.Text = tostring(math.floor(distance + 0.5)) .. " studs"
+                            end
+                        end
+                    end
+                end
+            end
+            for player in pairs(items) do if not seen[player] then remove(player) end end
+        end
+        function pointers.cleanup() pointers.toggle(false) end
+    end
     airWalkStep = airWalk.step
+    pointerStep = pointers.step
+    flyStep = fly.step
     markersStep = markers.step
     playerHealthStep = playerHealth.step
     chamsStep = chams.step
@@ -4218,7 +4463,7 @@ local function installGameplay(screenGui)
     mm2CoinEspStep = coinEsp.step
     mm2NotificationsStep = notifications.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -4237,12 +4482,12 @@ local function installGameplay(screenGui)
                 end
                 local gameplay, collected, ended
                 if value == true and name == "Auto Win" then
-                    if enabled["Auto Farm"] or enabled["Enable Speed"] or enabled["Noclip"] or enabled["Air Walk"] then
-                        old(false); message("Auto Win: disable Auto Farm, Speed, Noclip and Air Walk first"); return false
+                    if enabled["Auto Farm"] or enabled["Enable Speed"] or enabled["Noclip"] or enabled["Air Walk"] or enabled["Enable Fly"] or enabled["Walk Fling"] then
+                        old(false); message("Auto Win: disable Auto Farm, Speed, Noclip, Air Walk, Fly and Walk Fling first"); return false
                     end
                     if not autoWin.canStart() then old(false); message("Auto Win: victory event or safe return unavailable"); return false end
                 end
-                if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip" or name == "Air Walk") then
+                if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip" or name == "Air Walk" or name == "Enable Fly" or name == "Walk Fling") then
                     old(false); message(name .. ": disable Auto Win first"); return false
                 end
                 if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame" then
@@ -4257,6 +4502,26 @@ local function installGameplay(screenGui)
                 end
                 if value == true and name == "Coins Aura" and type(firetouchinterest) ~= "function" then
                     old(false); message("Coins Aura: touch API unavailable"); return false
+                end
+                if value == true and name == "Walk Fling" then
+                    if not run.RenderStepped or not run.Stepped then old(false); message("Walk Fling: physics signals unavailable"); return false end
+                    if enabled["Auto Farm"] or enabled["Air Walk"] or enabled["Enable Fly"] or enabled["Enable Speed"] or enabled["Noclip"] then
+                        old(false); message("Walk Fling: disable Farm, Air Walk, Fly, Speed and Noclip first"); return false
+                    end
+                end
+                if value == true and enabled["Walk Fling"] and (name == "Auto Farm" or name == "Air Walk" or name == "Enable Fly" or name == "Enable Speed" or name == "Noclip") then
+                    old(false); message(name .. ": disable Walk Fling first"); return false
+                end
+                if value == true and name == "Enable Fly" then
+                    if V["Fly Method"] ~= "Velocity" or V["Fly Float"] ~= "Velocity" then
+                        old(false); message("Fly: only Velocity method and float are implemented"); return false
+                    end
+                    if enabled["Auto Farm"] or enabled["Air Walk"] or enabled["Enable Speed"] then
+                        old(false); message("Fly: disable Auto Farm, Air Walk and Speed first"); return false
+                    end
+                end
+                if value == true and enabled["Enable Fly"] and (name == "Auto Farm" or name == "Air Walk" or name == "Enable Speed") then
+                    old(false); message(name .. ": disable Fly first"); return false
                 end
                 if value == true and name == "Air Walk" and (enabled["Auto Farm"] or enabled["Noclip"]) then
                     old(false); message("Air Walk: disable Auto Farm and Noclip first"); return false
@@ -4277,7 +4542,7 @@ local function installGameplay(screenGui)
                 if value == true and enabled["Auto Farm"] and (name == "Enable Speed" or (name == "Noclip" and V["Farm Mode"] == "Below")) then
                     AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: conflicting module")
                 end
-                if value == true and (name == "Auto Win" or name == "Auto Farm" or name == "Air Walk") then markers.cancelTravel() end
+                if value == true and (name == "Auto Win" or name == "Auto Farm" or name == "Air Walk" or name == "Enable Fly" or name == "Walk Fling") then markers.cancelTravel() end
                 local shootingBefore = shooter.active()
                 old(value == true); enabled[name] = value == true
                 if name == "Auto Farm" then
@@ -4296,9 +4561,12 @@ local function installGameplay(screenGui)
                 if name == "Gun Aura" or name == "Auto Get Gun" then gunAssist.toggle() end
                 if name == "Coin ESP" then coinEsp.toggle(value == true) end
                 if name == "Air Walk" then airWalk.toggle(value == true) end
+                if name == "Enable Fly" then fly.toggle(value == true) end
+                if name == "Walk Fling" then walkFling.cleanup(); if value then message("Walk Fling: high-power contact physics") end end
                 if name == "Chams" then chams.toggle(value == true) end
                 if name == "Nametags" then nametags.toggle(value == true) end
                 if name == "HP Players" then playerHealth.toggle(value == true) end
+                if name == "Player Pointers" then pointers.toggle(value == true) end
                 if name == "Insta Kill As Sheriff" and value then message("Auto Win Sheriff: basic CFrame; separate WallCheck option") end
                 if shootingBefore ~= shooter.active() then
                     if shooter.active() then shooter.start() else shooter.stop() end
@@ -4368,6 +4636,15 @@ local function installGameplay(screenGui)
             end
         end
     end
+    for _, name in ipairs({"Fly Method", "Fly Float"}) do
+        local old = AngelHub.setters[name]
+        if old then AngelHub.setters[name] = function(value)
+            old(value)
+            if enabled["Enable Fly"] and V[name] ~= "Velocity" then
+                AngelHub.setters["Enable Fly"](false); message("Fly stopped: unsupported " .. name)
+            end
+        end end
+    end
     -- Unsupported sub-options must not imply that these paths work.
     for _, name in ipairs({"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}) do
         local old = AngelHub.setters[name]
@@ -4428,6 +4705,7 @@ local function installGameplay(screenGui)
     end
     listen(userInputService.InputBegan, function(input, processed)
         markers.input(input, processed)
+        fly.inputBegan(input, processed)
         airWalk.inputBegan(input, processed)
         if not enabled["Infinite Jump"] or typing() then return end
         if (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA) and not processed then
@@ -4437,13 +4715,14 @@ local function installGameplay(screenGui)
         end
     end)
     listen(userInputService.InputEnded, function(input)
+        fly.inputEnded(input)
         airWalk.inputEnded(input)
         if (jumpKey and input.KeyCode == jumpKey) or (jumpTouch and input == jumpTouch) then
             jumpHeld, jumpTouch, jumpKey = false, nil, nil
         end
     end)
-    listen(userInputService.WindowFocusReleased, function() airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
-    listen(userInputService.TextBoxFocused, function() airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    listen(userInputService.WindowFocusReleased, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    listen(userInputService.TextBoxFocused, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
@@ -4498,9 +4777,21 @@ local function installGameplay(screenGui)
         local velocity = root.AssemblyLinearVelocity
         root.AssemblyLinearVelocity = Vector3.new(velocity.X, V["Infinite Jump Power"], velocity.Z)
     end)
+    if run.RenderStepped and run.Stepped then
+        listen(run.RenderStepped, function() walkFling.render() end)
+        listen(run.Stepped, function() walkFling.stepped() end)
+    end
     listen(run.Heartbeat, function(dt)
         local ok, err = pcall(update, dt)
         if not ok and not AngelHub.runtimeError then AngelHub.runtimeError = true; warn("Angel Hub gameplay error: " .. tostring(err)) end
+        if enabled["Walk Fling"] then
+            local character, humanoid, root = characterParts()
+            local flingOk, flingError = pcall(walkFling.heartbeat, character, humanoid, root)
+            if not flingOk then
+                warn("Angel Hub Walk Fling error: " .. tostring(flingError))
+                AngelHub.setters["Walk Fling"](false); message("Walk Fling stopped: runtime error")
+            end
+        end
     end)
     screenGui.Destroying:Connect(function()
         stopped = true
@@ -5017,7 +5308,6 @@ local function initializeScript()
 	addSlider(extraRight, "Speed Value", 1, 250, 16, 0)
 	addSlider(extraRight, "Speed Response", 0.2, 2, 1, 2)
 	addSlider(extraRight, "Speed Braking", 0, 1, 0.2, 2)
-	addSlider(extraRight, "Speed Vehicle Multiplier", 0.5, 3, 1, 2)
 	addToggle(extraRight, "Speed Keep Vertical", nil, true)
 	addToggle(extraRight, "Speed Wall Check", nil, true)
 	addSlider(extraRight, "Speed Burst Delay", 0.05, 1, 0.1, 2)
@@ -5381,7 +5671,7 @@ local function initializeScript()
         end
 		for pass = 1, 2 do
 		for name, value in data do
-            if name == "Marker Points by Place" then continue end
+            if name == "Marker Points by Place" or (name == "Walk Fling" and value == true) then continue end
 			if (AngelHub.moduleNames[name] == true) ~= (pass == 2) then continue end
 			local setter = AngelHub.setters[name]
 			if not setter then
