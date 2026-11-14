@@ -1,0 +1,332 @@
+MM2 — EVIDENCIA PARA REVISAR LEANSHOOT (NO ES UN SCRIPT)
+Limite solicitado: 19.000 bytes. Objetivo: ayudar a corregir el LeanShoot que el usuario envio; distinguir evidencia, codigo del menu y cosas no verificadas. No prometer 100% de aciertos. No pedir ejecutar Gun Probe ni instalar hooks globales para diagnosticar: Gun Probe produjo BAC-1583 y Delta ya se cerro con otro hook. No se ejecuto nada para este informe.
+
+FUENTES Y ALCANCE
+A) TestingStuff, snapshot commit b0da7a819bed03c1d7ea23132465eac600f05417, place, source.rbxlx: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/place%2C%20source.rbxlx
+B) Captura Cobalt: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/Shoot..txt
+C) Menu de referencia: https://github.com/XzAngel19/ARandomMenu/tree/f7de1b3ee13ce8783a4afb8f39b0426912ba5733/src/games/MM2 (build v199-20261108-aim-camera-fire).
+D) Datos historicos: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/MM2_Trajectory_Calibration.json
+E) Registro anterior: https://github.com/XzAngel19/TestingStuff/blob/b0da7a819bed03c1d7ea23132465eac600f05417/Place_142823291_Game_Learning.json
+Juego: Murder Mystery 2, placeId 142823291. El rbxlx es una captura guardada/decompilada, NO un inventario vivo del servidor; pudo cambiar o faltar instancias dinamicas. Source del cliente no demuestra validacion/daño del servidor.
+
+EVIDENCIA DE SHOOT Y REMOTES (no equivalen a hits)
+- B registra Event:FireServer(CFrame, CFrame); Function Info identifica src/games/MM2/Blatant/Shoot.lua:fireGunAtTarget. Es una llamada del menu observada, NO demostracion independiente del protocolo nativo o de daño aceptado.
+- B usa getnilinstances y GetDebugId para un evento llamado Shoot. La ruta nil y el DebugId son de esa captura; NO fijarlos como ID universal.
+- C busca Shoot directamente bajo la Tool Gun equipada y exige RemoteEvent; realiza FireServer(originCFrame, endCFrame). Eso es implementacion del menu, no garantia de que todos los servidores la acepten.
+- A contiene ReplicatedStorage.ClientServices.WeaponService.GunFired (RemoteEvent) y WeaponEvents.GunBeam (RemoteEvent). El LocalScript WeaponVisuals.GunBeams conecta GunFired.OnClientEvent a CreateBeam. Es señal/visual observada, NO prueba individual de daño o muerte.
+- A contiene Remotes.Gameplay.GetCurrentPlayerData (RemoteFunction), PlayerDataChanged, RoundStart, GameOver y otras señales de ronda. Existencia no demuestra formato, permisos ni autoridad. No inferir Murderer solo por Knife visible: roles y herramientas pueden no replicarse o estar desactualizados.
+- B muestra ReplicatedStorage.Remotes.Extras.ReplicateToy:InvokeServer("FakeBomb") y un Remote bajo FakeBomb, ademas de ejemplos firesignal para TrapHitLocal/TrapHitVisual. No son el disparo Gun; no invocarlos por este diagnostico.
+
+HOOKS Y COMPATIBILIDAD
+B muestra ejemplos generados por Cobalt usando hookmetamethod(game,"__namecall"), getnamecallmethod, hookfunction y getnilinstances; tambien firesignal. Son APIs del executor / ejemplos de captura, no remotes de MM2, ni garantia de disponibilidad o seguridad en Delta. No copiar hooks a ciegas. El menu C usa hookmetamethod, getnamecallmethod y checkcaller en PC para redirigir el FireServer de la Gun; su propio codigo difiere trabajo con task.defer y conserva argumentos/fallback. Esto no prueba que funcione en todos los ejecutores ni confirma daño. En movil se mantiene otra ruta; no tocar camara para Silent ni asumir que E dispara un clic nativo.
+
+LEANSHOOT ENVIADO POR EL USUARIO
+- Error concreto: define sampleplayers pero conecta samplePlayers. Corregir al mismo nombre; Luau distingue mayusculas. No asumir que escapes \, &lt; o &gt; presentes en chat estan en el archivo real.
+- Dispara por E o boton tactil mediante FireServer, no redirige automaticamente clic nativo. No ofrece modos separados ni Calibration. Si quiere silent nativo, definir ruta PC/movil y soporte antes de modificar hooks.
+- WallCheck desde Head no es necesariamente el origen del arma. C prioriza HumanoidRootPart.GunRaycastAttachment.WorldCFrame, despues Gun.Muzzle/Handle, RightHand/Right Arm/Head y ultimo root/camara. Son fallbacks del menu, no prueba universal. Validar tipos y que la Tool/Remote sigan vigentes.
+- Su raycast devuelve clear si alcanza cuerpo actual; este puede ocultar pared antes del endpoint predicho. Revisar segmento fisico arma→endpoint, personaje local, target actual, otras personas, partes transparentes y WeaponPassthrough. No afirmar el resultado del servidor a partir del cliente. A salta partes con Transparency==1 en la mira; C usa tambien una pasada conservadora para transparentes solidas. Limite de rayos no garantiza igualdad.
+- Su lead = Data Ping/1000 + 0.1 s; solo horizontal y dos muestras. C usa interpolacion 1/40 s, muestras/historia, RTT suavizado y echo cuando disponible; la ruta/factores son politica implementada, no medida autoritativa del rewind. El cuello Data Ping dentro de __namecall causo fallos reportados en versiones viejas; no hacer lecturas ni raycasts dentro del hook. Si no hay datos/funciones, fallback prudente; no inventar hit rate.
+- Cooldown 0.25 s y deteccion Knife del script son decisiones arbitrarias, no contrato servidor. EquipTool, gethui, estado de vida/ronda, target y remote pueden faltar. Respawn, 0 jugadores, input procesado, reinyeccion y limpieza requieren manejo; evitar bucles de 60 FPS y hooks activos por defecto. Confirmacion GunFired, trayectoria/impacto y daño/muerte son estados distintos.
+
+CALIBRACION: D es schema 4, build v111, guardada 2026-10-23, no es v199. Sesion: 6 intentos, 6 confirmaciones, 3 impactos al objetivo; estimador historico confirmedShots=142 y gunAcceptanceMs≈293.50 ms. Son metricas del archivo, no RTT/latencia aplicable a todos ni prueba de precision v199. E (v18): 93 intentos, 29 confirmaciones, 7 impactos; 64 sin confirmacion no prueban fallo. Datos e informe separados de comportamiento real actual.
+
+SOLICITUD PARA EL MODELO
+1. Detectar errores de sintaxis/alcance (incluido samplePlayers) y no inventar datos.
+2. Mantener el script compacto y adaptable a GUI, sin instalaciones ni hooks innecesarios; hacer PC/movil y rutas/limitaciones explicitas.
+3. Separar prediccion, disparo, WallCheck, confirmacion y daño. Proponer pruebas con mocks y pasos en vivo solo si el usuario acepta; no afirmar servidor verificado.
+4. No considerar la lista siguiente una API completa ni usar remotes no relacionados por sus nombres. RemoteEvent/RemoteFunction son red; BindableEvent/BindableFunction son eventos/funciones locales, NO remotes de red.
+
+WEAPONSERVICE DEL SNAPSHOT A (decompilado; texto completo de cliente, no servidor):
+-- Saved by UniversalSynSaveInstance (Join to Copy Games) https://discord.gg/wx4ThpAsmw
+
+-- Decompiled with Potassium's decompiler.
+
+local u1 = {};
+local l__CollectionService__1 = game:GetService("CollectionService");
+local l__UserInputService__2 = game:GetService("UserInputService");
+u1.KnifeThrown = Instance.new("BindableEvent");
+u1.GunFired = script:WaitForChild("GunFired");
+function u1.ThrowKnife(_) --[[ Line: 9 ]]
+    -- upvalues: u1 (copy)
+    u1.KnifeThrown:Fire();
+end;
+local function u4() --[[ Line: 14 ]]
+    -- upvalues: l__CollectionService__1 (copy)
+    local v2 = { game.Players.LocalPlayer.Character };
+    for _, v3 in l__CollectionService__1:GetTagged("WeaponPassthrough") do
+        table.insert(v2, v3);
+    end;
+    return v2;
+end;
+local function u9(p5) --[[ Line: 24 ]]
+    -- upvalues: u4 (copy)
+    local v6 = RaycastParams.new();
+    local v7 = u4();
+    v6.FilterDescendantsInstances = v7;
+    local v8;
+    while true do
+        v8 = workspace:Raycast(p5.Origin, p5.Direction, v6);
+        if not v8 then
+            break;
+        end;
+        local l__Instance__3 = v8.Instance;
+        if not l__Instance__3 or l__Instance__3.Transparency ~= 1 then
+            break;
+        end;
+        table.insert(v7, l__Instance__3);
+        v6.FilterDescendantsInstances = v7;
+    end;
+    return v8;
+end;
+function u1.IsMouseLockEnabled(_) --[[ Line: 51 ]]
+    local v10 = game.Players.LocalPlayer.PlayerScripts:FindFirstChild("MouseLock");
+    if v10 then
+        return v10:GetAttribute("Enabled") == true;
+    else
+        return false;
+    end;
+end;
+function u1.GetTargetPosition(_, p11, p12) --[[ Line: 61 ]]
+    -- upvalues: u9 (copy)
+    local _ = game.Players.LocalPlayer;
+    local v13 = workspace.CurrentCamera:ViewportPointToRay(p11, p12);
+    local v14 = Ray.new(v13.Origin, v13.Direction * 300);
+    local v15 = u9(v14);
+    if v15 and v15.Position then
+        return CFrame.new(v15.Position);
+    else
+        return CFrame.new(v14.Origin + v14.Direction);
+    end;
+end;
+function u1.GetMouseTargetCFrame(_) --[[ Line: 79 ]]
+    -- upvalues: l__UserInputService__2 (copy), u9 (copy)
+    local l__LocalPlayer__4 = game.Players.LocalPlayer;
+    local v16 = l__UserInputService__2:GetMouseLocation();
+    local l__X__5 = v16.X;
+    local l__Y__6 = v16.Y;
+    local v17 = l__LocalPlayer__4.PlayerScripts:FindFirstChild("MouseLock");
+    if v17 and (v17:GetAttribute("Enabled") == true and l__UserInputService__2.PreferredInput ~= Enum.PreferredInput.Gamepad) then
+        local l__ViewportSize__7 = workspace.CurrentCamera.ViewportSize;
+        l__X__5 = l__ViewportSize__7.X / 2;
+        l__Y__6 = l__ViewportSize__7.Y / 2;
+    end;
+    local v18 = workspace.CurrentCamera:ViewportPointToRay(l__X__5, l__Y__6);
+    local v19 = Ray.new(v18.Origin, v18.Direction * 300);
+    local v20 = u9(v19);
+    if v20 and v20.Position then
+        return CFrame.new(v20.Position);
+    else
+        return CFrame.new(v19.Origin + v19.Direction);
+    end;
+end;
+return u1;
+
+INVENTARIO ESTATICO COMPLETO EXTRAIDO DEL SNAPSHOT A
+RE=RemoteEvent; RF=RemoteFunction; BE=BindableEvent; BF=BindableFunction.
+RS=ReplicatedStorage; RFirst=ReplicatedFirst; SP=StarterPlayer; WS=Workspace.
+205 instancias: 115 RE, 53 RF, 30 BE, 7 BF. No incluye instancias dinamicas ausentes en el snapshot ni prueba su disponibilidad actual.
+BE WS.ServerVersion.Update
+RE RFirst.LoadingUpdate
+RE RFirst.ClientLoaded
+RE RS.Trade.GetRequest
+RE RS.Trade.AcceptRequest
+RE RS.Trade.DeclineRequest
+RE RS.Trade.AcceptTrade
+RE RS.Trade.DeclineTrade
+RE RS.Trade.StartTrade
+RE RS.Trade.OfferItem
+RE RS.Trade.UpdateOffers
+RE RS.Trade.RemoveOffer
+RE RS.Trade.EndTrade
+RE RS.Trade.CancelRequest
+RE RS.Trade.CompleteTrade
+RF RS.Trade.SendRequest
+RE RS.Trade.UpdateTrade
+RE RS.Trade.CancelAccept
+RF RS.Trade.GetTradeStatus
+RE RS.Trade.SetRequestsEnabled
+RE RS.Trade.RequestSent
+RE RS.UpdateData
+BE RS.Insight.RoundPlayed
+BE RS.Insight.CoinCollected
+BF RS.GetDataServer
+RE RS.UpdateData2
+BE RS.UpdateDataClient
+BF RS.GetPlayerData_REMOTE
+RF RS.GetSyncData
+BF RS.GetSyncDataServer
+BE RS.ServerMessage
+RE RS.ChatMessage
+RE RS.ItemGift
+RE RS.WeaponEvents.GunBeam
+RE RS.PlayerAdded
+RF RS.Remotes.Inventory.Craft
+RE RS.Remotes.Inventory.Equip
+RF RS.Remotes.Inventory.Recycle
+RE RS.Remotes.Inventory.BuySlot
+RE RS.Remotes.Inventory.Unequip
+RF RS.Remotes.Inventory.Salvage
+RE RS.Remotes.Inventory.UpdateLeaderboard
+RF RS.Remotes.Inventory.GetLeaderboardData
+RE RS.Remotes.Inventory.ToggleDeathEffects
+RE RS.Remotes.Inventory.GiveXP
+RE RS.Remotes.Inventory.Prestige
+BE RS.Remotes.Inventory.UpdateSalvageClient
+RE RS.Remotes.Inventory.SaveSong
+RE RS.Remotes.Inventory.RenamePet
+RE RS.Remotes.Inventory.RemoveSong
+RE RS.Remotes.Inventory.PlaySong
+RF RS.Remotes.Inventory.GetProfileData
+BE RS.Remotes.Inventory.ProfileDataChanged
+RE RS.Remotes.Inventory.ChangeProfileData
+RE RS.Remotes.Inventory.ChangeInventoryItem
+BE RS.Remotes.Inventory.InventoryDataChanged
+RE RS.Remotes.Inventory.RequestCraft
+RE RS.Remotes.Inventory.ItemReceived
+RF RS.Remotes.Shop.OpenCrate
+RF RS.Remotes.Shop.BuyItem
+BE RS.Remotes.Shop.BoxController
+BE RS.Remotes.Shop.EggController
+RE RS.Remotes.Shop.Buy
+RE RS.Remotes.Shop.CashSound
+RE RS.Remotes.Shop.CrateComplete
+RE RS.Remotes.Shop.GetElite
+RE RS.Remotes.Shop.GetPack
+RE RS.Remotes.Shop.GetRadio
+RE RS.Remotes.Shop.PurchaseProduct
+RE RS.Remotes.Shop.PurchaseWeaponProduct
+RE RS.Remotes.Shop.PurchaseWeaponPack
+RF RS.Remotes.Shop.BuyItemNew
+BE RS.Remotes.Shop.NewItemsClaimed
+BE RS.Remotes.Shop.NewItemReceived
+RE RS.Remotes.Shop.ProductPurchaseComplete
+RE RS.Remotes.Gameplay.Stealth
+RE RS.Remotes.Gameplay.FakeGun
+BE RS.Remotes.Gameplay.KnifeKill
+BE RS.Remotes.Gameplay.GunKill
+RE RS.Remotes.Gameplay.VictoryScreen
+RE RS.Remotes.Gameplay.RoundEndFade
+RF RS.Remotes.Gameplay.GetLastRoundRewards
+RE RS.Remotes.Gameplay.ActivatePerk
+RE RS.Remotes.Gameplay.ChangeTarget
+RE RS.Remotes.Gameplay.Fade
+RE RS.Remotes.Gameplay.GameOver
+RE RS.Remotes.Gameplay.GetCoin
+RE RS.Remotes.Gameplay.LoadingMap
+RE RS.Remotes.Gameplay.SpecialRound
+RE RS.Remotes.Gameplay.SpecialXPEvent
+RE RS.Remotes.Gameplay.KillEvent
+RE RS.Remotes.Gameplay.RoundStart
+RE RS.Remotes.Gameplay.RoleSelect
+RE RS.Remotes.Gameplay.CoinsStarted
+RE RS.Remotes.Gameplay.CoinCollected
+RE RS.Remotes.Gameplay.ShowRoleSelect
+RE RS.Remotes.Gameplay.PlayerDataChanged
+RF RS.Remotes.Gameplay.GetCurrentPlayerData
+RE RS.Remotes.Gameplay.TeleportToPart
+RE RS.Remotes.Gameplay.ShowRoleSelectNew
+RE RS.Remotes.Gameplay.ShowTeammates
+RF RS.Remotes.Gameplay.EliminatePlayer
+RE RS.Remotes.Gameplay.GiveWeapon
+RF RS.Remotes.Misc.GetLeaderboardData
+RE RS.Remotes.Misc.UpdateLeaderboard
+RF RS.Remotes.Misc.GetPlayerProfile
+BE RS.Remotes.Misc.PlayEmote
+RF RS.Remotes.Misc.CheckPrimeGaming
+BE RS.Remotes.Misc.WhL
+RE RS.Remotes.CustomGames.Started1v1
+RE RS.Remotes.CustomGames.Waiting1v1
+RE RS.Remotes.CustomGames.Cancelled1v1
+RE RS.Remotes.CustomGames.Clear1v1
+RF RS.Remotes.CustomGames.GetRanks
+RE RS.Remotes.CustomGames.Join1v1Queue
+RE RS.Remotes.CustomGames.Display1v1Queue
+RE RS.Remotes.CustomGames.Waiting1v1Queue
+RE RS.Remotes.CustomGames.Leave1v1Queue
+RE RS.Remotes.CustomGames.Update1v1Queue
+RF RS.Remotes.CustomGames.Get1v1Queue
+RE RS.Remotes.CustomGames.Hide1v1Queue
+RE RS.Remotes.CustomGames.JoinGoldServer
+RE RS.Remotes.CustomGames.UpdateServerSettings
+RE RS.Remotes.CustomGames.Start1v1
+RE RS.Remotes.CustomGames.SubmitDuel
+RE RS.Remotes.CustomGames.DuelStarted
+RF RS.Remotes.CustomGames.CanStartDuels
+RE RS.Remotes.CustomGames.DuelFinished
+RE RS.Remotes.CustomGames.DuelKill
+RF RS.Remotes.Extras.AmElite
+RF RS.Remotes.Extras.CheckCode
+RF RS.Remotes.Extras.CheckInventory
+BF RS.Remotes.Extras.CheckKey
+RF RS.Remotes.Extras.G
+RF RS.Remotes.Extras.GetChance
+RF RS.Remotes.Extras.GetData
+RF RS.Remotes.Extras.GetData2
+RF RS.Remotes.Extras.GetFullInventory
+RF RS.Remotes.Extras.GetItemData
+RF RS.Remotes.Extras.GetLeaderboard
+RF RS.Remotes.Extras.GetPlayerData
+RF RS.Remotes.Extras.GetPlayerLevel
+RF RS.Remotes.Extras.GetQueue
+RF RS.Remotes.Extras.GetServerSettings
+RF RS.Remotes.Extras.GetTimer
+RF RS.Remotes.Extras.GetVersion
+RF RS.Remotes.Extras.HasRadio
+RF RS.Remotes.Extras.IsVIPServer
+RF RS.Remotes.Extras.M
+RF RS.Remotes.Extras.RedeemCode
+RF RS.Remotes.Extras.ReplicateToy
+RF RS.Remotes.Extras.SearchSongs
+RF RS.Remotes.Extras.SetMap
+RF RS.Remotes.Extras.SetMurderer
+RF RS.Remotes.Extras.SetSheriff
+RE RS.Remotes.Extras.Admin
+RE RS.Remotes.Extras.ChangeGameMode
+RE RS.Remotes.Extras.ChangeLastDevice
+RE RS.Remotes.Extras.LegacyChatted
+RE RS.Remotes.Extras.Follow
+RE RS.Remotes.Extras.IsXbox
+RE RS.Remotes.Extras.LevelUp
+RF RS.Remotes.Extras.RequestTeleport
+RE RS.Remotes.Extras.ChangeServerSetting
+RF RS.Remotes.Extras.CanChangeServerSettings
+RE RS.Remotes.Extras.ServerSettingsUpdated
+RF RS.Remotes.Extras.CheckPermission
+RF RS.Remotes.Extras.GetCreatorStatus
+RF RS.Remotes.Extras.GetAvailableCommands
+RE RS.Remotes.Extras.LoadedCompletely
+RF RS.Remotes.Events.GetEvents
+RE RS.Remotes.Events.EventChanged
+BE RS.Remotes.Events.EventStarted
+RE RS.Remotes.Events.EventEnded
+RE RS.UpdateData3
+RE RS.TrapSystem.TrapHitLocal
+RE RS.TrapSystem.PlaceTrapLocal
+RE RS.TrapSystem.TrapNotification
+RE RS.TrapSystem.PlaceTrap-E
+RE RS.TrapSystem.TrapReplicate
+RE RS.TrapSystem.TrapHitVisual
+RF RS.TrapSystem.PlaceTrap
+BE RS.Modules.SpectateService.SpectateTargetChanged
+BE RS.Modules.SpectateService.SpectateCancelled
+BE RS.Modules.SpectateService.SpectateStarted
+BE RS.Modules.CurrentRoundClient.PlayerDataChanged
+BE RS.Modules.SpectateService1.SpectateTargetChanged
+BE RS.Modules.SpectateService1.SpectateCancelled
+BE RS.Modules.SpectateService1.SpectateStarted
+BE RS.ClientServices.EquipService.EquippedChanged
+BE RS.ClientServices.PerkService.PerkActivated
+RE RS.ClientServices.WeaponService.GunFired
+RE RS.ClientTweenEvents.StopClientTween
+RE RS.ClientTweenEvents.ClearTweens
+RE RS.ClientTweenEvents.CreateClientTween
+RE RS.ClientTweenEvents.PlayClientTween
+RF RS.ClientTweenEvents.GetClientTween
+RE RS.SharedServices.EventInfoService1.EventList.Easter2025.Remotes.ClaimTrackReward
+BF RS.GetPlayerImage
+BE SP.StarterPlayerScripts.TextChatServiceClient.SystemMessage
+BF SP.StarterPlayerScripts.MouseLock
+BE SP.StarterPlayerScripts.MouseLock.MouseLock
+BE SP.StarterPlayerScripts.MouseLock.MouseLockToggled
+BE SP.StarterPlayerScripts.WeaponVisuals.ChromaScript.ToggleChromas
+BF SP.StarterCharacterScripts.Animate.PlayEmote
