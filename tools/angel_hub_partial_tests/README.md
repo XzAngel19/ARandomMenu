@@ -27,12 +27,14 @@ Los marcadores se guardan por PlaceId dentro de la configuración del menú: hay
 
 ## Inventario del menú MM2
 
-Se cuentan los controles `addModule` del menú MM2, incluidas las cuatro opciones de Auto Win, pero no sus sliders, ciclos, toggles auxiliares ni botones. Hay **49** controles: **36 con alguna lógica conectada** y **13 bloqueados**. Esto no significa que los 36 estén completos: Auto Farm, Auto Win, sus ataques, Auto Shoot, Fly, Speed, Chams y Zoom tienen modos u opciones pendientes, y ninguno se ha verificado en Roblox.
+Se cuentan los controles `addModule` del menú MM2, incluidas las cuatro opciones de Auto Win, pero no sus sliders, ciclos, toggles auxiliares ni botones. Hay **49** controles: **37 con alguna lógica conectada** y **12 bloqueados**. Esto no significa que los 36 estén completos: Auto Farm, Auto Win, sus ataques, Auto Shoot, Fly, Speed, Chams y Zoom tienen modos u opciones pendientes, y ninguno se ha verificado en Roblox.
 
-Los 13 bloqueados son: Gun Aimbot, Auto Knife Throw, Auto Fling Selected Target, Player Shield, Impact Shield, Fling Sheriff And Get Gun, Fling Murder If Dead, Auto Blurt, Wall Crawl State, Air Swim, Player ESP, Disguise Character y FreeCam.
+Los 12 bloqueados son: Gun Aimbot, Auto Knife Throw, Auto Fling Selected Target, Player Shield, Impact Shield, Fling Sheriff And Get Gun, Fling Murder If Dead, Wall Crawl State, Air Swim, Player ESP, Disguise Character y FreeCam.
 
-Además hay 28 botones: 20 conectados y 8 pendientes (Kill All, Fling Murderer, Fling Sheriff, Fling All Innocents, Fling, Blurt Roles, Start Calibration y Open Calibration). Hay 27 opciones auxiliares expresamente bloqueadas; pueden existir otras opciones sin efecto bajo módulos pendientes. La prueba `run.cjs` comprueba el inventario para evitar desactualizarlo sin revisar.
+Además hay 26 botones: 21 conectados y 5 pendientes (Kill All, Fling Murderer, Fling Sheriff, Fling All Innocents y Fling). Hay 26 opciones auxiliares expresamente bloqueadas; pueden existir otras opciones sin efecto bajo módulos pendientes. La prueba `run.cjs` comprueba el inventario para evitar desactualizarlo sin revisar.
 
 Fly admite solo método y flotación Velocity, desplazamiento del humanoide, teclas configurables y botones móviles, velocidades, respuesta, WallCheck y orientación opcional. Otros métodos y flotaciones están bloqueados. Walk Fling usa pulso fijo de 30000 basado en la referencia, restaura velocidad/colisiones y nunca se activa desde una configuración guardada; su efecto real y seguridad dependen de las físicas del juego. Player Pointers muestra indicadores de dirección/distancia, respeta rango, equipo y colores disponibles. Todo sigue sin prueba en Roblox.
 
 Chams usa los colores de rol compartidos para relleno y contorno; sin rol conocido usa blanco, o el color del equipo fuera de MM2 si está activado. La caja de Nametags mide 200 × 30 y conserva el control existente de tamaño de texto.
+
+Calibration y sus controles se retiraron temporalmente. La tecla de menú predeterminada RightShift se acepta aunque Roblox marque la entrada procesada; se ignora al escribir y se respeta la captura de keybinds. Auto Blurt y Blurt Roles solicitan envío al chat público, con demora, roles invertidos opcionales y repetición opcional al cambiar; solo usan roles disponibles mientras el jugador está en el mapa. El módulo no se activa por configuración guardada. Puede haber filtrado o rate limits, una solicitud ya enviada no se puede cancelar y la recepción no está garantizada. Pruebas con mocks, no en Roblox.

@@ -37,7 +37,7 @@ local gui=Instance.new('PlayerGui');gui.Name='PlayerGui'
 local player=Instance.new('Player');gui.Parent=player;player.Character=nil;player.Idled=event()
 local players={LocalPlayer=player}
 local uis={TouchEnabled=false,KeyboardEnabled=true,InputBegan=event(),InputChanged=event(),InputEnded=event(),JumpRequest=event(),WindowFocusReleased=event(),TextBoxFocused=event()}
-function uis:GetFocusedTextBox()return nil end
+function uis:GetFocusedTextBox()return self.focused end
 local tw={};function tw:Create(object,info,goal)local t={Completed=event()};function t:Play()for k,v in goal do object[k]=v end end;return t end
 local lighting={Brightness=2,ClockTime=12};local run={Heartbeat=event()}
 workspace=Instance.new('Workspace');workspace.Gravity=196.2;workspace.DescendantAdded=event()

@@ -18,22 +18,22 @@ const readTest = p => read(path.join(__dirname, p));
   const supported = new Set([...supportBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]));
   const pending = moduleNames.filter(name => !supported.has(name));
   const expectedPending = ['Gun Aimbot', 'Auto Knife Throw', 'Auto Fling Selected Target', 'Player Shield', 'Impact Shield',
-    'Fling Sheriff And Get Gun', 'Fling Murder If Dead', 'Auto Blurt', 'Wall Crawl State', 'Air Swim', 'Player ESP', 'Disguise Character', 'FreeCam'];
+    'Fling Sheriff And Get Gun', 'Fling Murder If Dead', 'Wall Crawl State', 'Air Swim', 'Player ESP', 'Disguise Character', 'FreeCam'];
   assert.equal(moduleNames.length, 49); assert.equal(new Set(moduleNames).size, 49);
-  assert.equal(moduleNames.filter(name => supported.has(name)).length, 36);
+  assert.equal(moduleNames.filter(name => supported.has(name)).length, 37);
   assert.deepEqual(pending, expectedPending);
   assert.equal([...supported].filter(name => !moduleNames.includes(name)).length, 0);
   const buttons = [...file.matchAll(/addButton\([^\n]+?,\s*"([^"]+)"/g)].map(match => match[1]);
-  const pendingButtons = ['Kill All', 'Fling Murderer', 'Fling Sheriff', 'Fling All Innocents', 'Fling', 'Blurt Roles', 'Start Calibration', 'Open Calibration'];
-  assert.equal(buttons.length, 28); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 8);
+  const pendingButtons = ['Kill All', 'Fling Murderer', 'Fling Sheriff', 'Fling All Innocents', 'Fling'];
+  assert.equal(buttons.length, 26); assert.equal(pendingButtons.filter(name => buttons.includes(name)).length, 5);
   const boundActions = new Set([...file.matchAll(/AngelHub\.actions\["([^"]+)"\]\s*=/g)].map(match => match[1]));
   for (const name of ['High Jump', 'Long Jump', 'Create', 'Load', 'Save', 'Rejoin Server', 'Reset Settings', 'Unload']) boundActions.add(name);
   for (const name of buttons) assert.equal(boundActions.has(name), !pendingButtons.includes(name), `Action status: ${name}`);
   const blockedBlock = file.slice(file.indexOf('local UNIMPLEMENTED_TOGGLES ='), file.indexOf('local function addToggle('));
   const blockedOptions = [...blockedBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]);
-  assert.equal(blockedOptions.length, 24);
+  assert.equal(blockedOptions.length, 23);
   assert.ok(file.includes('{"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}'));
-  console.log(`Inventory: ${moduleNames.length} module switches, 36 connected, ${pending.length} blocked; 28 buttons, 20 connected, 8 pending; 27 explicitly blocked options`);
+  console.log(`Inventory: ${moduleNames.length} module switches, 37 connected, ${pending.length} blocked; 26 buttons, 21 connected, 5 pending; 26 explicitly blocked options`);
   const start = file.indexOf('local function installGameplay(screenGui)');
   const end = file.indexOf('\nlocal function initializeScript()', start);
   if (start < 0 || end < 0) throw new Error('Gameplay source boundaries not found');
@@ -75,6 +75,8 @@ const readTest = p => read(path.join(__dirname, p));
   nametagsLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('nametags-checks.luau'));
   const hpLua = await Lua.create({ sandbox: true });
   hpLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('hp-checks.luau'));
+  const blurtLua = await Lua.create({ sandbox: true });
+  blurtLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('blurt-checks.luau'));
   const notificationYieldLua = await Lua.create({ sandbox: true });
   notificationYieldLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('notifications-yield-checks.luau'));
   const markersLua = await Lua.create({ sandbox: true });
@@ -97,6 +99,21 @@ const readTest = p => read(path.join(__dirname, p));
   guiLua.execute(readTest('gui-mock.luau') + '\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed to initialize")
 local hub = shared.AngelHub
+assert(hub.values["Menu Keybind"] == "RightShift")
+assert(hub.values["Don't Show Again"] == nil and hub.actions["Start Calibration"] == nil and hub.actions["Open Calibration"] == nil)
+for _,card in ipairs(hub.searchables) do assert(card.Name ~= "Start Calibration" and card.Name ~= "Open Calibration" and card.Name ~= "Don't Show Again") end
+local keyboard = Enum.UserInputType.Keyboard
+local shift = {UserInputType=keyboard, KeyCode=Enum.KeyCode.RightShift}
+hub.mainWindow.Visible = true
+local before = hub.mainWindow.Visible
+services.UserInputService.InputBegan:Fire(shift, true); assert(hub.mainWindow.Visible ~= before)
+services.UserInputService.InputBegan:Fire(shift, false); assert(hub.mainWindow.Visible == before)
+services.UserInputService.focused = {}; services.UserInputService.InputBegan:Fire(shift, true); assert(hub.mainWindow.Visible == before); services.UserInputService.focused = nil
+local listened=false; hub.listening=function(k) listened=(k==Enum.KeyCode.RightShift); hub.listening=nil end
+services.UserInputService.InputBegan:Fire(shift,true); assert(listened and hub.mainWindow.Visible==before)
+hub.setters["Menu Keybind"]("Insert"); services.UserInputService.InputBegan:Fire(shift, true); assert(hub.mainWindow.Visible == before)
+services.UserInputService.InputBegan:Fire({UserInputType=keyboard,KeyCode=Enum.KeyCode.Insert},true); assert(hub.mainWindow.Visible ~= before)
+hub.setters["Menu Keybind"]("RightShift")
 assert(hub.values["Auto Farm"] == false and hub.values["Auto Win"] == false and hub.values["Gun ESP"] == false and hub.values["Anti AFK"] == false)
 assert(hub.setters["Auto Farm"](true) == false and hub.values["Auto Farm"] == false)
 assert(hub.values["Select Map"] == "Waiting for maps")
@@ -160,9 +177,9 @@ shared.AngelHubGui:Destroy()
   safeConfigLua.execute(readTest('gui-mock.luau') + `
 run.RenderStepped=event();run.Stepped=event()
 isfile=function()return true end;readfile=function()return "saved" end
-function services.HttpService:JSONDecode()return {Autoload=true,["Walk Fling"]=true}end
+function services.HttpService:JSONDecode()return {Autoload=true,["Walk Fling"]=true,["Auto Blurt"]=true}end
 ` + file + `
-assert(shared.AngelHub.values["Autoload"]==true and shared.AngelHub.values["Walk Fling"]==false)
+assert(shared.AngelHub.values["Autoload"]==true and shared.AngelHub.values["Walk Fling"]==false and shared.AngelHub.values["Auto Blurt"]==false)
 shared.AngelHubGui:Destroy()
 `);
   const outside = await Lua.create({ sandbox: true });

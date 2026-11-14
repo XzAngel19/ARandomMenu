@@ -232,7 +232,6 @@ local UNIMPLEMENTED_TOGGLES = {
     ["Hide Distant Scenery"] = true, ["Simplify Terrain"] = true, ["Disable Post Effects"] = true,
     ["Simple Lighting"] = true, ["Disable Local Lights"] = true, ["Simplify Game UI"] = true,
     ["Hide World UI"] = true, ["Hide Game UI"] = true, ["Hide Roblox Panels"] = true,
-    ["Don't Show Again"] = true,
 }
 
 local function addToggle(parent, text, keybind, default)
@@ -1090,6 +1089,7 @@ local function installGameplay(screenGui)
     local mm2GunAssistStep = function() end
     local mm2CoinEspStep = function() end
     local mm2NotificationsStep = function() end
+    local mm2BlurtStep = function() end
     local airWalkStep = function() end
     local flyStep = function() end
     local chamsStep = function() end
@@ -1110,7 +1110,7 @@ local function installGameplay(screenGui)
         ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
-        ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
+        ["Auto Blurt"] = true, ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
         ["Insta Kill As Sheriff"] = true, ["Insta Kill As Murder"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true, ["Coin ESP"] = true,
     }
     local function message(text)
@@ -1245,6 +1245,12 @@ local function installGameplay(screenGui)
         local notificationOk, notificationError = pcall(mm2NotificationsStep, dt, root)
         if not notificationOk and not AngelHub.notificationError then
             AngelHub.notificationError = true; warn("Angel Hub notifications error: " .. tostring(notificationError))
+        end
+        local blurtOk, blurtError = pcall(mm2BlurtStep)
+        if not blurtOk then
+            warn("Angel Hub Blurt error: " .. tostring(blurtError))
+            if enabled["Auto Blurt"] then AngelHub.setters["Auto Blurt"](false) end
+            message("Blurt Roles stopped: runtime error")
         end
         local pointerOk, pointerError = pcall(pointerStep, dt, root)
         if not pointerOk then
@@ -3478,22 +3484,24 @@ local function installGameplay(screenGui)
         end
         function coinEsp.cleanup() coinEsp.toggle(false) end
     end
+    local blurtWanted = false
     local notifications = {}
     do
         local connectionList, bound, mapSeen = {}, nil, nil
         local data, generation, busy, nextPoll, elapsed, blocked, rolesOnMap = {}, 0, false, 0, 0, false, false
+        local roundEpoch = 0
         local murdererAnnounced, sheriffAnnounced, localAnnounced = nil, nil, nil
         local trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
         local gunAnnounced, lastClose = false, -math.huge
         local function wanted()
-            if enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
+            if enabled["Auto Blurt"] or blurtWanted or enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] or enabled["Player Pointers"] then return true end
             for _, name in ipairs({"Instant Roles", "Gun Notification", "Murder Close", "Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do
                 if V[name] == true then return true end
             end
             return false
         end
         local function clearState()
-            generation += 1; data, nextPoll, rolesOnMap = {}, 0, false
+            generation += 1; roundEpoch += 1; data, nextPoll, rolesOnMap = {}, 0, false
             murdererAnnounced, sheriffAnnounced, localAnnounced = nil, nil, nil
             trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
             gunAnnounced, lastClose = false, -math.huge
@@ -3634,7 +3642,89 @@ local function installGameplay(screenGui)
                 or record.Role == "Innocent" or record.Role == "Dead" then return record.Role end
             return nil
         end
+        function notifications.epoch() return roundEpoch end
         function notifications.cleanup() disconnect(); clearState(); mapSeen = nil end
+    end
+    local blurt = {}
+    do
+        local manualUntil, dueAt, scheduled, lastSignature, roundId = nil, nil, nil, nil, nil
+        local sentThisRound, busy, serial, lastAttempt = false, false, 0, -math.huge
+        function blurt.manual()
+            if busy or manualUntil then message("Blurt Roles: request already pending"); return end
+            manualUntil = os.clock() + 5; blurtWanted = true
+            message("Blurt Roles: checking roles for public chat")
+        end
+        function blurt.toggle()
+            serial += 1; dueAt, scheduled = nil, nil
+        end
+        function blurt.cleanup() serial += 1; manualUntil, dueAt, scheduled, blurtWanted = nil, nil, nil, false end
+        local function roles()
+            local murderer, sheriff
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local role = notifications.role(player)
+                local human = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                if not human or human.Health > 0 then
+                    if role == "Murderer" then murderer = player.Name
+                    elseif role == "Sheriff" or role == "Hero" then sheriff = player.Name end
+                end
+            end
+            return murderer, sheriff
+        end
+        function blurt.step()
+            if not isMM2 or (not enabled["Auto Blurt"] and not manualUntil) then return end
+            local now = os.clock()
+            local epoch = notifications.epoch()
+            if epoch ~= roundId then
+                roundId, sentThisRound, lastSignature, dueAt, scheduled = epoch, false, nil, nil, nil
+            end
+            local murderer, sheriff = roles()
+            if not murderer and not sheriff then
+                dueAt, scheduled = nil, nil
+                if manualUntil and now >= manualUntil then manualUntil = nil; blurtWanted = false; message("Blurt Roles: no roles available") end
+                return
+            end
+            local fake = V["Fake Blurt Roles"] == true
+            local m, s = murderer or "?", sheriff or "?"
+            if fake then m, s = s, m end
+            local signature = (fake and "fake/" or "real/") .. m .. "/" .. s
+            local manual = manualUntil ~= nil
+            if not manual and (sentThisRound and (not V["Repeat On Change"] or signature == lastSignature)) then
+                dueAt, scheduled = nil, nil; return
+            end
+            if not manual then
+                if scheduled ~= signature then scheduled, dueAt = signature, now + math.clamp(tonumber(V["Blurt Delay"]) or 3, 0, 15) end
+                if now < dueAt then return end
+            end
+            if busy or now - lastAttempt < 2.5 then return end
+            local text = string.format('Murder; "%s" Sheriff; "%s"', m, s)
+            manualUntil, dueAt, scheduled = nil, nil, nil
+            busy, lastAttempt = true, now
+            local ticket, expectedEpoch = serial, epoch
+            task.spawn(function()
+                if stopped or ticket ~= serial or expectedEpoch ~= notifications.epoch() or (not manual and not enabled["Auto Blurt"]) then busy = false; if manual then blurtWanted = false end; return end
+                local currentMurderer, currentSheriff = roles()
+                if currentMurderer ~= murderer or currentSheriff ~= sheriff or (V["Fake Blurt Roles"] == true) ~= fake then busy = false; if manual then blurtWanted = false end; return end
+                sentThisRound, lastSignature = true, signature
+                local sent, attempted = false, false
+                pcall(function()
+                    local chat = game:GetService("TextChatService")
+                    if chat.ChatVersion ~= Enum.ChatVersion.TextChatService then return end
+                    local channels = chat:FindFirstChild("TextChannels")
+                    local channel = channels and (channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel"))
+                    if channel and channel:IsA("TextChannel") then attempted = true; channel:SendAsync(text); sent = true end
+                end)
+                if not attempted then
+                    pcall(function()
+                        local storage = game:GetService("ReplicatedStorage")
+                        local events = storage:FindFirstChild("DefaultChatSystemChatEvents")
+                        local remote = events and events:FindFirstChild("SayMessageRequest")
+                        if remote and remote:IsA("RemoteEvent") then remote:FireServer(text, "All"); sent = true end
+                    end)
+                end
+                busy = false; if manual then blurtWanted = false end
+                if not stopped then message(sent and "Blurt Roles: public chat request sent" or "Blurt Roles: chat unavailable or refused") end
+            end)
+        end
     end
     local airWalk = {}
     do
@@ -4463,8 +4553,9 @@ local function installGameplay(screenGui)
     mm2GunAssistStep = gunAssist.step
     mm2CoinEspStep = coinEsp.step
     mm2NotificationsStep = notifications.step
+    mm2BlurtStep = blurt.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -4555,6 +4646,7 @@ local function installGameplay(screenGui)
                 if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
                 if name == "Coins Aura" then resetCoinAura() end
                 if name == "Auto Vote" then resetAutoVote(value == true) end
+                if name == "Auto Blurt" then blurt.toggle(); if value then message("Auto Blurt: announces roles in public chat") end end
                 if name == "Auto Shoot" and value then message("Auto Shoot: basic prediction") end
                 if name == "Auto Unbox" then unbox.toggle(value) end
                 if name == "Auto Win" then autoWin.toggle(value) end
@@ -4725,6 +4817,7 @@ local function installGameplay(screenGui)
     listen(userInputService.WindowFocusReleased, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     listen(userInputService.TextBoxFocused, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
+        AngelHub.actions["Blurt Roles"] = blurt.manual
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
         AngelHub.actions["Report Boxes And Coin"] = unbox.report
@@ -5670,7 +5763,7 @@ local function initializeScript()
         end
 		for pass = 1, 2 do
 		for name, value in data do
-            if name == "Marker Points by Place" or (name == "Walk Fling" and value == true) then continue end
+            if name == "Marker Points by Place" or ((name == "Walk Fling" or name == "Auto Blurt") and value == true) then continue end
 			if (AngelHub.moduleNames[name] == true) ~= (pass == 2) then continue end
 			local setter = AngelHub.setters[name]
 			if not setter then
@@ -5711,13 +5804,6 @@ local function initializeScript()
 
 	addSection(configLeft, "Menu")
 	addCycle(configLeft, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
-	addButton(configLeft, "Start Calibration", function()
-		setStatus("Calibration is not implemented yet.")
-	end)
-	addButton(configLeft, "Open Calibration", function()
-		setStatus("Calibration is not implemented yet.")
-	end)
-	addToggle(configLeft, "Don't Show Again", nil, false)
 
 	addSection(configLeft, "Configs")
 	addText(configLeft, "Config Name", "my config")
@@ -5792,14 +5878,15 @@ local function initializeScript()
 			return AngelHub.listening(input.KeyCode)
 		end
 
-		if gameProcessed then
-			return
-		end
-
+		-- Roblox can mark Right Shift as processed for shift lock; still allow the menu key,
+		-- but never toggle while a text box has keyboard focus.
+		if userInputService:GetFocusedTextBox() then return end
 		if input.KeyCode.Name == AngelHub.values["Menu Keybind"] then
 			window.Visible = not window.Visible
 			return
 		end
+
+		if gameProcessed then return end
 
 		for featureName, keyCode in AngelHub.keybinds do
 			if keyCode == input.KeyCode then
