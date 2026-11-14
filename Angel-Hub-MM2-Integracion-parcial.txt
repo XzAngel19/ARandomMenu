@@ -1090,6 +1090,7 @@ local function installGameplay(screenGui)
     local mm2ShootStep = function() end
     local mm2UnboxStep = function() end
     local mm2WinStep = function() end
+    local mm2GunAssistStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1104,7 +1105,7 @@ local function installGameplay(screenGui)
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
-        ["Insta Kill As Sheriff"] = true,
+        ["Insta Kill As Sheriff"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1224,6 +1225,13 @@ local function installGameplay(screenGui)
             message("Shooting stopped: runtime error")
         end
         mm2UnboxStep()
+        local gunOk, gunError = pcall(mm2GunAssistStep, dt, character, humanoid, root)
+        if not gunOk then
+            warn("Angel Hub Gun assist error: " .. tostring(gunError))
+            if enabled["Gun Aura"] then AngelHub.setters["Gun Aura"](false) end
+            if enabled["Auto Get Gun"] then AngelHub.setters["Auto Get Gun"](false) end
+            message("Gun assist stopped: runtime error")
+        end
         local winOk, winError = pcall(mm2WinStep, dt, character, humanoid, root)
         if not winOk then
             warn("Angel Hub Auto Win error: " .. tostring(winError))
@@ -2989,8 +2997,228 @@ local function installGameplay(screenGui)
             releaseSafe()
         end
     end
+    local emotes = {}
+    do
+        local defs = {
+            ["Sit"] = {id = "sit", command = "sit2", asset = "rbxassetid://2431845940", looped = true},
+            ["Ninja Rest"] = {id = "ninja", command = "ninja", asset = "rbxassetid://2431864798", looped = true},
+            ["Zen"] = {id = "zen", command = "zen", asset = "rbxassetid://2431812646", looped = true},
+            ["Dab"] = {id = "dab", command = "dab", asset = "rbxassetid://2445521505"},
+            ["Floss"] = {id = "floss", command = "floss", asset = "rbxassetid://2452938820", looped = true},
+            ["Zombie"] = {id = "zombie", command = "zombie", asset = "rbxassetid://2513692312", looped = true},
+            ["Headless"] = {id = "headless", command = "headless", asset = "rbxassetid://2513664073"},
+        }
+        local order = {"Sit", "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless"}
+        local generation, grantBusy, track = 0, false, nil
+        local function stopTrack()
+            local previous = track; track = nil
+            if previous then pcall(function() previous:Stop(0.1); previous:Destroy() end) end
+        end
+        local function storage()
+            local ok, rs = pcall(function() return game:GetService("ReplicatedStorage") end)
+            return ok and rs or nil
+        end
+        function emotes.play()
+            local def = defs[V["Select Emote"]]
+            if stopped or not def then message("Emote: invalid selection"); return end
+            stopTrack()
+            local rs = storage()
+            local remotes = rs and rs:FindFirstChild("Remotes")
+            local misc = remotes and remotes:FindFirstChild("Misc")
+            local event = misc and misc:FindFirstChild("PlayEmote")
+            if event and event:IsA("BindableEvent") then
+                local ok = pcall(function() event:Fire(def.id) end)
+                message(ok and "Emote requested; playback and replication are not confirmed" or "Emote request uncertain; no duplicate playback")
+                return
+            end
+            local _, humanoid = characterParts()
+            if not humanoid then message("Emote: character unavailable"); return end
+            local animation
+            local ok, played = pcall(function()
+                animation = Instance.new("Animation")
+                animation.Name, animation.AnimationId = def.command, def.asset
+                local animator = humanoid:FindFirstChildOfClass("Animator")
+                local loaded = animator and animator:LoadAnimation(animation) or humanoid:LoadAnimation(animation)
+                if not loaded then return false end
+                track = loaded
+                loaded.Looped = def.looped == true
+                loaded:Play(0.1)
+                return true
+            end)
+            if animation then pcall(function() animation:Destroy() end) end
+            if not ok or not played then stopTrack(); message("Emote unavailable; check animation permissions")
+            else message("Local emote requested; replication is not confirmed") end
+        end
+        function emotes.grant()
+            if stopped or grantBusy then return end
+            grantBusy = true
+            local ticket = generation
+            task.spawn(function()
+                local ok, count, signalled = pcall(function()
+                    local rs = storage()
+                    if not rs then return nil end
+                    local database = rs:FindFirstChild("Database")
+                    local sync = database and database:FindFirstChild("Sync")
+                    local catalogModule = sync and sync:FindFirstChild("Emotes")
+                    if catalogModule and catalogModule:IsA("ModuleScript") then
+                        local catalogOk, catalog = pcall(require, catalogModule)
+                        if stopped or ticket ~= generation then return nil end
+                        if catalogOk and type(catalog) == "table" then
+                            local defaults = {back=true, wave=true, cheer=true, laugh=true, point=true, dance=true, dance1=true, dance2=true, dance3=true}
+                            local known = {}
+                            for _, def in pairs(defs) do known[def.id] = true end
+                            local extras = {}
+                            for id, item in pairs(catalog) do
+                                if type(id) == "string" and not known[id] and not defaults[string.lower(id)]
+                                    and type(item) == "table" and type(item.Command) == "string" and item.Command ~= ""
+                                    and not defaults[string.lower(item.Command)] then
+                                    local asset = item.AnimationID
+                                    if type(asset) == "number" and asset > 0 and asset < math.huge then
+                                        asset = "rbxassetid://" .. string.format("%.0f", asset)
+                                    elseif type(asset) == "string" and string.match(asset, "^%d+$") then
+                                        asset = "rbxassetid://" .. asset
+                                    end
+                                    if type(asset) == "string" and asset ~= "" then table.insert(extras, {id=id, data=item, asset=asset}) end
+                                end
+                            end
+                            table.sort(extras, function(a, b) return a.id < b.id end)
+                            for _, extra in ipairs(extras) do
+                                local item = extra.data
+                                local label = type(item.Name) == "string" and item.Name ~= "" and item.Name or extra.id
+                                if defs[label] then label = label .. " (" .. extra.id .. ")" end
+                                if not defs[label] then
+                                    defs[label] = {id=extra.id, command=item.Command, asset=extra.asset, looped=item.Loop == true}
+                                    table.insert(order, label)
+                                end
+                            end
+                            local refresh = AngelHub.cycleOptions and AngelHub.cycleOptions["Select Emote"]
+                            if refresh then refresh(order) end
+                        end
+                    end
+                    local modules = rs:FindFirstChild("Modules")
+                    local module = modules and modules:FindFirstChild("ProfileData")
+                    if not module or not module:IsA("ModuleScript") then return nil end
+                    local profile = require(module)
+                    if stopped or ticket ~= generation then return nil end
+                    if type(profile) ~= "table" or type(profile.Emotes) ~= "table" or type(profile.Emotes.Owned) ~= "table" then return nil end
+                    local owned, known, added = profile.Emotes.Owned, {}, {}
+                    for _, id in ipairs(owned) do if type(id) == "string" then known[id] = true end end
+                    for _, label in ipairs(order) do
+                        local id = defs[label].id
+                        if not known[id] then table.insert(owned, id); table.insert(added, id); known[id] = true end
+                    end
+                    local remotes = rs:FindFirstChild("Remotes")
+                    local inventory = remotes and remotes:FindFirstChild("Inventory")
+                    local changed = inventory and inventory:FindFirstChild("InventoryDataChanged")
+                    local didSignal = false
+                    if changed and changed:IsA("BindableEvent") then
+                        local signalIds = #added > 0 and added or {defs[order[1]].id}
+                        for _, id in ipairs(signalIds) do
+                            local fired = pcall(function() changed:Fire("Emotes", id, 1) end)
+                            didSignal = didSignal or fired
+                        end
+                    end
+                    return #added, didSignal
+                end)
+                grantBusy = false
+                if stopped or ticket ~= generation then return end
+                if not ok or count == nil then message("Emotes: local profile not available; try later"); return end
+                message("Emotes: " .. tostring(count) .. " local entries added" .. (signalled and "; UI notified" or "") .. "; server ownership not verified")
+            end)
+        end
+        function emotes.cleanup()
+            generation += 1
+            stopTrack()
+        end
+    end
+    local gunAssist = {}
+    do
+        local tickElapsed, autoElapsed = 0, 0
+        local saved, markerAnchor, markerSphere = nil, nil, nil
+        local function removeMarker()
+            if markerSphere then pcall(function() markerSphere:Destroy() end); markerSphere = nil end
+            if markerAnchor then pcall(function() markerAnchor:Destroy() end); markerAnchor = nil end
+        end
+        local function restoreGun()
+            local entry = saved; saved = nil
+            if not entry then return end
+            pcall(function()
+                -- Never restore a drop which has already become an equipped tool.
+                if gunCandidate(entry.drop) and entry.part:IsDescendantOf(workspace) then
+                    if entry.part.CFrame == entry.appliedFrame then entry.part.CFrame = entry.frame end
+                    if entry.part.CanCollide == false then entry.part.CanCollide = entry.collide end
+                end
+            end)
+        end
+        local function canGrab(character)
+            local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+            for _, holder in ipairs({character, backpack}) do
+                if holder and (holder:FindFirstChild("Gun") or holder:FindFirstChild("Knife")) then return false end
+            end
+            return true
+        end
+        local function updateMarker(part, frame)
+            if not enabled["Gun Aura"] or not V["Gun Aura Show Hitbox"] or not part then removeMarker(); return end
+            if not markerAnchor then
+                markerAnchor = Instance.new("Part")
+                markerAnchor.Name = "AngelHub_GunAuraMarker"
+                markerAnchor.Size = Vector3.new(0.1, 0.1, 0.1)
+                markerAnchor.Anchored = true; markerAnchor.CanCollide = false; markerAnchor.CanTouch = false; markerAnchor.CanQuery = false
+                markerAnchor.Transparency = 1; markerAnchor.Parent = workspace
+                markerSphere = Instance.new("SphereHandleAdornment")
+                markerSphere.Name = "AngelHub_GunAuraRadius"
+                markerSphere.Adornee = markerAnchor; markerSphere.Color3 = Color3.fromRGB(255, 255, 255)
+                markerSphere.Transparency = 0.88; markerSphere.AlwaysOnTop = true; markerSphere.ZIndex = 1
+                markerSphere.Parent = screenGui
+            end
+            markerAnchor.CFrame = frame
+            markerSphere.Radius = math.clamp(tonumber(V["Gun Aura Studs"]) or 25, 5, 250)
+        end
+        function gunAssist.cleanup()
+            restoreGun(); removeMarker()
+            tickElapsed, autoElapsed = 0, 0
+        end
+        function gunAssist.step(dt, character, humanoid, root)
+            if not enabled["Gun Aura"] and not enabled["Auto Get Gun"] then return end
+            tickElapsed += dt; autoElapsed += dt
+            if tickElapsed < 0.1 then return end
+            tickElapsed = 0
+            if not character or not humanoid or not root or not canGrab(character) or not farmOnMap(root, mm2Map()) then
+                restoreGun(); removeMarker(); return
+            end
+            local drop = findDroppedGun()
+            local part = drop and markerPart(drop)
+            if not part or not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then
+                restoreGun(); removeMarker(); return
+            end
+            if saved and (saved.part ~= part or saved.drop ~= drop) then restoreGun() end
+            local frame = saved and saved.frame or part.CFrame
+            updateMarker(part, frame)
+            local radius = math.clamp(tonumber(V["Gun Aura Studs"]) or 25, 5, 250)
+            local shouldAura = enabled["Gun Aura"] and (root.Position - frame.Position).Magnitude <= radius
+            if shouldAura then
+                if not saved then saved = {drop = drop, part = part, frame = part.CFrame, collide = part.CanCollide} end
+                part.CanCollide = false
+                saved.appliedFrame = root.CFrame
+                part.CFrame = saved.appliedFrame
+                pcall(firetouchinterest, root, part, 0); pcall(firetouchinterest, root, part, 1)
+                autoElapsed = 0
+            else
+                restoreGun()
+                if enabled["Auto Get Gun"] and autoElapsed >= 0.3 then
+                    autoElapsed = 0
+                    pcall(firetouchinterest, root, part, 0); pcall(firetouchinterest, root, part, 1)
+                end
+            end
+        end
+        function gunAssist.toggle()
+            if not enabled["Gun Aura"] then restoreGun(); removeMarker() end
+            if not enabled["Gun Aura"] and not enabled["Auto Get Gun"] then gunAssist.cleanup() end
+        end
+    end
+    mm2GunAssistStep = gunAssist.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -3024,6 +3252,9 @@ local function installGameplay(screenGui)
                     if type(firetouchinterest) ~= "function" then old(false); message("Auto Vote: touch API unavailable"); return false end
                     if not voteGameplay() then old(false); message("Auto Vote: round remotes unavailable"); return false end
                 end
+                if value == true and (name == "Gun Aura" or name == "Auto Get Gun") and type(firetouchinterest) ~= "function" then
+                    old(false); message(name .. ": touch API unavailable"); return false
+                end
                 if value == true and name == "Coins Aura" and type(firetouchinterest) ~= "function" then
                     old(false); message("Coins Aura: touch API unavailable"); return false
                 end
@@ -3054,6 +3285,7 @@ local function installGameplay(screenGui)
                 if name == "Auto Shoot" and value then message("Auto Shoot: basic prediction") end
                 if name == "Auto Unbox" then unbox.toggle(value) end
                 if name == "Auto Win" then autoWin.toggle(value) end
+                if name == "Gun Aura" or name == "Auto Get Gun" then gunAssist.toggle() end
                 if name == "Insta Kill As Sheriff" and value then message("Auto Win Sheriff: basic CFrame; separate WallCheck option") end
                 if shootingBefore ~= shooter.active() then
                     if shooter.active() then shooter.start() else shooter.stop() end
@@ -3192,6 +3424,8 @@ local function installGameplay(screenGui)
     listen(userInputService.WindowFocusReleased, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     listen(userInputService.TextBoxFocused, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
+        AngelHub.actions["Play Emote"] = emotes.play
+        AngelHub.actions["Get All Emotes"] = emotes.grant
         AngelHub.actions["Report Boxes And Coin"] = unbox.report
         AngelHub.actions["Teleport To Map"] = mapTeleport
         AngelHub.actions["Teleport To Lobby"] = lobbyTeleport
