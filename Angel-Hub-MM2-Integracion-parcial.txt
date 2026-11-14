@@ -223,7 +223,7 @@ local function addSection(parent, text)
 end
 
 local UNIMPLEMENTED_TOGGLES = {
-    ["Knife Tracer"] = true, ["Chams Show Perk"] = true,
+    ["Knife Tracer"] = true, ["Chams Show Perk"] = true, ["Show Target Emotes"] = true,
     ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
     ["Fling Sheriff After Full Bag"] = true, ["Auto Grab Gun And Shoot"] = true,
     ["Auto Kill All When Full Bag"] = true,
@@ -1108,7 +1108,7 @@ local function installGameplay(screenGui)
         ["Fullbright"] = true, ["Time Changer"] = true, ["Fast Time"] = true,
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
         ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true, ["Enable Fly"] = true, ["Walk Fling"] = true,
-        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true, ["Player ESP"] = true, ["Player Shield"] = true, ["Impact Shield"] = true, ["Wall Crawl State"] = true, ["Air Swim"] = true, ["Auto Knife Throw"] = true, ["FreeCam"] = true,
+        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true, ["Player Pointers"] = true, ["Player ESP"] = true, ["Player Shield"] = true, ["Impact Shield"] = true, ["Wall Crawl State"] = true, ["Air Swim"] = true, ["Auto Knife Throw"] = true, ["FreeCam"] = true, ["Disguise Character"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Blurt"] = true, ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
@@ -1284,6 +1284,11 @@ local function installGameplay(screenGui)
         if not pointerOk then
             warn("Angel Hub Pointers error: " .. tostring(pointerError))
             if enabled["Player Pointers"] then AngelHub.setters["Player Pointers"](false); message("Player Pointers stopped: runtime error") end
+        end
+        local disguiseOk, disguiseError = pcall(extensionSteps.disguise.step, dt)
+        if not disguiseOk then
+            warn("Angel Hub Disguise error: " .. tostring(disguiseError))
+            if enabled["Disguise Character"] then AngelHub.setters["Disguise Character"](false); message("Disguise stopped: runtime error") end
         end
         local selfHpOk, selfHpError = pcall(extensionSteps.selfHpStep, dt)
         if not selfHpOk then
@@ -5341,6 +5346,214 @@ local function installGameplay(screenGui)
         setupFreecam()
     end
     do
+        local function setupDisguise()
+            local disguise = {}
+            extensionSteps.disguise = disguise
+            local generation, seen, seenCharacter, scheduled, elapsed, appearance, animations, tracks = 0,nil,nil,nil,0,nil,{},{}
+            local fields = {
+                {"idle","IdleAnimation"},{"walk","WalkAnimation"},{"run","RunAnimation"},{"jump","JumpAnimation"},
+                {"fall","FallAnimation"},{"climb","ClimbAnimation"},{"swim","SwimAnimation"},{"swimidle","SwimIdleAnimation"},
+            }
+            local function safeDestroy(object) if object then pcall(function() object:Destroy() end) end end
+            local function restoreAnimations()
+                for obj, record in pairs(animations) do
+                    pcall(function() if obj.Parent and obj.AnimationId == record.applied then obj.AnimationId = record.original end end)
+                    animations[obj] = nil
+                end
+            end
+            local function restoreTracks()
+                for track, record in pairs(tracks) do
+                    pcall(function() if track.Speed == record.applied then track:AdjustSpeed(record.original) end end)
+                    tracks[track] = nil
+                end
+            end
+            local function restoreAppearance()
+                local old = appearance
+                if not old then return true end
+                for _, copy in ipairs(old.copies) do safeDestroy(copy) end
+                table.clear(old.copies)
+                local failed = false
+                for _, entry in ipairs(old.originals) do
+                    local ok = pcall(function()
+                        if entry.object.Parent == nil and entry.parent and (entry.parent == old.character or entry.parent.Parent) then
+                            if entry.object:IsA("Accessory") and entry.parent == old.character and old.human.Parent then
+                                local attached = pcall(function() old.human:AddAccessory(entry.object) end)
+                                if not attached or entry.object.Parent == nil then entry.object.Parent = entry.parent end
+                            else entry.object.Parent = entry.parent end
+                        end
+                    end)
+                    if not ok then failed = true end
+                end
+                if not failed or not old.character.Parent then appearance = nil; return true end
+                return false
+            end
+            local function reset()
+                generation += 1; scheduled = nil
+                restoreAnimations(); restoreTracks()
+                if not restoreAppearance() then message("Disguise: could not restore all original appearance items") end
+            end
+            function disguise.cleanup() reset(); seen,seenCharacter = nil,nil end
+            local function appearanceItem(object)
+                return object:IsA("Accessory") or object:IsA("Shirt") or object:IsA("Pants")
+                    or object:IsA("ShirtGraphic") or object:IsA("BodyColors") or object:IsA("CharacterMesh")
+            end
+            local function applyAppearance(character, human, model)
+                if not restoreAppearance() then error("previous appearance could not be restored") end
+                local record = {character=character,human=human,originals={},copies={}}
+                appearance = record
+                local head, targetHead = character:FindFirstChild("Head"),model:FindFirstChild("Head")
+                local face = targetHead and targetHead:FindFirstChild("face")
+                local originals = {}
+                for _, child in ipairs(character:GetChildren()) do if appearanceItem(child) then table.insert(originals,child) end end
+                if face and face:IsA("Decal") and head then
+                    local oldFace = head:FindFirstChild("face")
+                    if oldFace and oldFace:IsA("Decal") then table.insert(originals,oldFace) end
+                end
+                for _, object in ipairs(originals) do
+                    table.insert(record.originals,{object=object,parent=object.Parent})
+                    object.Parent = nil
+                end
+                for _, object in ipairs(model:GetChildren()) do
+                    if appearanceItem(object) then
+                        local copy = object:Clone(); table.insert(record.copies,copy)
+                        if copy:IsA("Accessory") then human:AddAccessory(copy) else copy.Parent = character end
+                    end
+                end
+                if face and face:IsA("Decal") and head then
+                    local copy = face:Clone(); table.insert(record.copies,copy); copy.Parent = head
+                end
+            end
+            local function applyAnimations(character, values)
+                local animate = character:FindFirstChild("Animate")
+                if not animate then return 0 end
+                local count = 0
+                for _, field in ipairs(fields) do
+                    local category,id = animate:FindFirstChild(field[1]),values[field[2]]
+                    if category and type(id) == "number" and id > 0 then
+                        local new = "rbxassetid://" .. tostring(math.floor(id))
+                        for _, object in ipairs(category:GetDescendants()) do
+                            if object:IsA("Animation") then
+                                animations[object] = {original=object.AnimationId,applied=new}
+                                object.AnimationId = new; count += 1
+                            end
+                        end
+                    end
+                end
+                return count
+            end
+            local function signature()
+                return table.concat({tostring(localPlayer.Character),tostring(V["Disguise Target ID"]),
+                    tostring(V["Disguise Mode"]),tostring(V["Use Target Movement Animations"])},"\0")
+            end
+            local function current(ticket, character)
+                return not stopped and enabled["Disguise Character"] and generation == ticket
+                    and localPlayer.Character == character and character.Parent ~= nil and signature() == seen
+            end
+            local function fetchDescription(userId,ticket,character)
+                local _, async = pcall(function() return playersService.GetHumanoidDescriptionFromUserIdAsync end)
+                local _, sync = pcall(function() return playersService.GetHumanoidDescriptionFromUserId end)
+                if type(async) == "function" then
+                    local ok, result = pcall(async,playersService,userId)
+                    if ok and result then return result end
+                end
+                if current(ticket,character) and type(sync) == "function" then
+                    local ok, result = pcall(sync,playersService,userId)
+                    if ok and result then return result end
+                end
+            end
+            local function createModel(description,rig,ticket,character)
+                local _, async = pcall(function() return playersService.CreateHumanoidModelFromDescriptionAsync end)
+                local _, sync = pcall(function() return playersService.CreateHumanoidModelFromDescription end)
+                if type(async) == "function" then
+                    local ok, result = pcall(async,playersService,description,rig)
+                    if ok and result then return result end
+                end
+                if current(ticket,character) and type(sync) == "function" then
+                    local ok, result = pcall(sync,playersService,description,rig)
+                    if ok and result then return result end
+                end
+            end
+            local function apply()
+                local character = localPlayer.Character
+                local human = character and character:FindFirstChildOfClass("Humanoid")
+                local userId = tonumber(V["Disguise Target ID"])
+                if not character or not character.Parent or not human or human.Health <= 0 then
+                    scheduled = os.clock()+.5; return
+                end
+                if not userId or userId ~= userId or userId <= 0 or userId % 1 ~= 0 or userId > 9007199254740991 then
+                    message("Disguise: enter a positive numeric UserId"); return
+                end
+                local ticket, mode = generation,V["Disguise Mode"]
+                local withAnimations = mode == "Animation" or V["Use Target Movement Animations"] == true
+                task.spawn(function()
+                    if not current(ticket,character) then return end
+                    local description = fetchDescription(userId,ticket,character)
+                    if not description then if current(ticket,character) then message("Disguise: avatar lookup unavailable or failed") end; return end
+                    if not current(ticket,character) then safeDestroy(description); return end
+                    local values = {}
+                    for _, field in ipairs(fields) do pcall(function() values[field[2]] = description[field[2]] end) end
+                    local model
+                    if mode == "Character" then model = createModel(description,human.RigType,ticket,character) end
+                    safeDestroy(description)
+                    if not current(ticket,character) then safeDestroy(model); return end
+                    if mode == "Character" and not model then message("Disguise: could not build target avatar"); return end
+                    local ok, err = pcall(function()
+                        if model then applyAppearance(character,human,model) end
+                        if withAnimations then
+                            local count = applyAnimations(character,values)
+                            if count == 0 then message("Disguise: no compatible movement animation slots found") end
+                        end
+                    end)
+                    safeDestroy(model)
+                    if not ok then
+                        restoreAnimations(); restoreAppearance()
+                        if current(ticket,character) then message("Disguise: failed to apply local appearance") end
+                        warn("Angel Hub Disguise: " .. tostring(err))
+                    elseif current(ticket,character) then
+                        message("Disguise applied locally; bundle and emote options are pending")
+                    end
+                end)
+            end
+            function disguise.toggle(value)
+                reset(); seen = signature(); seenCharacter = localPlayer.Character
+                if value then scheduled = os.clock(); message("Disguise: local appearance only") end
+            end
+            function disguise.step(dt)
+                if not enabled["Disguise Character"] then return end
+                elapsed += math.max(dt,0); if elapsed < .2 then return end; elapsed = 0
+                local sig = signature()
+                if sig ~= seen or localPlayer.Character ~= seenCharacter then
+                    reset(); seen = sig; seenCharacter = localPlayer.Character; scheduled = os.clock()+.7
+                end
+                if scheduled and os.clock() >= scheduled then scheduled = nil; apply() end
+                local character = localPlayer.Character
+                local human = character and character:FindFirstChildOfClass("Humanoid")
+                local animator = human and human:FindFirstChildOfClass("Animator")
+                if animator then
+                    local ok, playing = pcall(function() return animator:GetPlayingAnimationTracks() end)
+                    if ok and type(playing) == "table" then
+                        local speed = math.clamp(tonumber(V["Disguise Animation Speed"]) or 1,0,2)
+                        if speed == 1 then restoreTracks() else
+                            local alive = {}
+                            for _, track in ipairs(playing) do pcall(function()
+                                alive[track] = true
+                                local state = tracks[track]
+                                if not state then state = {original=track.Speed}; tracks[track] = state
+                                elseif track.Speed ~= state.applied then state.original = track.Speed end
+                                track:AdjustSpeed(speed); state.applied = speed
+                            end) end
+                            for track, state in pairs(tracks) do if not alive[track] then
+                                pcall(function() if track.Speed == state.applied then track:AdjustSpeed(state.original) end end)
+                                tracks[track] = nil
+                            end end
+                        end
+                    end
+                end
+            end
+        end
+        setupDisguise()
+    end
+    do
         local selfHp = {}
         extensionSteps.selfHp = selfHp
         local hud, scale, elapsed = nil, nil, 0
@@ -5393,7 +5606,7 @@ local function installGameplay(screenGui)
     mm2NotificationsStep = notifications.step
     mm2BlurtStep = blurt.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -5530,6 +5743,7 @@ local function installGameplay(screenGui)
                 if name == "Player ESP" then playerEsp.toggle(value == true) end
                 if name == "Wall Crawl State" then wallCrawl.toggle() end
                 if name == "Air Swim" then airSwim.toggle() end
+                if name == "Disguise Character" then extensionSteps.disguise.toggle(value == true) end
                 if name == "FreeCam" then
                     if value then
                         markers.cancelTravel()
@@ -6452,7 +6666,7 @@ local function initializeScript()
 	addToggle(visualsLeft, "Use Target Movement Animations", nil, false)
 	addToggle(visualsLeft, "Show Target Emotes", nil, false)
 
-	beginGroup(visualsLeft, "Advanced", false)
+	beginGroup(visualsLeft, "Advanced (Pending)", false)
 	addText(visualsLeft, "Pack Bundle ID", "Bundle Id")
 	addText(visualsLeft, "Idle Bundle ID", "Animation Id")
 	addText(visualsLeft, "Walk Bundle ID", "Animation Id")
@@ -6651,7 +6865,7 @@ local function initializeScript()
         end
 		for pass = 1, 2 do
 		for name, value in data do
-            if name == "Marker Points by Place" or ((name == "Walk Fling" or name == "Auto Blurt" or name == "FreeCam") and value == true) then continue end
+            if name == "Marker Points by Place" or ((name == "Walk Fling" or name == "Auto Blurt" or name == "FreeCam" or name == "Disguise Character") and value == true) then continue end
 			if (AngelHub.moduleNames[name] == true) ~= (pass == 2) then continue end
 			local setter = AngelHub.setters[name]
 			if not setter then
