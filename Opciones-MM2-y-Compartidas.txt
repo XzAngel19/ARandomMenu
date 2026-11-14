@@ -1,0 +1,528 @@
+INVENTARIO DE OPCIONES — MM2 Y MODULOS COMPARTIDOS
+Base: ARandomMenu v199, commit f7de1b3ee13ce8783a4afb8f39b0426912ba5733. Inventario de nombres y controles de las fuentes; no es codigo ni propuesta de distribucion. Opciones dinamicas, condicionales y por dispositivo pueden variar. No se ha probado el juego. Los rangos indicados son los del control, no una garantia de funcionamiento.
+
+MODULOS ESPECIFICOS DE MM2
+
+Gun Aimbot
+- Aim method (selector): PC: Bullet / Silent(CFrame), movil: Normal(Bullet) / Silent(Cframe) / Experimental
+- Target (selector): Murder / Custom, configuracion por modo
+- Keybind (tecla): PC, tecla compartida
+- WallCheck (interruptor): configuracion por modo
+- Macro (interruptor): configuracion por modo
+- Target player (texto): si Target = Custom
+
+Auto Shoot
+- Mode (selector): Bullet / CFrame / Experimental
+- WallCheck (interruptor): configuracion por modo
+- Proximity (interruptor): configuracion por modo
+- Aura (slider): 5–150, si Proximity, configuracion por modo
+
+Knife Stab
+- Knife Aura (interruptor)
+- Aura Range (slider): 7–30, si Knife Aura
+- Hold Mouse (interruptor): si Knife Aura
+- Kill All (boton)
+- Kill Player (lista)
+- En MM2 sustituye los controles de KillAura universal
+
+Knife Throw
+- WallCheck (interruptor)
+- Auto Knife Throw (interruptor)
+- Delay (slider): 0–10 segundos
+- Knife Tracer (interruptor)
+
+Auto Farm
+- Coins Collected (contador)
+- Time (contador)
+- Farm Mode (selector): Walk / Below (Hitbox)
+- Farm Speed (slider): 5–60
+- Stay Under When Round starts (interruptor)
+- Safe Zone (interruptor)
+- Reset When Full Coin Bag (interruptor)
+- Fling Murder after full bag (interruptor)
+- Fling Sheriff after full bag (interruptor)
+- Auto Grab gun and Shoot (interruptor)
+- Auto Kill All When full coin bag (interruptor)
+
+Auto Win
+- Sheriff Wins (contador)
+- Murder Wins (contador)
+- Innocent Wins (contador)
+- Insta Kill as Murder (interruptor)
+- Insta Kill As Sheriff (interruptor)
+- Fling Sheriff and Get Gun (interruptor)
+- Fling Murder if Dead (interruptor)
+
+Auto Unbox
+- Box to open (selector): catalogo dinamico; respaldo: Mystery Box #1 / #2, Knife Box #1–#5, Rainbow Box, Gun Box #1–#3, Common Egg, Christmas Box 24, Summer Box 25, Halloween Box 25
+- Pay with (selector): Auto / monedas disponibles segun catalogo
+- Reveal animation (selector): On / Off
+- Delay between boxes (slider): 0.8–5
+- Max boxes per run (slider): 1–50
+- Report boxes and coin (boton)
+
+Auto Vote
+- Select Map (selector): tres mapas detectados en la votacion; nombres dinamicos
+
+Coins Aura
+- Sin subopciones registradas en esta fuente
+
+Fling
+- Fling Murderer (boton)
+- Fling Sheriff (boton)
+- Fling All Innocents (boton)
+- Fling target (lista)
+- Fling (boton)
+- Auto Fling Selected Target (interruptor)
+- Power (slider): 1–12
+- Retries (slider): 0–3
+
+Get All Emotes
+- Select Emote (selector): Sit / Ninja Rest / Zen / Dab / Floss / Zombie / Headless / otros del catalogo
+- Play Emote (boton)
+
+Gun Aura
+- Studs (slider): 5–250
+- Show Hitbox (interruptor)
+
+Notifications
+- Instant Roles (interruptor)
+- Gun Notification (interruptor)
+- Murder Close (interruptor)
+- Close radius (slider): 10–120
+- Close cooldown (slider): 2–30
+- Sheriff Down (interruptor)
+- Your Role (interruptor)
+- Round Events (interruptor)
+- Murderer Defeated (interruptor)
+
+Blurt Roles
+- Auto blurt (interruptor)
+- Delay (slider): 0–15
+- Repeat on change (interruptor)
+- Fake Blurt Roles (interruptor)
+- Accion principal: Blurt Roles
+
+Coin ESP
+- Coin in use (selector): Auto (server) / Coin / Candy / SnowToken / BeachBall / Egg / Heart / All
+- Coin colour (color)
+- Coin transparency (slider): 0–1
+
+ItemESP — opciones adicionales MM2 (dentro de ItemESP compartido)
+- Gun ESP (interruptor)
+- Trap ESP (interruptor)
+
+Teleport — opciones adicionales MM2 (dentro de Teleport compartido, Destination = MM2)
+- Teleport to Map (boton)
+- Teleport to Lobby (boton)
+- Player name (texto)
+- Teleport to Player (boton)
+- Get Gun (boton)
+- Get Gun key (tecla)
+- Auto Get Gun (interruptor)
+
+Speed Settings — opcion adicional MM2
+- Sprint (boton de mantener; tecla / accion tactil)
+
+Calibration (dialogo; no es modulo ni tarjeta)
+- Yes
+- No
+- Don't Show Again
+
+MODULOS UNIVERSALES COMPARTIDOS CON MM2
+
+Fly
+- Method (selector): Velocity / Constraint / Impulse / CFrame / Blink / Pulse / WalkSpeed
+- Float (selector): Velocity / Impulse / Hover / Jump / Bounce / Floor / Bypass
+- Horizontal speed (slider): 1–250
+- Vertical speed (slider): 1–250
+- Response multiplier (slider): 0.5–2, si Method = Velocity/Constraint/Pulse
+- Burst interval (s) (slider): 0.05–1
+- Wall check (interruptor)
+- Face camera (interruptor)
+- Up key (tecla)
+- Down key (tecla)
+
+Invisibility
+- Fly (interruptor)
+- Fly speed (slider): 0–250, si Fly
+- Void depth (slider): 0–350
+- WalkSpeed (slider): 0–200
+- Transparency (slider): 0–1
+
+Noclip
+- Sin subopciones registradas en esta fuente
+
+Wall Crawling
+- Mode (selector): Velocity / Impulse / CFrame
+- Climb speed (slider): 1–250
+- Climb state (interruptor)
+- Impulse interval (slider): 0.05–0.5
+
+Air Swim
+- Sin subopciones registradas en esta fuente
+
+Walk Fling
+- Sin subopciones registradas en esta fuente
+
+Aimbot
+- Mode (selector): Aim Assist / Aimbot
+- Camera (selector): Auto / Camera / Mouse
+- FOV (slider): 15–500, si Mode = Aim Assist
+- Speed (slider): 0–360, si Mode = Aim Assist
+- Strength (slider): 0–100, si Mode = Aim Assist
+- Target part (selector): Closest / Head / Torso
+- Priority (selector): Cursor / Distance
+- Prediction (slider): 0–0.5
+- Max distance (slider): 25–2000
+- Visibility check (interruptor)
+- Team check (interruptor)
+- Target NPCs (interruptor)
+- Sticky target (interruptor): si Mode = Aimbot
+- Auto Fire (interruptor)
+- Auto Fire mode (selector): Hold / Always, si Auto Fire
+- Clicks Per Second (slider): 1–20, si Auto Fire
+
+Air Walk
+- Sin subopciones registradas en esta fuente
+
+Anti Fling
+- Player Shield (interruptor)
+- Impact Shield (interruptor)
+
+Teleport
+- Destination (selector): MM2 / Tap point / Nearest player / Named player / Item / Waypoint / Last position
+- Player (texto): si Destination = Named player
+- Item (texto): si Destination = Item
+- Point (lista): si Destination = Waypoint
+- Teleport to point (boton): si Destination = Waypoint
+- Arm window (slider): 1–15, si Destination = Tap point
+- Search range (slider): 50–5000, si Destination = Nearest player/Named player/Item
+- Player offset (slider): 0–20, si Destination = Nearest player/Named player
+- Skip friends (interruptor): si Destination = Nearest player
+- Movement (selector): Instant / Glide
+- Glide speed (slider): 1–500, si Movement = Glide
+- Height offset (slider): 0–12
+- Keep momentum (interruptor)
+
+Freeze Animations
+- Freeze mode (selector): Position Lock / Motion
+- Lock rotation (interruptor)
+- Keep gravity (interruptor)
+- Return if pushed (slider): 0–40
+- Freeze Emotes (interruptor)
+- Any emote (interruptor)
+- Freeze Animation (interruptor)
+- Any animation (interruptor)
+
+Gravity
+- Gravity value (slider): -500–500
+
+Infinite Jump
+- Mode (selector): Normal / Rise
+- Jump Power (slider): 1–250
+- Jump interval (slider): 0.05–0.6
+
+Jump Settings
+- Custom jump power (interruptor)
+- Jump power (slider): 1–250, si Custom jump power
+- High jump (boton)
+- High jump velocity (slider): 1–250
+- Auto jump (interruptor)
+- Long jump (boton)
+- Long jump mode (selector): Velocity / Impulse / CFrame
+- Long jump speed (slider): 1–250
+
+Speed Settings
+- Mode (selector): WalkSpeed / Velocity / Impulse / CFrame / Teleport
+- Speed (slider): 1–250
+- Response (slider): 0.2–2, si Mode = Velocity/Impulse/CFrame
+- Braking (slider): 0–1, si Mode = Velocity
+- Vehicle multiplier (slider): 0.5–3
+- Keep vertical (interruptor): si Mode = Velocity/Impulse
+- Wall check (interruptor): si Mode = CFrame/Teleport
+- Burst delay (slider): 0.05–1, si Mode = Teleport
+- Auto jump (interruptor)
+- Sprint (boton de mantener; MM2)
+
+Animations
+- Animation ID (texto)
+- Speed (slider): 1–5
+- Play Animation (boton)
+- Save Animation (boton)
+- Saved Animations (lista)
+
+Anti AFK
+- Sin subopciones registradas en esta fuente
+
+Disguise
+- Disguise Character (interruptor)
+- Mode (selector): Character / Animation; control interno oculto
+- Animation Speed (slider): 0–2
+- Show Advanced (interruptor)
+- Pack Bundle ID (texto): si Show Advanced
+- Target ID (texto): ID de usuario o bundle de animaciones
+- Use target movement animations if able (interruptor): si Disguise Character = __hidden__
+- Show target emotes (interruptor)
+- Idle Bundle ID (texto; si Show Advanced)
+- Walk Bundle ID (texto; si Show Advanced)
+- Run Bundle ID (texto; si Show Advanced)
+- Jump Bundle ID (texto; si Show Advanced)
+- Fall Bundle ID (texto; si Show Advanced)
+- Climb Bundle ID (texto; si Show Advanced)
+- Swim Bundle ID (texto; si Show Advanced)
+- Swim Idle Bundle ID (texto; si Show Advanced)
+
+Improve FPS
+- Remove textures (interruptor)
+- Disable particles (interruptor)
+- Disable shadows (interruptor)
+- Simple materials (interruptor)
+- Lowest render quality (interruptor)
+- Simple lighting (interruptor)
+- Disable local lights (interruptor)
+- Simplify terrain (interruptor)
+- Disable post effects (interruptor)
+- Simplify game UI (interruptor)
+- Hide world UI (interruptor)
+- Hide game UI (interruptor)
+- Hide Roblox panels (interruptor)
+- Low detail meshes (interruptor)
+- Hide distant scenery (interruptor)
+
+Proximity Prompts
+- Interaction distance (slider): 8–250
+- Instant prompts (interruptor)
+- Proximity prompts (interruptor)
+- Click detectors (interruptor)
+
+Rejoin Server
+- Sin subopciones registradas en esta fuente
+
+Server Settings
+- Copy Job ID (boton)
+- Hop: smallest server (boton)
+- Hop: largest server (boton)
+- Hop: random server (boton)
+- Server (contador)
+- Players (contador)
+- In server (contador)
+- Uptime (contador)
+- Server time (contador)
+- Place (contador)
+
+Player Pointers
+- Colour (color)
+- Distance (interruptor)
+- Max distance (slider): 25–2000
+- Teammates (interruptor)
+- Team colours (interruptor)
+
+Chams
+- Fill colour (color)
+- Outline colour (color)
+- Fill transparency (slider): 0–1
+- Outline transparency (slider): 0–1
+- Through walls (interruptor)
+- Teammates (interruptor)
+- Team colours (interruptor)
+- Show Perk (interruptor)
+- Algunas opciones de equipo se ocultan cuando MM2 provee roles
+- Role colours (interruptor; MM2)
+- Murderer colour (color; MM2)
+- Sheriff colour (color; MM2)
+- Hero colour (color; MM2)
+- Innocent colour (color; MM2)
+- Dead colour (color; MM2)
+- Murderer ESP (interruptor; MM2)
+- Sheriff ESP (interruptor; MM2)
+- Hero ESP (interruptor; MM2)
+- Innocent ESP (interruptor; MM2)
+- Dead ESP (interruptor; MM2)
+
+FOV
+- Field of view (slider): 20–120
+
+FreeCam
+- Speed (slider): 1–250
+- Sensitivity (slider): 0.05–0.6
+- Spectate (interruptor)
+- Spectate Player (lista; si Spectate)
+
+Fullbright
+- Brightness (slider)
+- Time Changer (interruptor)
+- Time (slider): 0–24, si Time Changer
+- Fast time (interruptor): si Time Changer
+
+HP
+- Players (interruptor)
+- Health text (interruptor): si Players
+- Max distance (slider): 50–5000, si Players
+- Teammates (interruptor): si Players
+- Through walls (interruptor): si Players
+- Self HP (interruptor)
+- Self HP position (selector): Center / Bottom, si Self HP
+- Self HP scale (slider): 0.8–1.6, si Self HP
+
+ItemESP
+- Objects (lista)
+- Add by name (texto)
+- Add object (boton)
+- Touch matching (selector): Appearance / Name
+- Touch part (boton)
+- Clear list (boton)
+- Show distance (interruptor)
+- Outline (interruptor)
+- Max distance (slider): 50–5000
+- Text size (slider): 8–22
+- Colour (color)
+- Gun ESP (interruptor; MM2)
+- Trap ESP (interruptor; MM2)
+
+Markers
+- Name (texto)
+- Save here (boton)
+- Touch (boton)
+- Point (lista)
+- Manual coordinates (interruptor)
+- Coordinates (texto): si Manual coordinates
+- Save coordinates (boton): si Manual coordinates
+- Distance (interruptor)
+- Colour (color)
+
+NPCESP
+- Box (interruptor)
+- Highlight (interruptor)
+- Through walls (interruptor): si Highlight
+- Name (interruptor)
+- Model name (interruptor): si Name
+- Health (interruptor): si Name
+- All humanoids (interruptor)
+- Colour (color)
+- Max distance (slider): 25–2000
+- Force by name (texto)
+- Add forced name (boton)
+- Clear forced names (boton)
+
+Nametags
+- Display name (interruptor)
+- Account name (interruptor): si Display name
+- Distance (interruptor)
+- Show role (interruptor)
+- Held tool (interruptor)
+- Background (interruptor)
+- Text size (slider): 10–24
+- Colour (color)
+- Max distance (slider): 50–5000
+- Through walls (interruptor)
+- Teammates (interruptor)
+- Algunas opciones de equipo se ocultan cuando MM2 provee roles
+- Role colours (interruptor; MM2)
+- Murderer colour (color; MM2)
+- Sheriff colour (color; MM2)
+- Hero colour (color; MM2)
+- Innocent colour (color; MM2)
+- Dead colour (color; MM2)
+
+PlayerESP
+- Boxes (selector): Corner / Full / Off
+- Box thickness (slider): 1–5, si Boxes = Corner/Full
+- Filled box (interruptor): si Boxes = Corner/Full
+- Skeleton (interruptor)
+- Tracers (selector): Off / Bottom / Centre / Cursor
+- Team check (interruptor)
+- Visibility check (interruptor)
+- Max distance (slider): 50–5000
+- Colour (color)
+- Team colours (interruptor)
+- Algunas opciones de equipo se ocultan cuando MM2 provee roles
+- Role colours (interruptor; MM2)
+- Murderer colour (color; MM2)
+- Sheriff colour (color; MM2)
+- Hero colour (color; MM2)
+- Innocent colour (color; MM2)
+- Dead colour (color; MM2)
+
+X-Ray
+- Scope (selector): All map / Walls / Named parts
+- Transparency (slider): 0–1
+- Part names (texto): si Scope = Named parts
+- Keep visible (texto)
+- Keep floors (interruptor)
+- Collidable only (interruptor)
+- Include unanchored (interruptor)
+- Limit range (interruptor)
+- Range (slider): 25–5000, si Limit range
+
+Zoom
+- Maximum distance (slider): 25–2000
+- Minimum distance (slider): 0.5–50
+- Unlock forced first person (interruptor)
+- Through walls (interruptor)
+
+KILLAURA UNIVERSAL — CONTROLES DE FUENTE NO VISIBLES EN MM2
+En MM2 esta tarjeta se adapta a Knife Stab y oculta estos controles genericos; no son controles adicionales activos de Knife Stab.
+
+KillAura universal
+- Activation (selector): Always / Hold key
+- Hold key (tecla): si Activation = Hold key
+- Reach (slider): 5–60
+- Max targets (slider): 1–10
+- Priority (selector): Distance / Health / Threat
+- Swings per second (slider): 1–20
+- Field of view (slider): 30–360
+- Rotation (selector): Off / Silent / Face
+- Hits per swing (slider): 1–8
+- Weapons (lista)
+- Weapon name (texto)
+- Bind held tool (boton)
+- Auto equip (interruptor)
+- Require tool (interruptor)
+- Team check (interruptor)
+- Wall check (interruptor)
+- Contact damage (interruptor)
+- Hit through walls (interruptor)
+- Target NPCs (interruptor)
+- Ignore players (texto)
+- Highlight targets (interruptor)
+- Highlight colour (color): si Highlight targets
+
+BIBLIOTECAS INTERNAS COMPARTIDAS (dependencias; no son controles visibles)
+
+CameraAccess
+- Refresh, GetControls, GetCameras, ThroughWalls
+
+Entity
+- IsFriendly, IsFriendlyModel, IsEnemy, Refresh, IsAlive, Get, GetNpc, ForEach, VisibleFrom, Rig, IsProtected, InRange, ClosestToRay, ClosestToCursor
+
+Framework
+- modulos, categorias, controles, keybinds, busqueda
+
+GameRoles
+- Register, Bind, Role, Resolve, Allows; paletas y filtros de roles
+
+Manifest
+- catalogo de modulos, juegos, categorias y bibliotecas
+
+Render
+- Layer, Set, Release, ReleaseAll, Project, ModelRect; Line, Box, Fill, Label, Bar, Highlight
+
+Targeting
+- List, Select
+
+Weapons
+- PressButton, Invalidate, RegisterGameSource, SetAllowEquip, Scan, Labels, IsMelee, Find, Best, Swing, Activate
+
+DEPENDENCIAS INTERNAS ESPECIFICAS DE MM2 (sin tarjeta propia)
+
+MM2 base
+- Roles / rondas / deteccion de armas / trayectoria / Calibration
+
+Prediction
+- Prediccion de movimiento y punteria
+
+FlingEngine
+- Motor compartido de Fling para MM2
+
+FUENTE: https://github.com/XzAngel19/ARandomMenu/tree/f7de1b3ee13ce8783a4afb8f39b0426912ba5733/src
