@@ -18,8 +18,16 @@ const readTest = p => read(path.join(__dirname, p));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
   const farmLua = await Lua.create({ sandbox: true });
   farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
+  const farmProgressLua = await Lua.create({ sandbox: true });
+  farmProgressLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-progress-checks.luau'));
   const shootLua = await Lua.create({ sandbox: true });
   shootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-checks.luau'));
+  const shootRoleLua = await Lua.create({ sandbox: true });
+  shootRoleLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-role-checks.luau'));
+  const unboxLua = await Lua.create({ sandbox: true });
+  unboxLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}; local require = function(module) return module.data end\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('unbox-checks.luau'));
+  const unboxYieldLua = await Lua.create({ sandbox: true });
+  unboxYieldLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}; local require = function(module) if module.yieldNow then coroutine.yield("require") end return module.data end\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('unbox-yield-checks.luau'));
   const voteLua = await Lua.create({ sandbox: true });
   voteLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('vote-checks.luau'));
   const guiLua = await Lua.create({ sandbox: true });
@@ -29,10 +37,18 @@ local hub = shared.AngelHub
 assert(hub.values["Auto Farm"] == false and hub.values["Gun ESP"] == false and hub.values["Anti AFK"] == false)
 assert(hub.setters["Auto Farm"](true) == false and hub.values["Auto Farm"] == false)
 assert(hub.values["Select Map"] == "Waiting for maps")
+assert(hub.values["Box To Open"] == "Waiting for boxes" and hub.values["Reveal Animation"] == "Off")
 hub.cycleOptions["Select Map"]({"Hospital", "Factory"})
 assert(hub.values["Select Map"] == "Hospital")
 hub.setters["Select Map"]("Factory");assert(hub.values["Select Map"] == "Factory")
 hub.cycleOptions["Select Map"]({"Bank", "Factory"});assert(hub.values["Select Map"] == "Factory")
+assert(hub.values["Farm Mode"] == "Walk")
+hub.setters["Farm Mode"]("Under"); assert(hub.values["Farm Mode"] == "Walk")
+hub.setters["Farm Mode"]("Below"); assert(hub.values["Farm Mode"] == "Below")
+assert(hub.values["Stay Under When Round Starts"] == nil)
+assert(hub.values["Shoot Mode"] == "Bullet")
+hub.setters["Shoot Mode"]("Experimental"); assert(hub.values["Shoot Mode"] == "Bullet")
+hub.setters["Shoot Mode"]("CFrame"); assert(hub.values["Shoot Mode"] == "CFrame")
 assert(hub.values["Speed Mode"] == "Velocity")
 hub.setters["Speed Value"](-12);assert(hub.values["Speed Value"] == -12)
 hub.setters["Speed Value"](0);assert(hub.values["Speed Value"] == 0)
@@ -57,6 +73,9 @@ shared.AngelHubGui:Destroy()
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed on mobile")
 assert(shared.AngelHub.values["Aimbot Keybind Value"] == nil)
 assert(shared.AngelHub.values["Fly Up Key Value"] == nil)
+shared.AngelHub.setters["Shoot Mode"]("Experimental")
+assert(shared.AngelHub.values["Shoot Mode"] == "Experimental")
+assert(shared.AngelHub.setters["Auto Shoot"](true) == false)
 assert(shared.AngelHub.values["Remove Textures"] == false)
 assert(shared.AngelHub.setters["Remove Textures"](true) == false)
 shared.AngelHubGui:Destroy()

@@ -47,7 +47,7 @@ wall.Transparency=0
 local pending={};task.defer=function(f)table.insert(pending,f)end
 local function drain()local list=pending;pending={};for _,f in ipairs(list)do f()end end
 installGameplay(screenGui)
-AngelHub.setters['Shoot Mode']('CFrame')
+AngelHub.setters['Shoot Mode']('Experimental')
 assert(AngelHub.setters['Auto Shoot'](true)==false and not V['Auto Shoot'])
 AngelHub.setters['Shoot Mode']('Bullet')
 AngelHub.setters['Auto Shoot'](true);assert(V['Auto Shoot'] and #remote.shots==0)
@@ -67,8 +67,12 @@ remote.fail=false;fakeNow+=.23;enemyHumanoid.Health=0;heartbeat:Fire(.1);assert(
 fakeNow+=.11;enemyHumanoid.Health=100;gunTool.Reloading=true;heartbeat:Fire(.1);assert(#remote.shots==3)
 fakeNow+=.11;gunTool.Reloading=false;enemy.knife=nil;heartbeat:Fire(.1);assert(#remote.shots==3)
 fakeNow+=.11;enemy.knife=knife;heartbeat:Fire(.1);assert(#remote.shots==4)
-AngelHub.setters['Shoot Mode']('CFrame');assert(not V['Auto Shoot'] and radius.destroyed)
+AngelHub.setters['Shoot Mode']('Experimental');assert(not V['Auto Shoot'] and radius.destroyed)
 fakeNow+=1;heartbeat:Fire(.1);assert(#remote.shots==4)
-AngelHub.setters['Shoot Mode']('Bullet');AngelHub.setters['Auto Shoot'](true);assert(#remote.shots==5)
+AngelHub.setters['Shoot Mode']('CFrame');V['Shoot WallCheck']=true;workspace.rayMode='wall'
+AngelHub.setters['Auto Shoot'](true);assert(#remote.shots==4)
+workspace.rayMode='clear';fakeNow+=.23;heartbeat:Fire(.1);assert(#remote.shots==5)
+assert(math.abs(remote.shots[5][1].Position.X-18.5)<0.0001)
+assert(math.abs(remote.shots[5][2].Position.X-22.3)<0.0001)
 screenGui.Destroying:Fire();fakeNow+=1;heartbeat:Fire(.1);assert(#remote.shots==5)
 for _,connection in ipairs(backpack.ChildAdded.callbacks) do assert(not connection.alive) end
