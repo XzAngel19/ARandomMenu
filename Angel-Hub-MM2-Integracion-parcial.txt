@@ -3865,7 +3865,7 @@ local function installGameplay(screenGui)
     end
     local chams = {}
     do
-        local highlights, elapsed = {}, 0
+        local highlights, elapsed, neutralColour = {}, 0, nil
         local function clear()
             for player, highlight in pairs(highlights) do
                 highlights[player] = nil; pcall(function() highlight:Destroy() end)
@@ -3899,8 +3899,9 @@ local function installGameplay(screenGui)
                         local roleColour = isMM2 and role and V["Role Colours"] and V[role .. " Colour"] or nil
                         local teamColour = not isMM2 and V["Chams Team Colours"] and player.Team and player.Team.TeamColor.Color or nil
                         highlight.Adornee = character
-                        highlight.FillColor = roleColour or teamColour or V["Chams Fill Colour"]
-                        highlight.OutlineColor = roleColour or teamColour or V["Chams Outline Colour"]
+                        if not roleColour and not teamColour then neutralColour = neutralColour or Color3.fromRGB(255, 255, 255) end
+                        highlight.FillColor = roleColour or teamColour or neutralColour
+                        highlight.OutlineColor = roleColour or teamColour or neutralColour
                         highlight.FillTransparency = math.clamp(tonumber(V["Chams Fill Transparency"]) or 0.5, 0, 1)
                         highlight.OutlineTransparency = math.clamp(tonumber(V["Chams Outline Transparency"]) or 0, 0, 1)
                         highlight.DepthMode = V["Chams Through Walls"] and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
@@ -3949,7 +3950,7 @@ local function installGameplay(screenGui)
                         local tag = tags[player]
                         if not tag then
                             local gui = Instance.new("BillboardGui")
-                            gui.Name = "AngelHubNametag"; gui.Size = UDim2.fromOffset(230, 38)
+                            gui.Name = "AngelHubNametag"; gui.Size = UDim2.fromOffset(200, 30)
                             gui.StudsOffset = Vector3.new(0, 2.6, 0); gui.Parent = screenGui
                             local label = Instance.new("TextLabel")
                             label.Name = "Label"; label.Size = UDim2.fromScale(1, 1)
@@ -5401,8 +5402,6 @@ local function initializeScript()
 
 	addSection(visualsLeft, "Chams")
 	addModule(visualsLeft, "Chams", nil, false)
-	addColor(visualsLeft, "Chams Fill Colour", Color3.fromRGB(255, 70, 70))
-	addColor(visualsLeft, "Chams Outline Colour", Color3.fromRGB(255, 255, 255))
 	addSlider(visualsLeft, "Chams Fill Transparency", 0, 1, 0.5, 2)
 	addSlider(visualsLeft, "Chams Outline Transparency", 0, 1, 0, 2)
 	addToggle(visualsLeft, "Chams Through Walls", nil, true)

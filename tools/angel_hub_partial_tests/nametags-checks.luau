@@ -19,6 +19,7 @@ services.ReplicatedStorage=storage
 installGameplay(screenGui);AngelHub.setters['Nametags'](true);heartbeat:Fire(.21);heartbeat:Fire(.21)
 local label=created[#created];local billboard=created[#created-1]
 assert(label.class=='TextLabel' and billboard.class=='BillboardGui' and billboard.Adornee==part and billboard.AlwaysOnTop)
+assert(billboard.Size.X==200 and billboard.Size.Y==30)
 assert(label.Text=='Ally @Alice [Murderer] 20 studs [Knife]' and label.TextColor3=='red' and label.TextSize==16 and label.BackgroundTransparency==.4)
 V['Nametag Max Distance']=10;heartbeat:Fire(.21);assert(billboard.destroyed)
 V['Nametag Max Distance']=100;V['Role Colours']=false;V['Nametag Background']=false;heartbeat:Fire(.21)
