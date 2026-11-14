@@ -43,6 +43,12 @@ services.UserInputService.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyb
 assert(window.Visible~=before)
 shared.AngelHubGui:Destroy()
 `);
+ const autoload=await Lua.create({sandbox:true});
+ autoload.execute(read(path.join(fixtures,'gui-mock.luau'))+`\nfunction players:GetPlayers()return {player}end
+ isfile=function()return true end;readfile=function()return '{}' end
+ function services.HttpService:JSONDecode()return {Autoload=true,['Auto Farm']=true,['Auto Win']=true,['Auto Unbox']=true,['Auto Fling Selected Target']=true}end\n`+file+`\n
+ local v=shared.AngelHub.values;assert(not v['Auto Farm'] and not v['Auto Win'] and not v['Auto Unbox'] and not v['Auto Fling Selected Target'])
+ shared.AngelHubGui:Destroy()\n`);
  const otherGui=await Lua.create({sandbox:true});
  otherGui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nfunction players:GetPlayers()return {player} end;game.PlaceId=1\n'+file+`\n
 local hidden=0
@@ -114,7 +120,9 @@ shared.AngelHubGui:Destroy()
  actions.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','actions-checks.luau')));
  const fling=await Lua.create({sandbox:true});
  fling.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'fling-checks.luau')));
+ const sheriff=await Lua.create({sandbox:true});
+ sheriff.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_farm_tests','sheriff-checks.luau')));
  const hook=await Lua.create({sandbox:true});
  hook.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','hook-checks.luau')));
- console.log('PASS: player lists, Fling lifecycle, player/coin/item visuals, MM2 roles, utilities, Auto Vote and previous GUI regressions (PC/mobile mocks only)');
+ console.log('PASS: lists, Fling, Auto Win Sheriff, safe autoload, visual and prior GUI regressions (PC/mobile mocks only)');
 })().catch(err=>{console.error(err);process.exit(1)});
