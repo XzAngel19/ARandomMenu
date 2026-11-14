@@ -1,0 +1,1663 @@
+-- Angel Hub | MM2 visual preview.
+-- Adapted from the user-provided message (2).txt template. No gameplay logic.
+-- Dynamic lists/catalogues and configuration/theme actions are visual placeholders.
+-- Services.
+local playersService = game:GetService("Players")
+local userInputService = game:GetService("UserInputService")
+local tweenService = game:GetService("TweenService")
+local httpService = game:GetService("HttpService")
+
+-- Constants.
+local WINDOW_WIDTH = 420
+local WINDOW_HEIGHT = 540
+local TITLE_HEIGHT = 34
+local TAB_HEIGHT = 30
+local MIN_WIDTH = 360
+local MIN_HEIGHT = 360
+local MAX_WIDTH = 820
+local MAX_HEIGHT = 800
+local CONFIG_FOLDER = "AngelHub"
+local CONFIG_FILE = "AngelHub/Settings.json"
+local TAB_NAMES = { "Main", "Extra", "Visuals", "Config" }
+local TITLE_TEXT = "Angel Hub | MM2"
+
+local ACCENT_A = Color3.fromRGB(225, 225, 225)
+local ACCENT_B = Color3.fromRGB(110, 110, 116)
+local BACKGROUND_TOP = Color3.fromRGB(25, 25, 27)
+local BACKGROUND_BOTTOM = Color3.fromRGB(9, 9, 10)
+local ROW_COLOR = Color3.fromRGB(34, 34, 36)
+local ELEMENT_COLOR = Color3.fromRGB(17, 17, 19)
+local TEXT_COLOR = Color3.fromRGB(238, 238, 238)
+local OFF_TEXT_COLOR = Color3.fromRGB(192, 192, 196)
+local DIM_TEXT_COLOR = Color3.fromRGB(120, 120, 124)
+
+local TEXT_FONT = Enum.Font.SourceSans
+local BOLD_FONT = Enum.Font.SourceSansBold
+
+local FAST_TWEEN = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SLIDE_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local MEDIUM_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local POP_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local localPlayer = playersService.LocalPlayer
+
+local AngelHub = {
+	values = {},
+	pages = {},
+	tabButtons = {},
+	tabIndex = {},
+	searchables = {},
+	sections = {},
+	boxes = {},
+	sectionBoxes = {},
+	setters = {},
+	connections = {},
+	keybinds = {},
+	keyLabels = {},
+	listening = nil,
+	defaults = {},
+	menuKey = Enum.KeyCode.RightShift,
+}
+
+---Create an instance with properties.
+local function create(className, properties, parent)
+	local instance = Instance.new(className)
+
+	for key, value in properties do
+		instance[key] = value
+	end
+
+	instance.Parent = parent
+	return instance
+end
+
+---Play a tween.
+local function tween(instance, info, goal)
+	local newTween = tweenService:Create(instance, info, goal)
+	newTween:Play()
+	return newTween
+end
+
+---Connect a global input signal that is cleaned up when the GUI closes.
+local function connectInput(signal, callback)
+	local connection = signal:Connect(callback)
+	table.insert(AngelHub.connections, connection)
+	return connection
+end
+
+---Check if an input is a primary press.
+local function isPress(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+end
+
+---Check if an input is pointer movement.
+local function isMove(input)
+	return input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch
+end
+
+---Add the accent gradient to an object.
+local function addGradient(parent, rotation)
+	return create("UIGradient", {
+		Color = ColorSequence.new(ACCENT_A, ACCENT_B),
+		Rotation = rotation,
+	}, parent)
+end
+
+---Add a border stroke to an object.
+local function addStroke(parent, color, transparency, thickness)
+	return create("UIStroke", {
+		Color = color,
+		Transparency = transparency,
+		Thickness = thickness or 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, parent)
+end
+
+---Create a rounded row card.
+local function createCard(className, parent, text, height)
+	local card = create(className, {
+		Name = text,
+		Size = UDim2.new(1, 0, 0, height),
+		LayoutOrder = (AngelHub.rowIndex or 0) + 1,
+		BackgroundColor3 = ROW_COLOR,
+		BackgroundTransparency = 0.65,
+		BorderSizePixel = 0,
+	}, AngelHub.sectionBoxes[parent] or parent)
+
+	AngelHub.rowIndex = (AngelHub.rowIndex or 0) + 1
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, card)
+	local stroke = addStroke(card, ACCENT_A, 1)
+	card.ClipsDescendants = true
+
+	-- Rows of a collapsible group start hidden and follow the group button.
+	local group = AngelHub.currentGroup
+	if group then
+		table.insert(group.cards, card)
+		card:SetAttribute("GroupHidden", group.collapsed)
+		card.Visible = not group.collapsed
+	end
+
+	-- Click ripple that expands from the cursor.
+	card.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		local offset = Vector2.new(input.Position.X, input.Position.Y) - card.AbsolutePosition
+
+		local ripple = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(offset.X, offset.Y),
+			Size = UDim2.fromOffset(0, 0),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.8,
+			BorderSizePixel = 0,
+			ZIndex = 0,
+		}, card)
+
+		create("UICorner", { CornerRadius = UDim.new(1, 0) }, ripple)
+
+		local diameter = math.max(card.AbsoluteSize.X, card.AbsoluteSize.Y) * 2
+
+		tween(ripple, MEDIUM_TWEEN, {
+			Size = UDim2.fromOffset(diameter, diameter),
+			BackgroundTransparency = 1,
+		}).Completed:Connect(function()
+			ripple:Destroy()
+		end)
+	end)
+
+	card.MouseEnter:Connect(function()
+		tween(card, FAST_TWEEN, { BackgroundTransparency = 0.35 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0.55 })
+	end)
+
+	card.MouseLeave:Connect(function()
+		tween(card, FAST_TWEEN, { BackgroundTransparency = 0.65 })
+		tween(stroke, FAST_TWEEN, { Transparency = 1 })
+	end)
+
+	return card, stroke
+end
+
+---Add a section group box. Following rows are placed inside it.
+local function addSection(parent, text)
+	local box = create("Frame", {
+		Name = text .. " Box",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Color3.fromRGB(22, 22, 24),
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		LayoutOrder = #AngelHub.boxes + 1,
+	}, parent)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
+	addStroke(box, Color3.fromRGB(105, 105, 110), 0.55)
+
+	create("UIGradient", {
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(165, 165, 170)),
+		Rotation = 90,
+	}, box)
+
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 4),
+		PaddingBottom = UDim.new(0, 6),
+		PaddingLeft = UDim.new(0, 6),
+		PaddingRight = UDim.new(0, 6),
+	}, box)
+
+	create("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, box)
+
+	local holder = create("Frame", {
+		Name = text,
+		Size = UDim2.new(1, 0, 0, 26),
+		BackgroundTransparency = 1,
+	}, box)
+
+	local marker = create("Frame", {
+		Size = UDim2.fromOffset(3, 12),
+		Position = UDim2.new(0, 3, 0.5, -7),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, marker)
+	addGradient(marker, 90)
+
+	tweenService:Create(
+		marker,
+		TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ BackgroundTransparency = 0.5 }
+	):Play()
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -14, 1, -4),
+		Position = UDim2.fromOffset(12, 0),
+		BackgroundTransparency = 1,
+		Text = string.upper(text),
+		TextColor3 = ACCENT_A,
+		TextSize = 11,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local line = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -2),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, holder)
+
+	local gradient = addGradient(line, 0)
+	gradient.Transparency = NumberSequence.new(0.3, 1)
+
+	AngelHub.rowIndex = 0
+	AngelHub.sectionBoxes[parent] = box
+	table.insert(AngelHub.boxes, box)
+	table.insert(AngelHub.sections, holder)
+	return box
+end
+
+---Add a toggle row.
+local function addToggle(parent, text, keybind, default, id)
+	id = id or text
+	local holder, stroke = createCard("TextButton", parent, text, #text > 22 and 38 or 28)
+	holder.Text = ""
+	holder.AutoButtonColor = false
+
+	local box = create("Frame", {
+		Size = UDim2.fromOffset(16, 16),
+		Position = UDim2.new(0, 8, 0.5, -8),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, box)
+	local boxStroke = addStroke(box, default and ACCENT_A or DIM_TEXT_COLOR, default and 0 or 0.5)
+
+	local check = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = default and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, box)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 3) }, check)
+	addGradient(check, 45)
+
+	local label = create("TextLabel", {
+		Size = UDim2.new(1, -40, 1, 0),
+		Position = UDim2.fromOffset(32, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = default and TEXT_COLOR or OFF_TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextWrapped = #text > 22,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	-- Glowing marker on the left edge while enabled.
+	local accentBar = create("Frame", {
+		Size = UDim2.new(0, 3, 1, -10),
+		Position = UDim2.fromOffset(0, 5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = default and 0 or 1,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, accentBar)
+	addGradient(accentBar, 90)
+
+	local state = default
+	AngelHub.values[id] = state
+	AngelHub.defaults[id] = default
+
+	AngelHub.setters[id] = function(value)
+		state = value == true
+		AngelHub.values[id] = state
+
+		tween(check, POP_TWEEN, { Size = state and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0) })
+		tween(boxStroke, FAST_TWEEN, { Color = state and ACCENT_A or DIM_TEXT_COLOR, Transparency = state and 0 or 0.5 })
+		tween(label, FAST_TWEEN, { TextColor3 = state and TEXT_COLOR or OFF_TEXT_COLOR })
+		tween(accentBar, FAST_TWEEN, { BackgroundTransparency = state and 0 or 1 })
+		if AngelHub.changed then AngelHub.changed(id) end
+	end
+
+	-- Clickable keybind label: click it, then press a key. Escape clears it.
+	if keybind then
+		local keybindName = text .. " Keybind"
+
+		local keybindButton = create("TextButton", {
+			Size = UDim2.fromOffset(52, 22),
+			Position = UDim2.new(1, -58, 0.5, -11),
+			BackgroundTransparency = 1,
+			Text = "[" .. keybind .. "]",
+			TextColor3 = DIM_TEXT_COLOR,
+			TextSize = 12,
+			Font = TEXT_FONT,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			AutoButtonColor = false,
+		}, holder)
+
+		---Apply a key name to this toggle.
+		local function applyKey(keyName)
+			local keyCode = nil
+
+			for _, item in Enum.KeyCode:GetEnumItems() do
+				if item.Name == keyName then
+					keyCode = item
+					break
+				end
+			end
+
+			AngelHub.keybinds[text] = keyCode
+			AngelHub.values[keybindName] = keyCode and keyName or ""
+			keybindButton.Text = keyCode and ("[" .. keyName .. "]") or "[None]"
+			keybindButton.Visible = AngelHub.values["Keybind Hints"] ~= false
+		end
+
+		AngelHub.defaults[keybindName] = keybind
+		AngelHub.setters[keybindName] = applyKey
+		AngelHub.keyLabels[text] = keybindButton
+		applyKey(keybind)
+
+		keybindButton.MouseEnter:Connect(function()
+			tween(keybindButton, FAST_TWEEN, { TextColor3 = ACCENT_A })
+		end)
+
+		keybindButton.MouseLeave:Connect(function()
+			if not AngelHub.listening then
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+			end
+		end)
+
+		keybindButton.Activated:Connect(function()
+			-- Cancel any other keybind that is still waiting for a key.
+			if AngelHub.cancelListening then
+				AngelHub.cancelListening()
+			end
+
+			local previousKey = AngelHub.values[keybindName]
+			keybindButton.Text = "[...]"
+			tween(keybindButton, FAST_TWEEN, { TextColor3 = ACCENT_A })
+
+			AngelHub.cancelListening = function()
+				AngelHub.listening = nil
+				AngelHub.cancelListening = nil
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+				applyKey(previousKey)
+			end
+
+			AngelHub.listening = function(keyCode)
+				AngelHub.listening = nil
+				AngelHub.cancelListening = nil
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+				applyKey(keyCode == Enum.KeyCode.Escape and "" or keyCode.Name)
+			end
+		end)
+	end
+
+	holder.MouseButton1Down:Connect(function()
+		tween(holder, FAST_TWEEN, { BackgroundTransparency = 0 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0 })
+	end)
+
+	holder.MouseButton1Up:Connect(function()
+		tween(holder, FAST_TWEEN, { BackgroundTransparency = 0.35 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0.55 })
+	end)
+
+	holder.Activated:Connect(function()
+		AngelHub.setters[id](not state)
+
+		if AngelHub.notify then
+			AngelHub.notify(text, state)
+		end
+	end)
+
+	holder.MouseEnter:Connect(function()
+		tween(label, FAST_TWEEN, { Position = UDim2.fromOffset(36, 0) })
+	end)
+
+	holder.MouseLeave:Connect(function()
+		tween(label, FAST_TWEEN, { Position = UDim2.fromOffset(32, 0) })
+	end)
+
+	table.insert(AngelHub.searchables, holder)
+	return holder
+end
+
+---Add a slider row.
+local function addSlider(parent, text, minValue, maxValue, default, decimals, id)
+	id = id or text
+	local longLabel = #text > 19
+	local holder = createCard("Frame", parent, text, longLabel and 56 or 44)
+	local startAlpha = (default - minValue) / (maxValue - minValue)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -70, 0, longLabel and 32 or 20),
+		Position = UDim2.fromOffset(10, 3),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextWrapped = longLabel,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local valueLabel = create("TextBox", {
+		Size = UDim2.fromOffset(56, 20),
+		Position = UDim2.new(1, -66, 0, 3),
+		BackgroundTransparency = 1,
+		Text = tostring(default),
+		ClearTextOnFocus = false,
+		TextColor3 = OFF_TEXT_COLOR,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, holder)
+
+	local bar = create("Frame", {
+		Size = UDim2.new(1, -20, 0, 6),
+		Position = UDim2.fromOffset(10, longLabel and 41 or 29),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+	addStroke(bar, Color3.new(1, 1, 1), 0.88)
+
+	local fill = create("Frame", {
+		Size = UDim2.fromScale(startAlpha, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, bar)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+	addGradient(fill, 0)
+
+	local knob = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(12, 12),
+		Position = UDim2.new(startAlpha, 0, 0.5, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, bar)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+	addStroke(knob, ACCENT_A, 0, 2)
+	local knobScale = create("UIScale", {}, knob)
+
+	local hitbox = create("Frame", {
+		Size = UDim2.new(1, -20, 0, 22),
+		Position = UDim2.fromOffset(10, longLabel and 33 or 21),
+		BackgroundTransparency = 1,
+	}, holder)
+
+	AngelHub.values[id] = default
+	AngelHub.defaults[id] = default
+
+	local dragging = false
+
+	local function setValue(value)
+		local factor = 10 ^ decimals
+		value = math.floor(math.clamp(value, minValue, maxValue) * factor + 0.5) / factor
+		local snapped = (value - minValue) / (maxValue - minValue)
+
+		tween(fill, SLIDE_TWEEN, { Size = UDim2.fromScale(snapped, 1) })
+		tween(knob, SLIDE_TWEEN, { Position = UDim2.new(snapped, 0, 0.5, 0) })
+
+		valueLabel.Text = tostring(value)
+		AngelHub.values[id] = value
+		if AngelHub.changed then AngelHub.changed(id) end
+	end
+
+	AngelHub.setters[id] = setValue
+	valueLabel.FocusLost:Connect(function() setValue(tonumber(valueLabel.Text) or AngelHub.values[id]) end)
+
+	local function updateFromX(positionX)
+		local alpha = math.clamp((positionX - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		setValue(minValue + (maxValue - minValue) * alpha)
+	end
+
+	hitbox.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		dragging = true
+		tween(knobScale, POP_TWEEN, { Scale = 1.35 })
+		tween(valueLabel, FAST_TWEEN, { TextColor3 = ACCENT_A })
+		updateFromX(input.Position.X)
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if dragging and isMove(input) then
+			updateFromX(input.Position.X)
+		end
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if not dragging or not isPress(input) then
+			return
+		end
+
+		dragging = false
+		tween(knobScale, POP_TWEEN, { Scale = 1 })
+		tween(valueLabel, FAST_TWEEN, { TextColor3 = OFF_TEXT_COLOR })
+	end)
+
+	table.insert(AngelHub.searchables, holder)
+	return holder
+end
+
+---Add a cycling option row.
+local function addCycle(parent, text, options)
+	local holder = createCard("Frame", parent, text, 56)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -20, 0, 20),
+		Position = UDim2.fromOffset(10, 3),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -20, 0, 24),
+		Position = UDim2.fromOffset(10, 26),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = options[1],
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	local index = 1
+	AngelHub.values[text] = options[1]
+	AngelHub.defaults[text] = options[1]
+
+	AngelHub.setters[text] = function(value)
+		local found = table.find(options, value)
+		if not found then
+			return
+		end
+
+		index = found
+		AngelHub.values[text] = options[index]
+		button.Text = options[index]
+	end
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+	end)
+
+	button.Activated:Connect(function()
+		index = index % #options + 1
+		AngelHub.values[text] = options[index]
+
+		button.Text = options[index]
+		button.TextTransparency = 1
+		tween(button, FAST_TWEEN, { TextTransparency = 0 })
+	end)
+
+	table.insert(AngelHub.searchables, holder)
+end
+
+---Add an action button row.
+local function addButton(parent, text, callback)
+	local holder = createCard("Frame", parent, text, 34)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -16, 0, 24),
+		Position = UDim2.fromOffset(8, 5),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(28, 28, 30) })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+		tween(button, FAST_TWEEN, { BackgroundColor3 = ELEMENT_COLOR })
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(46, 46, 48) })
+	end)
+
+	button.MouseButton1Up:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(28, 28, 30) })
+	end)
+
+	button.Activated:Connect(callback or function() end)
+	table.insert(AngelHub.searchables, holder)
+	return holder
+end
+
+---Start a group of rows that a button shows or hides. The rows that follow belong to the group.
+local function beginGroup(parent, text)
+	local group = { cards = {}, collapsed = true }
+	local holder = createCard("Frame", parent, text .. " Options", 30)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -16, 0, 22),
+		Position = UDim2.fromOffset(8, 4),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = "+  Show options",
+		TextColor3 = OFF_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+	end)
+
+	button.Activated:Connect(function()
+		group.collapsed = not group.collapsed
+		button.Text = group.collapsed and "+  Show options" or "-  Hide options"
+
+		for _, card in group.cards do
+			card:SetAttribute("GroupHidden", group.collapsed)
+			card.Visible = not group.collapsed
+		end
+	end)
+
+	table.insert(AngelHub.searchables, holder)
+	AngelHub.currentGroup = group
+end
+
+---End the current group of rows.
+local function endGroup()
+	AngelHub.currentGroup = nil
+end
+
+---Create a scrolling column.
+local function createColumn(parent, position)
+	local column = create("ScrollingFrame", {
+		Size = UDim2.new(0.5, -6, 1, 0),
+		Position = position,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = ACCENT_A,
+		ScrollBarImageTransparency = 0.4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, parent)
+
+	create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, column)
+	create("UIPadding", { PaddingRight = UDim.new(0, 6) }, column)
+
+	return column
+end
+
+---Make a frame draggable by a handle.
+local function makeDraggable(handle, target)
+	local dragStart, startPosition
+
+	handle.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		dragStart = input.Position
+		startPosition = target.Position
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if not dragStart or not isMove(input) then
+			return
+		end
+
+		local delta = input.Position - dragStart
+
+		target.Position = UDim2.new(
+			startPosition.X.Scale,
+			startPosition.X.Offset + delta.X,
+			startPosition.Y.Scale,
+			startPosition.Y.Offset + delta.Y
+		)
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if isPress(input) then
+			dragStart = nil
+		end
+	end)
+end
+
+---Create a title bar button with hover and press effects.
+local function createTitleButton(parent, text, offset, hoverColor)
+	local button = create("TextButton", {
+		Size = UDim2.fromOffset(24, 22),
+		Position = UDim2.new(1, offset, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		AutoButtonColor = false,
+	}, parent)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, button)
+
+	button.MouseEnter:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = hoverColor, BackgroundTransparency = 0.1 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = ELEMENT_COLOR, BackgroundTransparency = 0.4 })
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundTransparency = 0.4 })
+	end)
+
+	return button
+end
+
+---Switch the visible tab.
+local function switchTab(name)
+	for pageName, page in AngelHub.pages do
+		local selected = pageName == name
+
+		page.Visible = selected
+		tween(AngelHub.tabButtons[pageName], FAST_TWEEN, { TextColor3 = selected and TEXT_COLOR or DIM_TEXT_COLOR })
+
+		if selected then
+			page.GroupTransparency = 1
+			tween(page, MEDIUM_TWEEN, { GroupTransparency = 0 })
+		end
+	end
+
+	AngelHub.selected = name
+	tween(AngelHub.indicator, MEDIUM_TWEEN, { Position = UDim2.new((AngelHub.tabIndex[name] - 1) / #TAB_NAMES, 6, 0, 3) })
+end
+
+---Build the whole interface.
+local function initializeScript()
+	-- Remove a previous copy of the GUI when the script runs again.
+	if typeof(shared) == "table" and shared.AngelHubGui then
+		pcall(function()
+			shared.AngelHubGui:Destroy()
+		end)
+	end
+
+	-- Prefer the hidden GUI container when the executor provides one.
+	local guiParent = localPlayer:WaitForChild("PlayerGui")
+
+	if typeof(gethui) == "function" then
+		local success, hiddenParent = pcall(gethui)
+
+		if success and hiddenParent then
+			guiParent = hiddenParent
+		end
+	end
+
+	local screenGui = create("ScreenGui", {
+		Name = "AngelHub",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, guiParent)
+
+	if typeof(shared) == "table" then
+		shared.AngelHubGui = screenGui
+		shared.AngelHub = AngelHub
+	end
+
+	-- Stop every global listener when the GUI is destroyed.
+	screenGui.Destroying:Connect(function()
+		for _, connection in AngelHub.connections do
+			connection:Disconnect()
+		end
+
+		table.clear(AngelHub.connections)
+	end)
+
+	-- Stacked notifications in the bottom right corner.
+	local toastHolder = create("Frame", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -16, 1, -16),
+		Size = UDim2.fromOffset(230, 320),
+		BackgroundTransparency = 1,
+		ZIndex = 20,
+	}, screenGui)
+
+	create("UIListLayout", {
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+	}, toastHolder)
+
+	---Show a toast for a toggled feature.
+	AngelHub.notify = function(name, enabled)
+		if not toastHolder.Parent then
+			return
+		end
+
+		local toast = create("CanvasGroup", {
+			Size = UDim2.fromOffset(230, 34),
+			BackgroundColor3 = Color3.fromRGB(18, 18, 20),
+			BorderSizePixel = 0,
+			GroupTransparency = 1,
+		}, toastHolder)
+
+		create("UICorner", { CornerRadius = UDim.new(0, 7) }, toast)
+		addStroke(toast, Color3.new(1, 1, 1), 0.8)
+
+		create("Frame", {
+			Size = UDim2.new(0, 3, 1, -12),
+			Position = UDim2.fromOffset(6, 6),
+			BackgroundColor3 = enabled and Color3.fromRGB(120, 220, 140) or Color3.fromRGB(230, 100, 100),
+			BorderSizePixel = 0,
+		}, toast)
+
+		create("TextLabel", {
+			Size = UDim2.new(1, -80, 1, 0),
+			Position = UDim2.fromOffset(18, 0),
+			BackgroundTransparency = 1,
+			Text = name,
+			TextColor3 = TEXT_COLOR,
+			TextSize = 13,
+			Font = TEXT_FONT,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, toast)
+
+		create("TextLabel", {
+			Size = UDim2.fromOffset(46, 34),
+			Position = UDim2.new(1, -54, 0, 0),
+			BackgroundTransparency = 1,
+			Text = enabled and "ON" or "OFF",
+			TextColor3 = enabled and Color3.fromRGB(120, 220, 140) or Color3.fromRGB(230, 100, 100),
+			TextSize = 12,
+			Font = BOLD_FONT,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, toast)
+
+		tween(toast, FAST_TWEEN, { GroupTransparency = 0 })
+
+		task.delay(2, function()
+			tween(toast, MEDIUM_TWEEN, { GroupTransparency = 1 }).Completed:Wait()
+			toast:Destroy()
+		end)
+	end
+
+	local window = create("Frame", {
+		Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, screenGui)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, window)
+
+	create("UIGradient", {
+		Color = ColorSequence.new(BACKGROUND_TOP, BACKGROUND_BOTTOM),
+		Rotation = 90,
+	}, window)
+
+	local windowStroke = addStroke(window, Color3.new(1, 1, 1), 0.2, 1.5)
+	addGradient(windowStroke, 45)
+
+	local windowScale = create("UIScale", { Scale = 0.85 }, window)
+    local function fitScreen()
+        local camera = workspace.CurrentCamera
+        if camera then
+            local v = camera.ViewportSize
+            windowScale.Scale = math.min(1, math.max(0.1, (v.X - 12) / WINDOW_WIDTH), math.max(0.1, (v.Y - 12) / WINDOW_HEIGHT))
+        end
+    end
+    local function attachCamera()
+        if AngelHub.cameraConnection then AngelHub.cameraConnection:Disconnect() end
+        if workspace.CurrentCamera then
+            AngelHub.cameraConnection = connectInput(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), fitScreen)
+        end
+        fitScreen()
+    end
+    connectInput(workspace:GetPropertyChangedSignal("CurrentCamera"), attachCamera)
+    attachCamera()
+
+	-- Top sheen for depth.
+	local sheen = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 140),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, window)
+
+	create("UIGradient", {
+		Transparency = NumberSequence.new(0.965, 1),
+		Rotation = 90,
+	}, sheen)
+
+	local titleBar = create("Frame", {
+		Size = UDim2.new(1, 0, 0, TITLE_HEIGHT),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, window)
+
+	local titleGradient = addGradient(titleBar, 0)
+	titleGradient.Transparency = NumberSequence.new(0.8, 0.92)
+
+	local titleLine = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, titleBar)
+
+	addGradient(titleLine, 0)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -260, 1, 0),
+		Position = UDim2.fromOffset(12, 0),
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = "<b>" .. TITLE_TEXT .. "</b>",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 14,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, titleBar)
+
+	local searchBox = create("TextBox", {
+		Size = UDim2.fromOffset(130, 22),
+		Position = UDim2.new(1, -200, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		PlaceholderText = "Search",
+		PlaceholderColor3 = DIM_TEXT_COLOR,
+		Text = "",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		ClearTextOnFocus = false,
+	}, titleBar)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, searchBox)
+	local searchStroke = addStroke(searchBox, ACCENT_A, 1)
+
+	searchBox.Focused:Connect(function()
+		tween(searchStroke, FAST_TWEEN, { Transparency = 0 })
+	end)
+
+	searchBox.FocusLost:Connect(function()
+		tween(searchStroke, FAST_TWEEN, { Transparency = 1 })
+	end)
+
+	local minimizeButton = createTitleButton(titleBar, "-", -60, ACCENT_B)
+	local closeButton = createTitleButton(titleBar, "X", -32, Color3.fromRGB(230, 60, 70))
+
+	makeDraggable(titleBar, window)
+
+	local minimized = false
+	local windowWidth = WINDOW_WIDTH
+	local windowHeight = WINDOW_HEIGHT
+
+	minimizeButton.Activated:Connect(function()
+		minimized = not minimized
+		AngelHub.resizeHandle.Visible = not minimized
+		tween(window, MEDIUM_TWEEN, { Size = UDim2.fromOffset(windowWidth, minimized and TITLE_HEIGHT or windowHeight) })
+	end)
+
+	closeButton.Activated:Connect(function()
+		tween(windowScale, FAST_TWEEN, { Scale = 0 }).Completed:Connect(function()
+			screenGui:Destroy()
+		end)
+	end)
+
+	-- Tab bar with an animated indicator.
+	local tabBar = create("Frame", {
+		Size = UDim2.new(1, 0, 0, TAB_HEIGHT),
+		Position = UDim2.fromOffset(0, TITLE_HEIGHT),
+		BackgroundTransparency = 1,
+	}, window)
+
+	local indicator = create("Frame", {
+		Size = UDim2.new(1 / #TAB_NAMES, -12, 1, -6),
+		Position = UDim2.new(0, 6, 0, 3),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.9,
+		BorderSizePixel = 0,
+	}, tabBar)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 6) }, indicator)
+	addStroke(indicator, Color3.new(1, 1, 1), 0.8)
+
+	local underline = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Size = UDim2.new(0.5, 0, 0, 2),
+		Position = UDim2.fromScale(0.5, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, indicator)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, underline)
+	addGradient(underline, 0)
+	AngelHub.indicator = indicator
+
+	local contentTop = TITLE_HEIGHT + TAB_HEIGHT + 8
+
+	local content = create("Frame", {
+		Size = UDim2.new(1, -20, 1, -(contentTop + 10)),
+		Position = UDim2.fromOffset(10, contentTop),
+		BackgroundTransparency = 1,
+	}, window)
+
+	-- Resize grip in the bottom right corner.
+	local resizeHandle = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 1),
+		Size = UDim2.fromOffset(18, 18),
+		Position = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 10,
+	}, window)
+
+	AngelHub.resizeHandle = resizeHandle
+
+	for gripIndex = 1, 3 do
+		create("Frame", {
+			AnchorPoint = Vector2.new(1, 1),
+			Size = UDim2.fromOffset(gripIndex * 4, 1),
+			Position = UDim2.new(1, -3, 1, -3 - (3 - gripIndex) * 4 - 2),
+			BackgroundColor3 = DIM_TEXT_COLOR,
+			BorderSizePixel = 0,
+		}, resizeHandle)
+	end
+
+	local resizing = false
+	local resizeStart, startWidth, startHeight
+
+	resizeHandle.MouseEnter:Connect(function()
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = ACCENT_A })
+		end
+	end)
+
+	resizeHandle.MouseLeave:Connect(function()
+		if resizing then
+			return
+		end
+
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = DIM_TEXT_COLOR })
+		end
+	end)
+
+	resizeHandle.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		resizing = true
+		resizeStart = input.Position
+		startWidth, startHeight = windowWidth, windowHeight
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if not resizing or not isMove(input) then
+			return
+		end
+
+		local delta = input.Position - resizeStart
+		windowWidth = math.clamp(startWidth + delta.X, MIN_WIDTH, MAX_WIDTH)
+		windowHeight = math.clamp(startHeight + delta.Y, MIN_HEIGHT, MAX_HEIGHT)
+		window.Size = UDim2.fromOffset(windowWidth, windowHeight)
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if not resizing or not isPress(input) then
+			return
+		end
+
+		resizing = false
+
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = DIM_TEXT_COLOR })
+		end
+	end)
+
+	for index, name in TAB_NAMES do
+		local button = create("TextButton", {
+			Size = UDim2.fromScale(1 / #TAB_NAMES, 1),
+			Position = UDim2.fromScale((index - 1) / #TAB_NAMES, 0),
+			BackgroundTransparency = 1,
+			Text = name,
+			TextColor3 = DIM_TEXT_COLOR,
+			TextSize = 13,
+			Font = BOLD_FONT,
+			AutoButtonColor = false,
+		}, tabBar)
+
+		local page = create("CanvasGroup", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Visible = false,
+		}, content)
+
+		button.MouseEnter:Connect(function()
+			if AngelHub.selected ~= name then
+				tween(button, FAST_TWEEN, { TextColor3 = OFF_TEXT_COLOR })
+			end
+		end)
+
+		button.MouseLeave:Connect(function()
+			if AngelHub.selected ~= name then
+				tween(button, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+			end
+		end)
+
+		button.Activated:Connect(function()
+			switchTab(name)
+		end)
+
+		AngelHub.pages[name] = page
+		AngelHub.tabButtons[name] = button
+		AngelHub.tabIndex[name] = index
+	end
+
+    -- Angel Hub visual layout. Game modules are intentionally not implemented.
+    local IS_MM2 = game.PlaceId == 142823291
+    local MOBILE = userInputService.TouchEnabled and not userInputService.KeyboardEnabled
+    local values, modeValues, cards = AngelHub.values, {}, {}
+    local columns = {}
+    for _, name in ipairs(TAB_NAMES) do
+        columns[name] = {
+            left = createColumn(AngelHub.pages[name], UDim2.fromOffset(0, 0)),
+            right = createColumn(AngelHub.pages[name], UDim2.new(0.5, 6, 0, 0)),
+        }
+    end
+    local refresh
+    local function get(id) return values[id] end
+    local function newCard(tab, side, name, options)
+        options = options or {}
+        local col = columns[tab][side]
+        local box = addSection(col, name)
+        local card = {title = name, col = col, box = box, rows = {}, mm2 = options.mm2 == true}
+        table.insert(cards, card)
+        if options.toggle then
+            local row = addToggle(col, name, nil, false, name .. ".enabled")
+            table.insert(card.rows, {frame = row, name = name})
+        end
+        return card
+    end
+    local function row(card, frame, name, condition)
+        table.insert(card.rows, {frame = frame, name = name, condition = condition})
+        return frame
+    end
+    local function toggle(card, name, id, default, condition)
+        id = id or card.title .. "." .. name
+        row(card, addToggle(card.col, name, nil, default == true, id), name, condition)
+        return function(value) AngelHub.setters[id](value) end
+    end
+    local function slider(card, name, id, min, max, default, step, condition)
+        id = id or card.title .. "." .. name
+        local decimals = step < 0.1 and 2 or (step < 1 and 1 or 0)
+        row(card, addSlider(card.col, name, min, max, default, decimals, id), name, condition)
+        return function(value) AngelHub.setters[id](value) end
+    end
+    -- This dropdown extends the supplied template's cycling control while
+    -- retaining its card, typography, colours and border styling.
+    local function dropdown(card, name, id, choices, default, condition, afterChange)
+        id = id or card.title .. "." .. name
+        local holder = createCard("Frame", card.col, name, 56)
+        create("TextLabel", {Size=UDim2.new(1,-20,0,20), Position=UDim2.fromOffset(10,3), BackgroundTransparency=1,
+            Text=name, TextColor3=TEXT_COLOR, TextSize=13, Font=TEXT_FONT, TextXAlignment=Enum.TextXAlignment.Left, TextTruncate=Enum.TextTruncate.AtEnd}, holder)
+        local main = create("TextButton", {Size=UDim2.new(1,-20,0,24), Position=UDim2.fromOffset(10,26), BackgroundColor3=ELEMENT_COLOR,
+            BorderSizePixel=0, Text="", TextColor3=TEXT_COLOR, TextSize=13, Font=TEXT_FONT, AutoButtonColor=false}, holder)
+        create("UICorner", {CornerRadius=UDim.new(0,4)}, main); addStroke(main,DIM_TEXT_COLOR,0.6)
+        local expanded = false
+        local optionButtons = {}
+        local function apply(value)
+            if not table.find(choices,value) then return end
+            values[id]=value; main.Text=value.."  ▾"
+            if AngelHub.changed then AngelHub.changed(id) end
+        end
+        values[id]=default or choices[1]; AngelHub.defaults[id]=values[id]; AngelHub.setters[id]=apply
+        main.Text=values[id].."  ▾"
+        local function open(value)
+            expanded=value
+            holder.Size=UDim2.new(1,0,0,56+(expanded and #choices*24 or 0))
+            for _, button in ipairs(optionButtons) do button.Visible=expanded end
+        end
+        for index, choice in ipairs(choices) do
+            local button = create("TextButton", {Size=UDim2.new(1,-20,0,22), Position=UDim2.fromOffset(10,52+(index-1)*24),
+                BackgroundColor3=ELEMENT_COLOR, BorderSizePixel=0, Text=choice, TextColor3=OFF_TEXT_COLOR,
+                TextSize=13, Font=TEXT_FONT, AutoButtonColor=false, Visible=false}, holder)
+            create("UICorner", {CornerRadius=UDim.new(0,4)}, button)
+            button.Activated:Connect(function()
+                apply(choice); open(false)
+                if afterChange then afterChange(choice) end
+                if refresh then refresh() end
+            end)
+            table.insert(optionButtons,button)
+        end
+        main.Activated:Connect(function() open(not expanded) end)
+        row(card,holder,name,condition)
+        return function(value) apply(value); open(false) end
+    end
+    local function textInput(card, name, id, default, condition)
+        id = id or card.title .. "." .. name
+        values[id]=default or ""; AngelHub.defaults[id]=values[id]
+        local holder=createCard("Frame",card.col,name,54)
+        create("TextLabel",{Size=UDim2.new(1,-20,0,20),Position=UDim2.fromOffset(10,2),BackgroundTransparency=1,
+            Text=name,TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},holder)
+        local box=create("TextBox",{Size=UDim2.new(1,-20,0,24),Position=UDim2.fromOffset(10,25),BackgroundColor3=ELEMENT_COLOR,
+            BorderSizePixel=0,Text=values[id],PlaceholderText="...",TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,ClearTextOnFocus=false},holder)
+        create("UICorner",{CornerRadius=UDim.new(0,4)},box);addStroke(box,DIM_TEXT_COLOR,0.6)
+        local function apply(value) values[id]=tostring(value or "");box.Text=values[id];if AngelHub.changed then AngelHub.changed(id) end end
+        AngelHub.setters[id]=apply;box.FocusLost:Connect(function() apply(box.Text) end)
+        row(card,holder,name,condition)
+        return apply, box
+    end
+    local function action(card,name,callback,condition)
+        return row(card,addButton(card.col,name,callback),name,condition)
+    end
+    local function stat(card,name,value)
+        local holder=createCard("Frame",card.col,name,28)
+        create("TextLabel",{Size=UDim2.new(0.7,-10,1,0),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,
+            Text=name,TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd},holder)
+        create("TextLabel",{Size=UDim2.new(0.3,-10,1,0),Position=UDim2.new(0.7,0,0,0),BackgroundTransparency=1,
+            Text=value,TextColor3=OFF_TEXT_COLOR,TextSize=13,Font=BOLD_FONT,TextXAlignment=Enum.TextXAlignment.Right},holder)
+        row(card,holder,name)
+    end
+    local function emptyList(card,name,condition)
+        return dropdown(card,name,nil,{"No data in preview"},"No data in preview",condition)
+    end
+    local function keybind(card,name,id,default,condition,changed)
+        if MOBILE then return end
+        id=id or card.title.."."..name
+        values[id]=default and default.Name or ""
+        local buttonRow
+        buttonRow=action(card,name.." [None]",function() end,condition)
+        buttonRow.Name=name
+        local button=buttonRow:FindFirstChildOfClass("TextButton")
+        local function show() button.Text=name.." ["..(values[id]~="" and values[id] or "None").."]" end
+        local function apply(keyName) values[id]=keyName or "";show() end
+        AngelHub.defaults[id]=values[id];AngelHub.setters[id]=apply;show()
+        button.Activated:Connect(function()
+            if AngelHub.cancelListening then AngelHub.cancelListening() end
+            local previous=values[id];button.Text=name.." [...]"
+            AngelHub.cancelListening=function() AngelHub.listening=nil;AngelHub.cancelListening=nil;apply(previous) end
+            AngelHub.listening=function(key)
+                AngelHub.listening=nil;AngelHub.cancelListening=nil
+                local resolved=key==Enum.KeyCode.Escape and nil or key
+                apply(resolved and resolved.Name or "")
+                if changed then changed(resolved or Enum.KeyCode.Unknown) end
+            end
+        end)
+    end
+    local function colour(card,name,id,default,condition)
+        id=id or card.title.."."..name
+        local setter,box=textInput(card,name,id,"#"..(default or "FFFFFF"),condition)
+        local swatch=create("Frame",{Size=UDim2.fromOffset(14,14),Position=UDim2.fromOffset(5,5),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0},box)
+        create("UICorner",{CornerRadius=UDim.new(0,3)},swatch)
+        local last=default or "FFFFFF"
+        local function update()
+            local hex=string.upper(string.gsub(box.Text,"#",""))
+            if string.match(hex,"^%x%x%x%x%x%x$") then last=hex end
+            setter("#"..last)
+            swatch.BackgroundColor3=Color3.fromRGB(tonumber(string.sub(last,1,2),16),tonumber(string.sub(last,3,4),16),tonumber(string.sub(last,5,6),16))
+        end
+        box.FocusLost:Connect(update);update()
+    end
+    local function groupLabel(card,name)
+        local holder=createCard("Frame",card.col,name,22)
+        create("TextLabel",{Size=UDim2.new(1,-12,1,0),Position=UDim2.fromOffset(6,0),BackgroundTransparency=1,
+            Text=string.upper(name),TextColor3=DIM_TEXT_COLOR,TextSize=11,Font=BOLD_FONT,TextXAlignment=Enum.TextXAlignment.Left},holder)
+        row(card,holder,name)
+    end
+    local function yes(id) return function() return get(id)==true end end
+    local function equals(id,...)
+        local options={...}; return function() for _,v in ipairs(options) do if get(id)==v then return true end end return false end
+    end
+    local function detach() screenGui:Destroy() end
+    local function matches(name,query) return query=="" or string.find(string.lower(name),query,1,true)~=nil end
+    refresh=function()
+        local query=string.lower(searchBox.Text)
+        for _,card in ipairs(cards) do
+            local allowed=not card.mm2 or IS_MM2
+            local titleMatches=matches(card.title,query)
+            local any=false
+            for _,entry in ipairs(card.rows) do
+                local valid=not entry.condition or entry.condition()
+                local visible=allowed and valid and (titleMatches or matches(entry.name,query))
+                entry.frame.Visible=visible
+                if visible then any=true end
+            end
+            card.box.Visible=allowed and (query=="" or titleMatches or any)
+        end
+    end
+    AngelHub.changed=function() if refresh then refresh() end end
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function() refresh() end)
+-- MAIN / left
+local gun = newCard("Main", "left", "Gun Aimbot", {mm2=true, toggle=true})
+local gunModes = MOBILE and {"Normal(Bullet)", "Silent(CFrame)", "Experimental"} or {"Bullet", "Silent(CFrame)"}
+local gunMode = gunModes[1]
+modeValues.gun = {}
+for _, m in ipairs(gunModes) do modeValues.gun[m] = {target="Murder", player="", wall=true, macro=false} end
+local gunTargetSetter, gunPlayerSetter, gunWallSetter, gunMacroSetter
+local function saveGunMode()
+    modeValues.gun[gunMode] = {target=get("gun.target"), player=get("gun.player"), wall=get("gun.wall"), macro=get("gun.macro")}
+end
+dropdown(gun, "Aim method", "gun.mode", gunModes, gunMode, nil, function(chosen)
+    saveGunMode(); gunMode = chosen
+    local v = modeValues.gun[chosen]
+    gunTargetSetter(v.target); gunPlayerSetter(v.player); gunWallSetter(v.wall); gunMacroSetter(v.macro); refresh()
+end)
+gunTargetSetter = dropdown(gun, "Target", "gun.target", {"Murder", "Custom"}, "Murder")
+gunPlayerSetter = textInput(gun, "Target player", "gun.player", "", equals("gun.target", "Custom"))
+keybind(gun, "Keybind", "gun.key")
+gunWallSetter = toggle(gun, "WallCheck", "gun.wall", true)
+gunMacroSetter = toggle(gun, "Macro", "gun.macro", false)
+
+local autoShoot = newCard("Main", "left", "Auto Shoot", {mm2=true, toggle=true})
+local autoModes = MOBILE and {"Bullet", "CFrame", "Experimental"} or {"Bullet", "CFrame"}
+local autoMode = autoModes[1]
+modeValues.auto = {}
+for _, m in ipairs(autoModes) do modeValues.auto[m] = {wall=true, proximity=false, aura=25} end
+local autoWallSetter, autoProximitySetter, autoAuraSetter
+dropdown(autoShoot, "Mode", "autosh.mode", autoModes, autoMode, nil, function(chosen)
+    modeValues.auto[autoMode] = {wall=get("autosh.wall"), proximity=get("autosh.proximity"), aura=get("autosh.aura")}
+    autoMode = chosen
+    local v = modeValues.auto[chosen]
+    autoWallSetter(v.wall); autoProximitySetter(v.proximity); autoAuraSetter(v.aura); refresh()
+end)
+autoWallSetter = toggle(autoShoot, "WallCheck", "autosh.wall", true)
+autoProximitySetter = toggle(autoShoot, "Proximity", "autosh.proximity", false)
+autoAuraSetter = slider(autoShoot, "Aura", "autosh.aura", 5, 150, 25, 1, yes("autosh.proximity"))
+local gunAura = newCard("Main", "left", "Gun Aura", {mm2=true, toggle=true})
+slider(gunAura, "Studs", nil, 5, 250, 25, 1); toggle(gunAura, "Show Hitbox", nil, true)
+
+-- MAIN / right
+local stab = newCard("Main", "right", "Knife Stab", {mm2=true, toggle=true})
+toggle(stab, "Knife Aura", "stab.aura", true)
+slider(stab, "Aura Range", nil, 7, 30, 14, 1, yes("stab.aura")); toggle(stab, "Hold Mouse", nil, false, yes("stab.aura"))
+action(stab, "Kill All"); emptyList(stab, "Kill Player")
+local knife = newCard("Main", "right", "Knife Throw", {mm2=true, toggle=true})
+toggle(knife, "WallCheck", nil, true); toggle(knife, "Auto Knife Throw", nil, false)
+slider(knife, "Delay (seconds)", nil, 0, 10, 0.6, 0.1); toggle(knife, "Knife Tracer", nil, false)
+local fling = newCard("Main", "right", "Fling", {mm2=true})
+for _, n in ipairs({"Fling Murderer", "Fling Sheriff", "Fling All Innocents"}) do action(fling,n) end
+emptyList(fling, "Fling target"); action(fling, "Fling"); toggle(fling, "Auto Fling Selected Target", nil, false)
+slider(fling, "Power", nil, 1, 12, 12, 1); slider(fling, "Retries", nil, 0, 3, 3, 1)
+local antiFling = newCard("Main", "right", "Anti Fling", {toggle=true})
+toggle(antiFling, "Player Shield", nil, true); toggle(antiFling, "Impact Shield", nil, true)
+
+-- EXTRA / left
+local farm = newCard("Extra", "left", "Auto Farm", {mm2=true, toggle=true})
+stat(farm, "Coins Collected", "0"); stat(farm, "Time", "00:00")
+dropdown(farm, "Farm Mode", nil, {"Walk", "Below (Hitbox)"}, "Walk")
+slider(farm, "Farm Speed", nil, 5, 60, 16, 1)
+toggle(farm, "Stay Under When Round starts", nil, true); toggle(farm, "Safe Zone", nil, true)
+local full = newCard("Extra", "left", "Auto Farm Full Bag", {mm2=true})
+for _, n in ipairs({"Reset When Full Coin Bag", "Fling Murder after full bag", "Fling Sheriff after full bag", "Auto Grab gun and Shoot", "Auto Kill All When full coin bag"}) do toggle(full,n,nil,n == "Reset When Full Coin Bag") end
+local win = newCard("Extra", "left", "Auto Win", {mm2=true, toggle=true})
+for _, n in ipairs({"Sheriff Wins", "Murder Wins", "Innocent Wins"}) do stat(win,n,"0") end
+for _, n in ipairs({"Insta Kill as Murder", "Insta Kill As Sheriff", "Fling Sheriff and Get Gun", "Fling Murder if Dead"}) do toggle(win,n,nil,n == "Insta Kill as Murder" or n == "Insta Kill As Sheriff") end
+local vote = newCard("Extra", "left", "Auto Vote", {mm2=true, toggle=true})
+dropdown(vote, "Select Map", nil, {"No detected maps"}, "No detected maps")
+local unbox = newCard("Extra", "left", "Auto Unbox", {mm2=true, toggle=true})
+dropdown(unbox, "Box to open", nil, {"No catalog loaded"}, "No catalog loaded")
+dropdown(unbox, "Pay with", nil, {"Auto"}, "Auto")
+dropdown(unbox, "Reveal animation", nil, {"On", "Off"}, "On")
+slider(unbox, "Delay between boxes", nil, 0.8, 5, 1, 0.1); slider(unbox, "Max boxes per run", nil, 1, 50, 1, 1); action(unbox, "Report boxes and coin")
+local blurt = newCard("Extra", "left", "Blurt Roles", {mm2=true})
+toggle(blurt, "Auto blurt", nil, false); slider(blurt, "Delay", nil, 0, 15, 0, 0.5)
+toggle(blurt, "Repeat on change", nil, false); toggle(blurt, "Fake Blurt Roles", nil, false); action(blurt, "Blurt Roles")
+local coins = newCard("Extra", "left", "Coins Aura", {mm2=true, toggle=true})
+local emotes = newCard("Extra", "left", "Get All Emotes", {mm2=true})
+dropdown(emotes, "Select Emote", nil, {"Sit", "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless"}, "Floss")
+action(emotes, "Play Emote")
+
+-- EXTRA / right
+local fly = newCard("Extra", "right", "Fly", {toggle=true})
+dropdown(fly, "Method", "fly.method", {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"}, "Velocity")
+dropdown(fly, "Float", nil, {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"}, "Velocity")
+slider(fly, "Horizontal speed", nil, 1, 250, 32, 1); slider(fly, "Vertical speed", nil, 1, 250, 32, 1)
+slider(fly, "Response multiplier", nil, 0.5, 2, 1, 0.1, equals("fly.method", "Velocity", "Constraint", "Pulse"))
+slider(fly, "Burst interval", nil, 0.05, 1, 0.2, 0.05); toggle(fly, "Wall check", nil, true); toggle(fly, "Face camera", nil, false)
+keybind(fly, "Up key", nil, Enum.KeyCode.Space); keybind(fly, "Down key", nil, Enum.KeyCode.LeftControl)
+local speed = newCard("Extra", "right", "Speed Settings", {toggle=true})
+dropdown(speed, "Mode", "speed.mode", {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"}, "Velocity")
+slider(speed, "Speed", nil, 1, 250, 32, 1)
+slider(speed, "Response", nil, 0.2, 2, 1, 0.1, equals("speed.mode", "Velocity", "Impulse", "CFrame"))
+slider(speed, "Braking", nil, 0, 1, 0.8, 0.05, equals("speed.mode", "Velocity"))
+slider(speed, "Vehicle multiplier", nil, 0.5, 3, 1.2, 0.1)
+toggle(speed, "Keep vertical", nil, true, equals("speed.mode", "Velocity", "Impulse"))
+toggle(speed, "Wall check", nil, true, equals("speed.mode", "CFrame", "Teleport"))
+slider(speed, "Burst delay", nil, 0.05, 1, 0.2, 0.05, equals("speed.mode", "Teleport")); toggle(speed, "Auto jump", nil, false)
+if IS_MM2 then
+    if MOBILE then action(speed,"Sprint (hold / touch)") else keybind(speed,"Sprint (hold key)","speed.sprint") end
+end
+local jump = newCard("Extra", "right", "Jump Settings", {toggle=true})
+toggle(jump, "Custom jump power", "jump.custom", false); slider(jump, "Jump power", nil, 1, 250, 80, 1, yes("jump.custom"))
+action(jump, "High jump"); slider(jump, "High jump velocity", nil, 1, 250, 72, 1); toggle(jump, "Auto jump", nil, false)
+action(jump, "Long jump"); dropdown(jump, "Long jump mode", nil, {"Velocity", "Impulse", "CFrame"}, "Velocity")
+slider(jump, "Long jump speed", nil, 1, 250, 50, 1)
+local infinite = newCard("Extra", "right", "Infinite Jump", {toggle=true})
+dropdown(infinite, "Mode", nil, {"Normal", "Rise"}, "Normal"); slider(infinite, "Jump Power", nil, 1, 250, 50, 1)
+slider(infinite, "Jump interval", nil, 0.05, 0.6, 0.18, 0.01)
+local crawl = newCard("Extra", "right", "Wall Crawling", {toggle=true})
+dropdown(crawl, "Mode", nil, {"Velocity", "Impulse", "CFrame"}, "Velocity"); slider(crawl, "Climb speed", nil, 1, 250, 30, 1)
+toggle(crawl, "Climb state", nil, false); slider(crawl, "Impulse interval", nil, 0.05, 0.5, 0.1, 0.05)
+local gravity = newCard("Extra", "right", "Gravity", {toggle=true}); slider(gravity, "Gravity value", nil, -500, 500, 196.2, 0.1)
+local tp = newCard("Extra", "right", "Teleport")
+local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
+if IS_MM2 then table.insert(destinations,1,"MM2") end
+dropdown(tp, "Destination", "tp.dest", destinations, destinations[1])
+textInput(tp, "Player", nil, "", equals("tp.dest", "Named player")); textInput(tp, "Item", nil, "", equals("tp.dest", "Item"))
+emptyList(tp, "Point", equals("tp.dest", "Waypoint")); action(tp, "Teleport to point", nil, equals("tp.dest", "Waypoint"))
+slider(tp, "Arm window", nil, 1, 15, 6, 1, equals("tp.dest", "Tap point"))
+slider(tp, "Search range", nil, 50, 5000, 1500, 10, equals("tp.dest", "Nearest player", "Named player", "Item"))
+slider(tp, "Player offset", nil, 0, 20, 4, 1, equals("tp.dest", "Nearest player", "Named player"))
+toggle(tp, "Skip friends", nil, false, equals("tp.dest", "Nearest player"))
+dropdown(tp, "Movement", "tp.move", {"Instant", "Glide"}, "Instant")
+slider(tp, "Glide speed", nil, 1, 500, 60, 1, equals("tp.move", "Glide")); slider(tp, "Height offset", nil, 0, 12, 3, 1)
+toggle(tp, "Keep momentum", nil, false)
+if IS_MM2 then
+    local mm2Dest = equals("tp.dest", "MM2")
+    action(tp,"Teleport to Map",nil,mm2Dest); action(tp,"Teleport to Lobby",nil,mm2Dest)
+    textInput(tp,"Player name",nil,"",mm2Dest); action(tp,"Teleport to Player",nil,mm2Dest)
+    action(tp,"Get Gun",nil,mm2Dest); keybind(tp,"Get Gun key",nil,nil,mm2Dest); toggle(tp,"Auto Get Gun",nil,false,mm2Dest)
+end
+local movement = newCard("Extra", "right", "Movement Toggles")
+for _, n in ipairs({"Noclip", "Air Swim", "Air Walk", "Walk Fling"}) do toggle(movement,n,nil,false) end
+local prompts = newCard("Extra", "right", "Proximity Prompts", {toggle=true})
+slider(prompts,"Interaction distance",nil,8,250,16,1)
+for _, n in ipairs({"Instant prompts", "Proximity prompts", "Click detectors"}) do toggle(prompts,n,nil,true) end
+
+-- VISUALS / left
+local esp = newCard("Visuals", "left", "Player ESP", {toggle=true})
+dropdown(esp,"Boxes","esp.boxes",{"Corner","Full","Off"},"Corner")
+slider(esp,"Box thickness",nil,1,5,1,1,equals("esp.boxes","Corner","Full"))
+toggle(esp,"Filled box",nil,false,equals("esp.boxes","Corner","Full")); toggle(esp,"Skeleton",nil,false)
+dropdown(esp,"Tracers",nil,{"Off","Bottom","Centre","Cursor"},"Off")
+toggle(esp,"Team check",nil,false); toggle(esp,"Visibility check",nil,false); slider(esp,"Max distance",nil,50,5000,2000,50)
+colour(esp,"Colour",nil,"55FF55"); toggle(esp,"Team colours",nil,true)
+local chams = newCard("Visuals", "left", "Chams", {toggle=true})
+colour(chams,"Fill colour",nil,"55FF55"); colour(chams,"Outline colour",nil,"55FF55")
+slider(chams,"Fill transparency",nil,0,1,0.55,0.05); slider(chams,"Outline transparency",nil,0,1,0,0.05)
+for _, n in ipairs({"Through walls", "Teammates", "Team colours", "Show Perk"}) do toggle(chams,n,nil,n=="Through walls" or n=="Show Perk") end
+local tags = newCard("Visuals", "left", "Nametags", {toggle=true})
+toggle(tags,"Display name","tags.display",true); toggle(tags,"Account name",nil,false,yes("tags.display"))
+for _, n in ipairs({"Distance", "Show role", "Held tool", "Background"}) do toggle(tags,n,nil,n=="Background") end
+slider(tags,"Text size",nil,10,24,14,1); colour(tags,"Colour",nil,"55FF55"); slider(tags,"Max distance",nil,50,5000,1000,50)
+toggle(tags,"Through walls",nil,true); toggle(tags,"Teammates",nil,true)
+local hp = newCard("Visuals", "left", "HP", {toggle=true})
+toggle(hp,"Players","hp.players",true); toggle(hp,"Health text",nil,false,yes("hp.players"))
+slider(hp,"Max distance",nil,50,5000,2000,50,yes("hp.players")); toggle(hp,"Teammates",nil,true,yes("hp.players")); toggle(hp,"Through walls",nil,true,yes("hp.players"))
+toggle(hp,"Self HP","hp.self",false); dropdown(hp,"Self HP position",nil,{"Center","Bottom"},"Center",yes("hp.self")); slider(hp,"Self HP scale",nil,0.8,1.6,1,0.1,yes("hp.self"))
+local pointers = newCard("Visuals", "left", "Player Pointers", {toggle=true})
+colour(pointers,"Colour",nil,"55FF55"); toggle(pointers,"Distance",nil,true); slider(pointers,"Max distance",nil,25,2000,500,25)
+toggle(pointers,"Teammates",nil,false); toggle(pointers,"Team colours",nil,false)
+local roles = newCard("Visuals", "left", "Role Colours", {mm2=true})
+toggle(roles,"Role colours","roles.enabled",true)
+local roleNames = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"}
+local roleColours = {"FF5555", "5588FF", "FFDD55", "55FF55", "999999"}
+for i, n in ipairs(roleNames) do colour(roles,n.." colour",nil,roleColours[i],yes("roles.enabled")) end
+for _, n in ipairs(roleNames) do toggle(roles,n.." ESP",nil,true) end
+local coinEsp = newCard("Visuals", "left", "Coin ESP", {mm2=true, toggle=true})
+dropdown(coinEsp,"Coin in use",nil,{"Auto (server)","Coin","Candy","SnowToken","BeachBall","Egg","Heart","All"},"Auto (server)")
+colour(coinEsp,"Coin colour",nil,"FFE766"); slider(coinEsp,"Coin transparency",nil,0,1,0.2,0.05)
+local disguise = newCard("Visuals", "left", "Disguise", {toggle=true})
+toggle(disguise,"Disguise Character",nil,true); dropdown(disguise,"Mode",nil,{"Character","Animation"},"Character")
+slider(disguise,"Animation Speed",nil,0,2,1,0.05); textInput(disguise,"Target ID",nil,"")
+toggle(disguise,"Use target movement animations",nil,true); toggle(disguise,"Show target emotes",nil,false); toggle(disguise,"Show Advanced","disguise.advanced",false)
+for _, n in ipairs({"Pack Bundle ID", "Idle Bundle ID", "Walk Bundle ID", "Run Bundle ID", "Jump Bundle ID", "Fall Bundle ID", "Climb Bundle ID", "Swim Bundle ID", "Swim Idle Bundle ID"}) do textInput(disguise,n,nil,"",yes("disguise.advanced")) end
+local fps = newCard("Visuals", "left", "Improve FPS", {toggle=true})
+groupLabel(fps,"Render")
+for _, n in ipairs({"Remove textures", "Disable particles", "Disable shadows", "Simple materials", "Lowest render quality", "Low detail meshes", "Hide distant scenery", "Simplify terrain", "Disable post effects"}) do toggle(fps,n,nil,false) end
+groupLabel(fps,"Lighting"); for _, n in ipairs({"Simple lighting", "Disable local lights"}) do toggle(fps,n,nil,false) end
+groupLabel(fps,"UI"); for _, n in ipairs({"Simplify game UI", "Hide world UI", "Hide game UI", "Hide Roblox panels"}) do toggle(fps,n,nil,false) end
+
+-- VISUALS / right
+local items = newCard("Visuals", "right", "Item ESP", {toggle=true})
+emptyList(items,"Objects"); textInput(items,"Add by name",nil,""); action(items,"Add object")
+dropdown(items,"Touch matching",nil,{"Appearance","Name"},"Appearance"); action(items,"Touch part"); action(items,"Clear list")
+toggle(items,"Show distance",nil,true); toggle(items,"Outline",nil,true); slider(items,"Max distance",nil,50,5000,1200,50)
+slider(items,"Text size",nil,8,22,12,1); colour(items,"Colour",nil,"55FF55")
+if IS_MM2 then groupLabel(items,"MM2"); toggle(items,"Gun ESP",nil,false); toggle(items,"Trap ESP",nil,false) end
+local npc = newCard("Visuals", "right", "NPC ESP", {toggle=true})
+toggle(npc,"Box",nil,true); toggle(npc,"Highlight","npc.highlight",true); toggle(npc,"Through walls",nil,true,yes("npc.highlight"))
+toggle(npc,"Name","npc.name",true); toggle(npc,"Model name",nil,false,yes("npc.name")); toggle(npc,"Health",nil,true,yes("npc.name"))
+toggle(npc,"All humanoids",nil,false); colour(npc,"Colour",nil,"55FF55"); slider(npc,"Max distance",nil,25,2000,500,25)
+textInput(npc,"Force by name",nil,""); action(npc,"Add forced name"); action(npc,"Clear forced names")
+local markers = newCard("Visuals", "right", "Markers", {toggle=true})
+textInput(markers,"Name",nil,""); action(markers,"Save here"); action(markers,"Touch"); emptyList(markers,"Point")
+toggle(markers,"Manual coordinates","markers.manual",false); textInput(markers,"Coordinates",nil,"",yes("markers.manual"))
+action(markers,"Save coordinates",nil,yes("markers.manual")); toggle(markers,"Distance",nil,true); colour(markers,"Colour",nil,"55FF55")
+local xray = newCard("Visuals", "right", "X-Ray", {toggle=true})
+dropdown(xray,"Scope","xray.scope",{"All map","Walls","Named parts"},"All map"); slider(xray,"Transparency",nil,0,1,0.5,0.05)
+textInput(xray,"Part names",nil,"",equals("xray.scope","Named parts")); textInput(xray,"Keep visible",nil,"")
+toggle(xray,"Keep floors",nil,true); toggle(xray,"Collidable only",nil,true); toggle(xray,"Include unanchored",nil,false)
+toggle(xray,"Limit range","xray.limit",true); slider(xray,"Range",nil,25,5000,250,25,yes("xray.limit"))
+local bright = newCard("Visuals", "right", "Fullbright", {toggle=true})
+slider(bright,"Brightness",nil,-10,100,3,1); toggle(bright,"Time Changer","bright.time",false)
+slider(bright,"Time",nil,0,24,14,1,yes("bright.time")); toggle(bright,"Fast time",nil,false,yes("bright.time"))
+local fov = newCard("Visuals", "right", "FOV", {toggle=true}); slider(fov,"Field of view",nil,20,120,70,1)
+local zoom = newCard("Visuals", "right", "Zoom", {toggle=true})
+slider(zoom,"Maximum distance",nil,25,2000,400,25); slider(zoom,"Minimum distance",nil,0.5,50,0.5,0.5)
+toggle(zoom,"Unlock forced first person",nil,false); toggle(zoom,"Through walls",nil,false)
+local freecam = newCard("Visuals", "right", "FreeCam", {toggle=true})
+slider(freecam,"Speed",nil,1,250,48,1); slider(freecam,"Sensitivity",nil,0.05,0.6,0.2,0.01)
+toggle(freecam,"Spectate","freecam.spectate",false); emptyList(freecam,"Spectate Player",yes("freecam.spectate"))
+local notifications = newCard("Visuals", "right", "Notifications", {mm2=true, toggle=true})
+toggle(notifications,"Instant Roles",nil,false); toggle(notifications,"Gun Notification",nil,true); toggle(notifications,"Murder Close","notify.close",true)
+slider(notifications,"Close radius",nil,10,120,30,1,yes("notify.close")); slider(notifications,"Close cooldown",nil,2,30,8,1,yes("notify.close"))
+for _, n in ipairs({"Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do toggle(notifications,n,nil,true) end
+
+    -- Calibration is a dialog-only preview; it does not collect or store data.
+    local overlay=create("Frame",{Name="Calibration Preview",Visible=false,Size=UDim2.fromScale(1,1),
+        BackgroundColor3=Color3.new(0,0,0),BackgroundTransparency=0.4,BorderSizePixel=0,ZIndex=30},screenGui)
+    local dialog=create("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),Size=UDim2.new(0.8,0,0,150),
+        BackgroundColor3=BACKGROUND_TOP,BorderSizePixel=0,ZIndex=31},overlay)
+    create("UISizeConstraint",{MaxSize=Vector2.new(360,150)},dialog)
+    create("UICorner",{CornerRadius=UDim.new(0,8)},dialog);addStroke(dialog,ACCENT_A,0.5)
+    create("TextLabel",{Size=UDim2.new(1,-24,0,26),Position=UDim2.fromOffset(12,8),BackgroundTransparency=1,
+        Text="Give your calibration?",TextColor3=TEXT_COLOR,TextSize=15,Font=BOLD_FONT,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=32},dialog)
+    create("TextLabel",{Size=UDim2.new(1,-24,0,30),Position=UDim2.fromOffset(12,36),BackgroundTransparency=1,
+        Text="Visual preview only. No data is recorded.",TextColor3=OFF_TEXT_COLOR,TextSize=13,Font=TEXT_FONT,
+        TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true,ZIndex=32},dialog)
+    local rememberButton=create("TextButton",{Size=UDim2.new(1,-24,0,25),Position=UDim2.fromOffset(12,72),BackgroundColor3=ELEMENT_COLOR,
+        BorderSizePixel=0,Text="□  Don't Show Again",TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,ZIndex=32},dialog)
+    create("UICorner",{CornerRadius=UDim.new(0,4)},rememberButton)
+    local yesButton=create("TextButton",{Size=UDim2.new(0.5,-16,0,25),Position=UDim2.new(0,12,1,-35),BackgroundColor3=ELEMENT_COLOR,
+        BorderSizePixel=0,Text="Yes",TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,ZIndex=32},dialog)
+    local noButton=create("TextButton",{Size=UDim2.new(0.5,-16,0,25),Position=UDim2.new(0.5,4,1,-35),BackgroundColor3=ELEMENT_COLOR,
+        BorderSizePixel=0,Text="No",TextColor3=TEXT_COLOR,TextSize=13,Font=TEXT_FONT,ZIndex=32},dialog)
+    create("UICorner",{CornerRadius=UDim.new(0,4)},yesButton);create("UICorner",{CornerRadius=UDim.new(0,4)},noButton)
+    local rememberSet
+    local function syncRemember()
+        rememberButton.Text=(get("cal.remember") and "☑  " or "□  ").."Don't Show Again"
+    end
+    rememberButton.Activated:Connect(function() rememberSet(not get("cal.remember"));syncRemember() end)
+    yesButton.Activated:Connect(function() overlay.Visible=false end)
+    noButton.Activated:Connect(function() overlay.Visible=false end)
+
+    local menu = newCard("Config","left","Menu")
+    keybind(menu,"Menu keybind","menu.key",Enum.KeyCode.RightShift,nil,function(key) AngelHub.menuKey=key end)
+    local _, menuSearchBox=textInput(menu,"Search","menu.search","")
+    menuSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        if searchBox.Text~=menuSearchBox.Text then searchBox.Text=menuSearchBox.Text end
+    end)
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        if menuSearchBox.Text~=searchBox.Text then menuSearchBox.Text=searchBox.Text end
+    end)
+    if IS_MM2 then action(menu,"Open calibration",function() syncRemember();overlay.Visible=true end) end
+    rememberSet=toggle(menu,"Don't Show Again","cal.remember",false,function() return IS_MM2 end)
+    local configs=newCard("Config","left","Configs")
+    textInput(configs,"Config name",nil,"")
+    for _,n in ipairs({"Create","Load","Save","Autoload"}) do action(configs,n) end
+    local utility=newCard("Config","left","Utility")
+    toggle(utility,"Anti AFK",nil,false);action(utility,"Rejoin Server")
+    local theme=newCard("Config","right","Theme")
+    dropdown(theme,"Theme list",nil,{"Dark"},"Dark")
+    for _,n in ipairs({"Background colour","Panel colour","Text colour","Accent colour"}) do colour(theme,n,nil,"FFFFFF") end
+    action(theme,"Save theme");action(theme,"Load theme")
+    local unload=newCard("Config","right","Unload");action(unload,"Unload",detach)
+    connectInput(userInputService.InputBegan,function(input,processed)
+        if input.UserInputType~=Enum.UserInputType.Keyboard then return end
+        if AngelHub.listening then AngelHub.listening(input.KeyCode);return end
+        if processed or userInputService:GetFocusedTextBox() then return end
+        if input.KeyCode==AngelHub.menuKey and AngelHub.menuKey~=Enum.KeyCode.Unknown then screenGui.Enabled=not screenGui.Enabled end
+    end)
+    refresh()
+    switchTab("Main")
+
+end
+
+---Called when initialization errors.
+local function onInitializeError(error)
+	warn("Failed to initialize.")
+	warn(error)
+	warn(debug.traceback())
+end
+
+xpcall(initializeScript, onInitializeError)
