@@ -17,10 +17,10 @@ const readTest = p => read(path.join(__dirname, p));
   const supportBlock = file.slice(file.indexOf('local supportedModules ='), file.indexOf('    local function message(text)', file.indexOf('local supportedModules =')));
   const supported = new Set([...supportBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]));
   const pending = moduleNames.filter(name => !supported.has(name));
-  const expectedPending = ['Gun Aimbot', 'Auto Fling Selected Target',
+  const expectedPending = ['Auto Fling Selected Target',
     'Fling Sheriff And Get Gun', 'Fling Murder If Dead'];
   assert.equal(moduleNames.length, 49); assert.equal(new Set(moduleNames).size, 49);
-  assert.equal(moduleNames.filter(name => supported.has(name)).length, 45);
+  assert.equal(moduleNames.filter(name => supported.has(name)).length, 46);
   assert.deepEqual(pending, expectedPending);
   assert.equal([...supported].filter(name => !moduleNames.includes(name)).length, 0);
   const buttons = [...file.matchAll(/addButton\([^\n]+?,\s*"([^"]+)"/g)].map(match => match[1]);
@@ -31,9 +31,9 @@ const readTest = p => read(path.join(__dirname, p));
   for (const name of buttons) assert.equal(boundActions.has(name), !pendingButtons.includes(name), `Action status: ${name}`);
   const blockedBlock = file.slice(file.indexOf('local UNIMPLEMENTED_TOGGLES ='), file.indexOf('local function addToggle('));
   const blockedOptions = [...blockedBlock.matchAll(/\["([^"]+)"\]\s*=\s*true/g)].map(match => match[1]);
-  assert.equal(blockedOptions.length, 23);
+  assert.equal(blockedOptions.length, 24);
   assert.ok(file.includes('{"Zoom Through Walls", "Speed Auto Jump", "Jump Auto Jump"}'));
-  console.log(`Inventory: ${moduleNames.length} module switches, 45 connected, ${pending.length} blocked; 26 buttons, 21 connected, 5 pending; 26 explicitly blocked options`);
+  console.log(`Inventory: ${moduleNames.length} module switches, 46 connected, ${pending.length} blocked; 26 buttons, 21 connected, 5 pending; 27 explicitly blocked options`);
   const start = file.indexOf('local function installGameplay(screenGui)');
   const end = file.indexOf('\nlocal function initializeScript()', start);
   if (start < 0 || end < 0) throw new Error('Gameplay source boundaries not found');
@@ -41,6 +41,13 @@ const readTest = p => read(path.join(__dirname, p));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
   const farmLua = await Lua.create({ sandbox: true });
   farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
+  const gunAimbotLua = await Lua.create({ sandbox: true });
+  const shootFixture = readTest('shoot-checks.luau').split('installGameplay(screenGui)')[0];
+  gunAimbotLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + readTest('gun-aimbot-hook-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('gun-aimbot-checks.luau'));
+  for (const mobile of [false, true]) {
+    const missingHookLua = await Lua.create({ sandbox: true });
+    missingHookLua.execute(readTest('gameplay-mock.luau') + `\nlocal mobile = ${mobile}; local fakeNow = 100; local os = {clock = function() return fakeNow end}\n` + toggles + '\n' + file.slice(start, end) + '\n' + shootFixture + '\n' + readTest('gun-aimbot-unavailable-checks.luau'));
+  }
   const farmCounterLua = await Lua.create({ sandbox: true });
   farmCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-counter-checks.luau'));
   const farmProgressLua = await Lua.create({ sandbox: true });
@@ -49,6 +56,9 @@ const readTest = p => read(path.join(__dirname, p));
   shootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-checks.luau'));
   const shootRoleLua = await Lua.create({ sandbox: true });
   shootRoleLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-role-checks.luau'));
+  const aimRoleLua = await Lua.create({ sandbox: true });
+  const roleFixture = readTest('shoot-role-checks.luau').split('installGameplay(screenGui)')[0];
+  aimRoleLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + readTest('gun-aimbot-hook-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + roleFixture + '\n' + readTest('gun-aimbot-role-checks.luau'));
   const winCounterLua = await Lua.create({ sandbox: true });
   winCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-counter-checks.luau'));
   const winSheriffLua = await Lua.create({ sandbox: true });
@@ -202,9 +212,9 @@ shared.AngelHubGui:Destroy()
   safeConfigLua.execute(readTest('gui-mock.luau') + `
 run.RenderStepped=event();run.Stepped=event()
 isfile=function()return true end;readfile=function()return "saved" end
-function services.HttpService:JSONDecode()return {Autoload=true,["Walk Fling"]=true,["Auto Blurt"]=true,["FreeCam"]=true,["Disguise Character"]=true}end
+function services.HttpService:JSONDecode()return {Autoload=true,["Walk Fling"]=true,["Auto Blurt"]=true,["FreeCam"]=true,["Disguise Character"]=true,["Gun Aimbot"]=true}end
 ` + file + `
-assert(shared.AngelHub.values["Autoload"]==true and shared.AngelHub.values["Walk Fling"]==false and shared.AngelHub.values["Auto Blurt"]==false and shared.AngelHub.values["FreeCam"]==false and shared.AngelHub.values["Disguise Character"]==false)
+assert(shared.AngelHub.values["Autoload"]==true and shared.AngelHub.values["Walk Fling"]==false and shared.AngelHub.values["Auto Blurt"]==false and shared.AngelHub.values["FreeCam"]==false and shared.AngelHub.values["Disguise Character"]==false and shared.AngelHub.values["Gun Aimbot"]==false)
 shared.AngelHubGui:Destroy()
 `);
   const outside = await Lua.create({ sandbox: true });
