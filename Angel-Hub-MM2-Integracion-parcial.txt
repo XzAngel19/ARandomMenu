@@ -2436,7 +2436,7 @@ local function installGameplay(screenGui)
     end
     local shooter = {}
     do
-    -- Approximate Bullet/CFrame prediction; native-click interception is PC only.
+    -- Manual action uses the same basic Bullet/CFrame construction on PC and mobile.
     local shootConnections, shootContainers = {}, {}
     local lastGunShot, shootBusy, shootVisual, shootPollAt = -math.huge, false, nil, 0
     local shootRoleData, shootRoleMap, shootRoleAt, shootRoleBusy, shootRoleGeneration, shootRoundBlocked = {}, nil, 0, false, 0, false
@@ -2535,9 +2535,10 @@ local function installGameplay(screenGui)
         if tool and tool:IsA("Tool") then return tool end
         return nil
     end
-    local function shootMurderer(root, ignoreProximity, requested)
+    local function shootMurderer(root, ignoreProximity, requested, allowRemoteOrigin)
         local nearest, distance
-        local mayUseRoles = shootRoleMap ~= nil and farmOnMap(root, shootRoleMap)
+        local mayUseRoles = shootRoleMap ~= nil and shootRoleMap == mm2Map()
+            and (allowRemoteOrigin or farmOnMap(root, shootRoleMap))
         for _, player in ipairs(playersService:GetPlayers()) do
             if player ~= localPlayer and (not requested or player == requested) then
                 local character = player.Character
@@ -2595,11 +2596,8 @@ local function installGameplay(screenGui)
         end
         return false
     end
-    -- PC click interception never fires another request and never changes the camera.
-    -- Unsupported executor APIs leave the original click untouched.
-    local hookInstalled, hookWrapper, hookPrevious = false, nil, nil
     local function selectedGunTarget(root)
-        if V["Aimbot Target"] ~= "Custom" then return shootMurderer(root, true) end
+        if V["Aimbot Target"] ~= "Custom" then return shootMurderer(root, true, nil, V["Aim Method"] == "Silent AIM") end
         local query = string.lower(string.match(tostring(V["Target Player"] or ""), "^%s*(.-)%s*$") or "")
         if query == "" then return nil end
         local exact, matches = nil, {}
@@ -2612,23 +2610,23 @@ local function installGameplay(screenGui)
             end
         end
         local selected = exact or (#matches == 1 and matches[1] or nil)
-        return selected and shootMurderer(root,true,selected) or nil
+        return selected and shootMurderer(root,true,selected,V["Aim Method"] == "Silent AIM") or nil
     end
-    local function gunAimFrames(character, root, gun, nativeOrigin)
+    local function gunAimFrames(character, root, gun)
         if stopped or shootRoundBlocked then return end
         if V["Aim Method"] ~= "Normal" and V["Aim Method"] ~= "Silent AIM" then return end
         local target = selectedGunTarget(root)
         local targetCharacter = target and target.Character
         local targetRoot = targetCharacter and targetCharacter:FindFirstChild("HumanoidRootPart")
         if not targetRoot or not targetRoot:IsA("BasePart") then return end
-        local origin = nativeOrigin or gunOrigin(character,root,gun)
+        local origin = gunOrigin(character,root,gun)
         if not origin then return end
         local point = targetRoot.Position + targetRoot.AssemblyLinearVelocity * 0.08
         for _, n in ipairs({origin.Position.X,origin.Position.Y,origin.Position.Z,point.X,point.Y,point.Z}) do
             if n ~= n or math.abs(n) > 1000000 then return end
         end
         if (point-origin.Position).Magnitude < .05 then return end
-        if V["Aimbot WallCheck"] == true then
+        if V["Aim Method"] == "Normal" and V["Normal WallCheck"] == true then
             local ok, clear = pcall(bulletPathClear,origin.Position,point,character,targetCharacter)
             if not ok or not clear then return end
         end
@@ -2642,48 +2640,10 @@ local function installGameplay(screenGui)
         end
         return CFrame.lookAt(startPoint,endPoint), CFrame.new(endPoint)
     end
-    function shooter.installHook()
-        if hookInstalled then return true end
-        if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" or type(checkcaller) ~= "function" then return false end
-        local previous
-        local function redirect(remote,...)
-            if stopped or not enabled["Gun Aimbot"] then return previous(remote,...) end
-            local okMethod, method = pcall(getnamecallmethod)
-            local okCaller, caller = pcall(checkcaller)
-            if not okMethod or method ~= "FireServer" or not okCaller or caller ~= false then return previous(remote,...) end
-            local args = table.pack(...)
-            if typeof(args[1]) ~= "CFrame" or typeof(args[2]) ~= "CFrame" then return previous(remote,...) end
-            local ok, a, b = pcall(function()
-                local character, humanoid, root = characterParts()
-                local gun = character and getTool(character,"Gun")
-                if not humanoid or not root or not gun or gun.Parent ~= character or gun:FindFirstChild("Shoot") ~= remote then return end
-                return gunAimFrames(character,root,gun,args[1])
-            end)
-            if ok and a and b then args[1],args[2]=a,b; return previous(remote,table.unpack(args,1,args.n)) end
-            return previous(remote,...)
-        end
-        local wrapper = redirect
-        if type(newcclosure) == "function" then
-            local ok, wrapped = pcall(newcclosure,redirect)
-            if ok and type(wrapped) == "function" then wrapper = wrapped end
-        end
-        local ok, old = pcall(hookmetamethod,game,"__namecall",wrapper)
-        if not ok or type(old) ~= "function" then return false end
-        previous,hookPrevious,hookWrapper,hookInstalled = old,old,wrapper,true
-        return true
-    end
-    function shooter.removeHook()
-        if not hookInstalled then return end
-        local ok, displaced = pcall(hookmetamethod,game,"__namecall",hookPrevious)
-        if not ok then return end
-        if displaced == hookWrapper then hookInstalled,hookWrapper,hookPrevious = false,nil,nil
-        elseif type(displaced) == "function" then
-            -- Another hook is above ours; leave our inactive wrapper in its chain.
-            pcall(hookmetamethod,game,"__namecall",displaced)
-        end
-    end
-    function shooter.manual()
-        if stopped or not isMM2 or (userInputService.TouchEnabled and not userInputService.KeyboardEnabled) then return end
+    local fireGeneration = 0
+    function shooter.manual(requireEnabled)
+        if stopped or not isMM2 or (requireEnabled == true and not enabled["Gun Aimbot"]) then return end
+        local ticket = fireGeneration
         local character, human = characterParts()
         local backpack = localPlayer:FindFirstChildOfClass("Backpack")
         local gun = getTool(character,"Gun") or getTool(backpack,"Gun")
@@ -2694,6 +2654,7 @@ local function installGameplay(screenGui)
             local ok, err = pcall(function()
                 local current, alive, root = characterParts()
                 if stopped or current ~= character or not alive or not root or gun.Parent ~= current then return end
+                if requireEnabled == true and (not enabled["Gun Aimbot"] or ticket ~= fireGeneration) then return end
                 if shootBusy or os.clock()-lastGunShot < .22 then return end
                 if gun.Enabled == false or gun:GetAttribute("Disabled") == true or gun:GetAttribute("Reloading") == true or gun:GetAttribute("IsReloading") == true then return end
                 local remote = gun:FindFirstChild("Shoot")
@@ -2707,6 +2668,28 @@ local function installGameplay(screenGui)
             end)
             if not ok then shootBusy=false; warn("Angel Hub Gun Aimbot: "..tostring(err)); message("Gun Aimbot: request failed") end
         end)
+    end
+    local fireButton, fireButtonConnection
+    function shooter.clearButton()
+        fireGeneration += 1
+        if fireButtonConnection then fireButtonConnection:Disconnect(); fireButtonConnection = nil end
+        if fireButton then pcall(function() fireButton:Destroy() end); fireButton = nil end
+    end
+    function shooter.toggleButton(on)
+        shooter.clearButton()
+        if not on or not userInputService.TouchEnabled then return end
+        local ok, err = pcall(function()
+            fireButton = Instance.new("TextButton")
+            fireButton.Name = "AngelHubGunFire"; fireButton.Text = "FIRE"
+            fireButton.AnchorPoint = Vector2.new(.5,.5); fireButton.Position = UDim2.fromScale(.82,.55)
+            fireButton.Size = UDim2.fromOffset(70,50); fireButton.TextSize = 18
+            fireButton.TextColor3 = Color3.fromRGB(255,255,255); fireButton.BackgroundColor3 = Color3.fromRGB(25,25,25)
+            fireButton.BackgroundTransparency = .25; fireButton.ZIndex = 35; fireButton.Parent = screenGui
+            fireButtonConnection = fireButton.Activated:Connect(function()
+                if enabled["Gun Aimbot"] then shooter.manual(true) end
+            end)
+        end)
+        if not ok then shooter.clearButton(); warn("Angel Hub fire button: "..tostring(err)); message("Gun Aimbot: use Fire Gun in the menu") end
     end
     local function updateShootRadius(root)
         if not enabled["Auto Shoot"] or not V["Shoot Proximity"] or not root then
@@ -2800,7 +2783,7 @@ local function installGameplay(screenGui)
     end
     local function startAutoShoot()
         stopAutoShoot()
-        lastGunShot, shootPollAt = -math.huge, 0
+        shootPollAt = 0
         watchShootContainers()
         watchShootRoles()
         refreshShootRoles()
@@ -5723,7 +5706,7 @@ local function installGameplay(screenGui)
     mm2NotificationsStep = notifications.step
     mm2BlurtStep = blurt.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); shooter.removeHook(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); shooter.clearButton(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); blurt.cleanup(); notifications.cleanup(); airWalk.cleanup(); fly.cleanup(); walkFling.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); pointers.cleanup(); playerEsp.cleanup(); antiFling.cleanup(); wallCrawl.cleanup(); airSwim.cleanup(); extensionSteps.freecam.cleanup(); extensionSteps.disguise.cleanup(); extensionSteps.selfHp.cleanup(); markers.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -5736,12 +5719,6 @@ local function installGameplay(screenGui)
                     old(false); enabled[name] = nil
                     message("Not implemented: " .. name)
                     return false
-                end
-                if value == true and name == "Gun Aimbot" then
-                    if userInputService.TouchEnabled and not userInputService.KeyboardEnabled then
-                        old(false); message("Gun Aimbot: mobile mode pending"); return false
-                    end
-                    if not shooter.installHook() then old(false); message("Gun Aimbot: native click hook unavailable; optional key can still fire"); return false end
                 end
                 if value == true and name == "Enable Speed" and V["Speed Mode"] ~= "WalkSpeed" and V["Speed Mode"] ~= "Velocity" then
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
@@ -5868,7 +5845,8 @@ local function installGameplay(screenGui)
                 if name == "Air Swim" then airSwim.toggle() end
                 if name == "Disguise Character" then extensionSteps.disguise.toggle(value == true) end
                 if name == "Gun Aimbot" then
-                    if value then message("Gun Aimbot: PC redirect, basic prediction") else shooter.removeHook() end
+                    shooter.toggleButton(value == true)
+                    if value then message("Gun Aimbot: use Fire Gun or FIRE; basic prediction") end
                 end
                 if name == "FreeCam" then
                     if value then
@@ -6046,6 +6024,7 @@ local function installGameplay(screenGui)
     listen(userInputService.WindowFocusReleased, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     listen(userInputService.TextBoxFocused, function() fly.clearInput(); airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
+        AngelHub.actions["Fire Gun"] = shooter.manual
         AngelHub.actions["Blurt Roles"] = blurt.manual
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
@@ -6489,7 +6468,8 @@ local function initializeScript()
 	targetPlayerHolder = addText(mainLeft, "Target Player", "Player name")
 	updateTargetVisibility()
 	addKeybind(mainLeft, "Aimbot Keybind", "")
-	addToggle(mainLeft, "Aimbot WallCheck", nil, true)
+	addToggle(mainLeft, "Normal WallCheck", nil, true)
+	addButton(mainLeft, "Fire Gun")
 	addToggle(mainLeft, "Aimbot Macro", nil, false)
 
 	addSection(mainLeft, "Auto Shoot")
@@ -6989,6 +6969,10 @@ local function initializeScript()
 	end
 
 	local function applyConfig(data)
+        -- Preserve the previous Gun Aimbot option after renaming it to clarify its scope.
+        if data["Normal WallCheck"] == nil and data["Aimbot WallCheck"] ~= nil then
+            data["Normal WallCheck"] = data["Aimbot WallCheck"]
+        end
         -- Restore point lists before the saved list selections, regardless of JSON key order.
         if type(data["Marker Points by Place"]) == "table" and AngelHub.setters["Marker Points by Place"] then
             pcall(AngelHub.setters["Marker Points by Place"], data["Marker Points by Place"])
