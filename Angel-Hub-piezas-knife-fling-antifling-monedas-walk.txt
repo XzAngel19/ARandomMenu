@@ -1,0 +1,402 @@
+PIEZAS PARA ANGEL HUB | WURST 6b99580c29606be720da498a8a74e7d830c7c19b
+Fragmentos de Wurst sin comentarios ni lineas vacias: NO son un script
+ni modulos completos. Requieren adaptacion, dependencias y limpieza.
+Fuentes: K=src/games/MM2/Combat/KnifeThrow.lua
+F=src/games/MM2/Other/FlingEngine.lua
+A=src/games/universal/Movement/AntiFling.lua
+M=src/games/MM2/Other/AutoFarm.lua
+
+Knife: visibilidad y trayecto, sin objetivos ocultos; elegir por vuelo.
+Faltan predictor, rayos, origen, validacion, cooldown, input y tracer. Conservar
+llamada original y restaurar solo el hook propio. No reenviar ante error incierto.
+Fling: recibe objetivo; faltan control, cancelacion, restauracion y antivacio.
+Anti Fling: suspender durante Fling; faltan escaneo y presupuesto completos.
+Monedas/Walk: faltan mapa activo, cache, seleccion, contacto y limpieza.
+No garantiza replicas, recogidas ni impactos.
+
+=== Knife: visibilidad del cuerpo [K:216-230] ===
+local function bodyVisible(originPos: Vector3, bodyPos: Vector3, targetChar: Model?): boolean
+    if not settings.wallCheck then
+        return true
+    end
+    local from: Vector3 = originPos
+    local to: Vector3 = bodyPos
+    if (to - from).Magnitude < 0.05 then
+        return true
+    end
+    local shared: boolean? = sharedPathClear(from, to, targetChar, true)
+    if shared ~= nil then
+        return shared
+    end
+    return raycastClear(from, to, ignoreListFor(nil), targetChar)
+end
+
+=== Knife: prediccion (funcion parcial) [K:281-325] ===
+local function resolveKnifeAim(
+    target: Player,
+    originPos: Vector3,
+    knife: Tool?,
+    cheap: boolean?
+): (Vector3?, number?)
+    local character: Model? = target.Character
+    if not character then
+        return nil, nil
+    end
+    local root: BasePart? = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not root then
+        return nil, nil
+    end
+    if not bodyVisible(originPos, root.Position, character) then
+        return nil, nil
+    end
+    local speed: number = 96
+    if knife then
+        pcall(function(): ()
+            local attrSpeed: any = knife:GetAttribute("ThrowSpeed")
+            if type(attrSpeed) == "number" and attrSpeed >= 24 and attrSpeed <= 300 then
+                speed = attrSpeed
+            end
+        end)
+    end
+    local predicted: Vector3? = nil
+    local aimInfo: any = nil
+    if type(prediction) == "table" and type(prediction.knifeAim) == "function" then
+        local okPred: boolean, aimPoint: any, info: any =
+            pcall(prediction.knifeAim, target, originPos, speed)
+        if okPred and typeof(aimPoint) == "Vector3" then
+            predicted = aimPoint :: Vector3
+            aimInfo = info
+        end
+    end
+
+=== Knife: comprueba trayecto (fragmento) [K:397-402] ===
+if cheap or checkLineOfSight(originPos, predicted, character) then
+    return predicted, flight
+end
+
+=== Knife: valida antes de lanzar (fragmento) [K:675-688] ===
+local originCF: CFrame? = getThrowOriginCFrame(knife)
+if not originCF then
+    return false
+end
+if not target or not isValidTarget(target) then
+    return false
+end
+local aimPos: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+if not aimPos then
+    return false
+end
+
+=== Knife: envio principal (fragmento) [K:708-718] ===
+local eventsFolder: Instance? = knife:FindFirstChild("Events")
+local knifeThrownRemote: Instance? = eventsFolder and eventsFolder:FindFirstChild("KnifeThrown")
+if knifeThrownRemote and knifeThrownRemote:IsA("RemoteEvent") then
+    noteThrowAttempt()
+    local okFire: boolean = pcall(function(): ()
+        (knifeThrownRemote :: RemoteEvent):FireServer(originCF, CFrame.new(aimPos))
+    end)
+    if okFire then
+        fired = true
+    end
+end
+
+=== Knife: redirect nativo PC/movil (fragmento) [K:760-775] ===
+if type(origGetMouseTargetCFrame) == "function" then
+    wsTable.GetMouseTargetCFrame = function(self: any, ...: any): any
+        if settings.enabled then
+            local knife: Tool? = getKnife()
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            if knife and character and knife.Parent == character then
+                local originCF: CFrame? = getThrowOriginCFrame(knife)
+                local target: Player? = findTarget()
+                if originCF and target then
+                    local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+                    if aim then return CFrame.new(aim) end
+                end
+            end
+        end
+        return origGetMouseTargetCFrame(self, ...)
+    end
+
+=== Knife: segundo metodo nativo (fragmento) [K:778-797] ===
+if type(origGetTargetPosition) == "function" then
+    wsTable.GetTargetPosition = function(self: any, ...: any): any
+        if settings.enabled then
+            local knife: Tool? = getKnife()
+            local character: Model? = LocalPlayer and LocalPlayer.Character
+            if knife and character and knife.Parent == character then
+                local originCF: CFrame? = getThrowOriginCFrame(knife)
+                local target: Player? = findTarget()
+                if originCF and target then
+                    local aim: Vector3? = resolveKnifeAim(target, originCF.Position, knife)
+                    if aim then return CFrame.new(aim) end
+                end
+            end
+        end
+        return origGetTargetPosition(self, ...)
+    end
+end
+
+=== Fling: constantes [F:73-75] ===
+local FLING_VELOCITY_BASE: Vector3 = Vector3.new(9e7, 9e7 * 10, 9e7)
+local FLING_ROT_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+local PIN_VELOCITY_BASE: Vector3 = Vector3.new(9e8, 9e8, 9e8)
+
+=== Fling: fuerza fija [F:80-80] ===
+local PIN_FORCE: Vector3 = Vector3.new(9e9, 9e9, 9e9)
+
+=== Fling: potencia fija [F:84-84] ===
+local FLING_POWER: number = 6
+
+=== Fling: escala [F:89-98] ===
+local flingBoost: number = 1
+local function powerScale(): number
+    return (FLING_POWER / 3) * flingBoost
+end
+local function scaledVelocity(base: Vector3): Vector3
+    local scale: number = powerScale()
+    return Vector3.new(base.X * scale, base.Y * scale, base.Z * scale)
+end
+
+=== Fling: pose y velocidad [F:129-146] ===
+local function fpos(
+    character: Model,
+    root: BasePart,
+    basePart: BasePart,
+    offset: CFrame,
+    angles: CFrame,
+    lead: Vector3?
+): ()
+    local origin: Vector3 = basePart.Position
+    if lead then
+        origin = origin + lead
+    end
+    local targetCFrame: CFrame = CFrame.new(origin) * offset * angles
+    root.CFrame = targetCFrame
+    character:SetPrimaryPartCFrame(targetCFrame)
+    root.Velocity = scaledVelocity(FLING_VELOCITY_BASE)
+    root.RotVelocity = scaledVelocity(FLING_ROT_VELOCITY_BASE)
+end
+
+=== Fling: pose con cancelacion (fragmento) [F:273-284] ===
+local function pose(offset: CFrame, angles: CFrame): boolean
+    if shouldStop and shouldStop() then return false end
+    local part: BasePart? = currentBasePart()
+    if not part then
+        return false
+    end
+    fpos(character, root, part, offset, angles, leadFor(part))
+    stats.poses += 1
+    task.wait()
+    return true
+end
+
+=== Fling: BodyVelocity y limpieza [F:337-348] ===
+local function createPin(root: BasePart): any
+    local pin: any = Instance.new("BodyVelocity")
+    pin.Name = "EpixVel"
+    pin.Velocity = scaledVelocity(PIN_VELOCITY_BASE)
+    pin.MaxForce = PIN_FORCE
+    pin.Parent = root
+    return pin
+end
+local function destroyPin(pin: any): ()
+    if pin then pin:Destroy() end
+end
+
+=== Anti Fling: umbrales [A:42-48] ===
+local SCAN_INTERVAL: number = 0.15
+local RADIUS: number = 30
+local HAZARD_HOLD: number = 0.75
+local LINEAR_LIMIT: number = 80
+local SURFACE_LIMIT: number = 70
+local MAX_LINKS: number = 2048
+local MAX_PARTS: number = 200
+
+=== Anti Fling: suspender si hay fling [A:50-53] ===
+local function isBusy(): boolean
+    return activity ~= nil and type(activity.isActive) == "function"
+        and (activity.isActive("fling") or activity.isActive("walkfling"))
+end
+
+=== Anti Fling: limpiar constraints [A:55-64] ===
+local function destroyLinks(): ()
+    for _, perLocal: {[BasePart]: any} in pairs(links) do
+        for _, constraint: any in pairs(perLocal) do
+            pcall(function(): () constraint:Destroy() end)
+        end
+    end
+    table.clear(links)
+    table.clear(hazardSeen)
+    dangerUntil = 0
+end
+
+=== Anti Fling: detectar velocidad extrema [A:87-99] ===
+local function fastPart(part: BasePart, scale: number?): boolean
+    local ok: boolean, fast: any = pcall(function(): boolean
+        local linear: Vector3 = part.AssemblyLinearVelocity
+        local angular: Vector3 = part.AssemblyAngularVelocity
+        local radius: number = math.min(part.Size.Magnitude * 0.5, 20)
+        local multiplier: number = scale or 1
+        return linear.Magnitude > LINEAR_LIMIT * multiplier
+            or angular.Magnitude * radius > SURFACE_LIMIT * multiplier
+    end)
+    return ok and fast == true
+end
+
+=== Anti Fling: excluir suelo y registrar peligro (fragmento) [A:180-192] ===
+local inOwner: boolean = part:IsDescendantOf(owner)
+local isTool: boolean = isToolPart(part)
+local assembly: BasePart? = part.AssemblyRootPart or part
+if part.Parent and part.CanCollide and not part.Anchored and not inOwner
+    and (not isCharacterPart or isTool)
+    and (not floorAssembly or assembly ~= floorAssembly)
+    and fastPart(part, if isTool then 3 else nil) then
+    hazardSeen[part] = now
+    dangerUntil = math.max(dangerUntil, now + HAZARD_HOLD)
+end
+
+=== Anti Fling: aplicar y quitar constraints (fragmento) [A:244-269] ===
+for other: BasePart, perLocal: {[BasePart]: any} in pairs(links) do
+    local wanted: {[BasePart]: boolean}? = accepted[other]
+    for own: BasePart, constraint: any in pairs(perLocal) do
+        if not wanted or not wanted[own] or not own.Parent or not other.Parent then
+            pcall(function(): () constraint:Destroy() end)
+            perLocal[own] = nil
+        end
+    end
+    if next(perLocal) == nil then links[other] = nil end
+end
+for other: BasePart, wanted: {[BasePart]: boolean} in pairs(accepted) do
+    local perLocal: {[BasePart]: any} = links[other] or {}
+    links[other] = perLocal
+    for own: BasePart in pairs(wanted) do
+        if not perLocal[own] then
+            local ok: boolean, constraint: any = pcall(function(): any
+                local link: NoCollisionConstraint = Instance.new("NoCollisionConstraint")
+                link.Part0, link.Part1 = own, other
+                link.Parent = own
+                return link
+            end)
+            if ok and constraint then perLocal[own] = constraint end
+        end
+    end
+    if next(perLocal) == nil then links[other] = nil end
+end
+
+=== Farm: localizar monedas [M:179-234] ===
+local function coinPickups(): {Instance}
+    local map: Instance? = type(findMM2Map) == "function" and findMM2Map()
+    local out: {Instance} = {}
+    local function consider(object: Instance): ()
+        if not object.Parent or not object:IsA("BasePart") then return end
+        if map and type(object.IsDescendantOf) == "function"
+            and not object:IsDescendantOf(map) then return end
+        local ok: boolean, usable: any = pcall(function(): boolean
+            local parent: Instance? = object.Parent
+            local server: Instance = if parent and parent.Name == "Coin_Server" then parent else object
+            return object:GetAttribute("Collected") ~= true
+                and object:GetAttribute("Delete") ~= true
+                and server:GetAttribute("Collected") ~= true
+                and server:GetAttribute("Delete") ~= true
+        end)
+        if ok and usable then table.insert(out, object) end
+    end
+    if type(state.mm2CoinPickups) == "function" then
+        local ok: boolean, list: any = pcall(state.mm2CoinPickups)
+        if ok and type(list) == "table" then
+            for _, object: Instance in ipairs(list) do consider(object) end
+            if #out > 0 then return out end
+        end
+    end
+    local now: number = os.clock()
+    if map == fallbackScanMap and now - fallbackScanAt < 0.5 then
+        return fallbackPickups
+    end
+    fallbackScanAt = now
+    fallbackScanMap = map
+    local okTagged: boolean, tagged: any = pcall(function(): any
+        return game:GetService("CollectionService"):GetTagged("CoinVisual")
+    end)
+    if okTagged and type(tagged) == "table" then
+        for _, object: Instance in ipairs(tagged) do consider(object) end
+    end
+    if #out == 0 then
+        local ok: boolean, descendants: any = pcall(function(): any
+            if map and type(map.GetDescendants) == "function" then return map:GetDescendants() end
+            return workspace:GetDescendants()
+        end)
+        if ok and type(descendants) == "table" then
+            for _, object: Instance in ipairs(descendants) do
+                if object.Name == "Coin_Server" then consider(object) end
+            end
+        end
+    end
+    fallbackPickups = out
+    return out
+end
+
+=== Farm: detectar Coin_Server [M:1330-1339] ===
+local function serverPartOf(part: Instance): Instance?
+    if part.Name == "Coin_Server" then
+        return part
+    end
+    local parent: Instance? = part.Parent
+    if parent and parent.Name == "Coin_Server" then
+        return parent
+    end
+    return part
+end
+
+=== Farm Walk: caminar y recuperacion [M:1275-1326] ===
+local function walkTowards(
+    humanoid: Humanoid,
+    root: BasePart,
+    destination: Vector3
+): number
+    hoverActive = false
+    hoverTarget = nil
+    local delta: Vector3 = destination - root.Position
+    local flat: Vector3 = Vector3.new(delta.X, 0, delta.Z)
+    local distance: number = flat.Magnitude
+    local now: number = os.clock()
+    if distance < 1.4 then
+        walkCarryDirection = nil
+        walkCarryUntil = 0
+        pcall(function(): ()
+            humanoid:Move(Vector3.zero, false)
+        end)
+        return distance
+    end
+    if distance < walkLastDistance - 0.3 then
+        walkLastDistance = distance
+        walkStuckSince = now
+        walkCarryUntil = 0
+    elseif now - walkStuckSince > 2.0 then
+        walkStuckSince = now
+        walkCarryUntil = now + 1.0
+        walkCarryDirection = flat / distance
+        pcall(function(): ()
+            humanoid.Jump = true
+        end)
+    end
+    if walkCarryUntil > now and walkCarryDirection then
+        local speed: number = math.clamp(settings.speed, 5, 60)
+        local direction: Vector3 = walkCarryDirection :: Vector3
+        pcall(function(): ()
+            local current: Vector3 = root.AssemblyLinearVelocity
+            root.AssemblyLinearVelocity = Vector3.new(
+                direction.X * speed,
+                math.min(current.Y, 0),
+                direction.Z * speed
+            )
+            humanoid:Move(direction, false)
+        end)
+    else
+        walkCarryDirection = nil
+        pcall(function(): ()
+            humanoid:Move(flat.Unit, false)
+        end)
+    end
+    return distance
+end
