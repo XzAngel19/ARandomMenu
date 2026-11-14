@@ -1,0 +1,640 @@
+-- Angel Hub | MM2 — visual prototype (no gameplay modules)
+-- This is a standalone interface mockup. No external UI library or game logic.
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+if not player then return end
+local playerGui = player:WaitForChild("PlayerGui")
+local existing = playerGui:FindFirstChild("AngelHubPreview")
+if existing then existing:Destroy() end
+
+local IS_MM2 = game.PlaceId == 142823291
+local MOBILE = UIS.TouchEnabled and not UIS.KeyboardEnabled
+local C = {
+    bg = Color3.fromRGB(13, 13, 16), panel = Color3.fromRGB(20, 20, 24),
+    row = Color3.fromRGB(23, 23, 27), border = Color3.fromRGB(64, 64, 69),
+    top = Color3.fromRGB(38, 38, 43), text = Color3.fromRGB(238, 238, 240),
+    muted = Color3.fromRGB(150, 150, 158), accent = Color3.fromRGB(220, 220, 225),
+}
+local connections, cards, tabs = {}, {}, {}
+local activeTab, searchText, menuKey = "Main", "", Enum.KeyCode.RightShift
+local minimized = false
+local draggingWindow, draggingSlider, captureKey = nil, nil, nil
+local detached = false
+local function on(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(connections, c)
+    return c
+end
+local function make(class, props, parent)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    if parent then o.Parent = parent end
+    return o
+end
+local function corner(o, radius)
+    make("UICorner", {CornerRadius = UDim.new(0, radius or 5)}, o)
+end
+local function stroke(o, color)
+    make("UIStroke", {Color = color or C.border, Thickness = 1}, o)
+end
+local function text(o, size, color)
+    o.Font = Enum.Font.Gotham
+    o.TextSize = size or 11
+    o.TextColor3 = color or C.text
+    o.TextXAlignment = Enum.TextXAlignment.Left
+    o.TextTruncate = Enum.TextTruncate.AtEnd
+end
+local function padding(o, left, right, top, bottom)
+    make("UIPadding", {PaddingLeft = UDim.new(0, left or 0), PaddingRight = UDim.new(0, right or 0),
+        PaddingTop = UDim.new(0, top or 0), PaddingBottom = UDim.new(0, bottom or 0)}, o)
+end
+local function listLayout(o, gap)
+    return make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, gap or 0)}, o)
+end
+local function button(parent, label)
+    local b = make("TextButton", {Text = label, BackgroundColor3 = C.row, BorderSizePixel = 0,
+        AutoButtonColor = true, Size = UDim2.new(1, 0, 0, 27)}, parent)
+    text(b, 11); b.TextXAlignment = Enum.TextXAlignment.Center; corner(b, 5); stroke(b)
+    return b
+end
+local gui = make("ScreenGui", {Name = "AngelHubPreview", ResetOnSpawn = false, IgnoreGuiInset = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, playerGui)
+local window = make("Frame", {Name = "Window", AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(690, 590),
+    BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true, Active = true}, gui)
+corner(window, 10); stroke(window, Color3.fromRGB(105, 105, 110))
+local sizeConstraint = make("UISizeConstraint", {MinSize = Vector2.new(280, 230), MaxSize = Vector2.new(690, 590)}, window)
+local function fitWindow()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local v = cam.ViewportSize
+    sizeConstraint.MinSize = minimized and Vector2.new(1, 1) or Vector2.new(math.min(280, math.max(1, v.X - 16)), math.min(230, math.max(1, v.Y - 16)))
+    window.Size = UDim2.fromOffset(math.min(690, math.max(1, v.X - 16)), minimized and 37 or math.min(590, math.max(1, v.Y - 16)))
+end
+fitWindow()
+local cameraConn
+local function watchCamera()
+    if cameraConn then cameraConn:Disconnect(); cameraConn = nil end
+    local cam = workspace.CurrentCamera
+    if cam then cameraConn = on(cam:GetPropertyChangedSignal("ViewportSize"), fitWindow) end
+    fitWindow()
+end
+on(workspace:GetPropertyChangedSignal("CurrentCamera"), watchCamera)
+watchCamera()
+local header = make("Frame", {Name = "Header", BackgroundColor3 = C.top, BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, 37), Active = true}, window)
+local title = make("TextLabel", {BackgroundTransparency = 1, Text = "Angel Hub | MM2",
+    Position = UDim2.fromOffset(12, 0), Size = UDim2.new(0.43, -12, 1, 0)}, header)
+text(title, 12); title.Font = Enum.Font.GothamBold
+local search = make("TextBox", {Name = "Search", Text = "", PlaceholderText = "Search", ClearTextOnFocus = false,
+    BackgroundColor3 = C.bg, BorderSizePixel = 0, Position = UDim2.new(0.45, 0, 0, 7),
+    Size = UDim2.new(0.55, -76, 0, 23)}, header)
+text(search, 10); search.TextXAlignment = Enum.TextXAlignment.Center; corner(search, 5)
+local minimize = button(header, "−"); minimize.Position = UDim2.new(1, -68, 0, 6); minimize.Size = UDim2.fromOffset(27, 25)
+local close = button(header, "X"); close.Position = UDim2.new(1, -36, 0, 6); close.Size = UDim2.fromOffset(28, 25)
+local nav = make("Frame", {BackgroundColor3 = Color3.fromRGB(25,25,29), BorderSizePixel = 0,
+    Position = UDim2.fromOffset(0, 37), Size = UDim2.new(1, 0, 0, 37)}, window)
+local pageHolder = make("Frame", {BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 74),
+    Size = UDim2.new(1, 0, 1, -74), ClipsDescendants = true}, window)
+local function newScroll(parent, x)
+    local sc = make("ScrollingFrame", {BackgroundTransparency = 1, BorderSizePixel = 0,
+        Position = UDim2.new(x, x == 0 and 8 or 4, 0, 5), Size = UDim2.new(0.5, -12, 1, -10),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(),
+        ScrollBarThickness = 3, ScrollBarImageColor3 = Color3.fromRGB(90,90,95), ScrollingDirection = Enum.ScrollingDirection.Y}, parent)
+    padding(sc, 0, 4, 1, 5); listLayout(sc, 7)
+    return sc
+end
+for index, name in ipairs({"Main", "Extra", "Visuals", "Config"}) do
+    local tab = make("TextButton", {Text = name, BorderSizePixel = 0, BackgroundColor3 = C.top,
+        Position = UDim2.new((index-1)/4, 4, 0, 4), Size = UDim2.new(0.25, -8, 1, -8)}, nav)
+    text(tab, 11, C.muted); tab.Font = Enum.Font.GothamSemibold; tab.TextXAlignment = Enum.TextXAlignment.Center; corner(tab, 5)
+    local page = make("Frame", {Name = name, BackgroundTransparency = 1, Visible = false, Size = UDim2.fromScale(1,1)}, pageHolder)
+    tabs[name] = {button = tab, page = page, left = newScroll(page, 0), right = newScroll(page, 0.5)}
+end
+local function selectTab(name)
+    activeTab = name
+    for n, t in pairs(tabs) do
+        t.page.Visible = n == name and not minimized
+        t.button.BackgroundTransparency = n == name and 0 or 1
+        t.button.TextColor3 = n == name and C.text or C.muted
+    end
+end
+for name, t in pairs(tabs) do on(t.button.MouseButton1Click, function() selectTab(name) end) end
+selectTab("Main")
+
+local function detach()
+    if detached then return end
+    detached = true
+    draggingWindow, draggingSlider, captureKey = nil, nil, nil
+    for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+    table.clear(connections)
+    gui:Destroy()
+end
+gui.Destroying:Connect(function()
+    if not detached then
+        detached = true
+        for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+        table.clear(connections)
+    end
+end)
+on(close.MouseButton1Click, detach)
+on(minimize.MouseButton1Click, function()
+    minimized = not minimized
+    nav.Visible = not minimized; pageHolder.Visible = not minimized
+    minimize.Text = minimized and "+" or "−"
+    if minimized then
+        sizeConstraint.MinSize = Vector2.new(1, 1)
+        window.Size = UDim2.fromOffset(window.AbsoluteSize.X, 37)
+    else fitWindow(); selectTab(activeTab) end
+end)
+on(header.InputBegan, function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingWindow = {input = input, origin = input.Position, position = window.Position}
+    end
+end)
+
+-- Each value is local to this interface. No toggle or button runs a game feature.
+local values, modeValues = {}, {}
+local refresh
+local function set(id, value)
+    values[id] = value
+    if refresh then refresh() end
+end
+local function get(id) return values[id] end
+local function matchSearch(s) return searchText == "" or string.find(string.lower(s), searchText, 1, true) ~= nil end
+local function newCard(tab, side, titleText, opts)
+    opts = opts or {}
+    local holder = side == "left" and tabs[tab].left or tabs[tab].right
+    local frame = make("Frame", {Name = titleText, AutomaticSize = Enum.AutomaticSize.Y,
+        Size = UDim2.new(1, -2, 0, 0), BackgroundColor3 = C.panel, BorderSizePixel = 0}, holder)
+    corner(frame, 8); stroke(frame); padding(frame, 7, 7, 7, 7); listLayout(frame, 4)
+    local heading = make("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 25), LayoutOrder = 0}, frame)
+    local accent = make("Frame", {BackgroundColor3 = C.muted, BorderSizePixel = 0, Position = UDim2.fromOffset(0, 4), Size = UDim2.fromOffset(2, 14)}, heading)
+    corner(accent, 2)
+    local label = make("TextLabel", {Text = string.upper(titleText), BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(8, 0), Size = UDim2.new(1, opts.toggle and -48 or -8, 1, 0)}, heading)
+    text(label, 10); label.Font = Enum.Font.GothamBold
+    local card = {frame = frame, title = titleText, rows = {}, mm2 = opts.mm2 == true, toggle = nil}
+    table.insert(cards, card)
+    if opts.toggle then
+        local enabled = false
+        local b = make("TextButton", {Text = "", BackgroundColor3 = C.row, BorderSizePixel = 0,
+            Position = UDim2.new(1, -27, 0, 4), Size = UDim2.fromOffset(25, 15)}, heading)
+        corner(b, 8); stroke(b)
+        local dot = make("Frame", {BackgroundColor3 = C.muted, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(2, 2), Size = UDim2.fromOffset(11, 11)}, b); corner(dot, 6)
+        on(b.MouseButton1Click, function()
+            enabled = not enabled
+            b.BackgroundColor3 = enabled and Color3.fromRGB(94,94,101) or C.row
+            dot.Position = UDim2.fromOffset(enabled and 12 or 2, 2)
+            dot.BackgroundColor3 = enabled and C.text or C.muted
+        end)
+    end
+    return card
+end
+local function newRow(card, name, height, condition)
+    local row = make("Frame", {BackgroundColor3 = C.row, BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, height or 29), LayoutOrder = #card.rows + 1}, card.frame)
+    corner(row, 4)
+    local entry = {frame = row, name = name, condition = condition}
+    table.insert(card.rows, entry)
+    return row
+end
+local function labelIn(row, label, width)
+    local t = make("TextLabel", {Text = label, BackgroundTransparency = 1, Position = UDim2.fromOffset(8,0),
+        Size = UDim2.new(width or 0.57, -8, 0, 28)}, row)
+    text(t, 10); return t
+end
+local function toggle(card, name, id, default, condition)
+    id = id or (card.title .. "." .. name); values[id] = default == true
+    local row = newRow(card, name, 28, condition); labelIn(row, name, 0.77)
+    local b = make("TextButton", {Text = "", BackgroundColor3 = C.bg, BorderSizePixel = 0,
+        Position = UDim2.new(1, -25, 0, 5), Size = UDim2.fromOffset(17, 17)}, row)
+    corner(b, 4); stroke(b, Color3.fromRGB(160,160,165))
+    local dot = make("Frame", {BackgroundColor3 = C.accent, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(3,3), Size = UDim2.fromOffset(11,11), Visible = get(id)}, b); corner(dot, 3)
+    on(b.MouseButton1Click, function() set(id, not get(id)); dot.Visible = get(id) end)
+    return function(value) values[id] = value == true; dot.Visible = get(id) end
+end
+local function textInput(card, name, id, default, condition)
+    id = id or card.title .. "." .. name; values[id] = default or ""
+    local row = newRow(card, name, 29, condition); labelIn(row, name, 0.48)
+    local box = make("TextBox", {Text = values[id], PlaceholderText = "...", ClearTextOnFocus = false,
+        BackgroundColor3 = C.bg, BorderSizePixel = 0, Position = UDim2.new(0.48, 0, 0, 4), Size = UDim2.new(0.52, -6, 0, 21)}, row)
+    text(box, 10); padding(box, 5, 5); corner(box, 4); stroke(box)
+    on(box.FocusLost, function() set(id, box.Text) end)
+    return function(value) values[id] = value or ""; box.Text = values[id] end
+end
+local function action(card, name, fn, condition)
+    local row = newRow(card, name, 30, condition)
+    local b = button(row, name); b.Size = UDim2.new(1, -10, 0, 23); b.Position = UDim2.fromOffset(5,3)
+    if fn then on(b.MouseButton1Click, fn) end
+end
+local function stat(card, name, value)
+    local row = newRow(card, name, 25); labelIn(row, name, 0.7)
+    local l = make("TextLabel", {Text = value, BackgroundTransparency = 1, Position = UDim2.new(0.7,0,0,0), Size = UDim2.new(0.3,-7,1,0)}, row)
+    text(l, 10, C.muted); l.TextXAlignment = Enum.TextXAlignment.Right
+end
+local function slider(card, name, id, min, max, default, step, condition)
+    id = id or card.title .. "." .. name; step = step or 1; values[id] = default
+    local row = newRow(card, name, 46, condition); labelIn(row, name, 0.65)
+    local input = make("TextBox", {Text = tostring(default), ClearTextOnFocus = false, BackgroundTransparency = 1,
+        Position = UDim2.new(0.65,0,0,2), Size = UDim2.new(0.35,-7,0,23)}, row)
+    text(input, 10); input.TextXAlignment = Enum.TextXAlignment.Right
+    local bar = make("TextButton", {Text = "", BackgroundColor3 = C.bg, BorderSizePixel = 0,
+        Position = UDim2.new(0, 8, 0, 32), Size = UDim2.new(1, -16, 0, 7)}, row); corner(bar, 4); stroke(bar)
+    local fill = make("Frame", {BackgroundColor3 = Color3.fromRGB(175,175,180), BorderSizePixel = 0, Size = UDim2.new()}, bar); corner(fill,4)
+    local knob = make("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.text,
+        BorderSizePixel = 0, Position = UDim2.fromScale(0,0.5), Size = UDim2.fromOffset(12,12)}, bar); corner(knob, 6)
+    local function apply(v)
+        v = math.clamp(tonumber(v) or get(id), min, max)
+        v = math.clamp(min + math.floor((v-min)/step + 0.5)*step, min, max)
+        v = math.floor(v * 1000 + 0.5) / 1000
+        values[id] = v; input.Text = tostring(v)
+        local pct = (v-min)/(max-min); fill.Size = UDim2.fromScale(pct,1); knob.Position = UDim2.fromScale(pct,0.5)
+    end
+    local function move(x) if bar.AbsoluteSize.X > 0 then apply(min + math.clamp((x-bar.AbsolutePosition.X)/bar.AbsoluteSize.X,0,1)*(max-min)) end end
+    on(bar.InputBegan, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            draggingSlider = {input = i, move = move}; move(i.Position.X)
+        end
+    end)
+    on(input.FocusLost, function() apply(input.Text) end); apply(default)
+    return apply
+end
+local function dropdown(card, name, id, choices, default, condition, afterChange)
+    id = id or card.title .. "." .. name; values[id] = default or choices[1]
+    local row = newRow(card, name, 31, condition); row.AutomaticSize = Enum.AutomaticSize.Y
+    labelIn(row, name, 0.48)
+    local b = button(row, tostring(values[id]) .. "  ▾"); b.Position = UDim2.new(0.48,0,0,4); b.Size = UDim2.new(0.52,-6,0,22); b.TextSize = 10
+    local options = make("Frame", {BackgroundTransparency = 1, Visible = false, Position = UDim2.fromOffset(5,31),
+        Size = UDim2.new(1,-10,0,0), AutomaticSize = Enum.AutomaticSize.Y}, row); listLayout(options, 2)
+    for _, choice in ipairs(choices) do
+        local item = button(options, choice); item.Size = UDim2.new(1,0,0,23); item.TextSize = 10
+        on(item.MouseButton1Click, function()
+            set(id, choice); b.Text = tostring(choice) .. "  ▾"; options.Visible = false
+            if afterChange then afterChange(choice) end
+            if refresh then refresh() end
+        end)
+    end
+    on(b.MouseButton1Click, function() options.Visible = not options.Visible end)
+    return function(value) values[id] = value; b.Text = tostring(value) .. "  ▾"; options.Visible = false end
+end
+local function emptyList(card, name, condition)
+    local row = newRow(card, name, 31, condition)
+    row.AutomaticSize = Enum.AutomaticSize.Y
+    labelIn(row, name, 0.48)
+    local b = button(row, "Select  ▾")
+    b.Position = UDim2.new(0.48, 0, 0, 4); b.Size = UDim2.new(0.52, -6, 0, 22); b.TextSize = 10
+    local placeholder = make("TextLabel", {Text = "No data in preview", BackgroundTransparency = 1,
+        Visible = false, Position = UDim2.fromOffset(8, 33), Size = UDim2.new(1, -16, 0, 20)}, row)
+    text(placeholder, 10, C.muted)
+    on(b.MouseButton1Click, function() placeholder.Visible = not placeholder.Visible end)
+end
+local function keybind(card, name, id, default, condition, changed)
+    if MOBILE then return end
+    id = id or card.title .. "." .. name; values[id] = default or Enum.KeyCode.Unknown
+    local row = newRow(card, name, 29, condition); labelIn(row, name, 0.55)
+    local b = button(row, values[id] == Enum.KeyCode.Unknown and "None" or values[id].Name)
+    b.Position = UDim2.new(0.55,0,0,4); b.Size = UDim2.new(0.45,-6,0,21); b.TextSize = 10
+    on(b.MouseButton1Click, function()
+        if captureKey and captureKey.button then captureKey.button.Text = captureKey.oldText end
+        captureKey = {button = b, oldText = b.Text, id = id, changed = changed}; b.Text = "Press key..."
+    end)
+end
+local function colour(card, name, id, default, condition)
+    id = id or card.title .. "." .. name; values[id] = default or "FFFFFF"
+    local row = newRow(card, name, 29, condition); labelIn(row, name, 0.5)
+    local box = make("TextBox", {Text = "#"..values[id], ClearTextOnFocus = false, BackgroundColor3 = C.bg,
+        BorderSizePixel = 0, Position = UDim2.new(0.5,0,0,4), Size = UDim2.new(0.5,-6,0,21)}, row)
+    text(box, 10); box.TextXAlignment = Enum.TextXAlignment.Center; corner(box,4); stroke(box)
+    local swatch = make("Frame", {BackgroundColor3 = C.accent, BorderSizePixel = 0,
+        Position = UDim2.new(0,3,0,3), Size = UDim2.fromOffset(15,15)}, box); corner(swatch,3)
+    local function display()
+        local h = values[id]
+        box.Text = "#" .. h
+        swatch.BackgroundColor3 = Color3.fromRGB(tonumber(string.sub(h,1,2),16), tonumber(string.sub(h,3,4),16), tonumber(string.sub(h,5,6),16))
+    end
+    on(box.FocusLost, function()
+        local h = string.upper(string.gsub(box.Text, "#", ""))
+        if string.match(h, "^%x%x%x%x%x%x$") then values[id] = h end
+        display()
+    end)
+    display()
+end
+local function groupLabel(card, name)
+    local r = newRow(card, name, 20)
+    local l = make("TextLabel", {Text = string.upper(name), BackgroundTransparency = 1, Size = UDim2.new(1,-8,1,0), Position = UDim2.fromOffset(6,0)}, r)
+    text(l,9,C.muted); l.Font = Enum.Font.GothamBold
+end
+local function yes(id) return function() return get(id) == true end end
+local function equals(id, ...)
+    local opts = {...}
+    return function() for _, v in ipairs(opts) do if get(id) == v then return true end end return false end
+end
+local function both(a,b) return function() return a() and b() end end
+
+-- MAIN / left
+local gun = newCard("Main", "left", "Gun Aimbot", {mm2=true, toggle=true})
+local gunModes = MOBILE and {"Normal(Bullet)", "Silent(CFrame)", "Experimental"} or {"Bullet", "Silent(CFrame)"}
+local gunMode = gunModes[1]
+modeValues.gun = {}
+for _, m in ipairs(gunModes) do modeValues.gun[m] = {target="Murder", player="", wall=true, macro=false} end
+local gunTargetSetter, gunPlayerSetter, gunWallSetter, gunMacroSetter
+local function saveGunMode()
+    modeValues.gun[gunMode] = {target=get("gun.target"), player=get("gun.player"), wall=get("gun.wall"), macro=get("gun.macro")}
+end
+dropdown(gun, "Aim method", "gun.mode", gunModes, gunMode, nil, function(chosen)
+    saveGunMode(); gunMode = chosen
+    local v = modeValues.gun[chosen]
+    gunTargetSetter(v.target); gunPlayerSetter(v.player); gunWallSetter(v.wall); gunMacroSetter(v.macro); refresh()
+end)
+gunTargetSetter = dropdown(gun, "Target", "gun.target", {"Murder", "Custom"}, "Murder")
+gunPlayerSetter = textInput(gun, "Target player", "gun.player", "", equals("gun.target", "Custom"))
+keybind(gun, "Keybind", "gun.key")
+gunWallSetter = toggle(gun, "WallCheck", "gun.wall", true)
+gunMacroSetter = toggle(gun, "Macro", "gun.macro", false)
+
+local autoShoot = newCard("Main", "left", "Auto Shoot", {mm2=true, toggle=true})
+local autoModes = MOBILE and {"Bullet", "CFrame", "Experimental"} or {"Bullet", "CFrame"}
+local autoMode = autoModes[1]
+modeValues.auto = {}
+for _, m in ipairs(autoModes) do modeValues.auto[m] = {wall=true, proximity=false, aura=25} end
+local autoWallSetter, autoProximitySetter, autoAuraSetter
+dropdown(autoShoot, "Mode", "autosh.mode", autoModes, autoMode, nil, function(chosen)
+    modeValues.auto[autoMode] = {wall=get("autosh.wall"), proximity=get("autosh.proximity"), aura=get("autosh.aura")}
+    autoMode = chosen
+    local v = modeValues.auto[chosen]
+    autoWallSetter(v.wall); autoProximitySetter(v.proximity); autoAuraSetter(v.aura); refresh()
+end)
+autoWallSetter = toggle(autoShoot, "WallCheck", "autosh.wall", true)
+autoProximitySetter = toggle(autoShoot, "Proximity", "autosh.proximity", false)
+autoAuraSetter = slider(autoShoot, "Aura", "autosh.aura", 5, 150, 25, 1, yes("autosh.proximity"))
+local gunAura = newCard("Main", "left", "Gun Aura", {mm2=true, toggle=true})
+slider(gunAura, "Studs", nil, 5, 250, 25, 1); toggle(gunAura, "Show Hitbox", nil, true)
+
+-- MAIN / right
+local stab = newCard("Main", "right", "Knife Stab", {mm2=true, toggle=true})
+toggle(stab, "Knife Aura", "stab.aura", true)
+slider(stab, "Aura Range", nil, 7, 30, 14, 1, yes("stab.aura")); toggle(stab, "Hold Mouse", nil, false, yes("stab.aura"))
+action(stab, "Kill All"); emptyList(stab, "Kill Player")
+local knife = newCard("Main", "right", "Knife Throw", {mm2=true, toggle=true})
+toggle(knife, "WallCheck", nil, true); toggle(knife, "Auto Knife Throw", nil, false)
+slider(knife, "Delay (seconds)", nil, 0, 10, 0.6, 0.1); toggle(knife, "Knife Tracer", nil, false)
+local fling = newCard("Main", "right", "Fling", {mm2=true})
+for _, n in ipairs({"Fling Murderer", "Fling Sheriff", "Fling All Innocents"}) do action(fling,n) end
+emptyList(fling, "Fling target"); action(fling, "Fling"); toggle(fling, "Auto Fling Selected Target", nil, false)
+slider(fling, "Power", nil, 1, 12, 12, 1); slider(fling, "Retries", nil, 0, 3, 3, 1)
+local antiFling = newCard("Main", "right", "Anti Fling", {toggle=true})
+toggle(antiFling, "Player Shield", nil, true); toggle(antiFling, "Impact Shield", nil, true)
+
+-- EXTRA / left
+local farm = newCard("Extra", "left", "Auto Farm", {mm2=true, toggle=true})
+stat(farm, "Coins Collected", "0"); stat(farm, "Time", "00:00")
+dropdown(farm, "Farm Mode", nil, {"Walk", "Below (Hitbox)"}, "Walk")
+slider(farm, "Farm Speed", nil, 5, 60, 16, 1)
+toggle(farm, "Stay Under When Round starts", nil, true); toggle(farm, "Safe Zone", nil, true)
+local full = newCard("Extra", "left", "Auto Farm Full Bag", {mm2=true})
+for _, n in ipairs({"Reset When Full Coin Bag", "Fling Murder after full bag", "Fling Sheriff after full bag", "Auto Grab gun and Shoot", "Auto Kill All When full coin bag"}) do toggle(full,n,nil,n == "Reset When Full Coin Bag") end
+local win = newCard("Extra", "left", "Auto Win", {mm2=true, toggle=true})
+for _, n in ipairs({"Sheriff Wins", "Murder Wins", "Innocent Wins"}) do stat(win,n,"0") end
+for _, n in ipairs({"Insta Kill as Murder", "Insta Kill As Sheriff", "Fling Sheriff and Get Gun", "Fling Murder if Dead"}) do toggle(win,n,nil,n == "Insta Kill as Murder" or n == "Insta Kill As Sheriff") end
+local vote = newCard("Extra", "left", "Auto Vote", {mm2=true, toggle=true})
+dropdown(vote, "Select Map", nil, {"No detected maps"}, "No detected maps")
+local unbox = newCard("Extra", "left", "Auto Unbox", {mm2=true, toggle=true})
+dropdown(unbox, "Box to open", nil, {"No catalog loaded"}, "No catalog loaded")
+dropdown(unbox, "Pay with", nil, {"Auto"}, "Auto")
+dropdown(unbox, "Reveal animation", nil, {"On", "Off"}, "On")
+slider(unbox, "Delay between boxes", nil, 0.8, 5, 1, 0.1); slider(unbox, "Max boxes per run", nil, 1, 50, 1, 1); action(unbox, "Report boxes and coin")
+local blurt = newCard("Extra", "left", "Blurt Roles", {mm2=true})
+toggle(blurt, "Auto blurt", nil, false); slider(blurt, "Delay", nil, 0, 15, 0, 0.5)
+toggle(blurt, "Repeat on change", nil, false); toggle(blurt, "Fake Blurt Roles", nil, false); action(blurt, "Blurt Roles")
+local coins = newCard("Extra", "left", "Coins Aura", {mm2=true, toggle=true})
+local emotes = newCard("Extra", "left", "Get All Emotes", {mm2=true})
+dropdown(emotes, "Select Emote", nil, {"Sit", "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless"}, "Floss")
+action(emotes, "Play Emote")
+
+-- EXTRA / right
+local fly = newCard("Extra", "right", "Fly", {toggle=true})
+dropdown(fly, "Method", "fly.method", {"Velocity", "Constraint", "Impulse", "CFrame", "Blink", "Pulse", "WalkSpeed"}, "Velocity")
+dropdown(fly, "Float", nil, {"Velocity", "Impulse", "Hover", "Jump", "Bounce", "Floor", "Bypass"}, "Velocity")
+slider(fly, "Horizontal speed", nil, 1, 250, 32, 1); slider(fly, "Vertical speed", nil, 1, 250, 32, 1)
+slider(fly, "Response multiplier", nil, 0.5, 2, 1, 0.1, equals("fly.method", "Velocity", "Constraint", "Pulse"))
+slider(fly, "Burst interval", nil, 0.05, 1, 0.2, 0.05); toggle(fly, "Wall check", nil, true); toggle(fly, "Face camera", nil, false)
+keybind(fly, "Up key", nil, Enum.KeyCode.Space); keybind(fly, "Down key", nil, Enum.KeyCode.LeftControl)
+local speed = newCard("Extra", "right", "Speed Settings", {toggle=true})
+dropdown(speed, "Mode", "speed.mode", {"WalkSpeed", "Velocity", "Impulse", "CFrame", "Teleport"}, "Velocity")
+slider(speed, "Speed", nil, 1, 250, 32, 1)
+slider(speed, "Response", nil, 0.2, 2, 1, 0.1, equals("speed.mode", "Velocity", "Impulse", "CFrame"))
+slider(speed, "Braking", nil, 0, 1, 0.8, 0.05, equals("speed.mode", "Velocity"))
+slider(speed, "Vehicle multiplier", nil, 0.5, 3, 1.2, 0.1)
+toggle(speed, "Keep vertical", nil, true, equals("speed.mode", "Velocity", "Impulse"))
+toggle(speed, "Wall check", nil, true, equals("speed.mode", "CFrame", "Teleport"))
+slider(speed, "Burst delay", nil, 0.05, 1, 0.2, 0.05, equals("speed.mode", "Teleport")); toggle(speed, "Auto jump", nil, false)
+if IS_MM2 then
+    if MOBILE then action(speed,"Sprint (hold / touch)") else keybind(speed,"Sprint (hold key)","speed.sprint") end
+end
+local jump = newCard("Extra", "right", "Jump Settings", {toggle=true})
+toggle(jump, "Custom jump power", "jump.custom", false); slider(jump, "Jump power", nil, 1, 250, 80, 1, yes("jump.custom"))
+action(jump, "High jump"); slider(jump, "High jump velocity", nil, 1, 250, 72, 1); toggle(jump, "Auto jump", nil, false)
+action(jump, "Long jump"); dropdown(jump, "Long jump mode", nil, {"Velocity", "Impulse", "CFrame"}, "Velocity")
+slider(jump, "Long jump speed", nil, 1, 250, 50, 1)
+local infinite = newCard("Extra", "right", "Infinite Jump", {toggle=true})
+dropdown(infinite, "Mode", nil, {"Normal", "Rise"}, "Normal"); slider(infinite, "Jump Power", nil, 1, 250, 50, 1)
+slider(infinite, "Jump interval", nil, 0.05, 0.6, 0.18, 0.01)
+local crawl = newCard("Extra", "right", "Wall Crawling", {toggle=true})
+dropdown(crawl, "Mode", nil, {"Velocity", "Impulse", "CFrame"}, "Velocity"); slider(crawl, "Climb speed", nil, 1, 250, 30, 1)
+toggle(crawl, "Climb state", nil, false); slider(crawl, "Impulse interval", nil, 0.05, 0.5, 0.1, 0.05)
+local gravity = newCard("Extra", "right", "Gravity", {toggle=true}); slider(gravity, "Gravity value", nil, -500, 500, 196.2, 0.1)
+local tp = newCard("Extra", "right", "Teleport")
+local destinations = {"Tap point", "Nearest player", "Named player", "Item", "Waypoint", "Last position"}
+if IS_MM2 then table.insert(destinations,1,"MM2") end
+dropdown(tp, "Destination", "tp.dest", destinations, destinations[1])
+textInput(tp, "Player", nil, "", equals("tp.dest", "Named player")); textInput(tp, "Item", nil, "", equals("tp.dest", "Item"))
+emptyList(tp, "Point", equals("tp.dest", "Waypoint")); action(tp, "Teleport to point", nil, equals("tp.dest", "Waypoint"))
+slider(tp, "Arm window", nil, 1, 15, 6, 1, equals("tp.dest", "Tap point"))
+slider(tp, "Search range", nil, 50, 5000, 1500, 10, equals("tp.dest", "Nearest player", "Named player", "Item"))
+slider(tp, "Player offset", nil, 0, 20, 4, 1, equals("tp.dest", "Nearest player", "Named player"))
+toggle(tp, "Skip friends", nil, false, equals("tp.dest", "Nearest player"))
+dropdown(tp, "Movement", "tp.move", {"Instant", "Glide"}, "Instant")
+slider(tp, "Glide speed", nil, 1, 500, 60, 1, equals("tp.move", "Glide")); slider(tp, "Height offset", nil, 0, 12, 3, 1)
+toggle(tp, "Keep momentum", nil, false)
+if IS_MM2 then
+    local mm2Dest = equals("tp.dest", "MM2")
+    action(tp,"Teleport to Map",nil,mm2Dest); action(tp,"Teleport to Lobby",nil,mm2Dest)
+    textInput(tp,"Player name",nil,"",mm2Dest); action(tp,"Teleport to Player",nil,mm2Dest)
+    action(tp,"Get Gun",nil,mm2Dest); keybind(tp,"Get Gun key",nil,nil,mm2Dest); toggle(tp,"Auto Get Gun",nil,false,mm2Dest)
+end
+local movement = newCard("Extra", "right", "Movement Toggles")
+for _, n in ipairs({"Noclip", "Air Swim", "Air Walk", "Walk Fling"}) do toggle(movement,n,nil,false) end
+local prompts = newCard("Extra", "right", "Proximity Prompts", {toggle=true})
+slider(prompts,"Interaction distance",nil,8,250,16,1)
+for _, n in ipairs({"Instant prompts", "Proximity prompts", "Click detectors"}) do toggle(prompts,n,nil,true) end
+
+-- VISUALS / left
+local esp = newCard("Visuals", "left", "Player ESP", {toggle=true})
+dropdown(esp,"Boxes","esp.boxes",{"Corner","Full","Off"},"Corner")
+slider(esp,"Box thickness",nil,1,5,1,1,equals("esp.boxes","Corner","Full"))
+toggle(esp,"Filled box",nil,false,equals("esp.boxes","Corner","Full")); toggle(esp,"Skeleton",nil,false)
+dropdown(esp,"Tracers",nil,{"Off","Bottom","Centre","Cursor"},"Off")
+toggle(esp,"Team check",nil,false); toggle(esp,"Visibility check",nil,false); slider(esp,"Max distance",nil,50,5000,2000,50)
+colour(esp,"Colour",nil,"55FF55"); toggle(esp,"Team colours",nil,true)
+local chams = newCard("Visuals", "left", "Chams", {toggle=true})
+colour(chams,"Fill colour",nil,"55FF55"); colour(chams,"Outline colour",nil,"55FF55")
+slider(chams,"Fill transparency",nil,0,1,0.55,0.05); slider(chams,"Outline transparency",nil,0,1,0,0.05)
+for _, n in ipairs({"Through walls", "Teammates", "Team colours", "Show Perk"}) do toggle(chams,n,nil,n=="Through walls" or n=="Show Perk") end
+local tags = newCard("Visuals", "left", "Nametags", {toggle=true})
+toggle(tags,"Display name","tags.display",true); toggle(tags,"Account name",nil,false,yes("tags.display"))
+for _, n in ipairs({"Distance", "Show role", "Held tool", "Background"}) do toggle(tags,n,nil,n=="Background") end
+slider(tags,"Text size",nil,10,24,14,1); colour(tags,"Colour",nil,"55FF55"); slider(tags,"Max distance",nil,50,5000,1000,50)
+toggle(tags,"Through walls",nil,true); toggle(tags,"Teammates",nil,true)
+local hp = newCard("Visuals", "left", "HP", {toggle=true})
+toggle(hp,"Players","hp.players",true); toggle(hp,"Health text",nil,false,yes("hp.players"))
+slider(hp,"Max distance",nil,50,5000,2000,50,yes("hp.players")); toggle(hp,"Teammates",nil,true,yes("hp.players")); toggle(hp,"Through walls",nil,true,yes("hp.players"))
+toggle(hp,"Self HP","hp.self",false); dropdown(hp,"Self HP position",nil,{"Center","Bottom"},"Center",yes("hp.self")); slider(hp,"Self HP scale",nil,0.8,1.6,1,0.1,yes("hp.self"))
+local pointers = newCard("Visuals", "left", "Player Pointers", {toggle=true})
+colour(pointers,"Colour",nil,"55FF55"); toggle(pointers,"Distance",nil,true); slider(pointers,"Max distance",nil,25,2000,500,25)
+toggle(pointers,"Teammates",nil,false); toggle(pointers,"Team colours",nil,false)
+local roles = newCard("Visuals", "left", "Role Colours", {mm2=true})
+toggle(roles,"Role colours","roles.enabled",true)
+local roleNames = {"Murderer", "Sheriff", "Hero", "Innocent", "Dead"}
+local roleColours = {"FF5555", "5588FF", "FFDD55", "55FF55", "999999"}
+for i, n in ipairs(roleNames) do colour(roles,n.." colour",nil,roleColours[i],yes("roles.enabled")) end
+for _, n in ipairs(roleNames) do toggle(roles,n.." ESP",nil,true) end
+local coinEsp = newCard("Visuals", "left", "Coin ESP", {mm2=true, toggle=true})
+dropdown(coinEsp,"Coin in use",nil,{"Auto (server)","Coin","Candy","SnowToken","BeachBall","Egg","Heart","All"},"Auto (server)")
+colour(coinEsp,"Coin colour",nil,"FFE766"); slider(coinEsp,"Coin transparency",nil,0,1,0.2,0.05)
+local disguise = newCard("Visuals", "left", "Disguise", {toggle=true})
+toggle(disguise,"Disguise Character",nil,true); dropdown(disguise,"Mode",nil,{"Character","Animation"},"Character")
+slider(disguise,"Animation Speed",nil,0,2,1,0.05); textInput(disguise,"Target ID",nil,"")
+toggle(disguise,"Use target movement animations",nil,true); toggle(disguise,"Show target emotes",nil,false); toggle(disguise,"Show Advanced","disguise.advanced",false)
+for _, n in ipairs({"Pack Bundle ID", "Idle Bundle ID", "Walk Bundle ID", "Run Bundle ID", "Jump Bundle ID", "Fall Bundle ID", "Climb Bundle ID", "Swim Bundle ID", "Swim Idle Bundle ID"}) do textInput(disguise,n,nil,"",yes("disguise.advanced")) end
+local fps = newCard("Visuals", "left", "Improve FPS", {toggle=true})
+groupLabel(fps,"Render")
+for _, n in ipairs({"Remove textures", "Disable particles", "Disable shadows", "Simple materials", "Lowest render quality", "Low detail meshes", "Hide distant scenery", "Simplify terrain", "Disable post effects"}) do toggle(fps,n,nil,false) end
+groupLabel(fps,"Lighting"); for _, n in ipairs({"Simple lighting", "Disable local lights"}) do toggle(fps,n,nil,false) end
+groupLabel(fps,"UI"); for _, n in ipairs({"Simplify game UI", "Hide world UI", "Hide game UI", "Hide Roblox panels"}) do toggle(fps,n,nil,false) end
+
+-- VISUALS / right
+local items = newCard("Visuals", "right", "Item ESP", {toggle=true})
+emptyList(items,"Objects"); textInput(items,"Add by name",nil,""); action(items,"Add object")
+dropdown(items,"Touch matching",nil,{"Appearance","Name"},"Appearance"); action(items,"Touch part"); action(items,"Clear list")
+toggle(items,"Show distance",nil,true); toggle(items,"Outline",nil,true); slider(items,"Max distance",nil,50,5000,1200,50)
+slider(items,"Text size",nil,8,22,12,1); colour(items,"Colour",nil,"55FF55")
+if IS_MM2 then groupLabel(items,"MM2"); toggle(items,"Gun ESP",nil,false); toggle(items,"Trap ESP",nil,false) end
+local npc = newCard("Visuals", "right", "NPC ESP", {toggle=true})
+toggle(npc,"Box",nil,true); toggle(npc,"Highlight","npc.highlight",true); toggle(npc,"Through walls",nil,true,yes("npc.highlight"))
+toggle(npc,"Name","npc.name",true); toggle(npc,"Model name",nil,false,yes("npc.name")); toggle(npc,"Health",nil,true,yes("npc.name"))
+toggle(npc,"All humanoids",nil,false); colour(npc,"Colour",nil,"55FF55"); slider(npc,"Max distance",nil,25,2000,500,25)
+textInput(npc,"Force by name",nil,""); action(npc,"Add forced name"); action(npc,"Clear forced names")
+local markers = newCard("Visuals", "right", "Markers", {toggle=true})
+textInput(markers,"Name",nil,""); action(markers,"Save here"); action(markers,"Touch"); emptyList(markers,"Point")
+toggle(markers,"Manual coordinates","markers.manual",false); textInput(markers,"Coordinates",nil,"",yes("markers.manual"))
+action(markers,"Save coordinates",nil,yes("markers.manual")); toggle(markers,"Distance",nil,true); colour(markers,"Colour",nil,"55FF55")
+local xray = newCard("Visuals", "right", "X-Ray", {toggle=true})
+dropdown(xray,"Scope","xray.scope",{"All map","Walls","Named parts"},"All map"); slider(xray,"Transparency",nil,0,1,0.5,0.05)
+textInput(xray,"Part names",nil,"",equals("xray.scope","Named parts")); textInput(xray,"Keep visible",nil,"")
+toggle(xray,"Keep floors",nil,true); toggle(xray,"Collidable only",nil,true); toggle(xray,"Include unanchored",nil,false)
+toggle(xray,"Limit range","xray.limit",true); slider(xray,"Range",nil,25,5000,250,25,yes("xray.limit"))
+local bright = newCard("Visuals", "right", "Fullbright", {toggle=true})
+slider(bright,"Brightness",nil,-10,100,3,1); toggle(bright,"Time Changer","bright.time",false)
+slider(bright,"Time",nil,0,24,14,1,yes("bright.time")); toggle(bright,"Fast time",nil,false,yes("bright.time"))
+local fov = newCard("Visuals", "right", "FOV", {toggle=true}); slider(fov,"Field of view",nil,20,120,70,1)
+local zoom = newCard("Visuals", "right", "Zoom", {toggle=true})
+slider(zoom,"Maximum distance",nil,25,2000,400,25); slider(zoom,"Minimum distance",nil,0.5,50,0.5,0.5)
+toggle(zoom,"Unlock forced first person",nil,false); toggle(zoom,"Through walls",nil,false)
+local freecam = newCard("Visuals", "right", "FreeCam", {toggle=true})
+slider(freecam,"Speed",nil,1,250,48,1); slider(freecam,"Sensitivity",nil,0.05,0.6,0.2,0.01)
+toggle(freecam,"Spectate","freecam.spectate",false); emptyList(freecam,"Spectate Player",yes("freecam.spectate"))
+local notifications = newCard("Visuals", "right", "Notifications", {mm2=true, toggle=true})
+toggle(notifications,"Instant Roles",nil,false); toggle(notifications,"Gun Notification",nil,true); toggle(notifications,"Murder Close","notify.close",true)
+slider(notifications,"Close radius",nil,10,120,30,1,yes("notify.close")); slider(notifications,"Close cooldown",nil,2,30,8,1,yes("notify.close"))
+for _, n in ipairs({"Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do toggle(notifications,n,nil,true) end
+
+-- The dialog is a visual mockup. It records no telemetry or consent persistently.
+local modal = make("Frame", {Visible=false, BackgroundColor3=Color3.fromRGB(0,0,0), BackgroundTransparency=0.35,
+    Size=UDim2.fromScale(1,1), ZIndex=30}, gui)
+local dialog = make("Frame", {AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5), Size=UDim2.new(0.8,0,0,150),
+    BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=31}, modal)
+make("UISizeConstraint",{MaxSize=Vector2.new(370,150)},dialog); corner(dialog,8); stroke(dialog)
+local dialogTitle = make("TextLabel",{Text="Give your calibration?", BackgroundTransparency=1, Position=UDim2.fromOffset(14,10), Size=UDim2.new(1,-28,0,24), ZIndex=32},dialog)
+text(dialogTitle,13); dialogTitle.Font=Enum.Font.GothamBold
+local dialogText = make("TextLabel",{Text="Visual preview only. No data is recorded.", BackgroundTransparency=1,
+    Position=UDim2.fromOffset(14,38), Size=UDim2.new(1,-28,0,32), ZIndex=32, TextWrapped=true},dialog); text(dialogText,11,C.muted)
+local remember = button(dialog,"□  Don't Show Again"); remember.Position=UDim2.fromOffset(14,77); remember.Size=UDim2.new(1,-28,0,24); remember.ZIndex=32
+local no = button(dialog,"No"); no.Position=UDim2.new(0.5,4,1,-35); no.Size=UDim2.new(0.5,-18,0,25); no.ZIndex=32
+local yesButton = button(dialog,"Yes"); yesButton.Position=UDim2.new(0,14,1,-35); yesButton.Size=UDim2.new(0.5,-18,0,25); yesButton.ZIndex=32
+local rememberSet
+local function updateRemember() remember.Text = (get("cal.remember") and "☑  " or "□  ") .. "Don't Show Again" end
+on(remember.MouseButton1Click,function() rememberSet(not get("cal.remember")); updateRemember(); refresh() end)
+on(no.MouseButton1Click,function() modal.Visible=false end); on(yesButton.MouseButton1Click,function() modal.Visible=false end)
+
+-- CONFIG / left
+local menu = newCard("Config", "left", "Menu")
+keybind(menu,"Menu keybind","menu.key",menuKey,nil,function(k) menuKey=k end)
+textInput(menu,"Search","menu.search","")
+-- Both search boxes filter the same interface; neither contacts a service.
+local menuSearchRow = menu.rows[#menu.rows].frame
+local menuSearchBox = menuSearchRow:FindFirstChildOfClass("TextBox")
+if menuSearchBox then on(menuSearchBox:GetPropertyChangedSignal("Text"),function() if search.Text ~= menuSearchBox.Text then search.Text = menuSearchBox.Text end end) end
+if IS_MM2 then action(menu,"Open calibration",function() modal.Visible=true end) end
+rememberSet = toggle(menu,"Don't Show Again","cal.remember",false,IS_MM2 and nil or function() return false end)
+local configs = newCard("Config", "left", "Configs")
+textInput(configs,"Config name",nil,""); for _, n in ipairs({"Create", "Load", "Save", "Autoload"}) do action(configs,n) end
+local utility = newCard("Config", "left", "Utility")
+toggle(utility,"Anti AFK",nil,false); action(utility,"Rejoin Server")
+-- CONFIG / right
+local theme = newCard("Config", "right", "Theme")
+dropdown(theme,"Theme list",nil,{"Dark"},"Dark")
+for _, n in ipairs({"Background colour", "Panel colour", "Text colour", "Accent colour"}) do colour(theme,n,nil,"FFFFFF") end
+action(theme,"Save theme"); action(theme,"Load theme")
+local unload = newCard("Config", "right", "Unload"); action(unload,"Unload",detach)
+
+refresh = function()
+    if detached then return end
+    for _, card in ipairs(cards) do
+        local allowed = not card.mm2 or IS_MM2
+        local titleMatches = matchSearch(card.title)
+        local any = false
+        for _, row in ipairs(card.rows) do
+            local conditional = not row.condition or row.condition()
+            local visible = allowed and conditional and (searchText == "" or titleMatches or matchSearch(row.name))
+            row.frame.Visible = visible
+            if visible then any = true end
+        end
+        card.frame.Visible = allowed and (searchText == "" or titleMatches or any)
+    end
+end
+on(search:GetPropertyChangedSignal("Text"),function()
+    searchText = string.lower(search.Text)
+    if menuSearchBox and menuSearchBox.Text ~= search.Text then menuSearchBox.Text = search.Text end
+    refresh()
+end)
+on(UIS.InputBegan,function(input, processed)
+    if captureKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        local c = captureKey; captureKey = nil
+        local key = input.KeyCode == Enum.KeyCode.Escape and Enum.KeyCode.Unknown or input.KeyCode
+        values[c.id] = key; c.button.Text = key == Enum.KeyCode.Unknown and "None" or key.Name
+        if c.changed then c.changed(key) end
+        return
+    end
+    if not MOBILE and not processed and not UIS:GetFocusedTextBox() and input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == menuKey and menuKey ~= Enum.KeyCode.Unknown then
+        window.Visible = not window.Visible
+    end
+end)
+on(UIS.InputChanged,function(input)
+    local mouseMove = input.UserInputType == Enum.UserInputType.MouseMovement
+    if draggingSlider and (input == draggingSlider.input or (mouseMove and draggingSlider.input.UserInputType == Enum.UserInputType.MouseButton1)) then
+        draggingSlider.move(input.Position.X)
+    end
+    if draggingWindow and (input == draggingWindow.input or (mouseMove and draggingWindow.input.UserInputType == Enum.UserInputType.MouseButton1)) then
+        local delta = input.Position - draggingWindow.origin
+        window.Position = draggingWindow.position + UDim2.fromOffset(delta.X,delta.Y)
+    end
+end)
+on(UIS.InputEnded,function(input)
+    if draggingSlider and (input == draggingSlider.input or input.UserInputType == Enum.UserInputType.MouseButton1) then draggingSlider = nil end
+    if draggingWindow and (input == draggingWindow.input or input.UserInputType == Enum.UserInputType.MouseButton1) then draggingWindow = nil end
+end)
+refresh()
