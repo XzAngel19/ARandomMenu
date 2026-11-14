@@ -1,0 +1,2136 @@
+
+-- INICIO src/games/MM2/Blatant/Shoot.lua
+local Module={
+Name="MM2 Shoot",
+Events={}::{[string]:any},
+Initialized=false,
+Runtime=nil::any,
+}
+local activeCleanup:()->()=function():()end
+function Module.init(runtime:any):any
+if Module.Initialized then
+return Module
+end
+local core:any=state.mm2Core
+assert(type(core)=="table","MM2 Shoot requires the MM2 core module")
+local prediction:any=state.mm2Prediction
+assert(type(prediction)=="table","MM2 Shoot requires MM2 Prediction")
+local trajectoryCalibration:any=core.trajectoryCalibration
+Module.Runtime=runtime
+local connectGunFiredSignal:any=core.connectGunFiredSignal
+local disconnectGunFiredObserver:any=core.disconnectGunFiredObserver
+local findMurderer:any=core.findMurderer
+local getGunOriginCFrame:any=core.getGunOriginCFrame
+local getPlayerRole:any=core.getPlayerRole
+local getPlayerWeapon:any=core.getPlayerWeapon
+local getWeaponServiceModule:any=core.getWeaponServiceModule
+local isPlayerAlive:any=core.isPlayerAlive
+local isProtectedTarget:any=core.isProtectedTarget
+local isWeaponPathClear:any=core.isWeaponPathClear
+local describeRayHit:any=core.describeRayHit
+local mm2Settings:any=core.mm2Settings
+local validateGunShot:any=core.validateGunShot
+local shootMacro:boolean=false
+local lastGunOccluder:any=nil
+local function macroUnequip(gun:Tool?):()
+if not shootMacro or not gun then
+return
+end
+task.delay(0.01,function():()
+pcall(function():()
+local backpack:Instance?=LocalPlayer:FindFirstChildOfClass("Backpack")
+local character:Model?=LocalPlayer.Character
+if backpack and character and gun.Parent==character then
+gun.Parent=backpack
+end
+end)
+end)
+end
+local function getSelectedShootTarget():Player?
+local target
+if mm2Settings.shootMode=="Custom"
+and mm2Settings.shootTarget~=""then
+target=findPlayerByText(mm2Settings.shootTarget)
+else
+target=findMurderer()
+end
+if not target
+or target==LocalPlayer
+or not isPlayerAlive(target)
+or isProtectedTarget(target)then
+return nil
+end
+if getPlayerRole(target)~="Murderer"then
+return nil
+end
+return target
+end
+local SILENT_ORIGIN_STUDS:number=2.5
+local SILENT_PIERCE_STUDS:number=1.0
+local SILENT_LIFT_STUDS:number=1.6
+local MAX_SILENT_SWEEP:number=1.5
+local POINT_BLANK_STUDS:number=6
+local function silentLift(info:any,predicted:Vector3):number
+if type(info)=="table"
+and typeof(info.rootPosition)=="Vector3"then
+local aimOffsetY:number=predicted.Y-info.rootPosition.Y
+if aimOffsetY>0.5 then
+return math.clamp(aimOffsetY+0.35,1.2,2.4)
+end
+end
+return SILENT_LIFT_STUDS
+end
+local function getSilentSweepDistance(speed:number?):number
+local configured:number=tonumber(mm2Settings.silentSweep)or 0
+local sweep:number=math.clamp(configured,0,MAX_SILENT_SWEEP)
+local uncertainty:number=0
+if type(prediction)=="table"
+and type(prediction.getLeadUncertainty)=="function"then
+local ok:boolean,seconds:any=pcall(
+prediction.getLeadUncertainty,
+"CFrame"
+)
+if ok and type(seconds)=="number"and seconds==seconds then
+uncertainty=math.clamp(seconds,0,0.15)
+end
+end
+if uncertainty<=0 then
+return sweep
+end
+local travel:number=math.max(tonumber(speed)or 0,0)
+local extra:number=uncertainty*travel
+return math.clamp(sweep+extra,0,MAX_SILENT_SWEEP)
+end
+local function buildSilentShot(
+_target:Player,
+info:any,
+muzzleOrigin:CFrame?,
+variant:string
+):(CFrame?,CFrame?,number,number,string)
+local predicted:Vector3=info.endpoint
+local liftStuds:number=silentLift(info,predicted)
+local velocity:Vector3=info.velocity
+local horizontal:Vector3=Vector3.new(velocity.X,0,velocity.Z)
+local direction:Vector3?=nil
+local sweep:number=0
+if horizontal.Magnitude>1.5 then
+direction=horizontal.Unit
+sweep=getSilentSweepDistance(horizontal.Magnitude)
+end
+local sweepStart:Vector3=
+direction and-direction*sweep or Vector3.zero
+local sweepEnd:Vector3=
+direction and direction*sweep or Vector3.zero
+local approach:Vector3?=nil
+local approachOffset:number=SILENT_ORIGIN_STUDS
+if muzzleOrigin then
+local toTarget:Vector3=predicted-muzzleOrigin.Position
+local flat:Vector3=Vector3.new(toTarget.X,0,toTarget.Z)
+if flat.Magnitude>0.05 then
+approach=flat.Unit
+approachOffset=math.min(
+SILENT_ORIGIN_STUDS,
+math.max(1.0,flat.Magnitude*0.6)
+)
+end
+end
+local startPoint:Vector3
+local endPoint:Vector3
+local resolvedVariant:string=variant
+local pierceAxis:Vector3?=direction or approach
+if(variant=="Through"or variant==nil or variant=="")and pierceAxis then
+resolvedVariant="Through"
+local captured:Vector3=info.capturedPosition or predicted
+startPoint=captured-pierceAxis*1.0+sweepStart
+endPoint=predicted+pierceAxis*SILENT_PIERCE_STUDS+sweepEnd
+elseif variant=="Top"then
+resolvedVariant="Top"
+startPoint=predicted+Vector3.new(0,liftStuds,0)
++sweepStart
+endPoint=predicted+sweepEnd
+elseif variant=="Behind"and approach then
+resolvedVariant="Behind"
+startPoint=predicted+approach*approachOffset+sweepStart
+endPoint=predicted+sweepEnd
+elseif approach then
+resolvedVariant="Front"
+startPoint=predicted-approach*approachOffset+sweepStart
+endPoint=predicted+sweepEnd
+elseif direction then
+resolvedVariant="Motion"
+startPoint=predicted+sweepStart
+endPoint=predicted+sweepEnd
+else
+resolvedVariant="Top"
+startPoint=predicted+Vector3.new(0,liftStuds,0)
+endPoint=predicted
+end
+if(endPoint-startPoint).Magnitude<=0.05 then
+startPoint=predicted+Vector3.new(0,liftStuds,0)
+endPoint=predicted
+resolvedVariant="Top"
+sweep=0
+end
+return CFrame.lookAt(startPoint,endPoint),CFrame.new(endPoint),
+approachOffset,sweep,resolvedVariant
+end
+type FireOptions={
+silent:boolean?,
+quiet:boolean?,
+whenReady:boolean?,
+continuous:boolean?,
+wallCheck:boolean?,
+redirect:((CFrame,CFrame)->())?,
+nativeRedirect:boolean?,
+nativeOrigin:CFrame?
+}
+local function chooseExperimentalGunMode(target:Player?,origin:Vector3?):string
+local character:Model?=target and target.Character
+local root:BasePart?=character and character:FindFirstChild("HumanoidRootPart")::BasePart?
+if not root or not origin then return"Bullet"end
+local speed:number=0
+pcall(function():()
+local velocity:Vector3=root.AssemblyLinearVelocity
+speed=Vector3.new(velocity.X,0,velocity.Z).Magnitude
+end)
+if(root.Position-origin).Magnitude>=30 and speed>=8 then return"CFrame"end
+return"Bullet"
+end
+local SHOT_CONFIRM_WINDOW:number=1.5
+local ShootFeature:any=nil
+local lastRejectReason:string=""
+local AIM_BODY_PARTS:{string}={
+"UpperTorso","Torso","HumanoidRootPart","Head",
+"RightUpperArm","LeftUpperArm","RightUpperLeg","LeftUpperLeg",
+"Right Arm","Left Arm","Right Leg","Left Leg",
+}
+local function ghostOnLine(
+muzzle:Vector3,
+endpoint:Vector3,
+targetCharacter:Model?
+):any
+if type(describeRayHit)~="function"then
+return nil
+end
+local ok:boolean,hit:any=pcall(
+describeRayHit,
+muzzle,
+endpoint,
+targetCharacter
+)
+if not ok or type(hit)~="table"or hit.onTarget then
+return nil
+end
+if hit.transparency~=1 or hit.canCollide~=false then
+return nil
+end
+local reach:number=(endpoint-muzzle).Magnitude
+if type(hit.distance)~="number"or hit.distance>=reach-0.5 then
+return nil
+end
+return hit
+end
+local GHOST_PROBE_INTERVAL:number=0.15
+local GHOST_PROBE_CANDIDATES:number=4
+local ghostProbe:any={
+target=nil,
+at=-math.huge,
+partName=nil,
+}
+local function avoidGhostAim(
+target:Player,
+info:any,
+muzzle:Vector3
+):(Vector3?,string?)
+local character:Model?=target.Character
+if not character or not info or typeof(info.endpoint)~="Vector3"then
+return nil,nil
+end
+local now:number=os.clock()
+if target~=ghostProbe.target
+or now-ghostProbe.at>=GHOST_PROBE_INTERVAL then
+ghostProbe.target=target
+ghostProbe.at=now
+ghostProbe.partName=nil
+if ghostOnLine(muzzle,info.endpoint,character)then
+local captured:Vector3?=info.capturedPosition
+local probeLead:Vector3=captured
+and(info.endpoint-captured)
+or Vector3.zero
+local tried:number=0
+for _,partName:string in ipairs(AIM_BODY_PARTS)do
+if tried>=GHOST_PROBE_CANDIDATES then
+break
+end
+local part:Instance?=character:FindFirstChild(partName)
+if part and part:IsA("BasePart")then
+tried+=1
+local candidate:Vector3=(part::BasePart).Position
++probeLead
+if not ghostOnLine(muzzle,candidate,character)then
+ghostProbe.partName=partName
+break
+end
+end
+end
+end
+end
+local partName:string?=ghostProbe.partName
+if not partName then
+return nil,nil
+end
+local part:Instance?=character:FindFirstChild(partName)
+if not part or not part:IsA("BasePart")then
+ghostProbe.partName=nil
+return nil,nil
+end
+local captured:Vector3?=info.capturedPosition
+local lead:Vector3=captured and(info.endpoint-captured)or Vector3.zero
+return(part::BasePart).Position+lead,partName
+end
+local function fireGunAtTarget(
+target:Player?,
+options:FireOptions?
+):boolean
+local opts:FireOptions=options or{}
+local silent:boolean=mm2Settings.silentAim
+local experimental:boolean=opts.silent==nil and mm2Settings.experimentalAim==true
+if experimental then
+local localCharacter:Model?=LocalPlayer and LocalPlayer.Character
+local ownRoot:BasePart?=localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")::BasePart?
+silent=chooseExperimentalGunMode(target,ownRoot and ownRoot.Position)=="CFrame"
+elseif opts.silent~=nil then
+silent=opts.silent
+end
+local quiet:boolean=opts.quiet==true
+local continuous:boolean=opts.continuous==true
+local nativeRedirect:boolean=opts.nativeRedirect==true and type(opts.redirect)=="function"
+local useRaw:boolean=mm2Settings.shootRaw
+or(continuous and silent)
+local useWallCheck:boolean=if opts.wallCheck~=nil
+then opts.wallCheck==true
+else mm2Settings.shootWallCheck
+local function reject(message:string):boolean
+lastRejectReason=message
+if not quiet and ShootFeature then ShootFeature:SetStatus(message)end
+return false
+end
+local character,humanoid=getCharacterParts()
+if not target or not target.Character or target==LocalPlayer
+or not isPlayerAlive(target)or isProtectedTarget(target)or getPlayerRole(target)~="Murderer"then
+return reject("No selected shoot target was found.")
+end
+if not character or not humanoid then
+return reject("Your character is not available.")
+end
+local targetCharacter=target.Character
+local gun:Tool?=getPlayerWeapon(LocalPlayer,"Gun",true)
+if not gun or gun.Parent~=character then
+return reject("Equip the sheriff gun yourself to shoot.")
+end
+if not nativeRedirect and(gun.Enabled==false or gun:GetAttribute("Disabled")==true
+or gun:GetAttribute("Reloading")==true or gun:GetAttribute("IsReloading")==true)then
+return reject("The gun is disabled or reloading.")
+end
+local remote:Instance?=gun and gun:FindFirstChild("Shoot")
+local okOrigin:boolean,foundOrigin:any=pcall(getGunOriginCFrame,character,gun)
+local origin:CFrame?=okOrigin and foundOrigin or nil
+if not origin and nativeRedirect and typeof(opts.nativeOrigin)=="CFrame"then
+origin=opts.nativeOrigin
+end
+local pendingShot:any=state.mm2ShotFeedback.pending
+if not continuous and not nativeRedirect
+and type(pendingShot)=="table"
+and type(pendingShot.queuedAt)=="number"
+and os.clock()-pendingShot.queuedAt<SHOT_CONFIRM_WINDOW then
+local remaining:number=SHOT_CONFIRM_WINDOW
+-(os.clock()-pendingShot.queuedAt)
+return reject(string.format(
+"Shot gate: waiting for the previous shot (%.1f s left).",
+remaining))
+end
+local trackFeedback:boolean=not continuous
+and not(nativeRedirect and type(pendingShot)=="table")
+if not remote or not remote:IsA("RemoteEvent")or not origin then
+return reject(not origin and"The gun has no usable origin."
+or"The murderer is unavailable or obstructed.")
+end
+local info:any=nil
+local reason:string?=nil
+if origin then
+local aimMode:string=silent and"CFrame"or"Bullet"
+local ok:boolean,endpoint:any,aimInfo:any,aimReason:any=
+pcall(prediction.gunAim,target,origin.Position,aimMode)
+if not ok then return reject("Aim or visibility check failed.")end
+if endpoint==nil then
+reason=aimReason or"no samples"
+else
+info=aimInfo
+end
+end
+if(useRaw or continuous or nativeRedirect or opts.whenReady==true)and not info and target.Character then
+local targetRoot:BasePart?=target.Character:FindFirstChild("HumanoidRootPart")
+if targetRoot then
+local vel:Vector3=Vector3.zero
+pcall(function():()
+vel=targetRoot.AssemblyLinearVelocity or Vector3.zero
+end)
+local fallbackEndpoint:Vector3=targetRoot.Position+vel*0.08
+info={
+endpoint=fallbackEndpoint,
+velocity=vel,
+leadSeconds=0.08,
+motionSource="raw",
+model="raw",
+sampleAge=0,
+samples=0,
+capturedPosition=targetRoot.Position,
+rtt=0,
+echoDelay=0,
+rttEngine="raw",
+echoSamples=0,
+turnRate=0,
+brakeSeconds=0,
+leadCorrection=0,
+rootPosition=targetRoot.Position,
+}
+end
+end
+if info and origin and targetCharacter then
+local cleaner:Vector3?,cleanerPart:string?=
+avoidGhostAim(target,info,origin.Position)
+if cleaner then
+info.endpoint=cleaner
+info.targetPosition=cleaner
+info.ghostAvoided=cleanerPart
+end
+end
+if origin and info then
+local root:BasePart?=nil
+pcall(function():()
+root=targetCharacter:FindFirstChild("HumanoidRootPart")::BasePart?
+end)
+local aimVector:Vector3=info.endpoint-origin.Position
+local toRoot:Vector3=root and(root.Position-origin.Position)or aimVector
+local inverted:boolean=aimVector.Magnitude<0.05
+or aimVector:Dot(toRoot)<=0
+if root and(inverted or aimVector.Magnitude<POINT_BLANK_STUDS)then
+info.capturedPosition=root.Position
+info.endpoint=root.Position
+info.aimPartChosen="HumanoidRootPart"
+info.pointBlank=true
+end
+end
+local rejectMessages:{[string]:string}={
+["no body"]="The murderer has no usable body to aim at.",
+["no samples"]="The murderer has no fresh motion samples yet.",
+["stale sample"]="The murderer's position is stale; waiting for a fresh sample.",
+["unreachable"]="The murderer is moving too fast to intercept.",
+}
+if not remote
+or not remote:IsA("RemoteEvent")
+or not origin
+or not info then
+local message:string=rejectMessages[reason or""]
+or(
+not origin
+and"The gun has no usable origin."
+or"The murderer is unavailable or obstructed."
+)
+return reject(message)
+end
+local function safeToSend(
+shotOrigin:CFrame,
+shotEnd:CFrame,
+muzzle:CFrame?
+):boolean
+if gun.Parent~=character or(not nativeRedirect and(gun.Enabled==false
+or gun:GetAttribute("Disabled")==true or gun:GetAttribute("Reloading")==true
+or gun:GetAttribute("IsReloading")==true))then
+return reject("The gun is disabled or reloading.")
+end
+if useRaw then
+if not useWallCheck or not isWeaponPathClear then
+return true
+end
+local rawMuzzle:Vector3=(muzzle or shotOrigin).Position
+local rawClear,rawBlocker=isWeaponPathClear(
+rawMuzzle,
+shotEnd.Position,
+targetCharacter,
+nil,
+{ignoreTarget=true}
+)
+if not rawClear then
+if type(rawBlocker)=="table"and trajectoryCalibration
+and type(trajectoryCalibration.noteBlockedShot)=="function"then
+pcall(trajectoryCalibration.noteBlockedShot,
+trajectoryCalibration,rawBlocker)
+end
+return reject("A wall or another body blocks the shot.")
+end
+return true
+end
+local muzzlePosition:Vector3=(muzzle or shotOrigin).Position
+local ok,allowed,why,blocker,occluder=pcall(validateGunShot,target,character,targetCharacter,
+muzzlePosition,shotOrigin.Position,shotEnd.Position,useWallCheck)
+if not ok or not allowed then
+if type(blocker)=="table"and trajectoryCalibration
+and type(trajectoryCalibration.noteBlockedShot)=="function"then
+pcall(trajectoryCalibration.noteBlockedShot,trajectoryCalibration,blocker)
+end
+return reject(why or"Shot safety check failed.")
+end
+if type(occluder)=="table"then
+lastGunOccluder=occluder
+else
+lastGunOccluder=nil
+end
+return true
+end
+if silent then
+local variant:string="Through"
+local configuredSpawn:any=mm2Settings.silentSpawn
+if configuredSpawn=="Top"or configuredSpawn=="Behind"
+or configuredSpawn=="Front"then
+variant=configuredSpawn
+end
+local shotOrigin:CFrame?,shotEnd:CFrame?,offset:number,
+sweep:number,resolvedVariant:string
+if info.pointBlank and origin then
+shotOrigin=origin
+shotEnd=CFrame.new(info.endpoint)
+offset=0
+sweep=0
+resolvedVariant="PointBlank"
+else
+shotOrigin,shotEnd,offset,sweep,resolvedVariant=
+buildSilentShot(target,info,origin,variant)
+end
+if not shotOrigin or not shotEnd then
+if continuous and target.Character then
+local tr:BasePart?=target.Character:FindFirstChild("HumanoidRootPart")
+if tr then
+local ep:Vector3=info.endpoint or tr.Position
+local capPt:Vector3=info.capturedPosition or tr.Position
+local startPt:Vector3=capPt+Vector3.new(0,1.2,-1.5)
+shotOrigin=CFrame.lookAt(startPt,ep)
+shotEnd=CFrame.new(ep)
+offset=1.5
+sweep=0
+resolvedVariant="Through"
+end
+end
+if not shotOrigin or not shotEnd then
+return reject("Could not construct the silent shot.")
+end
+end
+variant=resolvedVariant
+if not useRaw
+and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true})then
+shotOrigin,shotEnd=origin,CFrame.new(info.endpoint)
+variant="Muzzle"
+offset=0
+sweep=0
+end
+if not safeToSend(shotOrigin,shotEnd,origin)then return false end
+if trackFeedback then
+pcall(state.mm2ShotFeedback.queue,target,gun,shotOrigin,shotEnd)
+end
+state.lastSilentShotInfo={
+variant=variant,
+at=os.clock(),
+offset=math.floor(offset*10)/10,
+}
+if opts.redirect then
+opts.redirect(shotOrigin,shotEnd)
+else
+remote:FireServer(shotOrigin,shotEnd)
+end
+local function recordSilent():()
+pcall(function():()
+if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot)~="function"then return end
+trajectoryCalibration:noteAuthoredShot({
+kind="gun",
+source=nativeRedirect and"native-redirect"or"menu",
+tool=gun,
+toolName=gun and gun.Name or"Gun",
+originPos=shotOrigin.Position,
+aimPos=shotEnd.Position,
+target=target,
+silent=true,
+variant=variant,
+offset=offset,
+settings={mode="Silent",spawn=variant,
+sweep=sweep,wallCheck=useWallCheck,
+leadSeconds=info.leadSeconds,motionSource=info.motionSource,
+model=info.model,
+sampleAge=info.sampleAge,samples=info.samples,
+referencePoint=info.capturedPosition and{info.capturedPosition.X,info.capturedPosition.Y,info.capturedPosition.Z},
+predictedPoint={info.endpoint.X,info.endpoint.Y,info.endpoint.Z},
+sampledVelocity={info.velocity.X,info.velocity.Y,info.velocity.Z},
+rtt=info.rtt,echoDelay=info.echoDelay,
+rttEngine=info.rttEngine,rttData=info.rttData,
+occluder=lastGunOccluder,
+echoSamples=info.echoSamples,
+turnRate=info.turnRate,brakeSeconds=info.brakeSeconds,
+leadCorrection=info.leadCorrection,
+leadCorrectionTarget=info.leadCorrectionTarget,
+leadSamples=info.leadSamples,aimMode=info.aimMode,
+ghostAvoided=info.ghostAvoided},
+})
+end)
+end
+if nativeRedirect and task and type(task.defer)=="function"then
+task.defer(recordSilent)
+else
+recordSilent()
+end
+if not quiet and ShootFeature then
+ShootFeature:SetStatus(experimental and"Experimental · CFrame · request sent"or nil)
+end
+if not continuous then
+macroUnequip(gun)
+end
+return true
+end
+local shotEndCFrame:CFrame=CFrame.new(info.endpoint)
+if not safeToSend(origin,shotEndCFrame)then return false end
+if trackFeedback then
+pcall(state.mm2ShotFeedback.queue,target,gun,origin,shotEndCFrame)
+end
+local shotOriginCFrame:CFrame=CFrame.lookAt(origin.Position,info.endpoint)
+if opts.redirect then
+opts.redirect(shotOriginCFrame,shotEndCFrame)
+else
+remote:FireServer(shotOriginCFrame,shotEndCFrame)
+end
+local function recordBullet():()
+pcall(function():()
+if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot)~="function"then return end
+trajectoryCalibration:noteAuthoredShot({
+kind="gun",
+source=nativeRedirect and"native-redirect"or"menu",
+tool=gun,
+toolName=gun and gun.Name or"Gun",
+originPos=origin.Position,
+aimPos=info.endpoint,
+target=target,
+silent=false,
+settings={mode="Normal",wallCheck=useWallCheck,
+leadSeconds=info.leadSeconds,motionSource=info.motionSource,
+model=info.model,
+sampleAge=info.sampleAge,samples=info.samples,
+referencePoint=info.capturedPosition and{info.capturedPosition.X,info.capturedPosition.Y,info.capturedPosition.Z},
+predictedPoint={info.endpoint.X,info.endpoint.Y,info.endpoint.Z},
+sampledVelocity={info.velocity.X,info.velocity.Y,info.velocity.Z},
+rtt=info.rtt,echoDelay=info.echoDelay,
+rttEngine=info.rttEngine,rttData=info.rttData,
+occluder=lastGunOccluder,
+echoSamples=info.echoSamples,
+turnRate=info.turnRate,brakeSeconds=info.brakeSeconds,
+leadCorrection=info.leadCorrection,
+leadCorrectionTarget=info.leadCorrectionTarget,
+leadSamples=info.leadSamples,aimMode=info.aimMode,
+ghostAvoided=info.ghostAvoided},
+})
+end)
+end
+if nativeRedirect and task and type(task.defer)=="function"then
+task.defer(recordBullet)
+else
+recordBullet()
+end
+if not quiet and ShootFeature then
+ShootFeature:SetStatus(experimental and"Experimental · Bullet · request sent"or nil)
+end
+if not continuous then
+macroUnequip(gun)
+end
+return true
+end
+local shootOptionsReady:boolean=false
+local shootFeatureActive:boolean=false
+local autoShootActive:boolean=false
+local autoShootWanted:boolean=false
+local transientShotActive:boolean=false
+local transientShotGeneration:number=0
+local updateAutoShootConnection:(()->())?=nil
+local observerGeneration:number=0
+local cachedShootRemote:Instance?=nil
+local lastCacheProbeAt:number=-math.huge
+local function refreshShootRemoteCache():()
+local remote:Instance?=nil
+local okGun:boolean,foundGun:any=pcall(getPlayerWeapon,LocalPlayer,"Gun",true)
+local gun:Tool?=if okGun then foundGun else nil
+if gun then
+pcall(function():()
+local found:Instance?=gun:FindFirstChild("Shoot")
+if found and found:IsA("RemoteEvent")then
+remote=found
+end
+end)
+end
+cachedShootRemote=remote
+end
+local function refreshShootInfrastructure():()
+observerGeneration+=1
+local generation:number=observerGeneration
+local wantActive:boolean=shootFeatureActive or autoShootActive or transientShotActive
+state.mm2ShotFeedback.shootActive=wantActive
+if wantActive then
+local function observe():()
+local weaponService:any=getWeaponServiceModule()
+if generation~=observerGeneration or not state.mm2ShotFeedback.shootActive then return end
+if type(weaponService)=="table"then connectGunFiredSignal(weaponService)end
+end
+if state.isMobile then
+observe()
+else
+task.spawn(observe)
+end
+refreshShootRemoteCache()
+return
+end
+disconnectGunFiredObserver()
+state.mm2ShotFeedback.pending=nil
+state.mm2ShotFeedback.lastAccepted=nil
+state.mm2ShotFeedback.hide()
+refreshShootRemoteCache()
+end
+local shotHookInstalled:boolean=false
+local shotHookWrapper:any=nil
+local originalNamecall:any=nil
+local function installNativeGunHook():boolean
+if state.isMobile then return true end
+if shotHookInstalled then return true end
+local hook:any=state.hookMetamethod
+local getMethod:any=state.getNamecallMethod
+local checkCaller:any=state.checkCaller
+if type(hook)~="function"or type(getMethod)~="function"
+or type(checkCaller)~="function"then
+return false
+end
+if type(task)~="table"or type(task.defer)~="function"then
+return false
+end
+local predecessor:any=nil
+local pendingRedirects:number=0
+local MAX_PENDING_REDIRECTS:number=2
+local sendingRedirect:boolean=false
+local function sendAsExecutor(remote:any,arguments:any):boolean
+local previous:boolean=sendingRedirect
+sendingRedirect=true
+local ok:boolean,failure:any=pcall(function():()
+remote:FireServer(table.unpack(arguments,1,arguments.n))
+end)
+sendingRedirect=previous
+if not ok then
+warn("[Wurst] native gun redirect failed: "..tostring(failure))
+end
+return ok
+end
+local function redirectDeferred(remote:any,arguments:any):()
+if not shootFeatureActive or not shootOptionsReady then
+sendAsExecutor(remote,arguments)
+return
+end
+local shotOrigin:CFrame?=nil
+local shotEnd:CFrame?=nil
+local ok:boolean=pcall(function():any
+lastRejectReason=""
+return fireGunAtTarget(getSelectedShootTarget(),{
+quiet=true,
+nativeRedirect=true,
+nativeOrigin=arguments[1],
+redirect=function(origin:CFrame,endpoint:CFrame):()
+shotOrigin,shotEnd=origin,endpoint
+end,
+})
+end)
+if shotOrigin and shotEnd then
+if ShootFeature then
+pcall(function():()ShootFeature:SetStatus("Native click redirected")end)
+end
+local redirected:any=table.pack(shotOrigin,shotEnd)
+local copied:number=2
+for index:number=3,arguments.n do
+copied+=1
+redirected[copied]=arguments[index]
+end
+redirected.n=copied
+sendAsExecutor(remote,redirected)
+return
+end
+if ShootFeature then
+pcall(function():()
+ShootFeature:SetStatus(if not ok then"Native redirect failed; original click kept"
+else(lastRejectReason~=""and lastRejectReason or"Native click unchanged"))
+end)
+end
+sendAsExecutor(remote,arguments)
+end
+local function redirectNamecall(remote:any,...:any):any
+if sendingRedirect then
+return predecessor(remote,...)
+end
+if not shootFeatureActive or not shootOptionsReady then
+return predecessor(remote,...)
+end
+if remote~=cachedShootRemote then
+local now:number=os.clock()
+if now-lastCacheProbeAt>=0.5 then
+lastCacheProbeAt=now
+task.defer(refreshShootRemoteCache)
+end
+return predecessor(remote,...)
+end
+local okMethod:boolean,method:any=pcall(getMethod)
+if not okMethod or method~="FireServer"then
+return predecessor(remote,...)
+end
+local okCaller:boolean,fromExecutor:any=pcall(checkCaller)
+if not okCaller or fromExecutor~=false then
+return predecessor(remote,...)
+end
+local arguments:any=table.pack(...)
+if typeof(arguments[1])~="CFrame"or typeof(arguments[2])~="CFrame"then
+return predecessor(remote,...)
+end
+if pendingRedirects>=MAX_PENDING_REDIRECTS then
+return predecessor(remote,...)
+end
+pendingRedirects+=1
+task.defer(function():()
+local handled:boolean,failure:any=pcall(redirectDeferred,remote,arguments)
+pendingRedirects-=1
+if not handled then
+warn("[Wurst] native gun redirect error: "..tostring(failure))
+end
+end)
+return nil
+end
+local callback:any=redirectNamecall
+if type(state.newCClosure)=="function"then
+local ok:boolean,wrapped:any=pcall(state.newCClosure,callback)
+if ok and type(wrapped)=="function"then callback=wrapped end
+end
+local ok:boolean,old:any=pcall(hook,game,"__namecall",callback)
+if not ok or type(old)~="function"then return false end
+predecessor=old
+originalNamecall,shotHookWrapper,shotHookInstalled=old,callback,true
+return true
+end
+local function uninstallNativeGunHook():()
+if not shotHookInstalled or type(state.hookMetamethod)~="function"then return end
+local ok:boolean,displaced:any=pcall(state.hookMetamethod,game,"__namecall",originalNamecall)
+if not ok then return end
+if displaced==shotHookWrapper then
+shotHookInstalled,shotHookWrapper,originalNamecall=false,nil,nil
+elseif type(displaced)=="function"then
+pcall(state.hookMetamethod,game,"__namecall",displaced)
+end
+end
+local manualShotPending:boolean=false
+local function triggerManualShot():()
+if state.isMobile and not shootFeatureActive then
+notify("Enable Gun Aimbot first.")
+return
+end
+if manualShotPending then return end
+local character,humanoid=getCharacterParts()
+local gun:Tool?=getPlayerWeapon(LocalPlayer,"Gun")
+if not character or not humanoid or not gun then
+notify("No sheriff gun is available.")
+return
+end
+manualShotPending=true
+local ok:boolean,message:any=pcall(function():()
+if gun.Parent~=character then
+humanoid:EquipTool(gun)
+RunService.Heartbeat:Wait()
+end
+if(not state.isMobile or shootFeatureActive)
+and LocalPlayer.Character==character and gun.Parent==character then
+if not shootFeatureActive and not state.isMobile then
+transientShotGeneration+=1
+local generation:number=transientShotGeneration
+transientShotActive=true
+refreshShootInfrastructure()
+task.delay(2,function():()
+if generation~=transientShotGeneration then return end
+transientShotActive=false
+refreshShootInfrastructure()
+end)
+end
+fireGunAtTarget(getSelectedShootTarget(),{whenReady=true})
+end
+end)
+manualShotPending=false
+if not ok then notify("Shoot failed: "..tostring(message))end
+end
+local function toggleShootMurderer(enabled:boolean):()
+shootFeatureActive=enabled
+state.mm2SilentAimEnabled=enabled
+if state.mm2KnifeThrowRefresh then state.mm2KnifeThrowRefresh()end
+autoShootActive=shootFeatureActive and autoShootWanted
+if enabled and not state.isMobile then
+if not installNativeGunHook()then
+notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+end
+elseif not enabled then
+uninstallNativeGunHook()
+end
+refreshShootInfrastructure()
+if updateAutoShootConnection then updateAutoShootConnection()end
+end
+local lastAutoStatus:string?=nil
+local function autoStatus(message:string):()
+if ShootFeature and lastAutoStatus~=message then
+lastAutoStatus=message
+ShootFeature:SetStatus(message)
+end
+end
+local function autoShootTick():()
+if not shootFeatureActive or not autoShootActive then return end
+local gun:Tool?=getPlayerWeapon(LocalPlayer,"Gun",true)
+if not gun or gun.Parent~=LocalPlayer.Character then
+autoStatus("Equip gun")
+return
+end
+if state and state.mm2ShotFeedback
+and state.mm2ShotFeedback.pending then
+autoStatus("Esperando confirmación")
+return
+end
+local target:Player?=getSelectedShootTarget()
+if not target then autoStatus("No target");return end
+lastRejectReason=""
+local sent:boolean=fireGunAtTarget(target,{whenReady=true,quiet=true})
+autoStatus(sent and"Auto: request sent"or lastRejectReason)
+end
+updateAutoShootConnection=function():()
+disconnectFeatureConnection("MM2AutoShoot")
+autoShootActive=shootOptionsReady and shootFeatureActive and autoShootWanted
+if not autoShootActive then
+lastAutoStatus=nil
+if ShootFeature then ShootFeature:SetStatus(nil)end
+return
+end
+featureConnections.MM2AutoShoot=
+TaskManager:Connect(autoShootTick,nil,"MM2 Auto Shoot")
+autoShootTick()
+end
+local function toggleAutoShoot(enabled:boolean):()
+autoShootWanted=enabled
+autoShootActive=shootFeatureActive and autoShootWanted
+refreshShootInfrastructure()
+if updateAutoShootConnection then updateAutoShootConnection()end
+end
+if type(configData)=="table"then
+local changed:boolean=false
+if configData.states["MM2.Shoot.AutoShoot"]==nil and configData.states["MM2.AutoShoot"]~=nil then
+local enabled:boolean=configData.states["MM2.AutoShoot"]==true
+configData.states["MM2.Shoot.AutoShoot"]=enabled
+if enabled then configData.states["MM2.Shoot"]=true end
+changed=true
+end
+local oldKey:any=configData.values["Shortcut.MM2AutoShoot"]
+if configData.values["Shortcut.MM2ShootAutoShoot"]==nil and type(oldKey)=="string"then
+configData.values["Shortcut.MM2ShootAutoShoot"]=oldKey
+changed=true
+end
+if changed and type(queueConfigSave)=="function"then queueConfigSave()end
+end
+if type(configData)=="table"and configData.values["MM2.Shoot.Aimmethod"]==nil then
+configData.values["MM2.Shoot.Aimmethod"]=configData.values["MM2.Shoot.Mode"]
+end
+ShootFeature=createUniversalFeature(
+"Gun Aimbot",
+state.isMobile
+and"Gun Aimbot with Normal(Bullet), Silent(Cframe), and Experimental modes. The assigned action fires/equips Gun; WallCheck is configurable per mode."
+or"Redirect native clicks with Bullet or Silent(CFrame). One optional keybind fires even while the module is off.",
+4,
+toggleShootMurderer,
+{
+categoryName="Exploits",
+configKey="MM2.Shoot",
+parent=MM2Scroll,
+registry=mm2Features,
+}
+)
+state.mm2SilentAimFeature=ShootFeature
+state.mm2ChooseExperimentalAim=chooseExperimentalGunMode
+state.mm2FireSilentShot=function(target:Player?,shotOpts:any):boolean
+local opts:any=type(shotOpts)=="table"and shotOpts or{}
+return fireGunAtTarget(target,{
+silent=true,
+quiet=opts.quiet~=false,
+continuous=opts.continuous~=false,
+wallCheck=opts.wallCheck,
+})
+end
+state.mm2FireGunShot=function(target:Player?,shotOpts:any):boolean
+local opts:any=type(shotOpts)=="table"and shotOpts or{}
+return fireGunAtTarget(target,{
+silent=opts.silent==true,
+wallCheck=opts.wallCheck,
+quiet=opts.quiet~=false,
+continuous=opts.continuous~=false,
+})
+end
+if addSectionOption then addSectionOption(ShootFeature,"Gun")end
+local states:any=type(configData)=="table"and configData.states or{}
+local values:any=type(configData)=="table"and configData.values or{}
+local function modeKey(value:any):string
+if value=="Experimental"then return"Experimental"end
+if value=="CFrame"or value=="Silent(Cframe)"or value=="Silent(CFrame)"then return"CFrame"end
+return"Bullet"
+end
+local savedMode:any=values["MM2.Shoot.Aimmethod"]
+local initialMode:string=modeKey(savedMode
+or(mm2Settings.experimentalAim and"Experimental"or(mm2Settings.silentAim and"CFrame"or"Bullet")))
+if state.isMobile then
+if savedMode=="Bullet"or savedMode=="CFrame"or savedMode=="Silent(CFrame)"then
+values["MM2.Shoot.Aimmethod"]=(savedMode=="CFrame"or savedMode=="Silent(CFrame)")
+and"Silent(Cframe)"or"Normal(Bullet)"
+if type(queueConfigSave)=="function"then queueConfigSave()end
+end
+else
+if initialMode=="Experimental"then initialMode="Bullet"end
+local normalized:string=initialMode=="CFrame"and"Silent(CFrame)"or"Bullet"
+if values["MM2.Shoot.Aimmethod"]~=normalized then
+values["MM2.Shoot.Aimmethod"]=normalized
+if type(queueConfigSave)=="function"then queueConfigSave()end
+end
+end
+local function modeConfig(mode:string):any
+local prefix:string="MM2.Shoot."..mode.."."
+local legacy:boolean=mode==initialMode
+local wall:any=states[prefix.."WallCheck"]
+local macro:any=states[prefix.."Macro"]
+local targetMode:any=values[prefix.."Target"]
+local targetName:any=values[prefix.."TargetPlayer"]
+if legacy then
+if wall==nil then wall=states["MM2.Shoot.WallCheck"]end
+if macro==nil then macro=states["MM2.Shoot.Macro"]end
+if targetMode==nil then targetMode=values["MM2.Shoot.Target"]end
+if targetName==nil then targetName=values["MM2.Shoot.Targetplayer"]end
+end
+return{wallCheck=wall==nil or wall==true,macro=macro==true,
+targetMode=targetMode=="Custom"and"Custom"or"Murder",
+targetName=type(targetName)=="string"and targetName or""}
+end
+local modeConfigs:any={Bullet=modeConfig("Bullet"),CFrame=modeConfig("CFrame"),
+Experimental=modeConfig("Experimental")}
+local activeModeKey:string=initialMode
+local switching:boolean=false
+local optionsReady:boolean=false
+local ShootTargetBox
+local function refreshShootOptions():()
+if ShootTargetBox then
+setOptionVisible(ShootFeature,ShootTargetBox.Parent::GuiObject,mm2Settings.shootMode=="Custom")
+end
+end
+local function syncMode():()
+local cfg:any=modeConfigs[activeModeKey]or modeConfigs.Bullet
+switching=true
+mm2Settings.shootWallCheck=cfg.wallCheck
+shootMacro,mm2Settings.shootMode,mm2Settings.shootTarget=cfg.macro,cfg.targetMode,cfg.targetName
+if state and type(state.toggleControls)=="table"then
+for _,item:any in ipairs({{"WallCheck",cfg.wallCheck},{"Macro",cfg.macro}})do
+local control:any=state.toggleControls["MM2.Shoot."..item[1] ]
+if control and control.setChecked then pcall(control.setChecked,item[2])end
+end
+end
+if state and type(state.valueControls)=="table"then
+local target:any=state.valueControls["MM2.Shoot.Target"]
+local name:any=state.valueControls["MM2.Shoot.Targetplayer"]
+if target and target.apply then pcall(target.apply,cfg.targetMode)end
+if name and name.apply then pcall(name.apply,cfg.targetName)end
+end
+switching=false
+refreshShootOptions()
+end
+local aimMethods:{string}=state.isMobile
+and{"Normal(Bullet)","Silent(Cframe)","Experimental"}
+or{"Bullet","Silent(CFrame)"}
+addCycleOption(ShootFeature,"Aim method",aimMethods,
+initialMode=="Experimental"and 3 or(initialMode=="CFrame"and 2 or 1),
+function(value:string):()
+activeModeKey=modeKey(value)
+mm2Settings.experimentalAim=activeModeKey=="Experimental"
+mm2Settings.silentAim=activeModeKey=="CFrame"
+syncMode()
+end,
+state.isMobile
+and"Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode."
+or"One keybind is shared; WallCheck and target settings are saved per mode.")
+addCycleOption(ShootFeature,"Target",{"Murder","Custom"},1,function(value:string):()
+mm2Settings.shootMode=value
+if optionsReady and not switching then
+modeConfigs[activeModeKey].targetMode=value
+values["MM2.Shoot."..activeModeKey..".Target"]=value
+end
+refreshShootOptions()
+end)
+if state.bindFeatureActivationKey then
+state.bindFeatureActivationKey(ShootFeature,mm2Settings.shootKey,triggerManualShot)
+end
+if not state.isMobile then
+local binding:any=state.shortcutBindings and state.shortcutBindings[ShootFeature.configKey]
+if binding then binding.feedback=nil end
+if type(state.addFeatureShortcutOption)=="function"then
+state.addFeatureShortcutOption(ShootFeature,"Keybind",
+"Optional: click the box and press a key. It fires in either mode, even when Gun Aimbot is off.")
+end
+end
+addToggleOption(ShootFeature,"WallCheck",true,function(value:boolean):()
+mm2Settings.shootWallCheck=value==true
+if optionsReady and not switching then
+modeConfigs[activeModeKey].wallCheck=value==true
+states["MM2.Shoot."..activeModeKey..".WallCheck"]=value==true
+end
+end,"Check for walls; saved independently per mode.")
+addToggleOption(ShootFeature,"Macro",false,function(value:boolean):()
+shootMacro=value==true
+if optionsReady and not switching then
+modeConfigs[activeModeKey].macro=value==true
+states["MM2.Shoot."..activeModeKey..".Macro"]=value==true
+end
+end,"Pistol macro: hides the gun after the shot; saved per mode.")
+ShootTargetBox=addTextOption(ShootFeature,"Target player","",function(value:string):()
+mm2Settings.shootTarget=value
+if optionsReady and not switching then
+modeConfigs[activeModeKey].targetName=value
+values["MM2.Shoot."..activeModeKey..".TargetPlayer"]=value
+if type(queueConfigSave)=="function"then queueConfigSave()end
+end
+end,false)
+optionsReady=true
+syncMode()
+shootOptionsReady=true
+if shootFeatureActive and not state.isMobile and not shotHookInstalled then
+if not installNativeGunHook()then
+notify("Native click redirect needs executor hookmetamethod, getnamecallmethod and checkcaller; the keybind can still fire.")
+end
+end
+if updateAutoShootConnection then updateAutoShootConnection()end
+activeCleanup=function():()
+transientShotGeneration+=1
+transientShotActive=false
+toggleShootMurderer(false)
+state.mm2SilentAimFeature=nil
+state.mm2FireSilentShot=nil
+state.mm2FireGunShot=nil
+state.mm2ChooseExperimentalAim=nil
+toggleAutoShoot(false)
+state.mm2ShotFeedback.hide()
+end
+Module.Events=featureConnections
+Module.Initialized=true
+return Module
+end
+function Module.destroy():()
+if not Module.Initialized then
+return
+end
+Module.Initialized=false
+pcall(activeCleanup)
+activeCleanup=function():()end
+Module.Events={}
+Module.Runtime=nil
+end
+return Module
+-- FIN src/games/MM2/Blatant/Shoot.lua
+
+-- INICIO src/games/universal/Render/Nametags.lua
+local Module={Name='Nametags',Initialized=false}local activeCard,cleanup,roleBinding local BLACK=Color3.new(0,0,0)function Module.init(context:any):any local host,entity,render=context.host,context.entity,context.render local layer=render:Layer('NametagsLayer')local tracked={}local store=host.configData if store and store.states['Universal.Nametags']==nil then local states,values=store.states,store.values states['Universal.Nametags']=states['Universal.Chams']==true and states['Universal.Chams.Nametags']==true or states['Universal.PlayerESP']==true and states['Universal.PlayerESP.Nametags']~=false if values['Universal.Nametags.Textsize']==nil then values['Universal.Nametags.Textsize']=values['Universal.PlayerESP.Textsize']end for new,old in pairs({Background='Nameplate',Displayname='Displayname',Heldtool='Heldtool',Showrole='Showrole',Rolecolours='Rolecolours'})do local key='Universal.Nametags.'..new if states[key]==nil then states[key]=states['Universal.PlayerESP.'..old]end end for key,colour in pairs(table.clone(values))do if string.sub(key,1,20)=='Universal.PlayerESP.'and string.lower(string.sub(key,-6))=='colour'then local newKey='Universal.Nametags.'..string.sub(key,21)if values[newKey]==nil then values[newKey]=colour end end end end local textService=game:GetService('TextService')local card local function clear()render:ReleaseAll(layer)table.clear(tracked)layer.Visible=false end local function fit(drawing,slot,text,size,viewport)local label=drawing.labels[slot]if not label then return end local key=text..':'..tostring(size)..':'..tostring(viewport.X)drawing.textMetrics=drawing.textMetrics or{}if not drawing.textMetrics[slot]or drawing.textMetrics[slot].key~=key then local width=#text*size*0.65+8 pcall(function()width=textService:GetTextSize(text,size,Enum.Font.Arial,Vector2.new(10000,100)).X+8 end)width=math.max(1,math.min(width,viewport.X-24))drawing.textMetrics[slot]={key=key,width=width}label.AutomaticSize=Enum.AutomaticSize.None label.Size=UDim2.fromOffset(width,size+7)label.TextTruncate=Enum.TextTruncate.AtEnd end local half=drawing.textMetrics[slot].width*0.5 local clampedX=math.clamp(label.Position.X.Offset,half+8,math.max(half+8,viewport.X-half-8))if math.abs(clampedX-label.Position.X.Offset)>=0.5 then label.Position=UDim2.fromOffset(clampedX,label.Position.Y.Offset)end end card=context.framework.Categories.Visuals:CreateModule({Name='Nametags',Category='Render',ConfigKey='Universal.Nametags',Order=3,Tooltip=[[Readable player nameplates, account names, distance and game roles. Independent of ESP and Chams.]],Function=function(enabled)if not enabled then clear()card:SetStatus(nil)return end layer.Visible=true card:Clean(clear)card:Render(function()local camera=(host.workspace or workspace).CurrentCamera if not camera then clear()return end layer.Visible=true local seen,count={},0 local options=card.Options for _,target in ipairs(entity:Refresh())do local player=target.Player if not player or target.Health<=0 or target.Distance>options['Max distance'].Value or not(roleBinding.provider and roleBinding.provider.ReplacesTeams)and not options.Teammates.Value and target.IsFriendly then continue end local head=target.Head or target.RootPart local point=head and render:Project(camera,head.Position+Vector3.new(0,head.Size.Y*0.5+0.7,0))if not point or point.X<0 or point.Y<0 or point.X>camera.ViewportSize.X or point.Y>camera.ViewportSize.Y or not options['Through walls'].Value and not entity:VisibleFrom(target)then continue end local colour,role=roleBinding:Resolve(player,options.Colour.Value)local shown=options['Display name'].Value and player.DisplayName or player.Name local details={}if options['Account name'].Value and shown~=player.Name then table.insert(details,'@'..player.Name)end if options['Show role'].Value and role then table.insert(details,role)end if options['Held tool'].Value then local tool=target.Character:FindFirstChildOfClass('Tool')if tool then table.insert(details,tool.Name)end end seen[player]=true tracked[player]=true count+=1 local drawing=render:Set(layer,player)drawing:Show(true)local size=math.round(options['Text size'].Value)if#details>0 then shown..=' ['..table.concat(details,'] [')..']'end if options.Distance.Value then shown='['..tostring(math.round(target.Distance))..'] '..shown end local y=math.max(point.Y,size+16)drawing:Label('Name',shown,Vector2.new(point.X,y),1,size,colour,options.Background.Value)local label=drawing.labels.Name if label then if not drawing.flatNametag then for _,child in ipairs(label:GetChildren())do if child:IsA('UICorner')or child:IsA('UIStroke')then child:Destroy()elseif child:IsA('UIPadding')then child.PaddingLeft,child.PaddingRight=UDim.new(0,4),UDim.new(0,4)end end drawing.flatNametag=true end if label.Font~=Enum.Font.Arial then label.Font=Enum.Font.Arial end if label.BackgroundColor3~=BLACK then label.BackgroundColor3=BLACK end local plate:number=options.Background.Value and 0.5 or 1 if label.BackgroundTransparency~=plate then label.BackgroundTransparency=plate end if label.TextStrokeTransparency~=1 then label.TextStrokeTransparency=1 end end fit(drawing,'Name',shown,size,camera.ViewportSize)drawing:HideLabel('Details')end for player in pairs(tracked)do if not seen[player]then render:Release(layer,player)tracked[player]=nil end end card:SetStatus(tostring(count))end)end})card:CreateToggle({Name='Display name',Default=true})card:CreateToggle({Name='Account name',Default=false,Show={Option='Display name'}})card:CreateToggle({Name='Distance',Default=false})card:CreateToggle({Name='Show role',Default=false})card:CreateToggle({Name='Held tool',Default=false})card:CreateToggle({Name='Background',Default=true})card:CreateSlider({Name='Text size',Min=10,Max=24,Default=14})card:CreateColor({Name='Colour',Default=Color3.fromRGB(85,255,85)})card:CreateSlider({Name='Max distance',Min=50,Max=5000,Default=1000})card:CreateToggle({Name='Through walls',Default=true})card:CreateToggle({Name='Teammates',Default=true})roleBinding=context.services.gameRoles:Bind(card)card.OptionFilter=function(name)if name=='Show role'then return roleBinding.provider~=nil end return not(name=='Teammates'and roleBinding.provider and roleBinding.provider.ReplacesTeams)end card:RefreshVisibility()activeCard,cleanup=card,clear Module.Initialized=true return card end function Module.destroy()if activeCard and activeCard.Enabled then activeCard:Toggle(false)end if cleanup then cleanup()end if roleBinding then roleBinding:Destroy()end activeCard,cleanup,roleBinding=nil,nil,nil Module.Initialized=false end return Module
+-- FIN src/games/universal/Render/Nametags.lua
+
+-- INICIO src/games/MM2/Other/CoinsAura.lua
+local Module={Name='MM2 Coins Aura',Events={}::{[string]:any},Initialized=false,Runtime=nil::any}local activeCleanup:()->()=function():()end function Module.init(runtime:any):any if Module.Initialized then return Module end local core:any=state.mm2Core assert(type(core)=='table','MM2 Coins Aura requires the MM2 core module')Module.Runtime=runtime local MAX_SERVER_REACH:number=15 local MAX_SERVER_REACH_SQ:number=MAX_SERVER_REACH*MAX_SERVER_REACH local TICK_INTERVAL:number=0.08 local CACHE_INTERVAL:number=0.5 local savedCFrames:{[BasePart]:CFrame}={}local savedPositions:{[BasePart]:Vector3}={}local activeCoin:BasePart?=nil local function rememberCoin(serverPart:BasePart):Vector3?local pos:Vector3?=savedPositions[serverPart]if pos then return pos end local cf:CFrame=serverPart.CFrame savedCFrames[serverPart]=cf savedPositions[serverPart]=cf.Position return cf.Position end local function restoreCoin(serverPart:BasePart?):()if not serverPart then return end local cf:CFrame?=savedCFrames[serverPart]if cf and serverPart.Parent then pcall(function():()serverPart.CFrame=cf end)end if activeCoin==serverPart then activeCoin=nil end end local function restoreAllCoins():()for serverPart,cf in pairs(savedCFrames)do if serverPart and serverPart.Parent then pcall(function():()serverPart.CFrame=cf end)end end table.clear(savedCFrames)table.clear(savedPositions)activeCoin=nil end local function isCoinCollectable(serverPart:BasePart):boolean if not serverPart or not serverPart.Parent then return false end if serverPart:GetAttribute('Collected')==true or serverPart:GetAttribute('Delete')==true then return false end local visual:Instance?=serverPart:FindFirstChild('CoinVisual')if visual and(visual:GetAttribute('Collected')==true or visual:GetAttribute('Delete')==true)then return false end return true end local function detachVisualWeld(serverPart:BasePart):()local visual:Instance?=serverPart:FindFirstChild('CoinVisual')if not visual or not visual:IsA('BasePart')then return end local vPart:BasePart=visual::BasePart vPart.Anchored=true local weld:Instance?=vPart:FindFirstChildOfClass('WeldConstraint')if weld then(weld::WeldConstraint).Enabled=false end end local function pulseCoinTouch(root:BasePart,serverPart:BasePart):()rememberCoin(serverPart)detachVisualWeld(serverPart)serverPart.CanCollide=false serverPart.CFrame=root.CFrame local fireTouch:any=state.fireTouchInterest if type(fireTouch)=='function'then pcall(fireTouch,root,serverPart,0)pcall(fireTouch,root,serverPart,1)end end local CoinsAuraFeature:any=nil local function toggleCoinsAura(enabled:boolean):()disconnectFeatureConnection('MM2CoinsAura')restoreAllCoins()if not enabled then if CoinsAuraFeature then CoinsAuraFeature:SetStatus(nil)end return end local cachedCoins:{BasePart}={}local lastCacheAt:number=-math.huge local lastTickAt:number=-math.huge if CoinsAuraFeature then CoinsAuraFeature:SetStatus('Max reach')end local function refreshCoins(now:number):()if now-lastCacheAt<CACHE_INTERVAL then return end lastCacheAt=now local list:{BasePart}={}local seen:{[BasePart]:boolean}={}local function addCoin(candidate:Instance?):()if not candidate then return end local serverPart:BasePart?=nil if candidate:IsA('BasePart')then if candidate.Name=='Coin_Server'or candidate.Name=='ServerCoinPart'then serverPart=candidate::BasePart elseif candidate.Parent and candidate.Parent:IsA('BasePart')and(candidate.Parent.Name=='Coin_Server'or candidate.Parent.Name=='ServerCoinPart')then serverPart=candidate.Parent::BasePart else serverPart=candidate::BasePart end elseif candidate:IsA('Model')then local child:Instance?=candidate:FindFirstChild('Coin_Server')or candidate:FindFirstChildWhichIsA('BasePart')if child and child:IsA('BasePart')then serverPart=child::BasePart end end if serverPart and not seen[serverPart]and isCoinCollectable(serverPart)then seen[serverPart]=true rememberCoin(serverPart)list[#list+1]=serverPart end end if type(core.findMM2Map)=='function'then local map:Instance?=core.findMM2Map()if map then local container:Instance?=map:FindFirstChild('CoinContainer')or map:FindFirstChild('CoinAreas')or map:FindFirstChild('Coins')if container then for _,child:Instance in ipairs(container:GetChildren())do addCoin(child)end end end end if#list==0 and type(state.mm2CoinPickups)=='function'then local okPickups:boolean,pickups:any=pcall(state.mm2CoinPickups)if okPickups and type(pickups)=='table'then for _,pickup:Instance in ipairs(pickups)do addCoin(pickup)end end end cachedCoins=list end local function auraTick():()local now:number=os.clock()if now-lastTickAt<TICK_INTERVAL then return end lastTickAt=now local character:Model?=LocalPlayer and LocalPlayer.Character local root:BasePart?=character and character:FindFirstChild('HumanoidRootPart')::BasePart?if not root then if activeCoin then restoreCoin(activeCoin)end return end local humanoid:Humanoid?=character:FindFirstChildOfClass('Humanoid')::Humanoid?if humanoid and humanoid.Health<=0 then if activeCoin then restoreCoin(activeCoin)end return end refreshCoins(now)local rootPos:Vector3=root.Position local bestCoin:BasePart?=nil local bestDistSq:number=MAX_SERVER_REACH_SQ for i:number=1,#cachedCoins do local coin:BasePart=cachedCoins[i]if isCoinCollectable(coin)then local coinPos:Vector3?=savedPositions[coin]or rememberCoin(coin)if coinPos then local diff:Vector3=coinPos-rootPos local distSq:number=diff.X*diff.X+diff.Y*diff.Y+diff.Z*diff.Z if distSq<=bestDistSq then bestDistSq=distSq bestCoin=coin end end elseif coin==activeCoin then restoreCoin(coin)end end if activeCoin and activeCoin~=bestCoin then restoreCoin(activeCoin)end if bestCoin then activeCoin=bestCoin pcall(pulseCoinTouch,root,bestCoin)end end featureConnections.MM2CoinsAura=TaskManager:Connect(auraTick,nil,'MM2 Coins Aura')auraTick()end CoinsAuraFeature=createUniversalFeature('Coins Aura',[[Automatically collects nearby coins at the maximum reach allowed by the MM2 server with minimal CPU usage.]],7,toggleCoinsAura,{categoryName='Utilities',parent=MM2Scroll,registry=mm2Features})state.mm2CoinsAuraFeature=CoinsAuraFeature activeCleanup=function():()toggleCoinsAura(false)end Module.Events=featureConnections Module.Initialized=true return Module end function Module.destroy():()if not Module.Initialized then return end Module.Initialized=false pcall(activeCleanup)activeCleanup=function():()end Module.Events={}Module.Runtime=nil end return Module
+-- FIN src/games/MM2/Other/CoinsAura.lua
+
+-- INICIO src/games/MM2/Render/CoinEsp.lua
+local Module={
+Name="MM2 Coin ESP",
+Events={}::{[string]:any},
+Initialized=false,
+Runtime=nil::any,
+}
+local activeCleanup:()->()=function():()end
+local COIN_TAG:string="CoinVisual"
+local VISUAL_NAME:string="CoinVisual"
+local SERVER_NAME:string="Coin_Server"
+local FAMILY_COIN:string="Coin"
+local FAMILY_CANDY:string="Candy"
+local FAMILY_SNOW:string="SnowToken"
+local FAMILY_BEACH:string="BeachBall"
+local FAMILY_EGG:string="Egg"
+local FAMILY_HEART:string="Heart"
+local FAMILY_ALL:string="All"
+local FAMILY_AUTO:string="Auto (server)"
+local FAMILY_ORDER:{string}={
+FAMILY_EGG,
+FAMILY_BEACH,
+FAMILY_SNOW,
+FAMILY_CANDY,
+FAMILY_HEART,
+FAMILY_COIN,
+}
+local COUNT_ORDER:{string}={
+FAMILY_COIN,
+FAMILY_CANDY,
+FAMILY_SNOW,
+FAMILY_BEACH,
+FAMILY_EGG,
+FAMILY_HEART,
+}
+local FAMILY_NOUNS:{[string]:{string}}={
+[FAMILY_COIN]={"coin","coins"},
+[FAMILY_CANDY]={"candy","candies"},
+[FAMILY_SNOW]={"snowtoken","snowtokens"},
+[FAMILY_BEACH]={"beachball","beachballs"},
+[FAMILY_EGG]={"egg","eggs"},
+[FAMILY_HEART]={"heart","hearts"},
+}
+local FAMILY_CHOICES:{string}={
+FAMILY_AUTO,
+FAMILY_COIN,
+FAMILY_CANDY,
+FAMILY_SNOW,
+FAMILY_BEACH,
+FAMILY_EGG,
+FAMILY_HEART,
+FAMILY_ALL,
+}
+local BAG_TO_FAMILY:{[string]:string}={
+Coin=FAMILY_COIN,
+Candy=FAMILY_CANDY,
+SnowToken=FAMILY_SNOW,
+BeachBall=FAMILY_BEACH,
+Egg=FAMILY_EGG,
+}
+local FAMILY_PHRASES:{[string]:{string}}={
+[FAMILY_EGG]={"egg","eggs"},
+[FAMILY_BEACH]={"beachball","beach ball","beachballs","beach balls"},
+[FAMILY_SNOW]={"snowtoken","snow token","snowtokens","snow tokens","snowball","snow ball"},
+[FAMILY_CANDY]={"candy","candies","candied","candycorn","candy corn"},
+[FAMILY_HEART]={"heart","hearts"},
+[FAMILY_COIN]={"maincoin","coinold","decalpart"},
+}
+local RESCAN_PERIOD:number=2
+local function lower(value:string):string
+return string.lower(value)
+end
+local function contains(value:string,needle:string):boolean
+return string.find(value,needle,1,true)~=nil
+end
+function Module.init(runtime:any):any
+if Module.Initialized then
+return Module
+end
+local core:any=state.mm2Core
+assert(type(core)=="table","MM2 Coin ESP requires the MM2 core module")
+Module.Runtime=runtime
+local CoinEffects:any=core.CoinEffects
+local clearEffects:any=core.clearEffects
+local mm2Settings:any=core.mm2Settings
+local collectionService:any=game:GetService("CollectionService")
+local settings={
+family=FAMILY_AUTO,
+}
+local serverFamily:string?=nil
+local lastRaw={tagged=0,coinId=0,named=0}
+local coinTags:{[Instance]:{box:Instance}}={}
+local lastFamilies:{[Instance]:string}={}
+state.mm2CoinTagParts={}
+local function clearTags():()
+for part:Instance,entry in pairs(coinTags)do
+coinTags[part]=nil
+pcall(function():()
+entry.box:Destroy()
+end)
+end
+table.clear(lastFamilies)
+state.mm2CoinTagParts={}
+end
+local function attribute(object:Instance,name:string):any
+return object:GetAttribute(name)
+end
+local function hasTag(object:Instance):boolean
+return collectionService:HasTag(object,COIN_TAG)
+end
+local function visualOf(part:Instance):Instance?
+if part.Name==SERVER_NAME then
+local child:Instance?=part:FindFirstChild(VISUAL_NAME)
+if child and child:IsA("BasePart")then
+return child
+end
+return nil
+end
+return part
+end
+local function passesFilters(part:Instance):boolean
+if not part:IsA("BasePart")or not part:IsDescendantOf(workspace)then
+return false
+end
+local current:Instance?=part.Parent
+while current and current~=workspace do
+if current:FindFirstChildOfClass("Humanoid")then
+return false
+end
+current=current.Parent
+end
+return true
+end
+local function familyFromWorkspace():string?
+local eventName:string=lower(tostring(attribute(workspace,"CurrentEvent")or""))
+if contains(eventName,"halloween")then
+return FAMILY_CANDY
+elseif contains(eventName,"christmas")then
+return FAMILY_SNOW
+elseif contains(eventName,"summer")then
+return FAMILY_BEACH
+elseif contains(eventName,"easter")then
+return FAMILY_EGG
+elseif contains(eventName,"valentine")then
+return FAMILY_HEART
+end
+for attrName:string,family:string in pairs({
+isValentines=FAMILY_HEART,
+isChristmas=FAMILY_SNOW,
+isChristmasEnding=FAMILY_SNOW,
+IsSummer=FAMILY_BEACH,
+IsEaster=FAMILY_EGG,
+})do
+if attribute(workspace,attrName)==true then
+return family
+end
+end
+return nil
+end
+local function activeFamily():string?
+return serverFamily or familyFromWorkspace()
+end
+local familyCache:{[Instance]:string}={}
+local function familyOf(part:Instance):string
+local cached:string?=familyCache[part]
+if cached then
+return cached
+end
+local names:{string}={}
+for _,object:Instance in ipairs(part:GetDescendants())do
+table.insert(names,object.Name)
+end
+local haystack:string=lower(table.concat(names," "))
+local active:string?=activeFamily()
+for _,family:string in ipairs(FAMILY_ORDER)do
+if family~=FAMILY_COIN or active==nil or active==FAMILY_COIN then
+for _,phrase:string in ipairs(FAMILY_PHRASES[family])do
+if contains(haystack,phrase)then
+if family~=FAMILY_COIN then
+familyCache[part]=family
+end
+return family
+end
+end
+end
+end
+return active or FAMILY_COIN
+end
+local filterCache:{[Instance]:boolean}={}
+local function collectAll():({[Instance]:string},{[string]:number})
+local found:{[Instance]:string}={}
+local counts:{[string]:number}={}
+lastRaw={tagged=0,coinId=0,named=0}
+local function passesFiltersCached(part:Instance):boolean
+if attribute(part,"Collected")==true
+or attribute(part,"Delete")==true then
+return false
+end
+local cached:boolean?=filterCache[part]
+if cached~=nil then
+return cached
+end
+local result:boolean=passesFilters(part)
+filterCache[part]=result
+return result
+end
+local function consider(part:Instance?):()
+if not part then
+return
+end
+local visual:Instance?=visualOf(part)
+if not visual or found[visual]then
+return
+end
+if not passesFiltersCached(visual)then
+return
+end
+local family:string=familyOf(visual)
+found[visual]=family
+counts[family]=(counts[family]or 0)+1
+end
+local tagged:{Instance}=collectionService:GetTagged(COIN_TAG)
+lastRaw.tagged=#tagged
+for _,object:Instance in ipairs(tagged)do
+if object:IsA("BasePart")then consider(object)end
+end
+for _,object:Instance in ipairs(workspace:GetDescendants())do
+if object:IsA("BasePart")then
+if attribute(object,"CoinID")~=nil then
+lastRaw.coinId+=1
+consider(object)
+elseif object.Name==VISUAL_NAME or object.Name==SERVER_NAME then
+lastRaw.named+=1
+consider(object)
+end
+end
+end
+return found,counts
+end
+local function wanted(family:string):boolean
+local choice:string=settings.family
+if choice==FAMILY_ALL then
+return true
+end
+if choice==FAMILY_AUTO then
+local active:string?=activeFamily()
+return active==nil or family==active
+end
+return family==choice
+end
+local function describe(counts:{[string]:number}):string
+local parts:{string}={}
+for _,family:string in ipairs(COUNT_ORDER)do
+local amount:number=counts[family]or 0
+if amount>0 then
+local nouns:{string}=FAMILY_NOUNS[family]
+table.insert(parts,tostring(amount).." "..(amount==1 and nouns[1]or nouns[2]))
+end
+end
+if#parts==0 then
+return"no coins yet"
+end
+return table.concat(parts," · ")
+end
+local pickupCache:{at:number,list:{Instance}}={at=-math.huge,list={}}
+local function refreshPickupCache(found:{[Instance]:string}):()
+local list:{Instance}={}
+for part:Instance,family:string in pairs(found)do
+if wanted(family)then
+table.insert(list,part)
+end
+end
+pickupCache={at=os.clock(),list=list}
+end
+state.mm2CoinPickups=function():{Instance}
+if os.clock()-pickupCache.at<0.5 then
+return pickupCache.list
+end
+local found:{[Instance]:string}=collectAll()
+refreshPickupCache(found)
+return pickupCache.list
+end
+local function toggleCoinEsp(enabled:boolean):()
+disconnectFeatureConnection("MM2CoinRefresh")
+disconnectFeatureConnection("MM2CoinCollected")
+disconnectFeatureConnection("MM2CoinsStarted")
+disconnectFeatureConnection("MM2CoinTagAdded")
+disconnectFeatureConnection("MM2CoinTagRemoved")
+disconnectFeatureConnection("MM2CoinAdded")
+clearEffects(CoinEffects)
+clearTags()
+if not enabled then
+local card:any=state.mm2CoinFeature
+if card then
+card:SetStatus(nil)
+end
+return
+end
+local elapsed:number=0
+local lastStatus:string?=nil
+local dirty:boolean=true
+local function setStatus(text:string):()
+if text==lastStatus then
+return
+end
+lastStatus=text
+local card:any=state.mm2CoinFeature
+if card then
+card:SetStatus(text)
+end
+end
+local function visualOf(part:Instance):BasePart
+local main:Instance?=part:FindFirstChild("MainCoin",true)
+if main and main:IsA("BasePart")then return main::BasePart end
+local visual:Instance?=part:FindFirstChild("CoinVisual",true)
+if visual and visual:IsA("BasePart")then return visual::BasePart end
+return part::BasePart
+end
+local tagsDirty:boolean=true
+local function markerTransparency():number
+return math.clamp(mm2Settings.coinTransparency,0,0.6)
+end
+local function makeTag(part:Instance):any
+local visual:BasePart=visualOf(part)
+local box:BoxHandleAdornment=Instance.new("BoxHandleAdornment")
+box.Name="WurstCoinBox"
+box.AlwaysOnTop=true
+box.ZIndex=5
+box.Adornee=visual
+box.Color3=mm2Settings.coinColor
+box.Transparency=markerTransparency()
+box.Size=visual.Size*1.3
+box.Parent=part
+return{box=box}
+end
+local function syncTags():()
+for part:Instance in pairs(lastFamilies)do
+if part.Parent and not coinTags[part]then
+coinTags[part]=makeTag(part)
+tagsDirty=true
+end
+end
+for part:Instance,entry:any in pairs(coinTags)do
+if not part.Parent or not lastFamilies[part]then
+coinTags[part]=nil
+pcall(function():()
+entry.box:Destroy()
+end)
+tagsDirty=true
+end
+end
+if tagsDirty then
+tagsDirty=false
+local published:{[Instance]:boolean}={}
+for part:Instance in pairs(coinTags)do
+published[part]=true
+end
+state.mm2CoinTagParts=published
+end
+end
+local lastTagColourAt:number=-math.huge
+local function drawOverlay():()
+local now:number=os.clock()
+if now-lastTagColourAt<0.5 then
+return
+end
+lastTagColourAt=now
+for part:Instance,entry:any in pairs(coinTags)do
+if not part.Parent then
+coinTags[part]=nil
+entry.box:Destroy()
+tagsDirty=true
+else
+pcall(function():()
+entry.box.Color3=mm2Settings.coinColor
+entry.box.Transparency=markerTransparency()
+end)
+end
+end
+if tagsDirty then
+tagsDirty=false
+local published:{[Instance]:boolean}={}
+for part:Instance in pairs(coinTags)do
+published[part]=true
+end
+state.mm2CoinTagParts=published
+end
+end
+local function refresh():()
+local found:{[Instance]:string},counts:{[string]:number}=collectAll()
+local visible:{[Instance]:boolean}={}
+table.clear(lastFamilies)
+for object:Instance,family:string in pairs(found)do
+if wanted(family)then
+visible[object]=true
+lastFamilies[object]=family
+end
+end
+if settings.family==FAMILY_AUTO and activeFamily()~=nil then
+local anyWanted:boolean=false
+for object:Instance in pairs(visible)do
+anyWanted=true
+break
+end
+if not anyWanted then
+for object:Instance,family:string in pairs(found)do
+visible[object]=true
+lastFamilies[object]=family
+end
+end
+end
+refreshPickupCache(found)
+syncTags()
+local shown:number=0
+for _ in pairs(visible)do
+shown+=1
+end
+local foundTotal:number=0
+for _ in pairs(found)do
+foundTotal+=1
+end
+if foundTotal==0 then
+setStatus(string.format(
+"no coins yet (tag %d · id %d · named %d)",
+lastRaw.tagged,lastRaw.coinId,lastRaw.named))
+else
+setStatus(describe(counts).." · "..shown.." shown")
+end
+dirty=false
+end
+featureConnections.MM2CoinTagAdded=
+collectionService:GetInstanceAddedSignal(COIN_TAG):Connect(function():()
+dirty=true
+end)
+featureConnections.MM2CoinTagRemoved=
+collectionService:GetInstanceRemovedSignal(COIN_TAG):Connect(function():()
+dirty=true
+end)
+featureConnections.MM2CoinAdded=workspace.DescendantAdded:Connect(function(object:Instance):()
+if object:IsA("BasePart")
+and(object.Name==VISUAL_NAME or object.Name==SERVER_NAME
+or attribute(object,"CoinID")~=nil or hasTag(object))
+then
+dirty=true
+end
+end)
+local started:Instance?=core.mm2GameplayRemotes
+and core.mm2GameplayRemotes:FindFirstChild("CoinsStarted")
+if started and started:IsA("RemoteEvent")then
+featureConnections.MM2CoinsStarted=
+(started::any).OnClientEvent:Connect(function(bagTable:any):()
+if type(bagTable)=="table"then
+for bag:any in pairs(bagTable)do
+local family:string?=BAG_TO_FAMILY[tostring(bag)]
+if family then
+serverFamily=family
+end
+end
+end
+dirty=true
+end)
+end
+local remotes:any=core.mm2GameplayRemotes
+local collected:Instance?=remotes and remotes:FindFirstChild("CoinCollected")
+if collected and collected:IsA("RemoteEvent")then
+featureConnections.MM2CoinCollected=
+(collected::any).OnClientEvent:Connect(function():()
+dirty=true
+end)
+end
+refresh()
+featureConnections.MM2CoinRefresh=TaskManager:Connect(
+function(deltaTime:number):()
+drawOverlay()
+elapsed+=deltaTime
+if not dirty and elapsed<RESCAN_PERIOD then
+return
+end
+elapsed=0
+refresh()
+end
+,nil,"Coin ESP")
+end
+local CoinFeature:any=createUniversalFeature(
+"Coin ESP",
+"Draws one small box, exactly the size of the coin, candy, snow token, beach ball or egg mesh, on every real pickup and reports how many of each family exist.",
+3,
+toggleCoinEsp,
+{
+categoryName="Render",
+parent=MM2Scroll,
+registry=mm2Features,
+}
+)
+state.mm2CoinFeature=CoinFeature
+addCycleOption(
+CoinFeature,
+"Coin in use",
+FAMILY_CHOICES,
+1,
+function(value:string):()
+settings.family=value
+if CoinFeature.enabled then
+toggleCoinEsp(true)
+end
+end,
+"Auto follows the coin family the server announces through CoinsStarted."
+)
+addColorOption(
+CoinFeature,
+"Coin colour",
+mm2Settings.coinColor,
+function(value:Color3):()
+mm2Settings.coinColor=value
+if CoinFeature.enabled then
+toggleCoinEsp(true)
+end
+end
+)
+addNumberOption(
+CoinFeature,
+"Coin transparency",
+mm2Settings.coinTransparency,
+0,
+1,
+function(value:number):()
+mm2Settings.coinTransparency=value
+if CoinFeature.enabled then
+toggleCoinEsp(true)
+end
+end
+)
+addInformationOption(
+CoinFeature,
+"Pickups are recognised by the game's own signatures only: the CoinVisual tag, the CoinID attribute and the exact server/visual part pair. Each pickup gets a single BoxHandleAdornment sized exactly to its visible mesh (no labels), so a hundred coins cost no per-frame Lua. Auto follows the family the server announces on CoinsStarted."
+)
+activeCleanup=function():()
+state.mm2CoinFeature=nil
+toggleCoinEsp(false)
+end
+Module.Events=featureConnections
+Module.Initialized=true
+return Module
+end
+function Module.destroy():()
+if not Module.Initialized then
+return
+end
+Module.Initialized=false
+pcall(activeCleanup)
+activeCleanup=function():()
+end
+Module.Events={}
+Module.Runtime=nil
+end
+return Module
+-- FIN src/games/MM2/Render/CoinEsp.lua
+
+-- INICIO src/games/MM2/Render/RoundEsp.lua
+local Module={Name='MM2 Round ESP',Events={}::{[string]:any},Initialized=false,Runtime=nil::any}local activeCleanup:()->()=function():()end function Module.init(runtime:any):any if Module.Initialized then return Module end local core:any=state.mm2Core assert(type(core)=='table','MM2 Round ESP requires the MM2 core module')Module.Runtime=runtime local GunEffects:any=core.GunEffects local TrapEffects:any=core.TrapEffects local clearEffects:any=core.clearEffects local createMM2Cham:any=core.createMM2Cham local createMM2Marker:any=core.createMM2Marker local findDroppedGun:any=core.findDroppedGun local findMM2Map:any=core.findMM2Map local mm2Settings:any=core.mm2Settings local function toggleGunEsp(enabled:boolean):()disconnectFeatureConnection('MM2GunESP')clearEffects(GunEffects)if not enabled then return end local elapsed:number=1 local markedGun:Instance?=nil featureConnections.MM2GunESP=TaskManager:Connect(function(deltaTime:number):()elapsed+=deltaTime if elapsed<0.4 then return end elapsed=0 local gun:any=findDroppedGun()if gun==markedGun and(gun==nil or gun.Parent~=nil)then return end markedGun=gun clearEffects(GunEffects)if gun then createMM2Marker(GunEffects,gun,'Gun',mm2Settings.gunColor,mm2Settings.gunTransparency)end end,nil,'MM2 Gun ESP')end local savedTrapTransparency:{[Instance]:number}=setmetatable({},{__mode='k'})::any local function restoreTrapTransparency():()for part:Instance,orig:number in pairs(savedTrapTransparency)do(part::BasePart).Transparency=orig end table.clear(savedTrapTransparency)end local function revealTrapPart(part:Instance):()if not part:IsA('BasePart')then return end local current:number=(part::BasePart).Transparency if current>=0.95 then if savedTrapTransparency[part]==nil then savedTrapTransparency[part]=current end(part::BasePart).Transparency=0.35 end end local function toggleTrapEsp(enabled:boolean):()disconnectFeatureConnection('MM2TrapAdded')restoreTrapTransparency()clearEffects(TrapEffects)if not enabled then return end local marked=setmetatable({},{__mode='k'})local function addTrap(object:Instance):()if marked[object]then return end if(object.Name=='TrapVisual'or object.Name=='Trap')and(object:IsA('Model')or object:IsA('BasePart'))then local parent:Instance?=(object::any).Parent if parent and marked[parent]then revealTrapPart(object)return end marked[object]=true revealTrapPart(object)for _,child:Instance in ipairs(object:GetDescendants())do revealTrapPart(child)end createMM2Cham(TrapEffects,object,mm2Settings.trapColor,mm2Settings.trapTransparency)end end local map=findMM2Map()for _,object in ipairs((map or workspace):GetDescendants())do addTrap(object)end if map then for _,child:Instance in ipairs(workspace:GetChildren())do addTrap(child)end end featureConnections.MM2TrapAdded=workspace.DescendantAdded:Connect(addTrap)end core.toggleGunEsp=toggleGunEsp core.toggleTrapEsp=toggleTrapEsp local unregister={}local itemEsp=services and services.itemEsp assert(itemEsp and type(itemEsp.register)=='function','MM2 item ESP requires the provider service')for _,provider in ipairs({{name='Gun ESP',tooltip='Highlights the dropped MM2 gun while ItemESP is ON.',setEnabled=toggleGunEsp},{name='Trap ESP',tooltip=[[Highlights existing and newly placed MM2 traps while ItemESP is ON.]],setEnabled=toggleTrapEsp}})do local release=itemEsp.register(provider)if release then table.insert(unregister,release)end end activeCleanup=function():()for _,release in ipairs(unregister)do pcall(release)end table.clear(unregister)toggleGunEsp(false)toggleTrapEsp(false)end Module.Events=featureConnections Module.Initialized=true return Module end function Module.destroy():()if not Module.Initialized then return end Module.Initialized=false pcall(activeCleanup)activeCleanup=function():()end Module.Events={}Module.Runtime=nil end return Module
+-- FIN src/games/MM2/Render/RoundEsp.lua
+
+-- INICIO src/games/MM2/Other/GunAura.lua
+local Module={
+Name="MM2 Gun Aura",
+Events={}::{[string]:any},
+Initialized=false,
+Runtime=nil::any,
+}
+local activeCleanup:()->()=function():()end
+function Module.init(runtime:any):any
+if Module.Initialized then
+return Module
+end
+local core:any=state.mm2Core
+assert(type(core)=="table","MM2 Gun Aura requires the MM2 core module")
+Module.Runtime=runtime
+local settings={
+studs=25,
+showHitbox=true,
+}
+local TICK_INTERVAL:number=0.08
+local SCAN_INTERVAL:number=0.4
+local ESP_INTERVAL:number=0.5
+local gunAuraActive=false
+local gunHitboxes:{[Instance]:BasePart}={}
+local espParts:{[Player]:BasePart}={}
+local savedGunStates:{[BasePart]:{cframe:CFrame,canCollide:boolean}}={}
+local trackedDrops:{[Instance]:boolean}={}
+local lastScanAt:number=-math.huge
+local lastTickAt:number=-math.huge
+local lastEspAt:number=-math.huge
+local function resolveGunTouchPart(gun:Instance?):BasePart?
+if not gun then
+return nil
+end
+if gun:IsA("BasePart")then
+return gun::BasePart
+end
+local handle:Instance?=gun:FindFirstChild("Handle")
+or gun:FindFirstChild("GunDrop")
+or gun:FindFirstChildWhichIsA("BasePart")
+if handle and handle:IsA("BasePart")then
+return handle::BasePart
+end
+return nil
+end
+local function rememberGunPartState(part:BasePart):{cframe:CFrame,canCollide:boolean}
+local existing=savedGunStates[part]
+if existing then
+return existing
+end
+local snap={cframe=part.CFrame,canCollide=part.CanCollide}
+savedGunStates[part]=snap
+return snap
+end
+local function restoreGunPartState(part:BasePart):()
+local snap=savedGunStates[part]
+if not snap then
+return
+end
+if part and part.Parent then
+pcall(function():()
+part.CFrame=snap.cframe
+part.CanCollide=snap.canCollide
+end)
+end
+savedGunStates[part]=nil
+end
+local function restoreAllGunPartStates():()
+for part in pairs(savedGunStates)do
+restoreGunPartState(part)
+end
+table.clear(savedGunStates)
+end
+local function trueGunPartPosition(part:BasePart):Vector3
+local snap=savedGunStates[part]
+return if snap then snap.cframe.Position else part.Position
+end
+local function canGrabGun():boolean
+local character=LocalPlayer and LocalPlayer.Character
+if not character then
+return false
+end
+local humanoid=character:FindFirstChildOfClass("Humanoid")
+if not humanoid or humanoid.Health<=0 then
+return false
+end
+if type(core.getPlayerRole)=="function"then
+local role=core.getPlayerRole(LocalPlayer)
+if role=="Murderer"or role=="Sheriff"or role=="Hero"then
+return false
+end
+end
+local backpack=LocalPlayer:FindFirstChildOfClass("Backpack")
+if(backpack and(backpack:FindFirstChild("Gun")or backpack:FindFirstChild("Knife")))
+or character:FindFirstChild("Gun")
+or character:FindFirstChild("Knife")then
+return false
+end
+return true
+end
+local function isValidGunDrop(obj:Instance?):boolean
+if not obj or not obj.Parent then
+return false
+end
+if obj.Name=="GunDrop"and(obj:IsA("BasePart")or obj:IsA("Model"))then
+return resolveGunTouchPart(obj)~=nil
+end
+return false
+end
+local function createGunHitbox(gun:Instance):BasePart?
+local handle=resolveGunTouchPart(gun)
+if not handle then
+return nil
+end
+rememberGunPartState(handle)
+local pos=trueGunPartPosition(handle)
+if not pos then
+return nil
+end
+local part=Instance.new("Part")
+part.Name="WurstGunAuraHitbox"
+part.Size=Vector3.new(settings.studs,settings.studs,settings.studs)
+part.Transparency=0.65
+part.BrickColor=BrickColor.new("White")
+part.Material=Enum.Material.Neon
+part.CanCollide=false
+part.CanQuery=false
+part.CanTouch=false
+part.Anchored=true
+part.CFrame=CFrame.new(pos)
+part.Parent=workspace
+return part
+end
+local function refreshTrackedDrops(now:number):()
+if now-lastScanAt<SCAN_INTERVAL then
+return
+end
+lastScanAt=now
+local wsDrop:Instance?=workspace:FindFirstChild("GunDrop")
+if wsDrop and isValidGunDrop(wsDrop)then
+trackedDrops[wsDrop]=true
+end
+local okChildren:boolean,children:any=pcall(function():any
+return workspace:GetChildren()
+end)
+if okChildren and type(children)=="table"then
+for _,child:Instance in ipairs(children)do
+if child.Name=="GunDrop"and isValidGunDrop(child)then
+trackedDrops[child]=true
+elseif child:IsA("Model")or child:IsA("Folder")then
+local gd:Instance?=child:FindFirstChild("GunDrop")
+if gd and isValidGunDrop(gd)then
+trackedDrops[gd]=true
+end
+end
+end
+end
+if type(core.findDroppedGun)=="function"then
+local okCore:boolean,drop:any=pcall(core.findDroppedGun)
+if okCore and drop and isValidGunDrop(drop)then
+trackedDrops[drop]=true
+end
+end
+end
+local function isWithinAura(truePos:Vector3,rootPos:Vector3):boolean
+local diff=rootPos-truePos
+local radius=settings.studs
+if diff.X*diff.X+diff.Y*diff.Y+diff.Z*diff.Z<=radius*radius then
+return true
+end
+local half=radius*0.5
+return math.abs(diff.X)<=half
+and math.abs(diff.Y)<=math.max(half,8)
+and math.abs(diff.Z)<=half
+end
+local function tryGrabGun(root:BasePart,handle:BasePart):()
+rememberGunPartState(handle)
+handle.CanCollide=false
+local rootCF:CFrame?=root.CFrame
+if rootCF then
+handle.CFrame=rootCF
+end
+local fireTouch:any=state.fireTouchInterest
+if type(fireTouch)=="function"then
+pcall(fireTouch,root,handle,0)
+pcall(fireTouch,root,handle,1)
+end
+end
+local function clearAllHitboxes():()
+for gun,hitbox in pairs(gunHitboxes)do
+if hitbox and hitbox.Parent then
+pcall(function():()
+hitbox:Destroy()
+end)
+end
+gunHitboxes[gun]=nil
+end
+end
+local function clearAllEsp():()
+for player,esp in pairs(espParts)do
+if esp and esp.Parent then
+pcall(function():()
+esp:Destroy()
+end)
+end
+espParts[player]=nil
+end
+end
+local function updateSheriffESP(player:Player):()
+local character=player.Character
+local root=character and character:FindFirstChild("HumanoidRootPart")
+local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+if not character or not root or not root:IsA("BasePart")
+or not humanoid or humanoid.Health>0 then
+local existing=espParts[player]
+if existing then
+if existing.Parent then
+pcall(function():()
+existing:Destroy()
+end)
+end
+espParts[player]=nil
+end
+return
+end
+local esp=espParts[player]
+if not esp or not esp.Parent then
+esp=Instance.new("Part")
+esp.Name="WurstDeadSheriffESP_"..player.Name
+esp.Size=Vector3.new(3,3,3)
+esp.Transparency=0.3
+esp.BrickColor=BrickColor.new("White")
+esp.Material=Enum.Material.Neon
+esp.CanCollide=false
+esp.CanQuery=false
+esp.CanTouch=false
+esp.Anchored=true
+esp.Parent=workspace
+espParts[player]=esp
+end
+esp.CFrame=(root::BasePart).CFrame
+end
+local GunAuraFeature:any=nil
+local lastStatus:string?=nil
+local function setStatus(text:string?):()
+if text==lastStatus then
+return
+end
+lastStatus=text
+if GunAuraFeature then
+GunAuraFeature:SetStatus(text)
+end
+end
+local function gunAuraTick():()
+if not gunAuraActive then
+return
+end
+local now:number=os.clock()
+if now-lastTickAt<TICK_INTERVAL then
+return
+end
+lastTickAt=now
+refreshTrackedDrops(now)
+local character=LocalPlayer and LocalPlayer.Character
+local root:BasePart?=character and character:FindFirstChild("HumanoidRootPart")::BasePart?
+local canGrab=canGrabGun()
+local activeGuns:{[Instance]:boolean}={}
+local touchedParts:{[BasePart]:boolean}={}
+local gunCount:number=0
+for gun in pairs(trackedDrops)do
+if isValidGunDrop(gun)then
+local handle:BasePart?=resolveGunTouchPart(gun)
+if handle then
+gunCount+=1
+activeGuns[gun]=true
+rememberGunPartState(handle)
+local truePos:Vector3?=trueGunPartPosition(handle)
+if settings.showHitbox then
+local hitbox=gunHitboxes[gun]
+if not hitbox or not hitbox.Parent then
+hitbox=createGunHitbox(gun)
+if hitbox then
+gunHitboxes[gun]=hitbox
+end
+elseif truePos then
+local targetSize=Vector3.new(settings.studs,settings.studs,settings.studs)
+if hitbox.Size~=targetSize then
+hitbox.Size=targetSize
+end
+hitbox.CFrame=CFrame.new(truePos)
+end
+end
+if canGrab and root and truePos and isWithinAura(truePos,root.Position)then
+touchedParts[handle]=true
+pcall(tryGrabGun,root,handle)
+end
+end
+else
+trackedDrops[gun]=nil
+end
+end
+for part in pairs(savedGunStates)do
+if not touchedParts[part]then
+restoreGunPartState(part)
+end
+end
+for gun,hitbox in pairs(gunHitboxes)do
+if not activeGuns[gun]then
+if hitbox and hitbox.Parent then
+pcall(function():()
+hitbox:Destroy()
+end)
+end
+gunHitboxes[gun]=nil
+end
+end
+if gunCount>0 then
+setStatus("Gun detected · "..tostring(math.round(settings.studs)).." studs")
+else
+setStatus(tostring(math.round(settings.studs)).." studs")
+end
+if now-lastEspAt>=ESP_INTERVAL and type(core.getPlayerRole)=="function"then
+lastEspAt=now
+local seenSheriffs:{[Player]:boolean}={}
+for _,player in ipairs(game:GetService("Players"):GetPlayers())do
+if player~=LocalPlayer then
+local role=core.getPlayerRole(player)
+if role=="Sheriff"then
+seenSheriffs[player]=true
+updateSheriffESP(player)
+end
+end
+end
+for player,esp in pairs(espParts)do
+if not seenSheriffs[player]then
+if esp and esp.Parent then
+pcall(function():()
+esp:Destroy()
+end)
+end
+espParts[player]=nil
+end
+end
+end
+end
+local function toggleGunAura(enabled:boolean):()
+gunAuraActive=enabled
+state.mm2GunAuraEnabled=enabled==true
+disconnectFeatureConnection("MM2GunAura")
+disconnectFeatureConnection("MM2GunAuraDescendant")
+if not enabled then
+clearAllHitboxes()
+clearAllEsp()
+restoreAllGunPartStates()
+table.clear(trackedDrops)
+setStatus(nil)
+return
+end
+lastScanAt=-math.huge
+lastTickAt=-math.huge
+lastEspAt=-math.huge
+if workspace.DescendantAdded then
+featureConnections.MM2GunAuraDescendant=workspace.DescendantAdded:Connect(function(obj:Instance):()
+if obj.Name=="GunDrop"then
+trackedDrops[obj]=true
+end
+end)
+end
+setStatus(tostring(math.round(settings.studs)).." studs")
+featureConnections.MM2GunAura=
+TaskManager:Connect(gunAuraTick,nil,"MM2 Gun Aura")
+gunAuraTick()
+end
+GunAuraFeature=createUniversalFeature(
+"Gun Aura",
+"Detects dropped guns in the map with event-driven tracking, draws a white aura box around them, and automatically grabs the gun within Studs range.",
+7,
+toggleGunAura,
+{
+categoryName="Utilities",
+parent=MM2Scroll,
+registry=mm2Features,
+}
+)
+state.mm2GunAuraFeature=GunAuraFeature
+addNumberOption(GunAuraFeature,"Studs",25,5,250,
+function(value:number):()
+settings.studs=math.clamp(tonumber(value)or 25,5,250)
+if GunAuraFeature.enabled then
+setStatus(tostring(math.round(settings.studs)).." studs")
+end
+end,
+"Distance in studs around each dropped gun to automatically grab it.",1)
+addToggleOption(GunAuraFeature,"Show Hitbox",true,
+function(value:boolean):()
+settings.showHitbox=value==true
+if not settings.showHitbox then
+clearAllHitboxes()
+end
+end,
+"Shows or hides the white aura hitbox square around dropped guns.")
+activeCleanup=function():()
+toggleGunAura(false)
+end
+Module.Events=featureConnections
+Module.Initialized=true
+return Module
+end
+function Module.destroy():()
+if not Module.Initialized then
+return
+end
+Module.Initialized=false
+pcall(activeCleanup)
+activeCleanup=function():()end
+Module.Events={}
+Module.Runtime=nil
+end
+return Module
+-- FIN src/games/MM2/Other/GunAura.lua
