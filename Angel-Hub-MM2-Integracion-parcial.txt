@@ -1089,6 +1089,7 @@ local function installGameplay(screenGui)
     local mm2VoteStep = function() end
     local mm2ShootStep = function() end
     local mm2UnboxStep = function() end
+    local mm2WinStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1102,7 +1103,8 @@ local function installGameplay(screenGui)
         ["X-Ray"] = true, ["Anti AFK"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
-        ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true,
+        ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
+        ["Insta Kill As Sheriff"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1217,9 +1219,16 @@ local function installGameplay(screenGui)
         local shotOk, shotError = pcall(mm2ShootStep, dt, character, humanoid, root)
         if not shotOk then
             warn("Angel Hub Auto Shoot error: " .. tostring(shotError))
-            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: runtime error") end
+            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false) end
+            if enabled["Insta Kill As Sheriff"] then AngelHub.setters["Insta Kill As Sheriff"](false) end
+            message("Shooting stopped: runtime error")
         end
         mm2UnboxStep()
+        local winOk, winError = pcall(mm2WinStep, dt, character, humanoid, root)
+        if not winOk then
+            warn("Angel Hub Auto Win error: " .. tostring(winError))
+            if enabled["Auto Win"] then AngelHub.setters["Auto Win"](false); message("Auto Win stopped: runtime error") end
+        end
         local voteOk, voteError = pcall(mm2VoteStep, dt, character, humanoid, root)
         if not voteOk then
             warn("Angel Hub Auto Vote error: " .. tostring(voteError))
@@ -1716,8 +1725,32 @@ local function installGameplay(screenGui)
             if velocity.X == x and velocity.Z == z then part.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0) end
         end) end
     end
+    local farmCounterSetters = {
+        ["Coins Collected"] = AngelHub.setters["Coins Collected"],
+        ["Farm Time"] = AngelHub.setters["Farm Time"],
+    }
     local function farmCounter(name, value)
-        if AngelHub.setters[name] then AngelHub.setters[name](value) end
+        local setter = farmCounterSetters[name]
+        if setter then setter(value) end
+    end
+    if farmCounterSetters["Coins Collected"] then
+        AngelHub.setters["Coins Collected"] = function(value)
+            local amount = tonumber(value)
+            if not amount or amount ~= amount or amount < 0 or amount > 1000000000 then return end
+            farmTotal = math.floor(amount)
+            farmCounter("Coins Collected", farmTotal)
+        end
+    end
+    if farmCounterSetters["Farm Time"] then
+        AngelHub.setters["Farm Time"] = function(value)
+            local minutes, seconds
+            if type(value) == "string" then minutes, seconds = value:match("^(%d+):(%d%d)$") end
+            local elapsed = minutes and seconds and (tonumber(minutes) * 60 + tonumber(seconds)) or tonumber(value)
+            if not elapsed or elapsed ~= elapsed or elapsed < 0 or elapsed > 1000000000 or (seconds and tonumber(seconds) >= 60) then return end
+            farmElapsed = elapsed
+            local whole = math.floor(elapsed)
+            farmCounter("Farm Time", string.format("%02d:%02d", math.floor(whole / 60), whole % 60))
+        end
     end
     local function farmStopMovement()
         stopFarmCarry()
@@ -1865,10 +1898,12 @@ local function installGameplay(screenGui)
     end
     local function farmStart(gameplay, collected, ended)
         farmStop()
-        farmAmount, farmLimit, farmElapsed, farmTotal = 0, 50, 0, 0
+        farmAmount, farmLimit = 0, 50
         farmBagSampleKnown = false
         farmTickElapsed, farmScanElapsed, farmDone = 0, 0.5, false
-        farmCounter("Coins Collected", 0); farmCounter("Farm Time", "00:00")
+        farmCounter("Coins Collected", farmTotal)
+        local whole = math.floor(farmElapsed)
+        farmCounter("Farm Time", string.format("%02d:%02d", math.floor(whole / 60), whole % 60))
         table.insert(farmConnections, collected.OnClientEvent:Connect(function(_, amount, limit)
             if not enabled["Auto Farm"] then return end
             local character, humanoid, root = characterParts()
@@ -2298,10 +2333,18 @@ local function installGameplay(screenGui)
     mm2KnifeStep = function()
         if enabled["Knife Aura"] then knifeSwing(false) end
     end
+    local shooter = {}
+    do
     -- Based on AutoShoot's documented Bullet/CFrame fallbacks; no advanced predictor/hook.
     local shootConnections, shootContainers = {}, {}
     local lastGunShot, shootBusy, shootVisual, shootPollAt = -math.huge, false, nil, 0
     local shootRoleData, shootRoleMap, shootRoleAt, shootRoleBusy, shootRoleGeneration, shootRoundBlocked = {}, nil, 0, false, 0, false
+    local function winSheriffActive()
+        return enabled["Auto Win"] == true and enabled["Insta Kill As Sheriff"] == true
+    end
+    local function shootingActive()
+        return enabled["Auto Shoot"] == true or winSheriffActive()
+    end
     local function disconnectShoot(list)
         for _, connection in ipairs(list) do connection:Disconnect() end
         table.clear(list)
@@ -2334,7 +2377,7 @@ local function installGameplay(screenGui)
         return remotes and remotes:FindFirstChild("Gameplay")
     end
     local function refreshShootRoles()
-        if not enabled["Auto Shoot"] or shootRoundBlocked then return end
+        if not shootingActive() or shootRoundBlocked then return end
         local map = mm2Map()
         if map ~= shootRoleMap then shootRoleMap, shootRoleData, shootRoleAt = map, {}, 0 end
         if not map or shootRoleBusy or os.clock() < shootRoleAt then return end
@@ -2347,7 +2390,7 @@ local function installGameplay(screenGui)
         task.spawn(function()
             local ok, result = pcall(function() return remote:InvokeServer() end)
             shootRoleBusy = false
-            if ok and enabled["Auto Shoot"] and not stopped and not shootRoundBlocked
+            if ok and shootingActive() and not stopped and not shootRoundBlocked
                 and generation == shootRoleGeneration and map == mm2Map() then updateShootRoles(result, true) end
         end)
     end
@@ -2357,7 +2400,7 @@ local function installGameplay(screenGui)
         local changed = gameplay:FindFirstChild("PlayerDataChanged")
         if changed and changed:IsA("RemoteEvent") then
             table.insert(shootConnections, changed.OnClientEvent:Connect(function(data)
-                if not enabled["Auto Shoot"] or shootRoundBlocked then return end
+                if not shootingActive() or shootRoundBlocked then return end
                 shootRoleGeneration += 1
                 local map = mm2Map()
                 if map ~= shootRoleMap then shootRoleMap, shootRoleData = map, {} end
@@ -2388,7 +2431,7 @@ local function installGameplay(screenGui)
         if tool and tool:IsA("Tool") then return tool end
         return nil
     end
-    local function shootMurderer(root)
+    local function shootMurderer(root, ignoreProximity)
         local nearest, distance
         local mayUseRoles = shootRoleMap ~= nil and farmOnMap(root, shootRoleMap)
         for _, player in ipairs(playersService:GetPlayers()) do
@@ -2409,7 +2452,7 @@ local function installGameplay(screenGui)
                     and not (okDead and dead == true) and not (okState and deadState) and role ~= "Dead"
                     and not hasGun and (hasKnife or role == "Murderer") then
                     local d = (targetRoot.Position - root.Position).Magnitude
-                    if (not V["Shoot Proximity"] or d <= V["Shoot Proximity Aura"]) and (not distance or d < distance) then
+                    if (ignoreProximity or not V["Shoot Proximity"] or d <= V["Shoot Proximity Aura"]) and (not distance or d < distance) then
                         nearest, distance = player, d
                     end
                 end
@@ -2466,14 +2509,18 @@ local function installGameplay(screenGui)
         shootVisual.Radius = V["Shoot Proximity Aura"]
     end
     local function tryAutoShoot()
-        if stopped or not enabled["Auto Shoot"] or shootRoundBlocked or (V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame") or shootBusy then return end
+        if stopped or not shootingActive() or shootRoundBlocked or shootBusy then return end
+        local forceWin = winSheriffActive()
+        local mode = forceWin and "CFrame" or V["Shoot Mode"]
+        if mode ~= "Bullet" and mode ~= "CFrame" then return end
         local character, humanoid, root = characterParts()
         if not humanoid or not root then return end
+        if forceWin and not farmOnMap(root, mm2Map()) then return end
         local backpack = localPlayer:FindFirstChildOfClass("Backpack")
         if getTool(character, "Knife") or getTool(backpack, "Knife") then return end
         local gun = getTool(character, "Gun") or getTool(backpack, "Gun")
         if not gun then return end
-        local target = shootMurderer(root)
+        local target = shootMurderer(root, forceWin)
         if not target or not target.Character then return end
         if gun.Parent ~= character then
             pcall(function() humanoid:EquipTool(gun) end)
@@ -2494,12 +2541,13 @@ local function installGameplay(screenGui)
             if number ~= number or math.abs(number) > 1000000 then return end
         end
         if (endpoint - origin.Position).Magnitude < 0.05 then return end
-        if V["Shoot WallCheck"] then
+        local wallCheck = forceWin and V["Win Sheriff WallCheck"] == true or (not forceWin and V["Shoot WallCheck"] == true)
+        if wallCheck then
             local ok, clear = pcall(bulletPathClear, origin.Position, endpoint, character, target.Character)
             if not ok or not clear then return end
         end
         local startPoint, endPoint = origin.Position, endpoint
-        if V["Shoot Mode"] == "CFrame" then
+        if mode == "CFrame" then
             -- Approximation of the reference's immediate Silent fallback, not the full predictor.
             local chord = Vector3.new(endpoint.X - targetRoot.Position.X, 0, endpoint.Z - targetRoot.Position.Z)
             local line = Vector3.new(endpoint.X - origin.Position.X, 0, endpoint.Z - origin.Position.Z)
@@ -2517,7 +2565,9 @@ local function installGameplay(screenGui)
         local ok, err = pcall(tryAutoShoot)
         if not ok then
             warn("Angel Hub Auto Shoot error: " .. tostring(err))
-            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false); message("Auto Shoot stopped: runtime error") end
+            if enabled["Auto Shoot"] then AngelHub.setters["Auto Shoot"](false) end
+            if enabled["Insta Kill As Sheriff"] then AngelHub.setters["Insta Kill As Sheriff"](false) end
+            message("Shooting stopped: runtime error")
         end
     end
     local function watchShootContainers()
@@ -2525,7 +2575,7 @@ local function installGameplay(screenGui)
         local function watch(container)
             if not container or not container.ChildAdded then return end
             table.insert(shootContainers, container.ChildAdded:Connect(function(child)
-                if child.Name == "Gun" and enabled["Auto Shoot"] then task.defer(safelyTryAutoShoot) end
+                if child.Name == "Gun" and shootingActive() then task.defer(safelyTryAutoShoot) end
             end))
         end
         watch(localPlayer.Character)
@@ -2550,11 +2600,14 @@ local function installGameplay(screenGui)
         safelyTryAutoShoot()
     end
     mm2ShootStep = function(_, _, _, root)
-        if not enabled["Auto Shoot"] or os.clock() < shootPollAt then return end
+        if not shootingActive() or os.clock() < shootPollAt then return end
         shootPollAt = os.clock() + 0.1
         refreshShootRoles()
         updateShootRadius(root)
         safelyTryAutoShoot()
+    end
+    shooter.active, shooter.start, shooter.stop, shooter.gameplay = shootingActive, startAutoShoot, stopAutoShoot, shootGameplay
+    shooter.hideRadius = function() updateShootRadius(nil) end
     end
     local unbox = {}
     do
@@ -2800,12 +2853,152 @@ local function installGameplay(screenGui)
         end
     end
     end
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); stopAutoShoot(); knifeGeneration += 1 end
+    -- VictoryScreen's first three arguments are documented by the recovered
+    -- MM2 GameplayAnimations client: local victory, local role, win reason.
+    local autoWin = {}
+    do
+        local connectionList, gameplayBound = {}, nil
+        local roundCounted, roundBlocked = false, false
+        local safe, accumulator = nil, 0
+        local reasons = {
+            Innocent = {Time = true, MurdererDied = true, MurdererLeft = true, InnocentsEscaped = true},
+            Hero = {Time = true, MurdererDied = true, MurdererLeft = true},
+            Sheriff = {MurdererDied = true, MurdererLeft = true, SheriffWin = true},
+            Murderer = {MurdererWin = true},
+        }
+        local counterNames = {Innocent = "Innocent Wins", Hero = "Sheriff Wins", Sheriff = "Sheriff Wins", Murderer = "Murder Wins"}
+        local function disconnect()
+            for _, connection in ipairs(connectionList) do connection:Disconnect() end
+            table.clear(connectionList); gameplayBound = nil
+        end
+        local function bind()
+            local gameplay = shooter.gameplay()
+            if gameplay == gameplayBound and gameplay then return true end
+            disconnect()
+            local victory = gameplay and gameplay:FindFirstChild("VictoryScreen")
+            local ended = gameplay and gameplay:FindFirstChild("RoundEndFade")
+            local starting = gameplay and (gameplay:FindFirstChild("RoundStart") or gameplay:FindFirstChild("RoleSelect")
+                or gameplay:FindFirstChild("ShowRoleSelect") or gameplay:FindFirstChild("ShowRoleSelectNew"))
+            if not victory or not victory:IsA("RemoteEvent") or not ended or not ended:IsA("RemoteEvent")
+                or not starting or not starting:IsA("RemoteEvent") then return false end
+            gameplayBound = gameplay
+            table.insert(connectionList, victory.OnClientEvent:Connect(function(won, role, reason)
+                if roundCounted then return end
+                roundCounted = true
+                if not enabled["Auto Win"] or won ~= true or type(role) ~= "string" or type(reason) ~= "string" then return end
+                local valid, counter = reasons[role], counterNames[role]
+                if not valid or not valid[reason] or not counter then return end
+                local previous = tonumber(V[counter]) or 0
+                if AngelHub.setters[counter] then AngelHub.setters[counter](math.max(0, math.floor(previous)) + 1) end
+            end))
+            table.insert(connectionList, ended.OnClientEvent:Connect(function() roundBlocked = true end))
+            for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew"}) do
+                local remote = gameplay:FindFirstChild(name)
+                if remote and remote:IsA("RemoteEvent") then
+                    table.insert(connectionList, remote.OnClientEvent:Connect(function(duration)
+                        if name == "RoundStart" and (not tonumber(duration) or tonumber(duration) <= 0) then return end
+                        roundCounted, roundBlocked = false, false
+                    end))
+                end
+            end
+            return true
+        end
+        local function releaseSafe()
+            if not safe then return true end
+            local parked = safe
+            local character, humanoid, root = characterParts()
+            local near = character == parked.character and humanoid and root
+                and (root.Position - parked.position).Magnitude <= 100
+            if near then
+                if root.Anchored or not parked.map or parked.map.Parent ~= workspace then
+                    message("Auto Win: return unavailable; platform kept")
+                    return false
+                end
+                local ok = pcall(function()
+                    character:PivotTo(parked.returnFrame)
+                    root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end)
+                if not ok then message("Auto Win: return failed; platform kept"); return false end
+            end
+            safe = nil
+            pcall(function() parked.part:Destroy() end)
+            return true
+        end
+        function autoWin.canStart()
+            if safe and not releaseSafe() then return false end
+            return bind()
+        end
+        function autoWin.toggle(value)
+            if not value then releaseSafe(); return end
+            accumulator = 0
+            message("Auto Win: safe platform; Sheriff uses basic CFrame; other combat options pending")
+        end
+        function autoWin.step(dt, character, humanoid, root)
+            if not enabled["Auto Win"] then return end
+            accumulator += dt
+            if accumulator < 0.1 then return end
+            accumulator = 0
+            if safe then
+                if character ~= safe.character or not humanoid or not root
+                    or (root.Position - safe.position).Magnitude > 100 then
+                    releaseSafe()
+                end
+                if safe then return end
+            end
+            if roundBlocked or not character or not humanoid or not root or root.Anchored then return end
+            local map = mm2Map()
+            if not farmOnMap(root, map) then return end
+            local destroyY = workspace.FallenPartsDestroyHeight
+            if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1000000 then destroyY = -500 end
+            if root.Position.Y <= destroyY + 100 then return end
+            local original = root.CFrame
+            if humanoid.FloorMaterial == Enum.Material.Air then
+                local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
+                local spawn = spawnPart(spawns)
+                if not spawn then return end
+                original = spawn.CFrame + Vector3.new(0, 3, 0)
+            end
+            local destination = root.Position + Vector3.new(0, 120, 0)
+            local platform
+            local ok = pcall(function()
+                platform = Instance.new("Part")
+                platform.Name = "AngelHub_AutoWinSafe"
+                platform.Anchored = true; platform.CanCollide = true; platform.CanQuery = false; platform.CanTouch = false
+                platform.CastShadow = false; platform.Size = Vector3.new(64, 4, 64)
+                platform.Material = Enum.Material.SmoothPlastic; platform.Transparency = 0.15
+                platform.CFrame = CFrame.new(destination); platform.Parent = workspace
+            end)
+            if not ok or not platform or not platform.Parent then
+                if platform then pcall(function() platform:Destroy() end) end
+                AngelHub.setters["Auto Win"](false); message("Auto Win stopped: safe platform unavailable"); return
+            end
+            safe = {part = platform, position = destination, character = character, map = map, returnFrame = original}
+            local moved = pcall(function() character:PivotTo(CFrame.new(destination + Vector3.new(0, 5, 0))) end)
+            if not moved then
+                releaseSafe()
+                AngelHub.setters["Auto Win"](false); message("Auto Win stopped: platform move uncertain"); return
+            end
+            pcall(function()
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end)
+        end
+        function autoWin.cleanup()
+            disconnect()
+            releaseSafe()
+        end
+    end
+    mm2WinStep = autoWin.step
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
         if old then
             AngelHub.setters[name] = function(value)
+                if value == true and enabled[name] == true and (name == "Auto Farm" or name == "Auto Win" or name == "Auto Shoot") then
+                    old(true); return
+                end
                 if value == true and not supportedModules[name] then
                     old(false); enabled[name] = nil
                     message("Not implemented: " .. name)
@@ -2815,6 +3008,15 @@ local function installGameplay(screenGui)
                     old(false); enabled[name] = nil; message("Speed: WalkSpeed or Velocity only"); return false
                 end
                 local gameplay, collected, ended
+                if value == true and name == "Auto Win" then
+                    if enabled["Auto Farm"] or enabled["Enable Speed"] or enabled["Noclip"] then
+                        old(false); message("Auto Win: disable Auto Farm, Speed and Noclip first"); return false
+                    end
+                    if not autoWin.canStart() then old(false); message("Auto Win: victory event or safe return unavailable"); return false end
+                end
+                if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip") then
+                    old(false); message(name .. ": disable Auto Win first"); return false
+                end
                 if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame" then
                     old(false); message("Auto Shoot: Experimental not implemented"); return false
                 end
@@ -2838,6 +3040,7 @@ local function installGameplay(screenGui)
                 if value == true and enabled["Auto Farm"] and (name == "Enable Speed" or (name == "Noclip" and V["Farm Mode"] == "Below")) then
                     AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: conflicting module")
                 end
+                local shootingBefore = shooter.active()
                 old(value == true); enabled[name] = value == true
                 if name == "Auto Farm" then
                     if value then
@@ -2848,10 +3051,13 @@ local function installGameplay(screenGui)
                 if name == "Knife Aura" then knifeGeneration += 1; knifeLastSwing = -math.huge end
                 if name == "Coins Aura" then resetCoinAura() end
                 if name == "Auto Vote" then resetAutoVote(value == true) end
-                if name == "Auto Shoot" then
-                    if value then startAutoShoot(); message("Auto Shoot: basic prediction") else stopAutoShoot() end
-                end
+                if name == "Auto Shoot" and value then message("Auto Shoot: basic prediction") end
                 if name == "Auto Unbox" then unbox.toggle(value) end
+                if name == "Auto Win" then autoWin.toggle(value) end
+                if name == "Insta Kill As Sheriff" and value then message("Auto Win Sheriff: basic CFrame; separate WallCheck option") end
+                if shootingBefore ~= shooter.active() then
+                    if shooter.active() then shooter.start() else shooter.stop() end
+                elseif name == "Auto Shoot" and not value then shooter.hideRadius() end
                 if name == "Infinite Jump" and not value then jumpHeld, jumpTouch, jumpKey = false, nil, nil end
                 if name == "Anti AFK" then afkElapsed = 0 end
                 if name == "X-Ray" then xrayToggle(value == true) end
@@ -3479,13 +3685,31 @@ local function initializeScript()
 	endGroup()
 
 	addSection(extraLeft, "Auto Win")
+	addModule(extraLeft, "Auto Win", nil, false)
 	addCounter(extraLeft, "Sheriff Wins", 0)
 	addCounter(extraLeft, "Murder Wins", 0)
 	addCounter(extraLeft, "Innocent Wins", 0)
-	addModule(extraLeft, "Insta Kill As Murder", nil, false)
-	addModule(extraLeft, "Insta Kill As Sheriff", nil, false)
-	addModule(extraLeft, "Fling Sheriff And Get Gun", nil, false)
-	addModule(extraLeft, "Fling Murder If Dead", nil, false)
+	local winCards = {
+		addModule(extraLeft, "Insta Kill As Murder", nil, false),
+		addModule(extraLeft, "Insta Kill As Sheriff", nil, false),
+		addToggle(extraLeft, "Win Sheriff WallCheck", nil, false),
+		addModule(extraLeft, "Fling Sheriff And Get Gun", nil, false),
+		addModule(extraLeft, "Fling Murder If Dead", nil, false),
+	}
+	local function refreshWinCards()
+		local query = string.lower(searchBox.Text)
+		for _, card in ipairs(winCards) do
+			local hidden = AngelHub.values["Auto Win"] ~= true
+				or (card.Name == "Win Sheriff WallCheck" and AngelHub.values["Insta Kill As Sheriff"] ~= true)
+			card:SetAttribute("GroupHidden", hidden)
+			card.Visible = not hidden and (query == "" or string.find(string.lower(card.Name), query, 1, true) ~= nil)
+		end
+	end
+	for _, name in ipairs({"Auto Win", "Insta Kill As Sheriff"}) do
+		local previous = AngelHub.setters[name]
+		AngelHub.setters[name] = function(value) previous(value); refreshWinCards() end
+	end
+	refreshWinCards()
 
 	addSection(extraLeft, "Auto Vote")
 	addModule(extraLeft, "Auto Vote", nil, false)

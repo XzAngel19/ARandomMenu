@@ -18,12 +18,18 @@ const readTest = p => read(path.join(__dirname, p));
   lua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('gameplay-checks.luau'));
   const farmLua = await Lua.create({ sandbox: true });
   farmLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-combat-checks.luau'));
+  const farmCounterLua = await Lua.create({ sandbox: true });
+  farmCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-counter-checks.luau'));
   const farmProgressLua = await Lua.create({ sandbox: true });
   farmProgressLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('farm-progress-checks.luau'));
   const shootLua = await Lua.create({ sandbox: true });
   shootLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-checks.luau'));
   const shootRoleLua = await Lua.create({ sandbox: true });
   shootRoleLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('shoot-role-checks.luau'));
+  const winCounterLua = await Lua.create({ sandbox: true });
+  winCounterLua.execute(readTest('gameplay-mock.luau') + '\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-counter-checks.luau'));
+  const winSheriffLua = await Lua.create({ sandbox: true });
+  winSheriffLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('win-sheriff-checks.luau'));
   const unboxLua = await Lua.create({ sandbox: true });
   unboxLua.execute(readTest('gameplay-mock.luau') + '\nlocal fakeNow = 100; local os = {clock = function() return fakeNow end}; local require = function(module) return module.data end\n' + toggles + '\n' + file.slice(start, end) + '\n' + readTest('unbox-checks.luau'));
   const unboxYieldLua = await Lua.create({ sandbox: true });
@@ -34,10 +40,13 @@ const readTest = p => read(path.join(__dirname, p));
   guiLua.execute(readTest('gui-mock.luau') + '\n' + file + `
 assert(shared.AngelHub and shared.AngelHub.actions, "GUI failed to initialize")
 local hub = shared.AngelHub
-assert(hub.values["Auto Farm"] == false and hub.values["Gun ESP"] == false and hub.values["Anti AFK"] == false)
+assert(hub.values["Auto Farm"] == false and hub.values["Auto Win"] == false and hub.values["Gun ESP"] == false and hub.values["Anti AFK"] == false)
 assert(hub.setters["Auto Farm"](true) == false and hub.values["Auto Farm"] == false)
 assert(hub.values["Select Map"] == "Waiting for maps")
 assert(hub.values["Box To Open"] == "Waiting for boxes" and hub.values["Reveal Animation"] == "Off")
+for _,card in ipairs(hub.searchables) do
+ if card.Name == "Insta Kill As Sheriff" or card.Name == "Win Sheriff WallCheck" then assert(card:GetAttribute("GroupHidden")) end
+end
 hub.cycleOptions["Select Map"]({"Hospital", "Factory"})
 assert(hub.values["Select Map"] == "Hospital")
 hub.setters["Select Map"]("Factory");assert(hub.values["Select Map"] == "Factory")
@@ -60,6 +69,25 @@ hub.setters["Enable Gravity"](false)
 assert(workspace.Gravity == 196.2)
 shared.AngelHubGui:Destroy()
 assert(not hub.actions)
+`);
+  const winGui = await Lua.create({ sandbox: true });
+  winGui.execute(readTest('gui-mock.luau') + `
+local storage=Instance.new('Folder');services.ReplicatedStorage=storage
+local remotes=Instance.new('Folder');remotes.Name='Remotes';remotes.Parent=storage
+local gameplay=Instance.new('Folder');gameplay.Name='Gameplay';gameplay.Parent=remotes
+for _,name in ipairs({'VictoryScreen','RoundEndFade','RoundStart'})do
+ local remote=Instance.new('RemoteEvent');remote.Name=name;remote.OnClientEvent=event();remote.Parent=gameplay
+end
+` + file + `
+local h=shared.AngelHub
+local cards={};for _,card in ipairs(h.searchables)do cards[card.Name]=card end
+assert(not cards['Insta Kill As Sheriff'].Visible and not cards['Win Sheriff WallCheck'].Visible)
+h.setters['Auto Win'](true)
+assert(h.values['Auto Win'] and cards['Insta Kill As Sheriff'].Visible and not cards['Win Sheriff WallCheck'].Visible)
+h.setters['Insta Kill As Sheriff'](true);assert(cards['Win Sheriff WallCheck'].Visible)
+h.setters['Auto Win'](false)
+assert(not cards['Insta Kill As Sheriff'].Visible and not cards['Win Sheriff WallCheck'].Visible and cards['Sheriff Wins'].Visible ~= false)
+shared.AngelHubGui:Destroy()
 `);
   const outside = await Lua.create({ sandbox: true });
   outside.execute(readTest('gui-mock.luau') + '\ngame.PlaceId = 1\n' + file + `
