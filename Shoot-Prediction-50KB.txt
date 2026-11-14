@@ -1,0 +1,574 @@
+SHOOT + PREDICTION — EXTRACTO PARA REVISION (NO EJECUTABLE)
+Fuente: XzAngel19/ARandomMenu, arena/0ce50d99-arandommenu
+Commit: f7de1b3ee13ce8783a4afb8f39b0426912ba5733
+Build: v199-20261108-aim-camera-fire
+
+Incluye funciones seleccionadas de Shoot, opciones Bullet/CFrame/Experimental/WallCheck, fragmentos de Prediction y comprobaciones de trayectoria de base.lua. No incluye AutoShoot.lua. No es el codigo completo: faltan muestreo de jugadores, ajuste de velocidad y giro, inicializacion, estado, servicios y dependencias. Las funciones comparten contexto: no pegar ni ejecutar este extracto como script independiente. Algunas funciones incluidas llaman a otras no incluidas. La informacion no demuestra que el tiro o el dano funcionen en un servidor real.
+
+CALIBRACION HISTORICA (solo resumen, no datos completos)
+Archivo publico: https://github.com/XzAngel19/TestingStuff/blob/main/MM2_Trajectory_Calibration.json
+Build v111-20261023-farm-teleport-map-grab; schema 4; fecha 2026-10-23.
+Estimator: confirmedShots=142, gunAcceptanceMs=293.49826267613156, confirmedThrows=6, knifeSpeed=96. Sesion registrada: gunAttempts=6, gunConfirmed=6, gunHitTarget=3, gunKills=3. Confirmacion no equivale necesariamente a impacto. Son datos antiguos de v111, no demuestran precision en v199. El JSON completo no esta incluido.
+
+
+-- base.lua: isWeaponPathClear
+local function isWeaponPathClear(origin:Vector3,endpoint:Vector3,target:Model?,strict:boolean?,options:{ignoreTarget:boolean?,requireTarget:boolean?}?):(boolean,any?)local direction:Vector3=endpoint-origin if direction.Magnitude<0.05 then return true,nil end local excluded:{Instance}={}if LocalPlayer.Character then table.insert(excluded,LocalPlayer.Character)end if options and options.ignoreTarget and target then table.insert(excluded,target)end for _,object:Instance in ipairs(CollectionService:GetTagged('WeaponPassthrough'))do table.insert(excluded,object)end local params:RaycastParams=RaycastParams.new()params.FilterType=Enum.RaycastFilterType.Exclude params.IgnoreWater=true for _=1,32 do params.FilterDescendantsInstances=excluded local hit:RaycastResult?=workspace:Raycast(origin,direction,params)if not hit then return not(options and options.requireTarget==true),nil end if target and hit.Instance:IsDescendantOf(target)then return true,nil end local part:Instance=hit.Instance local
+info:any={name=nil,className=nil,transparency=nil,canCollide=nil,distance=nil,skipped=false}pcall(function():()info.name=string.sub(part:GetFullName(),1,160)info.className=part.ClassName local hitPosition:any=(hit::any).Position if hitPosition then info.distance=(hitPosition-origin).Magnitude end end)if part:IsA('BasePart')then info.transparency=part.Transparency info.canCollide=part.CanCollide end if part:IsA('BasePart')and part.Transparency==1 and(not strict or part.CanCollide==false)then info.skipped=true table.insert(excluded,part)else return false,info end end return false,{name='raycast budget',skipped=false}end
+
+-- base.lua: validateGunShot
+local function validateGunShot(target:Player,character:Model,targetCharacter:Model,muzzle:Vector3,origin:Vector3,endpoint:Vector3,walls:boolean):(boolean,string?,any?,any?)if LocalPlayer.Character~=character or not target or target==LocalPlayer or target.Character~=targetCharacter or not isPlayerAlive(target)or isProtectedTarget(target)or getPlayerRole(target)~='Murderer'then return false,'Target changed or is not the murderer.'end if roundLifecycleActive==false then return false,'The round is not active.'end local roundRole=getRoundRole(target)if roundRole and roundRole~='Murderer'then return false,'Conflicting target role.'end if not roundRole and not getPlayerWeapon(target,'Knife')and not hasMurdererCollisionGroup(targetCharacter)then return false,'No current murderer evidence.'end local ownHumanoid=character:FindFirstChildOfClass('Humanoid')if not ownHumanoid or not predictionMath.finite(ownHumanoid.Health)or ownHumanoid.Health<=0 then return false,'Your character is not alive.'end
+if not predictionMath.finite(muzzle.Magnitude)or not predictionMath.finite(origin.Magnitude)or not predictionMath.finite(endpoint.Magnitude)or(endpoint-origin).Magnitude<0.05 or(endpoint-muzzle).Magnitude<0.05 then return false,'Invalid shot geometry.'end if walls then local options={ignoreTarget=true}local clear,blocker=isWeaponPathClear(muzzle,endpoint,targetCharacter,nil,options)if not clear then return false,'A wall or another body blocks the shot.',blocker end local solidClear,solidBlocker=isWeaponPathClear(muzzle,endpoint,targetCharacter,true,options)if not solidClear then return false,'An invisible wall blocks the shot.',solidBlocker end if(origin-muzzle).Magnitude>0.05 then local originClear,originBlocker=isWeaponPathClear(origin,endpoint,targetCharacter,nil,options)if not originClear then return false,'A wall or another body blocks the shot.',originBlocker end local originSolid,originSolidBlocker=isWeaponPathClear(origin,endpoint,targetCharacter,true,options)if not originSolid
+then return false,'An invisible wall blocks the shot.',originSolidBlocker end end end local occluder:any=nil if walls then pcall(function():()local first:any=describeRayHit(muzzle,endpoint,targetCharacter)local reach:number=(endpoint-muzzle).Magnitude if first and not first.onTarget and predictionMath.finite(first.distance)and first.distance<reach-0.5 then occluder=first end end)end return true,nil,nil,occluder end
+
+-- Prediction.lua: constants
+local MAX_SAMPLE_AGE:number=0.35 local FIT_WINDOW:number=0.16 local FIT_TAU:number=0.055 local HISTORY_SECONDS:number=0.6 local SAMPLE_HZ:number=60 local MAX_HORIZONTAL_SPEED:number=60 local DEFAULT_KNIFE_SPEED:number=96 local MAX_ECHOES:number=8 local MIN_ECHO_SAMPLES:number=3 local MIN_ECHO_DELAY:number=0.05 local MAX_ECHO_DELAY:number=1.6 local ECHO_MAX_AGE:number=30 local ECHO_DIVERGENCE_RATIO:number=1.5 local MAX_HORIZON:number=1 local MAX_AUTO_LEAD:number=0.6 local TURN_SPAN:number=0.1 local TURN_MIN_SPEED:number=2 local TURN_MAX_RATE:number=10 local TURN_MIN_RATE:number=0.4 local TURN_MAX_ANGLE:number=math.rad(45)local TURN_RESIDUAL:number=0.2 local VERTICAL_MIN_SPEED:number=8 local MAX_FLOOR_LIFT_STUDS:number=6 local RTT_SAMPLES:number=8 local RTT_SAMPLE_INTERVAL:number=0.25 local BRAKE_MIN_ACCEL:number=6 local BRAKE_MAX_ACCEL:number=120 local LEAD_FEEDBACK_MIN_SAMPLES:number=3 local LEAD_FEEDBACK_MAX_SAMPLES:number=8 local LEAD_FEEDBACK_SAMPLE_LIMIT:number=0.15 local
+MAX_LEAD_CORRECTION:number=0.06 local LEAD_SLEW_PER_SAMPLE:number=0.02 local settings={autoLead=true,extraLead=0,interpolation=1/40}
+
+-- Prediction.lua: currentRtt
+local function currentRtt():number local latency:any=nil if type(core.getLatencyReadings)=='function'then local ok:boolean,engine:any,data:any=pcall(core.getLatencyReadings)if ok and finiteNumber(data)then latency=data elseif ok and finiteNumber(engine)then latency=engine end end if not finiteNumber(latency)and type(core.getEstimatedLatency)=='function'then local ok:boolean,value:any=pcall(core.getEstimatedLatency)if ok then latency=value end end if not finiteNumber(latency)then latency=0.08 end return math.clamp(latency,0.02,0.6)end local rttSamples:{number}={}local lastRttSampleAt:number=-math.huge
+
+-- Prediction.lua: robustRtt
+local function robustRtt():number local now:number=os.clock()if now-lastRttSampleAt>=RTT_SAMPLE_INTERVAL then lastRttSampleAt=now table.insert(rttSamples,currentRtt())while#rttSamples>RTT_SAMPLES do table.remove(rttSamples,1)end end local sorted:{number}=table.clone(rttSamples)table.insert(sorted,currentRtt())table.sort(sorted)return sorted[math.floor((#sorted+1)/2)]end
+
+-- Prediction.lua: pruneEchoes
+local function pruneEchoes(now:number):()if not finiteNumber(now)then return end while#echoes>0 and now-echoTimes[1]>ECHO_MAX_AGE do table.remove(echoes,1)table.remove(echoTimes,1)end end
+
+-- Prediction.lua: echoMedian
+local function echoMedian():number?pruneEchoes(os.clock())local count:number=#echoes if count<MIN_ECHO_SAMPLES then return nil end local sorted:{number}=table.clone(echoes)table.sort(sorted)local middle:number=(count+1)/2 local lower:number=math.floor(middle)local upper:number=math.ceil(middle)return(sorted[lower]+sorted[upper])/2 end
+
+-- Prediction.lua: noteEcho
+local function noteEcho(sentAt:number,receivedAt:number):()if not finiteNumber(sentAt)or not finiteNumber(receivedAt)then return end local delay:number=receivedAt-sentAt if delay<MIN_ECHO_DELAY or delay>MAX_ECHO_DELAY then return end local plausible:number=math.clamp(currentRtt()*2.5+0.05,0.3,MAX_ECHO_DELAY)if delay>plausible then return end pruneEchoes(receivedAt)table.insert(echoes,delay)table.insert(echoTimes,receivedAt)while#echoes>MAX_ECHOES do table.remove(echoes,1)table.remove(echoTimes,1)end local median:number?=echoMedian()if median and median>currentRtt()*ECHO_DIVERGENCE_RATIO then table.clear(echoes)table.clear(echoTimes)end end
+
+-- Prediction.lua: manualLead
+local function manualLead():number return settings.autoLead and 0 or settings.extraLead end local leadErrors:{[string]:{number}}={}local leadApplied:{[string]:number}={}
+
+-- Prediction.lua: modeKey
+local function modeKey(mode:any):string local text:string=type(mode)=='string'and mode or''local lower:string=string.lower(text)if lower=='normal'or lower=='bullet'then return'Bullet'end if lower=='silent'or lower=='cframe'or lower=='silent aim'then return'CFrame'end if lower=='knife'or lower=='blade'then return'Knife'end return'default'end
+
+-- Prediction.lua: leadBucket
+local function leadBucket(mode:any):{number}local key:string=modeKey(mode)local bucket:{number}?=leadErrors[key]if not bucket then bucket={}leadErrors[key]=bucket end return bucket::{number}end
+
+-- Prediction.lua: medianOf
+local function medianOf(values:{number}):number?local count:number=#values if count==0 then return nil end local sorted:{number}=table.clone(values)table.sort(sorted)if count%2==1 then return sorted[(count+1)//2]end return(sorted[count//2]+sorted[count//2+1])*0.5 end
+
+-- Prediction.lua: leadCorrection
+local function leadCorrection(mode:any):number local bucket:{number}?=leadErrors[modeKey(mode)]if not bucket or#bucket<LEAD_FEEDBACK_MIN_SAMPLES then return 0 end return leadApplied[modeKey(mode)]or 0 end
+
+-- Prediction.lua: gunHorizon
+local function gunHorizon(mode:any):(number,number,number?)local rtt:number=robustRtt()local echo:number?=echoMedian()local pipeline:number=echo and(rtt*0.6+echo*0.4)or rtt local horizon:number=pipeline+settings.interpolation+manualLead()+leadCorrection(mode)if settings.autoLead then horizon=math.min(horizon,MAX_AUTO_LEAD)end return math.clamp(horizon,0.005,MAX_HORIZON),rtt,echo end
+
+-- Prediction.lua: estimateMotion
+local function estimateMotion(track:Track,now:number):Motion?local samples:{Sample}=track.samples local last:Sample?=samples[#samples]if not last then return nil end local age:number=math.max(0,now-last.at)if age>MAX_SAMPLE_AGE then return nil end local fit:Fit?=fitVelocity(track,now)local reported:Vector3=last.velocity local horizontal:Vector3 local source:string local turnRate:number=0 local longitudinalAccel:number=0 local accelX:number=0 local accelZ:number=0 local brakeSeconds:number?=nil local fitLag:number=0 local verticalLead:boolean=false if fit and fit.count>=3 and fit.span>=0.04 and fit.residual<=1.5 then horizontal=Vector3.new(fit.velocity.X,0,fit.velocity.Z)source='history'else horizontal=Vector3.new(reported.X,0,reported.Z)source='replicated'end if not finiteVector(horizontal)then horizontal=Vector3.zero elseif horizontal.Magnitude>MAX_HORIZONTAL_SPEED then horizontal=horizontal.Unit*MAX_HORIZONTAL_SPEED end local airborne:boolean=last.state=='Jumping'or last.state==
+'Freefall'or math.abs(reported.Y)>=15 local vertical:number=0 if airborne then vertical=reported.Y if not finiteNumber(vertical)then vertical=0 elseif math.abs(vertical)<0.5 and fit then vertical=fit.velocity.Y end vertical=math.clamp(vertical,-120,120)end if fit then turnRate,longitudinalAccel,brakeSeconds,fitLag,accelX,accelZ=measureTurn(track,now,fit)end if airborne and math.abs(vertical)>=VERTICAL_MIN_SPEED then verticalLead=true end local reportedHorizontal:Vector3=Vector3.new(reported.X,0,reported.Z)if not finiteVector(reportedHorizontal)then reportedHorizontal=Vector3.zero elseif reportedHorizontal.Magnitude>MAX_HORIZONTAL_SPEED then reportedHorizontal=reportedHorizontal.Unit*MAX_HORIZONTAL_SPEED end local moveDir:Vector3=last.moveDirection or Vector3.zero local moveHorizontal:Vector3=Vector3.new(moveDir.X,0,moveDir.Z)if not finiteVector(moveHorizontal)then moveHorizontal=Vector3.zero end local hasInputHistory:boolean=moveHorizontal.Magnitude>0.08 if not hasInputHistory then for
+idx:number=math.max(1,#samples-15),#samples do local s:Sample=samples[idx]local md:Vector3=s.moveDirection or Vector3.zero if math.sqrt(md.X*md.X+md.Z*md.Z)>0.08 then hasInputHistory=true break end end end return{velocity=Vector3.new(horizontal.X,vertical,horizontal.Z),horizontal=horizontal,vertical=vertical,airborne=airborne,sampleAge=age,samples=#samples,residual=fit and fit.residual or math.huge,source=source,turnRate=turnRate,longitudinalAccel=longitudinalAccel,accelX=accelX,accelZ=accelZ,brakeSeconds=brakeSeconds,fitLag=fitLag,verticalLead=verticalLead,moveDirection=moveHorizontal,reportedHorizontal=reportedHorizontal,hasInputHistory=hasInputHistory}end
+
+-- Prediction.lua: leadHorizontal
+local function leadHorizontal(motion:Motion,horizon:number):Vector3 if horizon<=0 then return Vector3.zero end local moveDir:Vector3?=motion.moveDirection local moveMag:number=moveDir and moveDir.Magnitude or 0 if motion.hasInputHistory then local repH:Vector3=motion.reportedHorizontal or motion.horizontal local fitH:Vector3=motion.horizontal local v0:Vector3=if repH.Magnitude>0.05 then repH*0.65+fitH*0.35 else fitH local v0Mag:number=v0.Magnitude local effHorizon:number=horizon*0.88 local tau:number=motion.airborne and 0.17 or 0.11 if moveMag>0.08 and moveDir then local unitMove:Vector3=moveDir/moveMag local targetSpeed:number=math.clamp(math.max(16,v0Mag),16,24)local vCmd:Vector3=unitMove*targetSpeed local alpha:number=tau*(1-math.exp(-effHorizon/tau))return vCmd*effHorizon+(v0-vCmd)*alpha else local stopTau:number=0.1 local alpha:number=stopTau*(1-math.exp(-effHorizon/stopTau))return v0*alpha end end local speed:number=motion.horizontal.Magnitude if speed<1e-4 then return Vector3.
+zero end local direction:Vector3=motion.horizontal.Unit local accelMagnitude:number=math.sqrt(motion.accelX*motion.accelX+motion.accelZ*motion.accelZ)if accelMagnitude>=4 then local applied:Vector3=Vector3.new(motion.accelX,0,motion.accelZ)if accelMagnitude>60 then applied*=60/accelMagnitude end local displacement:Vector3=motion.horizontal*horizon+applied*(motion.fitLag*horizon+0.5*horizon*horizon)if motion.brakeSeconds and horizon>motion.brakeSeconds then local alongDistance:number=displacement:Dot(direction)local along:number=math.min(0,motion.longitudinalAccel)local speedNow:number=math.max(0,speed+along*motion.fitLag)local stopDistance:number=speedNow*motion.brakeSeconds*0.5 if alongDistance>stopDistance then displacement-=direction*(alongDistance-stopDistance)end end return displacement end if math.abs(motion.turnRate)>1e-3 then local angle:number=math.clamp(motion.turnRate*(horizon*0.5+motion.fitLag),-TURN_MAX_ANGLE,TURN_MAX_ANGLE)local cosine:number=math.cos(angle)local sine:
+number=math.sin(angle)direction=Vector3.new(direction.X*cosine+direction.Z*sine,0,-direction.X*sine+direction.Z*cosine)end local along:number=math.min(0,motion.longitudinalAccel)local speedNow:number=math.max(0,speed+along*motion.fitLag)local length:number=speedNow*horizon+0.5*along*horizon*horizon length=math.max(0,length)if motion.brakeSeconds and horizon>motion.brakeSeconds then length=math.min(length,speedNow*motion.brakeSeconds*0.5)end return direction*length end
+
+-- Prediction.lua: predictedRoot
+local function predictedRoot(track:Track,motion:Motion,horizon:number):Vector3 local last:Sample=track.samples[#track.samples]local lead:Vector3=leadHorizontal(motion,horizon)local x:number=last.position.X+lead.X local z:number=last.position.Z+lead.Z local y:number=last.position.Y if motion.verticalLead then y+=motion.vertical*horizon-0.5*workspace.Gravity*horizon*horizon if y<last.position.Y then for idx:number=#track.samples,1,-1 do local s:Sample=track.samples[idx]if s.grounded then if s.position.Y-y<=MAX_FLOOR_LIFT_STUDS then y=math.max(y,s.position.Y)end break end end end end return Vector3.new(x,y,z)end
+
+-- Prediction.lua: gunAim
+local function gunAim(target:Player,_muzzle:Vector3,mode:any):(Vector3?,AimInfo?,string?)local aimMode:string=modeKey(mode)local humanoid:any=targetHumanoid(target)if humanoid~=nil and not bodyIsAlive(humanoid)then tracks[target]=nil return nil,nil,'dead target'end local track:Track?=tracks[target]if not track then samplePlayer(target,os.clock())track=tracks[target]end if not track or#track.samples==0 then return nil,nil,'no samples'end local now:number=os.clock()local motion:Motion?=estimateMotion(track,now)if not motion then return nil,nil,'stale sample'end local pipeline:number,rtt:number,echo:number?=gunHorizon(aimMode)local rttEngine:number?,rttData:number?=nil,nil if type(core.getLatencyReadings)=='function'then local ok:boolean,engine:any,data:any=pcall(core.getLatencyReadings)if ok then rttEngine=finiteNumber(engine)and engine or nil rttData=finiteNumber(data)and data or nil end end local horizon:number=math.clamp(motion.sampleAge+pipeline,0.005,MAX_HORIZON)local rootPosition:
+Vector3=predictedRoot(track,motion,horizon)local last:Sample=track.samples[#track.samples]local aimVelocity:Vector3=motion.velocity if motion.hasInputHistory and horizon>1e-4 then local chord:Vector3=rootPosition-last.position aimVelocity=Vector3.new(chord.X/horizon,motion.velocity.Y,chord.Z/horizon)end local aimOffset:Vector3=last.aimOffset local freshAimPart:BasePart?=findAimPart(track.character)if freshAimPart then aimOffset=freshAimPart.Position-track.root.Position end local endpoint:Vector3=rootPosition+aimOffset return endpoint,{endpoint=endpoint,targetPosition=endpoint,capturedPosition=last.position+aimOffset,rootPosition=rootPosition,velocity=aimVelocity,leadSeconds=horizon,sampleAge=motion.sampleAge,samples=motion.samples,residual=motion.residual,motionSource=motion.source,model='kinematic-v51',rtt=rtt,rttEngine=rttEngine,rttData=rttData,echoDelay=echo,echoSamples=#echoes,turnRate=motion.turnRate,brakeSeconds=motion.brakeSeconds,leadCorrection=leadCorrection(aimMode),
+leadCorrectionTarget=leadTarget(aimMode),leadSamples=leadSamples(aimMode),aimMode=aimMode},nil end local KNIFE_FLOOR_DEPTH:number=80 local KNIFE_FLOOR_CACHE_SECONDS:number=0.1 local KNIFE_FLOOR_XZ_TOLERANCE:number=0.35 local knifeFloorParams:RaycastParams?=nil local knifeFloorParamsTried:boolean=false local knifeFloorFilter:{Instance}={}
+
+-- Shoot.lua: getSelectedShootTarget
+local function getSelectedShootTarget():Player?local target if mm2Settings.shootMode=='Custom'and mm2Settings.shootTarget~=''then target=findPlayerByText(mm2Settings.shootTarget)else target=findMurderer()end if not target or target==LocalPlayer or not isPlayerAlive(target)or isProtectedTarget(target)then return nil end if getPlayerRole(target)~='Murderer'then return nil end return target end local SILENT_ORIGIN_STUDS:number=2.5 local SILENT_PIERCE_STUDS:number=1 local SILENT_LIFT_STUDS:number=1.6 local MAX_SILENT_SWEEP:number=1.5 local POINT_BLANK_STUDS:number=6
+
+-- Shoot.lua: silentLift
+local function silentLift(info:any,predicted:Vector3):number if type(info)=='table'and typeof(info.rootPosition)=='Vector3'then local aimOffsetY:number=predicted.Y-info.rootPosition.Y if aimOffsetY>0.5 then return math.clamp(aimOffsetY+0.35,1.2,2.4)end end return SILENT_LIFT_STUDS end
+
+-- Shoot.lua: getSilentSweepDistance
+local function getSilentSweepDistance(speed:number?):number local configured:number=tonumber(mm2Settings.silentSweep)or 0 local sweep:number=math.clamp(configured,0,MAX_SILENT_SWEEP)local uncertainty:number=0 if type(prediction)=='table'and type(prediction.getLeadUncertainty)=='function'then local ok:boolean,seconds:any=pcall(prediction.getLeadUncertainty,'CFrame')if ok and type(seconds)=='number'and seconds==seconds then uncertainty=math.clamp(seconds,0,0.15)end end if uncertainty<=0 then return sweep end local travel:number=math.max(tonumber(speed)or 0,0)local extra:number=uncertainty*travel return math.clamp(sweep+extra,0,MAX_SILENT_SWEEP)end
+
+-- Shoot.lua: buildSilentShot
+local function buildSilentShot(_target:Player,info:any,muzzleOrigin:CFrame?,variant:string):(CFrame?,CFrame?,number,number,string)local predicted:Vector3=info.endpoint local liftStuds:number=silentLift(info,predicted)local velocity:Vector3=info.velocity local horizontal:Vector3=Vector3.new(velocity.X,0,velocity.Z)local direction:Vector3?=nil local sweep:number=0 if horizontal.Magnitude>1.5 then direction=horizontal.Unit sweep=getSilentSweepDistance(horizontal.Magnitude)end local sweepStart:Vector3=direction and-direction*sweep or Vector3.zero local sweepEnd:Vector3=direction and direction*sweep or Vector3.zero local approach:Vector3?=nil local approachOffset:number=SILENT_ORIGIN_STUDS if muzzleOrigin then local toTarget:Vector3=predicted-muzzleOrigin.Position local flat:Vector3=Vector3.new(toTarget.X,0,toTarget.Z)if flat.Magnitude>0.05 then approach=flat.Unit approachOffset=math.min(SILENT_ORIGIN_STUDS,math.max(1,flat.Magnitude*0.6))end end local startPoint:Vector3 local endPoint:
+Vector3 local resolvedVariant:string=variant local pierceAxis:Vector3?=direction or approach if(variant=='Through'or variant==nil or variant=='')and pierceAxis then resolvedVariant='Through'local captured:Vector3=info.capturedPosition or predicted startPoint=captured-pierceAxis*1+sweepStart endPoint=predicted+pierceAxis*SILENT_PIERCE_STUDS+sweepEnd elseif variant=='Top'then resolvedVariant='Top'startPoint=predicted+Vector3.new(0,liftStuds,0)+sweepStart endPoint=predicted+sweepEnd elseif variant=='Behind'and approach then resolvedVariant='Behind'startPoint=predicted+approach*approachOffset+sweepStart endPoint=predicted+sweepEnd elseif approach then resolvedVariant='Front'startPoint=predicted-approach*approachOffset+sweepStart endPoint=predicted+sweepEnd elseif direction then resolvedVariant='Motion'startPoint=predicted+sweepStart endPoint=predicted+sweepEnd else resolvedVariant='Top'startPoint=predicted+Vector3.new(0,liftStuds,0)endPoint=predicted end if(endPoint-startPoint).Magnitude<=
+0.05 then startPoint=predicted+Vector3.new(0,liftStuds,0)endPoint=predicted resolvedVariant='Top'sweep=0 end return CFrame.lookAt(startPoint,endPoint),CFrame.new(endPoint),approachOffset,sweep,resolvedVariant end type FireOptions={silent:boolean?,quiet:boolean?,whenReady:boolean?,continuous:boolean?,wallCheck:boolean?,redirect:((CFrame,CFrame)->())?,nativeRedirect:boolean?,nativeOrigin:CFrame?}
+
+-- Shoot.lua: chooseExperimentalGunMode
+local function chooseExperimentalGunMode(target:Player?,origin:Vector3?):string local character:Model?=target and target.Character local root:BasePart?=character and character:FindFirstChild('HumanoidRootPart')::BasePart?if not root or not origin then return'Bullet'end local speed:number=0 pcall(function():()local velocity:Vector3=root.AssemblyLinearVelocity speed=Vector3.new(velocity.X,0,velocity.Z).Magnitude end)if(root.Position-origin).Magnitude>=30 and speed>=8 then return'CFrame'end return'Bullet'end local SHOT_CONFIRM_WINDOW:number=1.5 local ShootFeature:any=nil local lastRejectReason:string=''local AIM_BODY_PARTS:{string}={'UpperTorso','Torso','HumanoidRootPart','Head','RightUpperArm','LeftUpperArm','RightUpperLeg','LeftUpperLeg','Right Arm','Left Arm','Right Leg','Left Leg'}
+
+-- Shoot.lua: ghostOnLine
+local function ghostOnLine(muzzle:Vector3,endpoint:Vector3,targetCharacter:Model?):any if type(describeRayHit)~='function'then return nil end local ok:boolean,hit:any=pcall(describeRayHit,muzzle,endpoint,targetCharacter)if not ok or type(hit)~='table'or hit.onTarget then return nil end if hit.transparency~=1 or hit.canCollide~=false then return nil end local reach:number=(endpoint-muzzle).Magnitude if type(hit.distance)~='number'or hit.distance>=reach-0.5 then return nil end return hit end local GHOST_PROBE_INTERVAL:number=0.15 local GHOST_PROBE_CANDIDATES:number=4 local ghostProbe:any={target=nil,at=-math.huge,partName=nil}
+
+-- Shoot.lua: avoidGhostAim
+local function avoidGhostAim(target:Player,info:any,muzzle:Vector3):(Vector3?,string?)local character:Model?=target.Character if not character or not info or typeof(info.endpoint)~='Vector3'then return nil,nil end local now:number=os.clock()if target~=ghostProbe.target or now-ghostProbe.at>=GHOST_PROBE_INTERVAL then ghostProbe.target=target ghostProbe.at=now ghostProbe.partName=nil if ghostOnLine(muzzle,info.endpoint,character)then local captured:Vector3?=info.capturedPosition local probeLead:Vector3=captured and(info.endpoint-captured)or Vector3.zero local tried:number=0 for _,partName:string in ipairs(AIM_BODY_PARTS)do if tried>=GHOST_PROBE_CANDIDATES then break end local part:Instance?=character:FindFirstChild(partName)if part and part:IsA('BasePart')then tried+=1 local candidate:Vector3=(part::BasePart).Position+probeLead if not ghostOnLine(muzzle,candidate,character)then ghostProbe.partName=partName break end end end end end local partName:string?=ghostProbe.partName if not
+partName then return nil,nil end local part:Instance?=character:FindFirstChild(partName)if not part or not part:IsA('BasePart')then ghostProbe.partName=nil return nil,nil end local captured:Vector3?=info.capturedPosition local lead:Vector3=captured and(info.endpoint-captured)or Vector3.zero return(part::BasePart).Position+lead,partName end
+
+-- Shoot.lua: fireGunAtTarget
+local function fireGunAtTarget(
+target:Player?,
+options:FireOptions?
+):boolean
+local opts:FireOptions=options or{}
+local silent:boolean=mm2Settings.silentAim
+local experimental:boolean=opts.silent==nil and mm2Settings.experimentalAim==true
+if experimental then
+local localCharacter:Model?=LocalPlayer and LocalPlayer.Character
+local ownRoot:BasePart?=localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")::BasePart?
+silent=chooseExperimentalGunMode(target,ownRoot and ownRoot.Position)=="CFrame"
+elseif opts.silent~=nil then
+silent=opts.silent
+end
+local quiet:boolean=opts.quiet==true
+local continuous:boolean=opts.continuous==true
+
+
+
+local nativeRedirect:boolean=opts.nativeRedirect==true and type(opts.redirect)=="function"
+local useRaw:boolean=mm2Settings.shootRaw
+or(continuous and silent)
+local useWallCheck:boolean=if opts.wallCheck~=nil
+then opts.wallCheck==true
+else mm2Settings.shootWallCheck
+local function reject(message:string):boolean
+lastRejectReason=message
+if not quiet and ShootFeature then ShootFeature:SetStatus(message)end
+return false
+end
+
+local character,humanoid=getCharacterParts()
+if not target or not target.Character or target==LocalPlayer
+or not isPlayerAlive(target)or isProtectedTarget(target)or getPlayerRole(target)~="Murderer"then
+return reject("No selected shoot target was found.")
+end
+if not character or not humanoid then
+return reject("Your character is not available.")
+end
+local targetCharacter=target.Character
+local gun:Tool?=getPlayerWeapon(LocalPlayer,"Gun",true)
+if not gun or gun.Parent~=character then
+return reject("Equip the sheriff gun yourself to shoot.")
+end
+if not nativeRedirect and(gun.Enabled==false or gun:GetAttribute("Disabled")==true
+or gun:GetAttribute("Reloading")==true or gun:GetAttribute("IsReloading")==true)then
+return reject("The gun is disabled or reloading.")
+end
+
+local remote:Instance?=gun and gun:FindFirstChild("Shoot")
+local okOrigin:boolean,foundOrigin:any=pcall(getGunOriginCFrame,character,gun)
+local origin:CFrame?=okOrigin and foundOrigin or nil
+if not origin and nativeRedirect and typeof(opts.nativeOrigin)=="CFrame"then
+origin=opts.nativeOrigin
+end
+
+
+
+
+
+
+
+local pendingShot:any=state.mm2ShotFeedback.pending
+if not continuous and not nativeRedirect
+and type(pendingShot)=="table"
+and type(pendingShot.queuedAt)=="number"
+and os.clock()-pendingShot.queuedAt<SHOT_CONFIRM_WINDOW then
+local remaining:number=SHOT_CONFIRM_WINDOW
+-(os.clock()-pendingShot.queuedAt)
+return reject(string.format(
+"Shot gate: waiting for the previous shot (%.1f s left).",
+remaining))
+end
+
+
+local trackFeedback:boolean=not continuous
+and not(nativeRedirect and type(pendingShot)=="table")
+if not remote or not remote:IsA("RemoteEvent")or not origin then
+return reject(not origin and"The gun has no usable origin."
+or"The murderer is unavailable or obstructed.")
+end
+
+local info:any=nil
+local reason:string?=nil
+if origin then
+
+
+local aimMode:string=silent and"CFrame"or"Bullet"
+local ok:boolean,endpoint:any,aimInfo:any,aimReason:any=
+pcall(prediction.gunAim,target,origin.Position,aimMode)
+if not ok then return reject("Aim or visibility check failed.")end
+if endpoint==nil then
+reason=aimReason or"no samples"
+else
+info=aimInfo
+end
+end
+
+
+
+
+
+
+
+
+
+
+
+if(useRaw or continuous or nativeRedirect or opts.whenReady==true)and not info and target.Character then
+local targetRoot:BasePart?=target.Character:FindFirstChild("HumanoidRootPart")
+if targetRoot then
+local vel:Vector3=Vector3.zero
+pcall(function():()
+vel=targetRoot.AssemblyLinearVelocity or Vector3.zero
+end)
+local fallbackEndpoint:Vector3=targetRoot.Position+vel*0.08
+info={
+endpoint=fallbackEndpoint,
+velocity=vel,
+leadSeconds=0.08,
+motionSource="raw",
+model="raw",
+sampleAge=0,
+samples=0,
+capturedPosition=targetRoot.Position,
+rtt=0,
+echoDelay=0,
+rttEngine="raw",
+echoSamples=0,
+turnRate=0,
+brakeSeconds=0,
+leadCorrection=0,
+rootPosition=targetRoot.Position,
+}
+end
+end
+
+
+
+
+if info and origin and targetCharacter then
+local cleaner:Vector3?,cleanerPart:string?=
+avoidGhostAim(target,info,origin.Position)
+if cleaner then
+info.endpoint=cleaner
+info.targetPosition=cleaner
+info.ghostAvoided=cleanerPart
+end
+end
+
+
+
+
+
+
+
+
+if origin and info then
+local root:BasePart?=nil
+pcall(function():()
+root=targetCharacter:FindFirstChild("HumanoidRootPart")::BasePart?
+end)
+local aimVector:Vector3=info.endpoint-origin.Position
+local toRoot:Vector3=root and(root.Position-origin.Position)or aimVector
+local inverted:boolean=aimVector.Magnitude<0.05
+or aimVector:Dot(toRoot)<=0
+if root and(inverted or aimVector.Magnitude<POINT_BLANK_STUDS)then
+info.capturedPosition=root.Position
+info.endpoint=root.Position
+info.aimPartChosen="HumanoidRootPart"
+info.pointBlank=true
+end
+end
+
+local rejectMessages:{[string]:string}={
+["no body"]="The murderer has no usable body to aim at.",
+["no samples"]="The murderer has no fresh motion samples yet.",
+["stale sample"]="The murderer's position is stale; waiting for a fresh sample.",
+["unreachable"]="The murderer is moving too fast to intercept.",
+}
+if not remote
+or not remote:IsA("RemoteEvent")
+or not origin
+or not info then
+local message:string=rejectMessages[reason or""]
+or(
+not origin
+and"The gun has no usable origin."
+or"The murderer is unavailable or obstructed."
+)
+return reject(message)
+end
+
+
+
+
+
+local function safeToSend(
+shotOrigin:CFrame,
+shotEnd:CFrame,
+muzzle:CFrame?
+):boolean
+if gun.Parent~=character or(not nativeRedirect and(gun.Enabled==false
+or gun:GetAttribute("Disabled")==true or gun:GetAttribute("Reloading")==true
+or gun:GetAttribute("IsReloading")==true))then
+return reject("The gun is disabled or reloading.")
+end
+
+
+
+
+
+
+
+if useRaw then
+if not useWallCheck or not isWeaponPathClear then
+return true
+end
+local rawMuzzle:Vector3=(muzzle or shotOrigin).Position
+local rawClear,rawBlocker=isWeaponPathClear(
+rawMuzzle,
+shotEnd.Position,
+targetCharacter,
+nil,
+{ignoreTarget=true}
+)
+if not rawClear then
+if type(rawBlocker)=="table"and trajectoryCalibration
+and type(trajectoryCalibration.noteBlockedShot)=="function"then
+pcall(trajectoryCalibration.noteBlockedShot,
+trajectoryCalibration,rawBlocker)
+end
+return reject("A wall or another body blocks the shot.")
+end
+return true
+end
+
+
+
+
+
+
+local muzzlePosition:Vector3=(muzzle or shotOrigin).Position
+local ok,allowed,why,blocker,occluder=pcall(validateGunShot,target,character,targetCharacter,
+muzzlePosition,shotOrigin.Position,shotEnd.Position,useWallCheck)
+if not ok or not allowed then
+if type(blocker)=="table"and trajectoryCalibration
+and type(trajectoryCalibration.noteBlockedShot)=="function"then
+pcall(trajectoryCalibration.noteBlockedShot,trajectoryCalibration,blocker)
+end
+return reject(why or"Shot safety check failed.")
+end
+
+
+if type(occluder)=="table"then
+lastGunOccluder=occluder
+else
+lastGunOccluder=nil
+end
+return true
+end
+
+
+
+
+if silent then
+
+
+
+
+local variant:string="Through"
+local configuredSpawn:any=mm2Settings.silentSpawn
+if configuredSpawn=="Top"or configuredSpawn=="Behind"
+or configuredSpawn=="Front"then
+variant=configuredSpawn
+end
+local shotOrigin:CFrame?,shotEnd:CFrame?,offset:number,
+sweep:number,resolvedVariant:string
+if info.pointBlank and origin then
+
+
+
+
+
+
+shotOrigin=origin
+shotEnd=CFrame.new(info.endpoint)
+offset=0
+sweep=0
+resolvedVariant="PointBlank"
+else
+shotOrigin,shotEnd,offset,sweep,resolvedVariant=
+buildSilentShot(target,info,origin,variant)
+end
+if not shotOrigin or not shotEnd then
+if continuous and target.Character then
+local tr:BasePart?=target.Character:FindFirstChild("HumanoidRootPart")
+if tr then
+local ep:Vector3=info.endpoint or tr.Position
+local capPt:Vector3=info.capturedPosition or tr.Position
+local startPt:Vector3=capPt+Vector3.new(0,1.2,-1.5)
+shotOrigin=CFrame.lookAt(startPt,ep)
+shotEnd=CFrame.new(ep)
+offset=1.5
+sweep=0
+resolvedVariant="Through"
+end
+end
+if not shotOrigin or not shotEnd then
+return reject("Could not construct the silent shot.")
+end
+end
+variant=resolvedVariant
+
+
+
+if not useRaw
+and not isWeaponPathClear(shotOrigin.Position,shotEnd.Position,targetCharacter,nil,{ignoreTarget=true})then
+shotOrigin,shotEnd=origin,CFrame.new(info.endpoint)
+variant="Muzzle"
+offset=0
+sweep=0
+end
+if not safeToSend(shotOrigin,shotEnd,origin)then return false end
+if trackFeedback then
+pcall(state.mm2ShotFeedback.queue,target,gun,shotOrigin,shotEnd)
+end
+
+state.lastSilentShotInfo={
+variant=variant,
+at=os.clock(),
+offset=math.floor(offset*10)/10,
+}
+if opts.redirect then
+opts.redirect(shotOrigin,shotEnd)
+else
+remote:FireServer(shotOrigin,shotEnd)
+end
+
+local function recordSilent():()
+pcall(function():()
+if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot)~="function"then return end
+trajectoryCalibration:noteAuthoredShot({
+kind="gun",
+source=nativeRedirect and"native-redirect"or"menu",
+tool=gun,
+toolName=gun and gun.Name or"Gun",
+originPos=shotOrigin.Position,
+aimPos=shotEnd.Position,
+target=target,
+silent=true,
+variant=variant,
+offset=offset,
+settings={mode="Silent",spawn=variant,
+sweep=sweep,wallCheck=useWallCheck,
+leadSeconds=info.leadSeconds,motionSource=info.motionSource,
+model=info.model,
+sampleAge=info.sampleAge,samples=info.samples,
+referencePoint=info.capturedPosition and{info.capturedPosition.X,info.capturedPosition.Y,info.capturedPosition.Z},
+predictedPoint={info.endpoint.X,info.endpoint.Y,info.endpoint.Z},
+sampledVelocity={info.velocity.X,info.velocity.Y,info.velocity.Z},
+rtt=info.rtt,echoDelay=info.echoDelay,
+rttEngine=info.rttEngine,rttData=info.rttData,
+occluder=lastGunOccluder,
+echoSamples=info.echoSamples,
+turnRate=info.turnRate,brakeSeconds=info.brakeSeconds,
+leadCorrection=info.leadCorrection,
+leadCorrectionTarget=info.leadCorrectionTarget,
+leadSamples=info.leadSamples,aimMode=info.aimMode,
+ghostAvoided=info.ghostAvoided},
+})
+end)
+end
+if nativeRedirect and task and type(task.defer)=="function"then
+task.defer(recordSilent)
+else
+recordSilent()
+end
+if not quiet and ShootFeature then
+ShootFeature:SetStatus(experimental and"Experimental · CFrame · request sent"or nil)
+end
+if not continuous then
+macroUnequip(gun)
+end
+return true
+end
+
+local shotEndCFrame:CFrame=CFrame.new(info.endpoint)
+if not safeToSend(origin,shotEndCFrame)then return false end
+if trackFeedback then
+pcall(state.mm2ShotFeedback.queue,target,gun,origin,shotEndCFrame)
+end
+
+
+
+local shotOriginCFrame:CFrame=CFrame.lookAt(origin.Position,info.endpoint)
+if opts.redirect then
+opts.redirect(shotOriginCFrame,shotEndCFrame)
+else
+remote:FireServer(shotOriginCFrame,shotEndCFrame)
+end
+local function recordBullet():()
+pcall(function():()
+if not trajectoryCalibration or type(trajectoryCalibration.noteAuthoredShot)~="function"then return end
+trajectoryCalibration:noteAuthoredShot({
+kind="gun",
+source=nativeRedirect and"native-redirect"or"menu",
+tool=gun,
+toolName=gun and gun.Name or"Gun",
+originPos=origin.Position,
+aimPos=info.endpoint,
+target=target,
+silent=false,
+settings={mode="Normal",wallCheck=useWallCheck,
+leadSeconds=info.leadSeconds,motionSource=info.motionSource,
+model=info.model,
+sampleAge=info.sampleAge,samples=info.samples,
+referencePoint=info.capturedPosition and{info.capturedPosition.X,info.capturedPosition.Y,info.capturedPosition.Z},
+predictedPoint={info.endpoint.X,info.endpoint.Y,info.endpoint.Z},
+sampledVelocity={info.velocity.X,info.velocity.Y,info.velocity.Z},
+rtt=info.rtt,echoDelay=info.echoDelay,
+rttEngine=info.rttEngine,rttData=info.rttData,
+occluder=lastGunOccluder,
+echoSamples=info.echoSamples,
+turnRate=info.turnRate,brakeSeconds=info.brakeSeconds,
+leadCorrection=info.leadCorrection,
+leadCorrectionTarget=info.leadCorrectionTarget,
+leadSamples=info.leadSamples,aimMode=info.aimMode,
+ghostAvoided=info.ghostAvoided},
+})
+end)
+end
+if nativeRedirect and task and type(task.defer)=="function"then
+task.defer(recordBullet)
+else
+recordBullet()
+end
+if not quiet and ShootFeature then
+ShootFeature:SetStatus(experimental and"Experimental · Bullet · request sent"or nil)
+end
+if not continuous then
+macroUnequip(gun)
+end
+return true
+end
+
+-- Shoot.lua: refreshShootRemoteCache
+local function refreshShootRemoteCache():()local remote:Instance?=nil local okGun:boolean,foundGun:any=pcall(getPlayerWeapon,LocalPlayer,'Gun',true)local gun:Tool?=if okGun then foundGun else nil if gun then pcall(function():()local found:Instance?=gun:FindFirstChild('Shoot')if found and found:IsA('RemoteEvent')then remote=found end end)end cachedShootRemote=remote end
+
+-- Shoot.lua: installNativeGunHook
+local function installNativeGunHook():boolean if state.isMobile then return true end if shotHookInstalled then return true end local hook:any=state.hookMetamethod local getMethod:any=state.getNamecallMethod local checkCaller:any=state.checkCaller if type(hook)~='function'or type(getMethod)~='function'or type(checkCaller)~='function'then return false end if type(task)~='table'or type(task.defer)~='function'then return false end local predecessor:any=nil local pendingRedirects:number=0 local MAX_PENDING_REDIRECTS:number=2 local sendingRedirect:boolean=false local function sendAsExecutor(remote:any,arguments:any):boolean local previous:boolean=sendingRedirect sendingRedirect=true local ok:boolean,failure:any=pcall(function():()remote:FireServer(table.unpack(arguments,1,arguments.n))end)sendingRedirect=previous if not ok then warn('[Wurst] native gun redirect failed: '..tostring(failure))end return ok end local function redirectDeferred(remote:any,arguments:any):()if not shootFeatureActive
+or not shootOptionsReady then sendAsExecutor(remote,arguments)return end local shotOrigin:CFrame?=nil local shotEnd:CFrame?=nil local ok:boolean=pcall(function():any lastRejectReason=''return fireGunAtTarget(getSelectedShootTarget(),{quiet=true,nativeRedirect=true,nativeOrigin=arguments[1],redirect=function(origin:CFrame,endpoint:CFrame):()shotOrigin,shotEnd=origin,endpoint end})end)if shotOrigin and shotEnd then if ShootFeature then pcall(function():()ShootFeature:SetStatus('Native click redirected')end)end local redirected:any=table.pack(shotOrigin,shotEnd)local copied:number=2 for index:number=3,arguments.n do copied+=1 redirected[copied]=arguments[index]end redirected.n=copied sendAsExecutor(remote,redirected)return end if ShootFeature then pcall(function():()ShootFeature:SetStatus(if not ok then'Native redirect failed; original click kept'else(lastRejectReason~=''and lastRejectReason or'Native click unchanged'))end)end sendAsExecutor(remote,arguments)end local function
+redirectNamecall(remote:any,...:any):any if sendingRedirect then return predecessor(remote,...)end if not shootFeatureActive or not shootOptionsReady then return predecessor(remote,...)end if remote~=cachedShootRemote then local now:number=os.clock()if now-lastCacheProbeAt>=0.5 then lastCacheProbeAt=now task.defer(refreshShootRemoteCache)end return predecessor(remote,...)end local okMethod:boolean,method:any=pcall(getMethod)if not okMethod or method~='FireServer'then return predecessor(remote,...)end local okCaller:boolean,fromExecutor:any=pcall(checkCaller)if not okCaller or fromExecutor~=false then return predecessor(remote,...)end local arguments:any=table.pack(...)if typeof(arguments[1])~='CFrame'or typeof(arguments[2])~='CFrame'then return predecessor(remote,...)end if pendingRedirects>=MAX_PENDING_REDIRECTS then return predecessor(remote,...)end pendingRedirects+=1 task.defer(function():()local handled:boolean,failure:any=pcall(redirectDeferred,remote,arguments)pendingRedirects-=
+1 if not handled then warn('[Wurst] native gun redirect error: '..tostring(failure))end end)return nil end local callback:any=redirectNamecall if type(state.newCClosure)=='function'then local ok:boolean,wrapped:any=pcall(state.newCClosure,callback)if ok and type(wrapped)=='function'then callback=wrapped end end local ok:boolean,old:any=pcall(hook,game,'__namecall',callback)if not ok or type(old)~='function'then return false end predecessor=old originalNamecall,shotHookWrapper,shotHookInstalled=old,callback,true return true end
+
+-- Shoot.lua: uninstallNativeGunHook
+local function uninstallNativeGunHook():()if not shotHookInstalled or type(state.hookMetamethod)~='function'then return end local ok:boolean,displaced:any=pcall(state.hookMetamethod,game,'__namecall',originalNamecall)if not ok then return end if displaced==shotHookWrapper then shotHookInstalled,shotHookWrapper,originalNamecall=false,nil,nil elseif type(displaced)=='function'then pcall(state.hookMetamethod,game,'__namecall',displaced)end end local manualShotPending:boolean=false
+
+-- Shoot.lua: triggerManualShot
+local function triggerManualShot():()if state.isMobile and not shootFeatureActive then notify('Enable Gun Aimbot first.')return end if manualShotPending then return end local character,humanoid=getCharacterParts()local gun:Tool?=getPlayerWeapon(LocalPlayer,'Gun')if not character or not humanoid or not gun then notify('No sheriff gun is available.')return end manualShotPending=true local ok:boolean,message:any=pcall(function():()if gun.Parent~=character then humanoid:EquipTool(gun)RunService.Heartbeat:Wait()end if(not state.isMobile or shootFeatureActive)and LocalPlayer.Character==character and gun.Parent==character then if not shootFeatureActive and not state.isMobile then transientShotGeneration+=1 local generation:number=transientShotGeneration transientShotActive=true refreshShootInfrastructure()task.delay(2,function():()if generation~=transientShotGeneration then return end transientShotActive=false refreshShootInfrastructure()end)end fireGunAtTarget(getSelectedShootTarget(),{
+whenReady=true})end end)manualShotPending=false if not ok then notify('Shoot failed: '..tostring(message))end end
+
+-- Shoot.lua: modeKey
+local function modeKey(value:any):string if value=='Experimental'then return'Experimental'end if value=='CFrame'or value=='Silent(Cframe)'or value=='Silent(CFrame)'then return'CFrame'end return'Bullet'end local savedMode:any=values['MM2.Shoot.Aimmethod']local initialMode:string=modeKey(savedMode or(mm2Settings.experimentalAim and'Experimental'or(mm2Settings.silentAim and'CFrame'or'Bullet')))if state.isMobile then if savedMode=='Bullet'or savedMode=='CFrame'or savedMode=='Silent(CFrame)'then values['MM2.Shoot.Aimmethod']=(savedMode=='CFrame'or savedMode=='Silent(CFrame)')and'Silent(Cframe)'or'Normal(Bullet)'if type(queueConfigSave)=='function'then queueConfigSave()end end else if initialMode=='Experimental'then initialMode='Bullet'end local normalized:string=initialMode=='CFrame'and'Silent(CFrame)'or'Bullet'if values['MM2.Shoot.Aimmethod']~=normalized then values['MM2.Shoot.Aimmethod']=normalized if type(queueConfigSave)=='function'then queueConfigSave()end end end
+
+-- Shoot.lua: modeConfig
+local function modeConfig(mode:string):any local prefix:string='MM2.Shoot.'..mode..'.'local legacy:boolean=mode==initialMode local wall:any=states[prefix..'WallCheck']local macro:any=states[prefix..'Macro']local targetMode:any=values[prefix..'Target']local targetName:any=values[prefix..'TargetPlayer']if legacy then if wall==nil then wall=states['MM2.Shoot.WallCheck']end if macro==nil then macro=states['MM2.Shoot.Macro']end if targetMode==nil then targetMode=values['MM2.Shoot.Target']end if targetName==nil then targetName=values['MM2.Shoot.Targetplayer']end end return{wallCheck=wall==nil or wall==true,macro=macro==true,targetMode=targetMode=='Custom'and'Custom'or'Murder',targetName=type(targetName)=='string'and targetName or''}end local modeConfigs:any={Bullet=modeConfig('Bullet'),CFrame=modeConfig('CFrame'),Experimental=modeConfig('Experimental')}local activeModeKey:string=initialMode local switching:boolean=false local optionsReady:boolean=false local ShootTargetBox
+
+-- Shoot.lua: options_short
+local aimMethods:{string}=state.isMobile and{'Normal(Bullet)','Silent(Cframe)','Experimental'}or{'Bullet','Silent(CFrame)'}addCycleOption(ShootFeature,'Aim method',aimMethods,initialMode=='Experimental'and 3 or(initialMode=='CFrame'and 2 or 1),function(value:string):()activeModeKey=modeKey(value)mm2Settings.experimentalAim=activeModeKey=='Experimental'mm2Settings.silentAim=activeModeKey=='CFrame'syncMode()end,state.isMobile and[[Experimental selects one route based on movement and range; hit-rate improvement is unverified. Options are saved per mode.]]or[[One keybind is shared; WallCheck and target settings are saved per mode.]])addCycleOption(ShootFeature,'Target',{'Murder','Custom'},1,function(value:string):()mm2Settings.shootMode=value if optionsReady and not switching then modeConfigs[activeModeKey].targetMode=value values['MM2.Shoot.'..activeModeKey..'.Target']=value end refreshShootOptions()end)if state.bindFeatureActivationKey then state.bindFeatureActivationKey(ShootFeature,
+mm2Settings.shootKey,triggerManualShot)end if not state.isMobile then local binding:any=state.shortcutBindings and state.shortcutBindings[ShootFeature.configKey]if binding then binding.feedback=nil end if type(state.addFeatureShortcutOption)=='function'then state.addFeatureShortcutOption(ShootFeature,'Keybind',[[Optional: click the box and press a key. It fires in either mode, even when Gun Aimbot is off.]])end end addToggleOption(ShootFeature,'WallCheck',true,function(value:boolean):()mm2Settings.shootWallCheck=value==true if optionsReady and not switching then modeConfigs[activeModeKey].wallCheck=value==true states['MM2.Shoot.'..activeModeKey..'.WallCheck']=value==true end end,'Check for walls; saved independently per mode.')addToggleOption(ShootFeature,'Macro',false,function(value:boolean):()shootMacro=value==true if optionsReady and not switching then modeConfigs[activeModeKey].macro=value==true states['MM2.Shoot.'..activeModeKey..'.Macro']=value==true end end,
+'Pistol macro: hides the gun after the shot; saved per mode.')ShootTargetBox=addTextOption(ShootFeature,'Target player','',function(value:string):()mm2Settings.shootTarget=value if optionsReady and not switching then modeConfigs[activeModeKey].targetName=value values['MM2.Shoot.'..activeModeKey..'.TargetPlayer']=value if type(queueConfigSave)=='function'then queueConfigSave()end end end,false)
