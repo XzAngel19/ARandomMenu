@@ -222,7 +222,7 @@ local function addSection(parent, text)
 end
 
 local UNIMPLEMENTED_TOGGLES = {
-    ["Knife Tracer"] = true, ["Self HP"] = true,
+    ["Knife Tracer"] = true, ["Self HP"] = true, ["Chams Show Perk"] = true,
     ["Reset When Full Coin Bag"] = true, ["Fling Murder After Full Bag"] = true,
     ["Fling Sheriff After Full Bag"] = true, ["Auto Grab Gun And Shoot"] = true,
     ["Auto Kill All When Full Bag"] = true,
@@ -231,8 +231,6 @@ local UNIMPLEMENTED_TOGGLES = {
     ["Hide Distant Scenery"] = true, ["Simplify Terrain"] = true, ["Disable Post Effects"] = true,
     ["Simple Lighting"] = true, ["Disable Local Lights"] = true, ["Simplify Game UI"] = true,
     ["Hide World UI"] = true, ["Hide Game UI"] = true, ["Hide Roblox Panels"] = true,
-    ["Instant Roles"] = true, ["Gun Notification"] = true, ["Murder Close"] = true,
-    ["Sheriff Down"] = true, ["Your Role"] = true, ["Round Events"] = true, ["Murderer Defeated"] = true,
     ["Don't Show Again"] = true,
 }
 
@@ -1091,6 +1089,12 @@ local function installGameplay(screenGui)
     local mm2UnboxStep = function() end
     local mm2WinStep = function() end
     local mm2GunAssistStep = function() end
+    local mm2CoinEspStep = function() end
+    local mm2NotificationsStep = function() end
+    local airWalkStep = function() end
+    local chamsStep = function() end
+    local nametagsStep = function() end
+    local playerHealthStep = function() end
     local mm2Cleanup = function() end
     local cleanupItemEsp = function() end
     local stopped = false
@@ -1100,12 +1104,12 @@ local function installGameplay(screenGui)
         ["Custom Jump Power"] = true, ["Infinite Jump"] = true,
         ["Fullbright"] = true, ["Time Changer"] = true, ["Fast Time"] = true,
         ["Custom FOV"] = true, ["Custom Zoom"] = true,
-        ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true,
-        ["X-Ray"] = true, ["Anti AFK"] = true,
+        ["Instant Prompts"] = true, ["Proximity Prompts"] = true, ["Click Detectors"] = true, ["Air Walk"] = true,
+        ["X-Ray"] = true, ["Anti AFK"] = true, ["Chams"] = true, ["Nametags"] = true, ["HP Players"] = true,
         ["Gun ESP"] = true, ["Trap ESP"] = true,
         ["Auto Farm"] = true, ["Knife Aura"] = true, ["Coins Aura"] = true,
         ["Auto Vote"] = true, ["Auto Shoot"] = true, ["Auto Unbox"] = true, ["Auto Win"] = true,
-        ["Insta Kill As Sheriff"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true,
+        ["Insta Kill As Sheriff"] = true, ["Gun Aura"] = true, ["Auto Get Gun"] = true, ["Coin ESP"] = true,
     }
     local function message(text)
         if AngelHub.notify then AngelHub.notify(text, false, true) end
@@ -1231,6 +1235,35 @@ local function installGameplay(screenGui)
             if enabled["Gun Aura"] then AngelHub.setters["Gun Aura"](false) end
             if enabled["Auto Get Gun"] then AngelHub.setters["Auto Get Gun"](false) end
             message("Gun assist stopped: runtime error")
+        end
+        local notificationOk, notificationError = pcall(mm2NotificationsStep, dt, root)
+        if not notificationOk and not AngelHub.notificationError then
+            AngelHub.notificationError = true; warn("Angel Hub notifications error: " .. tostring(notificationError))
+        end
+        local hpOk, hpError = pcall(playerHealthStep, dt, root)
+        if not hpOk then
+            warn("Angel Hub HP error: " .. tostring(hpError))
+            if enabled["HP Players"] then AngelHub.setters["HP Players"](false); message("HP Players stopped: runtime error") end
+        end
+        local tagOk, tagError = pcall(nametagsStep, dt, root)
+        if not tagOk then
+            warn("Angel Hub Nametags error: " .. tostring(tagError))
+            if enabled["Nametags"] then AngelHub.setters["Nametags"](false); message("Nametags stopped: runtime error") end
+        end
+        local chamsOk, chamsError = pcall(chamsStep, dt)
+        if not chamsOk then
+            warn("Angel Hub Chams error: " .. tostring(chamsError))
+            if enabled["Chams"] then AngelHub.setters["Chams"](false); message("Chams stopped: runtime error") end
+        end
+        local airOk, airError = pcall(airWalkStep, dt, character, humanoid, root)
+        if not airOk then
+            warn("Angel Hub Air Walk error: " .. tostring(airError))
+            if enabled["Air Walk"] then AngelHub.setters["Air Walk"](false); message("Air Walk stopped: runtime error") end
+        end
+        local coinEspOk, coinEspError = pcall(mm2CoinEspStep, dt)
+        if not coinEspOk then
+            warn("Angel Hub Coin ESP error: " .. tostring(coinEspError))
+            if enabled["Coin ESP"] then AngelHub.setters["Coin ESP"](false); message("Coin ESP stopped: runtime error") end
         end
         local winOk, winError = pcall(mm2WinStep, dt, character, humanoid, root)
         if not winOk then
@@ -3216,9 +3249,550 @@ local function installGameplay(screenGui)
             if not enabled["Gun Aura"] and not enabled["Auto Get Gun"] then gunAssist.cleanup() end
         end
     end
+    local coinEsp = {}
+    do
+        local markers, connections = {}, {}
+        local elapsed, dirty, serverFamily, activeMap, serverMap = 2, true, nil, nil, nil
+        local familyOrder = {
+            {"Egg", {"egg"}}, {"BeachBall", {"beachball", "beach ball"}},
+            {"SnowToken", {"snowtoken", "snow token", "snowball", "snow ball"}},
+            {"Candy", {"candy", "candies", "candied"}}, {"Heart", {"heart"}},
+        }
+        local function clear()
+            for visual, box in pairs(markers) do
+                markers[visual] = nil; pcall(function() box:Destroy() end)
+            end
+        end
+        local function disconnect()
+            for _, connection in ipairs(connections) do connection:Disconnect() end
+            table.clear(connections)
+        end
+        local function workspaceFamily()
+            local ok, name = pcall(function() return string.lower(tostring(workspace:GetAttribute("CurrentEvent") or "")) end)
+            if ok then
+                for _, pair in ipairs({{"halloween", "Candy"}, {"christmas", "SnowToken"}, {"summer", "BeachBall"}, {"easter", "Egg"}, {"valentine", "Heart"}}) do
+                    if string.find(name, pair[1], 1, true) then return pair[2] end
+                end
+            end
+            for _, pair in ipairs({{"isValentines", "Heart"}, {"isChristmas", "SnowToken"}, {"isChristmasEnding", "SnowToken"}, {"IsSummer", "BeachBall"}, {"IsEaster", "Egg"}}) do
+                local success, active = pcall(function() return workspace:GetAttribute(pair[1]) end)
+                if success and active == true then return pair[2] end
+            end
+            return nil
+        end
+        local function familyOf(part, active)
+            local names = {}
+            for _, child in ipairs(part:GetDescendants()) do table.insert(names, child.Name) end
+            local text = string.lower(table.concat(names, " "))
+            for _, data in ipairs(familyOrder) do
+                for _, phrase in ipairs(data[2]) do
+                    if string.find(text, phrase, 1, true) then return data[1] end
+                end
+            end
+            return active or "Coin"
+        end
+        local function usable(part, map)
+            if not part or not part:IsA("BasePart") or not part:IsDescendantOf(map)
+                or part:GetAttribute("Collected") == true or part:GetAttribute("Delete") == true then return false end
+            local ancestor = part.Parent
+            while ancestor and ancestor ~= map do
+                if ancestor:FindFirstChildOfClass("Humanoid") then return false end
+                if ancestor:IsA("BasePart") and (ancestor:GetAttribute("Collected") == true or ancestor:GetAttribute("Delete") == true) then return false end
+                ancestor = ancestor.Parent
+            end
+            return ancestor == map
+        end
+        function coinEsp.toggle(value)
+            disconnect(); clear(); serverFamily = nil; activeMap, serverMap = nil, nil; elapsed, dirty = 2, true
+            if not value then return end
+            local gameplay = shooter.gameplay()
+            local started = gameplay and gameplay:FindFirstChild("CoinsStarted")
+            if started and started:IsA("RemoteEvent") then
+                table.insert(connections, started.OnClientEvent:Connect(function(bags)
+                    serverFamily, serverMap = nil, mm2Map()
+                    if type(bags) == "table" then
+                        for _, family in ipairs({"Coin", "Candy", "SnowToken", "BeachBall", "Egg", "Heart"}) do
+                            if bags[family] ~= nil then serverFamily = family; break end
+                        end
+                    end
+                    dirty = true
+                end))
+            end
+            local ended = gameplay and gameplay:FindFirstChild("RoundEndFade")
+            if ended and ended:IsA("RemoteEvent") then
+                table.insert(connections, ended.OnClientEvent:Connect(function() serverFamily, serverMap = nil, nil; dirty = true end))
+            end
+        end
+        function coinEsp.step(dt)
+            if not isMM2 or not enabled["Coin ESP"] then return end
+            elapsed += math.max(0, dt)
+            if not dirty and elapsed < 1 then return end
+            elapsed, dirty = 0, false
+            local map = mm2Map()
+            if map ~= activeMap then
+                clear(); activeMap = map
+                if serverMap ~= map then serverFamily, serverMap = nil, nil end
+            end
+            if not map then clear(); return end
+            local active = serverFamily or workspaceFamily()
+            local wanted = V["Coin In Use"] or "Auto (Server)"
+            local found = {}
+            local function consider(object)
+                if not object:IsA("BasePart") then return end
+                local visual = object
+                if object.Name == "Coin_Server" or object.Name == "ServerCoinPart" then
+                    visual = object:FindFirstChild("CoinVisual")
+                end
+                if not usable(visual, map) or found[visual] then return end
+                local family = familyOf(visual, active)
+                if wanted ~= "All" and wanted ~= "Auto (Server)" and wanted ~= family then return end
+                if wanted == "Auto (Server)" and active and active ~= family then return end
+                found[visual] = true
+                local box = markers[visual]
+                if not box then
+                    box = Instance.new("BoxHandleAdornment")
+                    box.Name = "AngelHub_CoinMarker"; box.Adornee = visual; box.AlwaysOnTop = true; box.ZIndex = 5
+                    box.Parent = screenGui; markers[visual] = box
+                end
+                box.Color3 = V["Coin Colour"]
+                box.Transparency = math.clamp(tonumber(V["Coin Transparency"]) or 0, 0, 1)
+                box.Size = visual.Size * 1.3
+            end
+            local ok, collection = pcall(function() return game:GetService("CollectionService") end)
+            if ok and collection then
+                for _, object in ipairs(collection:GetTagged("CoinVisual")) do consider(object) end
+            end
+            for _, object in ipairs(map:GetDescendants()) do
+                if object:IsA("BasePart") and (object.Name == "CoinVisual" or object.Name == "Coin_Server"
+                    or object.Name == "ServerCoinPart" or object:GetAttribute("CoinID") ~= nil) then consider(object) end
+            end
+            for visual, box in pairs(markers) do
+                if not found[visual] then markers[visual] = nil; pcall(function() box:Destroy() end) end
+            end
+        end
+        function coinEsp.cleanup() coinEsp.toggle(false) end
+    end
+    local notifications = {}
+    do
+        local connectionList, bound, mapSeen = {}, nil, nil
+        local data, generation, busy, nextPoll, elapsed, blocked, rolesOnMap = {}, 0, false, 0, 0, false, false
+        local murdererAnnounced, sheriffAnnounced, localAnnounced = nil, nil, nil
+        local trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
+        local gunAnnounced, lastClose = false, -math.huge
+        local function wanted()
+            if enabled["Chams"] or enabled["Nametags"] or enabled["HP Players"] then return true end
+            for _, name in ipairs({"Instant Roles", "Gun Notification", "Murder Close", "Sheriff Down", "Your Role", "Round Events", "Murderer Defeated"}) do
+                if V[name] == true then return true end
+            end
+            return false
+        end
+        local function clearState()
+            generation += 1; data, nextPoll, rolesOnMap = {}, 0, false
+            murdererAnnounced, sheriffAnnounced, localAnnounced = nil, nil, nil
+            trackedMurder, trackedSheriff, defeatAnnounced, sheriffDownAnnounced = nil, nil, false, false
+            gunAnnounced, lastClose = false, -math.huge
+        end
+        local function disconnect()
+            for _, c in ipairs(connectionList) do c:Disconnect() end
+            table.clear(connectionList); bound = nil
+        end
+        local function getRecord(player)
+            for key, value in pairs(data) do
+                if type(value) == "table" and (tostring(key) == player.Name or tostring(key) == tostring(player.UserId)
+                    or value.Name == player.Name or (value.UserId ~= nil and tostring(value.UserId) == tostring(player.UserId))) then return value end
+            end
+        end
+        local function dead(player)
+            if not player then return false end
+            local record = getRecord(player)
+            if record and (record.Dead == true or record.Killed == true or record.Role == "Dead") then return true end
+            local character = player.Character
+            local human = character and character:FindFirstChildOfClass("Humanoid")
+            return human ~= nil and human.Health <= 0
+        end
+        local function updateData(result, replace)
+            if type(result) ~= "table" then return end
+            if replace then data = {} end
+            for key, value in pairs(result) do if type(value) == "table" then data[key] = value end end
+        end
+        local function bind()
+            local gameplay = shooter.gameplay()
+            if gameplay == bound and gameplay then return end
+            disconnect(); clearState(); bound = gameplay
+            if not gameplay then return end
+            local changed = gameplay:FindFirstChild("PlayerDataChanged")
+            if changed and changed:IsA("RemoteEvent") then
+                table.insert(connectionList, changed.OnClientEvent:Connect(function(result)
+                    if stopped or not wanted() or blocked or not mm2Map() then return end
+                    generation += 1
+                    if type(result) == "table" and next(result) then updateData(result, false) else data = {} end
+                    elapsed = 0.25
+                end))
+            end
+            local ended = gameplay:FindFirstChild("RoundEndFade")
+            if ended and ended:IsA("RemoteEvent") then
+                table.insert(connectionList, ended.OnClientEvent:Connect(function()
+                    if V["Round Events"] and mapSeen then message("Round ended") end
+                    blocked = true; clearState()
+                end))
+            end
+            for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew"}) do
+                local event = gameplay:FindFirstChild(name)
+                if event and event:IsA("RemoteEvent") then
+                    table.insert(connectionList, event.OnClientEvent:Connect(function(duration, result)
+                        if name == "RoundStart" and (not tonumber(duration) or tonumber(duration) <= 0) then return end
+                        if blocked then clearState() else generation += 1 end
+                        blocked = false; nextPoll = 0
+                        if type(result) == "table" then updateData(result, false) end
+                        if name == "RoundStart" and V["Round Events"] and mapSeen then message("Round started") end
+                        elapsed = 0.25
+                    end))
+                end
+            end
+        end
+        local function request()
+            if busy or os.clock() < nextPoll or not bound or not mapSeen then return end
+            nextPoll = os.clock() + 2
+            local remote = bound:FindFirstChild("GetCurrentPlayerData")
+            if not remote or not remote:IsA("RemoteFunction") then return end
+            busy = true
+            local ticket, map = generation, mapSeen
+            task.spawn(function()
+                local ok, result = pcall(function() return remote:InvokeServer() end)
+                busy = false
+                if ok and not stopped and wanted() and not blocked and ticket == generation and map == mm2Map() then
+                    updateData(result, true); elapsed = 0.25
+                end
+            end)
+        end
+        function notifications.step(dt, root)
+            if not isMM2 then return end
+            if not wanted() then
+                if bound then disconnect(); clearState(); mapSeen = nil end
+                return
+            end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.2 then return end
+            elapsed = 0
+            bind()
+            local map = mm2Map()
+            if map ~= mapSeen then clearState(); mapSeen = map; blocked = false end
+            rolesOnMap = map ~= nil and root ~= nil and farmOnMap(root, map) and not blocked
+            if not rolesOnMap then return end
+            request()
+            local murder, sheriff
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local record = getRecord(player)
+                if record and not dead(player) then
+                    if record.Role == "Murderer" then murder = player
+                    elseif record.Role == "Sheriff" or record.Role == "Hero" then sheriff = player end
+                end
+            end
+            if murder and murder ~= trackedMurder then trackedMurder, defeatAnnounced = murder, false end
+            if sheriff and sheriff ~= trackedSheriff then trackedSheriff, sheriffDownAnnounced = sheriff, false end
+            if V["Instant Roles"] then
+                if murder and murdererAnnounced ~= murder then message("Murderer: " .. murder.Name); murdererAnnounced = murder end
+                if sheriff and sheriffAnnounced ~= sheriff then message("Sheriff/Hero: " .. sheriff.Name); sheriffAnnounced = sheriff end
+            end
+            if V["Your Role"] then
+                local record = getRecord(localPlayer)
+                local role = record and record.Role
+                if type(role) == "string" and role ~= "" and localAnnounced ~= role then message("Your role: " .. role); localAnnounced = role end
+            end
+            if V["Murderer Defeated"] and trackedMurder and not defeatAnnounced and dead(trackedMurder) then
+                message("Murderer defeated: " .. trackedMurder.Name); defeatAnnounced = true
+            end
+            if V["Sheriff Down"] and trackedSheriff and not sheriffDownAnnounced and dead(trackedSheriff) then
+                message("Sheriff/Hero down: " .. trackedSheriff.Name); sheriffDownAnnounced = true
+            end
+            if V["Murder Close"] and murder and murder ~= localPlayer then
+                local target = murder.Character and murder.Character:FindFirstChild("HumanoidRootPart")
+                local radius = math.clamp(tonumber(V["Close Radius"]) or 40, 10, 120)
+                local cooldown = math.clamp(tonumber(V["Close Cooldown"]) or 10, 2, 30)
+                if target and (target.Position - root.Position).Magnitude <= radius and os.clock() - lastClose >= cooldown then
+                    message("Murderer nearby: " .. murder.Name); lastClose = os.clock()
+                end
+            end
+            if V["Gun Notification"] then
+                local drop = findDroppedGun()
+                if drop and not gunAnnounced then message("Gun dropped"); gunAnnounced = true
+                elseif not drop then gunAnnounced = false end
+            end
+        end
+        function notifications.role(player)
+            if not rolesOnMap or blocked then return nil end
+            local record = getRecord(player)
+            if not record then return nil end
+            if record.Dead == true or record.Killed == true then return "Dead" end
+            if record.Role == "Murderer" or record.Role == "Sheriff" or record.Role == "Hero"
+                or record.Role == "Innocent" or record.Role == "Dead" then return record.Role end
+            return nil
+        end
+        function notifications.cleanup() disconnect(); clearState(); mapSeen = nil end
+    end
+    local airWalk = {}
+    do
+        local platform, controls, tracked, airY = nil, nil, nil, nil
+        local heldUp, heldDown, controlConnections = {}, {}, {}
+        local function clearInput() table.clear(heldUp); table.clear(heldDown) end
+        local function destroyPlatform()
+            if platform then pcall(function() platform:Destroy() end); platform = nil end
+            tracked, airY = nil, nil
+        end
+        local function destroyControls()
+            for _, connection in ipairs(controlConnections) do connection:Disconnect() end
+            table.clear(controlConnections)
+            if controls then pcall(function() controls:Destroy() end); controls = nil end
+        end
+        function airWalk.toggle(value)
+            destroyPlatform(); destroyControls(); clearInput()
+            if not value or not userInputService.TouchEnabled then return end
+            controls = Instance.new("Frame")
+            controls.Name = "AngelHubAirWalkControls"; controls.Size = UDim2.fromScale(1, 1)
+            controls.BackgroundTransparency = 1; controls.Parent = screenGui
+            for _, spec in ipairs({{"Up", "+", -152, heldUp}, {"Down", "−", -96, heldDown}}) do
+                local button = Instance.new("TextButton")
+                button.Name = spec[1]; button.Text = spec[2]
+                button.Position = UDim2.new(1, -70, 1, spec[3]); button.Size = UDim2.fromOffset(48, 48)
+                button.TextSize = 18; button.TextColor3 = Color3.new(1, 1, 1)
+                button.BackgroundColor3 = Color3.fromRGB(25, 25, 25); button.BackgroundTransparency = 0.3
+                button.ZIndex = 31; button.Parent = controls
+                local bucket = spec[4]
+                table.insert(controlConnections, button.InputBegan:Connect(function(input)
+                    if enabled["Air Walk"] and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then bucket[input] = true end
+                end))
+                table.insert(controlConnections, button.InputEnded:Connect(function(input) bucket[input] = nil end))
+            end
+        end
+        function airWalk.step(dt, character, humanoid, root)
+            if not enabled["Air Walk"] then return end
+            if not character or not humanoid or not root or root.Anchored or humanoid.SeatPart then destroyPlatform(); clearInput(); return end
+            local hip = tonumber(humanoid.HipHeight) or 2
+            if hip <= 0 then hip = 2 end
+            local foot = root.Position.Y - hip - root.Size.Y * 0.5 - 0.5
+            if tracked ~= character or not airY then tracked, airY = character, foot end
+            if not platform or not platform.Parent then
+                platform = Instance.new("Part")
+                platform.Name = "AngelHubAirWalkPlatform"; platform.Anchored = true; platform.CanCollide = true
+                platform.CanQuery = false; platform.CanTouch = false; platform.CastShadow = false
+                platform.Size = Vector3.new(16, 1, 16); platform.Transparency = 1; platform.Parent = workspace
+            end
+            local up, down = next(heldUp) ~= nil, next(heldDown) ~= nil
+            local step = math.clamp(tonumber(dt) or 0, 0, 0.1)
+            local velocity = root.AssemblyLinearVelocity
+            if up and not down then
+                airY = math.max(airY, foot) + 22 * step
+                if velocity.Y < 22 then root.AssemblyLinearVelocity = Vector3.new(velocity.X, 22, velocity.Z) end
+            elseif down and not up then
+                airY = foot - 22 * step - 1.4
+                if velocity.Y > -22 then root.AssemblyLinearVelocity = Vector3.new(velocity.X, -22, velocity.Z) end
+            else
+                airY = math.max(airY, foot)
+            end
+            platform.CFrame = CFrame.new(root.Position.X, airY, root.Position.Z)
+        end
+        function airWalk.inputBegan(input, processed)
+            if not enabled["Air Walk"] or processed or userInputService:GetFocusedTextBox() then return end
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode == Enum.KeyCode.Space then heldUp[input.KeyCode] = true
+                elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then heldDown[input.KeyCode] = true end
+            end
+        end
+        function airWalk.inputEnded(input)
+            heldUp[input], heldDown[input] = nil, nil
+            if input.UserInputType == Enum.UserInputType.Keyboard then heldUp[input.KeyCode], heldDown[input.KeyCode] = nil, nil end
+        end
+        function airWalk.clearInput() clearInput() end
+        function airWalk.cleanup() airWalk.toggle(false) end
+    end
+    local chams = {}
+    do
+        local highlights, elapsed = {}, 0
+        local function clear()
+            for player, highlight in pairs(highlights) do
+                highlights[player] = nil; pcall(function() highlight:Destroy() end)
+            end
+        end
+        function chams.toggle(value) clear(); elapsed = value and 1 or 0 end
+        function chams.step(dt)
+            if not enabled["Chams"] then return end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.2 then return end
+            elapsed = 0
+            local seen = {}
+            for _, player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer and player.Character then
+                    local character = player.Character
+                    local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    local role = isMM2 and notifications.role(player) or nil
+                    if humanoid and humanoid.Health <= 0 and role then role = "Dead" end
+                    local visibleRole = not role or V[role .. " ESP"] == true
+                    local sameTeam = localPlayer.Team ~= nil and player.Team == localPlayer.Team
+                        and not localPlayer.Neutral and not player.Neutral
+                    local allowedTeam = isMM2 or V["Chams Teammates"] == true or not sameTeam
+                    if character.Parent and character:IsDescendantOf(workspace) and humanoid
+                        and (humanoid.Health > 0 or role == "Dead") and visibleRole and allowedTeam then
+                        seen[player] = true
+                        local highlight = highlights[player]
+                        if not highlight then
+                            highlight = Instance.new("Highlight"); highlight.Name = "AngelHubChams"
+                            highlight.Parent = screenGui; highlights[player] = highlight
+                        end
+                        local roleColour = isMM2 and role and V["Role Colours"] and V[role .. " Colour"] or nil
+                        local teamColour = not isMM2 and V["Chams Team Colours"] and player.Team and player.Team.TeamColor.Color or nil
+                        highlight.Adornee = character
+                        highlight.FillColor = roleColour or teamColour or V["Chams Fill Colour"]
+                        highlight.OutlineColor = roleColour or teamColour or V["Chams Outline Colour"]
+                        highlight.FillTransparency = math.clamp(tonumber(V["Chams Fill Transparency"]) or 0.5, 0, 1)
+                        highlight.OutlineTransparency = math.clamp(tonumber(V["Chams Outline Transparency"]) or 0, 0, 1)
+                        highlight.DepthMode = V["Chams Through Walls"] and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+                    end
+                end
+            end
+            for player, highlight in pairs(highlights) do
+                if not seen[player] then highlights[player] = nil; pcall(function() highlight:Destroy() end) end
+            end
+        end
+        function chams.cleanup() clear() end
+    end
+    local nametags = {}
+    do
+        local tags, elapsed = {}, 0
+        local function remove(player)
+            local tag = tags[player]; tags[player] = nil
+            if tag then pcall(function() tag.gui:Destroy() end) end
+        end
+        function nametags.toggle(value)
+            for player in pairs(tags) do remove(player) end
+            elapsed = value and 1 or 0
+        end
+        function nametags.step(dt, localRoot)
+            if not enabled["Nametags"] then return end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.2 then return end
+            elapsed = 0
+            local seen = {}
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local character = player.Character
+                if player ~= localPlayer and character and character.Parent and character:IsDescendantOf(workspace) then
+                    local human = character:FindFirstChildOfClass("Humanoid")
+                    local targetRoot = character:FindFirstChild("HumanoidRootPart")
+                    local head = character:FindFirstChild("Head") or targetRoot
+                    local role = isMM2 and notifications.role(player) or nil
+                    if human and human.Health <= 0 and role then role = "Dead" end
+                    local sameTeam = localPlayer.Team ~= nil and player.Team == localPlayer.Team
+                        and not localPlayer.Neutral and not player.Neutral
+                    local eligible = (isMM2 or V["Nametag Teammates"] == true or not sameTeam)
+                        and (not role or V[role .. " ESP"] == true)
+                    local distance = localRoot and targetRoot and (targetRoot.Position - localRoot.Position).Magnitude or math.huge
+                    local limit = math.clamp(tonumber(V["Nametag Max Distance"]) or 1000, 0, 5000)
+                    if eligible and human and (human.Health > 0 or role == "Dead") and head and head:IsA("BasePart") and distance <= limit then
+                        seen[player] = true
+                        local tag = tags[player]
+                        if not tag then
+                            local gui = Instance.new("BillboardGui")
+                            gui.Name = "AngelHubNametag"; gui.Size = UDim2.fromOffset(230, 38)
+                            gui.StudsOffset = Vector3.new(0, 2.6, 0); gui.Parent = screenGui
+                            local label = Instance.new("TextLabel")
+                            label.Name = "Label"; label.Size = UDim2.fromScale(1, 1)
+                            label.Font = Enum.Font.SourceSansBold; label.TextStrokeTransparency = 0.3
+                            label.BackgroundColor3 = Color3.fromRGB(20, 20, 20); label.BorderSizePixel = 0; label.Parent = gui
+                            tag = {gui = gui, label = label}; tags[player] = tag
+                        end
+                        local text = {}
+                        if V["Display Name"] then table.insert(text, player.DisplayName) end
+                        if V["Account Name"] then table.insert(text, "@" .. player.Name) end
+                        if #text == 0 then table.insert(text, player.Name) end
+                        if V["Show Role"] and role then table.insert(text, "[" .. role .. "]") end
+                        if V["Nametag Distance"] then table.insert(text, tostring(math.floor(distance + 0.5)) .. " studs") end
+                        if V["Held Tool"] then
+                            local tool = character:FindFirstChildOfClass("Tool")
+                            if tool then table.insert(text, "[" .. tool.Name .. "]") end
+                        end
+                        tag.gui.Adornee = head; tag.gui.AlwaysOnTop = V["Nametag Through Walls"] == true
+                        tag.label.Text = table.concat(text, " ")
+                        tag.label.TextSize = math.clamp(tonumber(V["Nametag Text Size"]) or 14, 10, 24)
+                        tag.label.BackgroundTransparency = V["Nametag Background"] and 0.4 or 1
+                        tag.label.TextColor3 = (isMM2 and role and V["Role Colours"] and V[role .. " Colour"]) or V["Nametag Colour"]
+                    end
+                end
+            end
+            for player in pairs(tags) do if not seen[player] then remove(player) end end
+        end
+        function nametags.cleanup() nametags.toggle(false) end
+    end
+    local playerHealth = {}
+    do
+        local tags, elapsed = {}, 0
+        local function remove(player)
+            local tag = tags[player]; tags[player] = nil
+            if tag then pcall(function() tag.gui:Destroy() end) end
+        end
+        function playerHealth.toggle(value)
+            for player in pairs(tags) do remove(player) end
+            elapsed = value and 1 or 0
+        end
+        function playerHealth.step(dt, localRoot)
+            if not enabled["HP Players"] then return end
+            elapsed += math.max(dt, 0)
+            if elapsed < 0.2 then return end
+            elapsed = 0
+            local seen = {}
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local character = player.Character
+                if player ~= localPlayer and character and character.Parent and character:IsDescendantOf(workspace) then
+                    local human = character:FindFirstChildOfClass("Humanoid")
+                    local targetRoot = character:FindFirstChild("HumanoidRootPart")
+                    local head = character:FindFirstChild("Head") or targetRoot
+                    local role = isMM2 and notifications.role(player) or nil
+                    local sameTeam = localPlayer.Team ~= nil and player.Team == localPlayer.Team
+                        and not localPlayer.Neutral and not player.Neutral
+                    local eligible = (isMM2 or V["HP Teammates"] == true or not sameTeam)
+                        and (not role or V[role .. " ESP"] == true)
+                    local distance = localRoot and targetRoot and (targetRoot.Position - localRoot.Position).Magnitude or math.huge
+                    local limit = math.clamp(tonumber(V["HP Max Distance"]) or 1000, 0, 5000)
+                    if eligible and human and human.Health > 0 and head and head:IsA("BasePart") and distance <= limit then
+                        seen[player] = true
+                        local tag = tags[player]
+                        if not tag then
+                            local gui = Instance.new("BillboardGui")
+                            gui.Name = "AngelHubPlayerHP"; gui.Size = UDim2.fromOffset(120, 20)
+                            gui.StudsOffset = Vector3.new(0, 3.8, 0); gui.Parent = screenGui
+                            local bar = Instance.new("Frame")
+                            bar.Name = "Bar"; bar.Size = UDim2.fromScale(1, 1); bar.BorderSizePixel = 0
+                            bar.BackgroundColor3 = Color3.fromRGB(20, 20, 20); bar.Parent = gui
+                            local fill = Instance.new("Frame")
+                            fill.Name = "Fill"; fill.BorderSizePixel = 0; fill.Parent = bar
+                            local label = Instance.new("TextLabel")
+                            label.Name = "Health"; label.Size = UDim2.fromScale(1, 1); label.BackgroundTransparency = 1
+                            label.Font = Enum.Font.SourceSansBold; label.TextSize = 14; label.TextColor3 = Color3.fromRGB(255, 255, 255)
+                            label.TextStrokeTransparency = 0.2; label.Parent = gui
+                            tag = {gui=gui, fill=fill, label=label}; tags[player] = tag
+                        end
+                        local maximum = math.max(tonumber(human.MaxHealth) or 100, 1)
+                        local health = math.max(0, tonumber(human.Health) or 0)
+                        local ratio = math.clamp(health / maximum, 0, 1)
+                        tag.gui.Adornee = head; tag.gui.AlwaysOnTop = V["HP Through Walls"] == true
+                        tag.fill.Size = UDim2.fromScale(ratio, 1)
+                        tag.fill.BackgroundColor3 = Color3.fromRGB(math.floor(255 * (1 - ratio)), math.floor(220 * ratio), 40)
+                        tag.label.Visible = V["HP Health Text"] == true
+                        tag.label.Text = tostring(math.floor(health + 0.5)) .. " / " .. tostring(math.floor(maximum + 0.5))
+                    end
+                end
+            end
+            for player in pairs(tags) do if not seen[player] then remove(player) end end
+        end
+        function playerHealth.cleanup() playerHealth.toggle(false) end
+    end
+    airWalkStep = airWalk.step
+    playerHealthStep = playerHealth.step
+    chamsStep = chams.step
+    nametagsStep = nametags.step
     mm2GunAssistStep = gunAssist.step
+    mm2CoinEspStep = coinEsp.step
+    mm2NotificationsStep = notifications.step
     mm2WinStep = autoWin.step
-    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); knifeGeneration += 1 end
+    mm2Cleanup = function() farmStop(); resetCoinAura(); resetAutoVote(false); shooter.stop(); autoWin.cleanup(); emotes.cleanup(); gunAssist.cleanup(); coinEsp.cleanup(); notifications.cleanup(); airWalk.cleanup(); chams.cleanup(); nametags.cleanup(); playerHealth.cleanup(); knifeGeneration += 1 end
     local moduleNames = AngelHub.moduleNames or {}
     for name in pairs(moduleNames) do
         local old = AngelHub.setters[name]
@@ -3237,12 +3811,12 @@ local function installGameplay(screenGui)
                 end
                 local gameplay, collected, ended
                 if value == true and name == "Auto Win" then
-                    if enabled["Auto Farm"] or enabled["Enable Speed"] or enabled["Noclip"] then
-                        old(false); message("Auto Win: disable Auto Farm, Speed and Noclip first"); return false
+                    if enabled["Auto Farm"] or enabled["Enable Speed"] or enabled["Noclip"] or enabled["Air Walk"] then
+                        old(false); message("Auto Win: disable Auto Farm, Speed, Noclip and Air Walk first"); return false
                     end
                     if not autoWin.canStart() then old(false); message("Auto Win: victory event or safe return unavailable"); return false end
                 end
-                if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip") then
+                if value == true and enabled["Auto Win"] and (name == "Auto Farm" or name == "Enable Speed" or name == "Noclip" or name == "Air Walk") then
                     old(false); message(name .. ": disable Auto Win first"); return false
                 end
                 if value == true and name == "Auto Shoot" and V["Shoot Mode"] ~= "Bullet" and V["Shoot Mode"] ~= "CFrame" then
@@ -3257,6 +3831,12 @@ local function installGameplay(screenGui)
                 end
                 if value == true and name == "Coins Aura" and type(firetouchinterest) ~= "function" then
                     old(false); message("Coins Aura: touch API unavailable"); return false
+                end
+                if value == true and name == "Air Walk" and (enabled["Auto Farm"] or enabled["Noclip"]) then
+                    old(false); message("Air Walk: disable Auto Farm and Noclip first"); return false
+                end
+                if value == true and enabled["Air Walk"] and (name == "Auto Farm" or name == "Noclip") then
+                    old(false); message(name .. ": disable Air Walk first"); return false
                 end
                 if value == true and name == "Auto Farm" then
                     if farmPark and not leaveFarmPark() then old(false); message("Auto Farm: Safe Zone return pending"); return false end
@@ -3286,6 +3866,11 @@ local function installGameplay(screenGui)
                 if name == "Auto Unbox" then unbox.toggle(value) end
                 if name == "Auto Win" then autoWin.toggle(value) end
                 if name == "Gun Aura" or name == "Auto Get Gun" then gunAssist.toggle() end
+                if name == "Coin ESP" then coinEsp.toggle(value == true) end
+                if name == "Air Walk" then airWalk.toggle(value == true) end
+                if name == "Chams" then chams.toggle(value == true) end
+                if name == "Nametags" then nametags.toggle(value == true) end
+                if name == "HP Players" then playerHealth.toggle(value == true) end
                 if name == "Insta Kill As Sheriff" and value then message("Auto Win Sheriff: basic CFrame; separate WallCheck option") end
                 if shootingBefore ~= shooter.active() then
                     if shooter.active() then shooter.start() else shooter.stop() end
@@ -3409,6 +3994,7 @@ local function installGameplay(screenGui)
         return p.X >= at.X and p.X <= at.X + size.X and p.Y >= at.Y and p.Y <= at.Y + size.Y
     end
     listen(userInputService.InputBegan, function(input, processed)
+        airWalk.inputBegan(input, processed)
         if not enabled["Infinite Jump"] or typing() then return end
         if (input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.ButtonA) and not processed then
             jumpHeld, jumpKey = true, input.KeyCode
@@ -3417,12 +4003,13 @@ local function installGameplay(screenGui)
         end
     end)
     listen(userInputService.InputEnded, function(input)
+        airWalk.inputEnded(input)
         if (jumpKey and input.KeyCode == jumpKey) or (jumpTouch and input == jumpTouch) then
             jumpHeld, jumpTouch, jumpKey = false, nil, nil
         end
     end)
-    listen(userInputService.WindowFocusReleased, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
-    listen(userInputService.TextBoxFocused, function() jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    listen(userInputService.WindowFocusReleased, function() airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
+    listen(userInputService.TextBoxFocused, function() airWalk.clearInput(); jumpHeld, jumpTouch, jumpKey = false, nil, nil end)
     if isMM2 then
         AngelHub.actions["Play Emote"] = emotes.play
         AngelHub.actions["Get All Emotes"] = emotes.grant
