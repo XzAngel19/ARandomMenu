@@ -72,7 +72,7 @@ root.Position=Vector3.new(0,-500,0);character.lastPivot=nil;run.PreSimulation:Fi
 assert(not V['Auto Farm'] and root.CanCollide and character.lastPivot==homeFrame)
 root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
 AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11);AngelHub.setters['Noclip'](true)
-assert(not V['Auto Farm']);AngelHub.setters['Noclip'](false);assert(root.CanCollide)
+assert(V['Auto Farm']);AngelHub.setters['Noclip'](false);AngelHub.setters['Auto Farm'](false);assert(root.CanCollide)
 -- Full bag returns to the original interior when Below is active.
 root.Position=Vector3.zero;root.CFrame=homeFrame
 AngelHub.setters['Auto Farm'](true);heartbeat:Fire(.11)

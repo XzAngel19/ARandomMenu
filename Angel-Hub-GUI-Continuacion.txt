@@ -5110,6 +5110,12 @@ return Module
     local function gunStatus(text)
         if AngelHub.setGunStatus then AngelHub.setGunStatus(text) end
     end
+    local function deferredGunStatus(text)
+        if not AngelHub.setGunStatus then return end
+        task.defer(function()
+            if not stopped then pcall(gunStatus,text) end
+        end)
+    end
     -- One sender shared by manual and automatic shots; a refusal never falls
     -- back to a different unchecked constructor. A send error is uncertain.
     local function sendShot(character,root,gun,target,method,wallCheck)
@@ -5208,21 +5214,39 @@ return Module
     local function installHook()
         if installed or type(hookmetamethod)~="function" or type(getnamecallmethod)~="function" or type(checkcaller)~="function" then return end
         local predecessor
+        local function restoreMethod(method)
+            if type(setnamecallmethod)=="function" then pcall(setnamecallmethod,method) end
+        end
         local function redirect(remote,...)
             if stopped or V["Gun Aimbot"]~=true then return predecessor(remote,...) end
             local methodOk,method=pcall(getnamecallmethod)
             local callerOk,caller=pcall(checkcaller)
             if not methodOk or method~="FireServer" or not callerOk or caller~=false
                 or typeof(remote)~="Instance" or remote.Name~="Shoot" then return predecessor(remote,...) end
-            local char,_,root=characterParts();local gun=weapon(LocalPlayer,"Gun")
-            if not char or not root or not gun or gun.Parent~=char or remote~=gun:FindFirstChild("Shoot") then return predecessor(remote,...) end
             local args=table.pack(...)
-            if typeof(args[1])~="CFrame" or typeof(args[2])~="CFrame" then return predecessor(remote,...) end
-            local ok,a,b,target,info,mode=pcall(frames,char,root,gun,args[1])
-            if not ok or not a or not b then gunStatus("Gun Aimbot: sin objetivo o bloqueado; disparo original");return predecessor(remote,...) end
-            gunStatus("Gun Aimbot: disparo redirigido, impacto sin confirmar")
-            queueShot(gun,a,b,target,info,mode);args[1],args[2]=a,b
-            macro(gun,char,generation)
+            if typeof(args[1])~="CFrame" or typeof(args[2])~="CFrame" then
+                restoreMethod(method)
+                return predecessor(remote,...)
+            end
+            local ok,matched,a,b=pcall(function()
+                local char,_,root=characterParts();local gun=weapon(LocalPlayer,"Gun")
+                if not char or not root or not gun or gun.Parent~=char or remote~=gun:FindFirstChild("Shoot") then
+                    return false
+                end
+                local ra,rb,target,info,mode=frames(char,root,gun,args[1])
+                if not ra or not rb then return true,nil,nil end
+                queueShot(gun,ra,rb,target,info,mode)
+                macro(gun,char,generation)
+                return true,ra,rb
+            end)
+            restoreMethod(method)
+            if not ok or not matched then return predecessor(remote,...) end
+            if not a or not b then
+                deferredGunStatus("Gun Aimbot: sin objetivo o bloqueado; disparo original")
+                return predecessor(remote,...)
+            end
+            deferredGunStatus("Gun Aimbot: disparo redirigido, impacto sin confirmar")
+            args[1],args[2]=a,b
             return predecessor(remote,table.unpack(args,1,args.n))
         end
         local callback=redirect
@@ -5697,6 +5721,7 @@ local function installMovementFeatures(screenGui)
         if not V["Enable Speed"] then restoreSpeed();releaseVelocity(speed) end
     end
     local function speedStep(dt)
+        if V["Auto Farm"] and AngelHub.mm2FarmActive then restoreSpeed();releaseVelocity(speed);clearSprintTrail();return end
         local sprint=sprintHeld()
         if not V["Enable Speed"] and not sprint then restoreSpeed();releaseVelocity(speed);clearSprintTrail();return end
         if V["Enable Fly"] then restoreSpeed();releaseVelocity(speed);clearSprintTrail();return end
@@ -5740,6 +5765,9 @@ local function installMovementFeatures(screenGui)
     end
     local function flyStep(dt)
         if not V["Enable Fly"] then return end
+        if V["Auto Farm"] and AngelHub.mm2FarmActive then
+            releaseVelocity(fly);removePlatform();fly.hoverY=nil;clearFlyInput();return
+        end
         local character,humanoid,root=parts()
         if not character or root.Anchored or humanoid.Sit or humanoid.SeatPart then
             releaseVelocity(fly);removePlatform();fly.hoverY=nil;clearFlyInput();return
@@ -8016,6 +8044,7 @@ local function installMM2Farm(screenGui)
     local function farmStopMovement()
         local wasBelow, previousCharacter, home = farmBelowEngaged, farmCharacter, farmHomeCFrame
         farmBelowEngaged, farmHoverTarget, farmHomeCFrame, farmInitialHold = false, nil, nil, false
+        AngelHub.mm2FarmActive = farmPark ~= nil
         restore("farmBody"); restore("farmSize")
         for part, original in pairs(farmCollision) do
             pcall(function() if part.CanCollide == false then part.CanCollide = original end end)
@@ -8095,6 +8124,7 @@ local function installMM2Farm(screenGui)
             end)
         end
         farmPark = nil
+        AngelHub.mm2FarmActive = farmBelowEngaged == true
         pcall(function() parked.part:Destroy() end)
         return true
     end
@@ -8129,6 +8159,7 @@ local function installMM2Farm(screenGui)
         local moved = pcall(function() character:PivotTo(CFrame.new(platformPosition + Vector3.new(0, 5, 0))) end)
         if not moved then pcall(function() part:Destroy() end); message("Safe Zone: move failed"); return false end
         farmPark = {character = character, map = map, part = part, returnFrame = returnFrame, position = platformPosition}
+        AngelHub.mm2FarmActive = true
         pcall(function()
             root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
@@ -8305,6 +8336,7 @@ local function installMM2Farm(screenGui)
             if humanoid.FloorMaterial==Enum.Material.Air then return false end
             farmHomeCFrame, farmBelowEngaged = root.CFrame, true
         end
+        AngelHub.mm2FarmActive = true
         for _,object in ipairs(character:GetDescendants()) do
             if object:IsA("BasePart") then
                 if farmCollision[object]==nil then farmCollision[object]=object.CanCollide end
@@ -8569,8 +8601,7 @@ local function installMM2Farm(screenGui)
 
     local oldFarm=AngelHub.setters["Auto Farm"]
     local function conflict()
-        return V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"] or V["Noclip"] or V["Air Walk"] or V["Air Swim"]
-            or V["FreeCam"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"]
+        return V["Auto Win"]
             or (AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner~="farm")
             or (AngelHub.mm2KnifeKillBusy and AngelHub.mm2KnifeKillOwner~="farm")
     end
@@ -8586,7 +8617,7 @@ local function installMM2Farm(screenGui)
             -- Undo any standalone Aura relocation before Farm scans targets.
             resetCoinAura();oldFarm(true);farmStart(gameplay,collected,ended)
             if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
-        else oldFarm(false);farmStop();if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
+        else AngelHub.mm2FarmActive=false;oldFarm(false);farmStop();if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
     end
     local oldGrab=AngelHub.setters["Auto Grab Gun And Shoot"]
     AngelHub.setters["Auto Grab Gun And Shoot"]=function(value)
@@ -8622,9 +8653,9 @@ local function installMM2Farm(screenGui)
         oldSafe(value==true)
         if not value then leaveFarmPark() elseif V["Auto Farm"] and farmAmount>=math.max(50,farmLimit) then farmDone=false end
     end
-    for _,name in ipairs({"Noclip","Enable Fly","Enable Speed","Auto Vote","Auto Fling Selected Target","Auto Win"})do
-        local setter=AngelHub.setters[name]
-        if setter then AngelHub.setters[name]=function(value)
+    do
+        local setter=AngelHub.setters["Auto Win"]
+        if setter then AngelHub.setters["Auto Win"]=function(value)
             if value==true and V["Auto Farm"] then AngelHub.setters["Auto Farm"](false)end
             if value==true and farmPark and not leaveFarmPark() then return false end
             return setter(value)
@@ -8652,7 +8683,7 @@ local function installMM2Farm(screenGui)
         if not ok then warn("Angel Hub Auto Farm: "..tostring(err));AngelHub.setters["Auto Farm"](false)end
     end)
     screenGui.Destroying:Connect(function()
-        stopped=true;oldFarm(false);oldAura(false);resetCoinAura();farmStop()
+        stopped=true;AngelHub.mm2FarmActive=false;oldFarm(false);oldAura(false);resetCoinAura();farmStop()
         AngelHub.farmFullTicket=nil;AngelHub.farmFullAllowed=nil;AngelHub.farmTargetAllowed=nil
     end)
 end
@@ -9583,7 +9614,7 @@ local function installFreeCam(screenGui)
         end
         old(false);freecam.cleanup();if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam apagado")end;return true
     end
-    for _,name in ipairs({"Enable Speed","Infinite Jump","Enable Fly","Air Walk","Air Swim","Walk Fling","Auto Farm","Auto Win","Auto Fling Selected Target","Auto Vote","Noclip"})do
+    for _,name in ipairs({"Enable Speed","Infinite Jump","Enable Fly","Air Walk","Air Swim","Walk Fling","Auto Win","Auto Fling Selected Target","Auto Vote","Noclip"})do
         local setter=AngelHub.setters[name]
         if setter then AngelHub.setters[name]=function(value)
             if value==true and V["FreeCam"] then if AngelHub.status then AngelHub.status("Desactiva FreeCam primero") end;return false end
@@ -9635,6 +9666,7 @@ local function installAirWalk(screenGui)
         end
         function airWalk.step(dt, character, humanoid, root)
             if not enabled["Air Walk"] then return end
+            if V["Auto Farm"] and AngelHub.mm2FarmActive then destroyPlatform(); clearInput(); return end
             if not character or not character.Parent or not humanoid or humanoid.Health<=0 or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then destroyPlatform(); clearInput(); return end
             local hip = tonumber(humanoid.HipHeight) or 2
             if hip <= 0 then hip = 2 end
@@ -9690,7 +9722,7 @@ local function installAirWalk(screenGui)
         if AngelHub.setAirWalkStatus then AngelHub.setAirWalkStatus(V["Air Walk"] and "Air Walk activo" or "Air Walk apagado")end
         return V["Air Walk"]
     end
-    for _,name in ipairs({"Noclip","Enable Fly","Air Swim","Walk Fling","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+    for _,name in ipairs({"Noclip","Enable Fly","Air Swim","Walk Fling","Auto Win","Auto Vote","Auto Fling Selected Target"})do
         local setter=AngelHub.setters[name]
         if setter then AngelHub.setters[name]=function(value)
             if value==true and V["Air Walk"] then if AngelHub.status then AngelHub.status("Desactiva Air Walk primero")end;return false end
@@ -9756,6 +9788,11 @@ local function installAirSwim(screenGui)
         end
         function airSwim.step(dt, character, human, root)
             if not enabled["Air Swim"] then return end
+            if V["Auto Farm"] and AngelHub.mm2FarmActive then
+                tracked, lastKey = nil,nil
+                if not restore() then error("terrain restoration failed") end
+                return
+            end
             if not character or not character.Parent or not human or not root or root.Anchored or human.Sit or human.SeatPart then
                 tracked, lastKey = nil,nil
                 if not restore() then error("terrain restoration failed") end
@@ -9801,7 +9838,7 @@ local function installAirSwim(screenGui)
         message(not restored and "Air Swim: restauracion pendiente; reintentando" or (V["Air Swim"] and "Air Swim activo; terreno local temporal" or "Air Swim apagado"))
         return V["Air Swim"]
     end
-    for _,name in ipairs({"Noclip","Enable Fly","Air Walk","Walk Fling","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+    for _,name in ipairs({"Noclip","Enable Fly","Air Walk","Walk Fling","Auto Win","Auto Vote","Auto Fling Selected Target"})do
         local setter=AngelHub.setters[name]
         if setter then AngelHub.setters[name]=function(value)
             if value==true and V["Air Swim"] then message("Desactiva Air Swim primero");return false end
@@ -9866,6 +9903,7 @@ local function installWalkFling(screenGui)
         end
         function walkFling.heartbeat(character, humanoid, root)
             if not enabled["Walk Fling"] then return end
+            if V["Auto Farm"] and AngelHub.mm2FarmActive then walkFling.cleanup(); return end
             restorePulse()
             if not character or not character.Parent or not humanoid or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then
                 restoreCollisions(); return
@@ -9925,7 +9963,7 @@ local function installWalkFling(screenGui)
         if AngelHub.setWalkFlingStatus then AngelHub.setWalkFlingStatus(V["Walk Fling"] and "Walk Fling activo" or "Walk Fling apagado") end
         return V["Walk Fling"]
     end
-    for _,name in ipairs({"Enable Fly","Enable Speed","Noclip","Air Walk","Air Swim","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+    for _,name in ipairs({"Enable Fly","Enable Speed","Noclip","Air Walk","Air Swim","Auto Win","Auto Vote","Auto Fling Selected Target"})do
         local setter=AngelHub.setters[name]
         if setter then AngelHub.setters[name]=function(value)
             if value==true and V["Walk Fling"] then if AngelHub.status then AngelHub.status("Desactiva Walk Fling primero") end;return false end
