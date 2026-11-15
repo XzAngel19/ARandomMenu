@@ -6,13 +6,17 @@ node tools/angel_hub_completion_tests/run.cjs
 ```
 
 Se reutilizan fixtures de `angel_hub_visual_tests` y
-`angel_hub_partial_tests`. Incluye listas de jugadores, Knife de corto alcance,
-Fling manual y automático con diagnóstico y sin depender de spawns, visuales sin filtro de distancia, disparos de Auto Win y Auto Farm, y bloqueo de autoload de
-automatizaciones. Ejecuta también regresiones de visuales, movimiento y Auto
-Vote. Las pruebas de Farm, Coins Aura, Auto Win y Auto Unbox están en
-`tools/angel_hub_farm_tests`. `LUAU_TEST_PREFIX` permite otra instalación.
+`angel_hub_partial_tests`. Se comprueban los botones reales de la GUI,
+selección de jugadores, Knife Aura, Kill All y Kill Selected (equipar cuchillo,
+objetivos lejanos, cooldown, interrupción y retorno), Gun Aimbot PC/móvil,
+WallCheck, hook nativo y arma en mochila. Knife Throw prueba el predictor,
+WallCheck, restauración del hook y carga tardía de WeaponService en ambos
+perfiles. Auto Pickup Gun prueba la tecla configurable, ausencia de API,
+roles, lobby y touch. Incluye Fling manual/automático, ESP, movimiento y Auto
+Vote. Las demás pruebas están en `tools/angel_hub_farm_tests`.
+`LUAU_TEST_PREFIX` permite otra instalación de Luau.
 
-Los mocks no verifican física, autoridad del servidor, restricciones de un
-executor ni funcionamiento efectivo en Roblox. Otros controles permanecen
-marcados como pendientes, incluidos los flings y Kill All de Farm tras llenar
-la bolsa.
+Los mocks no verifican física, streaming, validaciones del servidor, contratos
+cambiantes de MM2, daño, captura de GunDrop ni compatibilidad con un executor
+real. Los intentos no confirman impactos. Otros controles permanecen marcados
+como pendientes, incluidos los flings y Kill All de Farm con bolsa llena.

@@ -41,10 +41,4 @@ userInputService.InputBegan:Fire(press,true);drain();assert(blade.activations==2
 userInputService.InputBegan:Fire(press,false);drain();assert(blade.activations==3 and #hit.calls==2)
 userInputService.InputEnded:Fire(press);fakeNow+=2;heartbeat:Fire(.1);drain();assert(blade.activations==3)
 AngelHub.setters['Knife Aura'](false)
--- One-shot actions use the selected live player without enabling Knife Aura.
-V['Kill Player']='Nobody';fakeNow+=2;AngelHub.actions['Kill Selected']();drain();assert(blade.activations==3)
-V['Kill Player']='Alice';AngelHub.actions['Kill Selected']();drain();assert(blade.activations==4 and #hit.calls==3 and not V['Knife Aura'])
-fakeNow+=2;targetRoot.Position=Vector3.new(100,0,0);AngelHub.actions['Kill Selected']();drain();assert(blade.activations==4)
-targetRoot.Position=Vector3.new(10,0,0);AngelHub.actions['Kill All']();drain();assert(blade.activations==5 and #hit.calls==4)
-fakeNow+=2;AngelHub.actions['Kill Selected']();AngelHub.setters['Knife Aura'](false);drain();assert(#hit.calls==4)
-screenGui.Destroying:Fire();fakeNow+=2;heartbeat:Fire(.1);assert(blade.activations==6 and #remote.shots==3)
+screenGui.Destroying:Fire();fakeNow+=2;heartbeat:Fire(.1);assert(blade.activations==3 and #remote.shots==3)

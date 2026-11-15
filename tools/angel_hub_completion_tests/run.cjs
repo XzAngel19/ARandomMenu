@@ -12,7 +12,7 @@ const fixtures=path.join(root,'tools/angel_hub_partial_tests');
  for (const name of ['Farm Mode','ESP Max Distance','Item Max Distance','Nametag Max Distance','HP Max Distance']) assert(!file.includes('"'+name+'"'));
  assert(file.includes('addCycle(mainLeft, "Aim Method", { "Normal", "Instakill" })'));
  const gui=await Lua.create({sandbox:true});
- gui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nplayer.Name="Me";local roster={player};function players:GetPlayers()return roster end\n'+file+`\n
+ gui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nplayer.Name="Me";firetouchinterest=function()end;local roster={player};function players:GetPlayers()return roster end\n'+file+`\n
 assert(shared.AngelHub and shared.AngelHubGui)
 local h=shared.AngelHub
 local alice={Name='Alice'};local bob={Name='Bob'};table.insert(roster,bob);table.insert(roster,alice)
@@ -22,6 +22,18 @@ table.remove(roster,2);run.Heartbeat:Fire(1.1);assert(h.values['Kill Player']=='
 h.setters['Kill Player']('Nobody');assert(h.values['Kill Player']=='Alice')
 table.remove(roster,2);run.Heartbeat:Fire(1.1);assert(h.values['Kill Player']==nil and h.values['Fling Target']==nil)
 assert(h.values['Gun Aimbot']==false and h.values['Gun Aura']==false)
+assert(h.values['Auto Pickup Gun Key Value']=='H' and h.values['Auto Get Gun']==false)
+local foundPickup=false;for _,c in ipairs(h.searchables)do if c.Name=='Auto Pickup Gun' then foundPickup=true end end;assert(foundPickup)
+-- Exercise the actual GUI Activated dispatch, not just direct action calls.
+for _,name in ipairs({'Kill All','Kill Selected','Fling','Get Gun'})do
+ local calls=0;local previous=h.actions[name];h.actions[name]=function()calls+=1 end
+ local card;for _,c in ipairs(h.searchables)do if c.Name==name then card=c end end
+ assert(card and card:FindFirstChildOfClass('TextButton'))
+ card:FindFirstChildOfClass('TextButton').Activated:Fire();assert(calls==1);h.actions[name]=previous
+end
+uis.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyboard,KeyCode={Name='H'}},false)
+assert(h.values['Auto Get Gun']);uis.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyboard,KeyCode={Name='H'}},false);assert(not h.values['Auto Get Gun'])
+
 assert(h.values['WallCheck']==true and h.values['Macro']==false and h.values['Aim Method']=='Normal')
 assert(h.values['Speed Mode']=='Velocity' and h.values['Gravity Method']=='Workspace')
 h.setters['Auto Farm'](true);h.setters['Walk Fling'](true);assert(not h.values['Auto Farm'] and not h.values['Walk Fling'])
@@ -65,7 +77,7 @@ shared.AngelHubGui:Destroy()
  const src=file.slice(start,end);
  for(const mobile of [false,true]){
   const lua=await Lua.create({sandbox:true});
-  lua.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','gun-checks.luau')));
+  lua.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'gun-checks.luau')));
  }
  const instrumented=src.replace('    local function cleanupMainFeatures()','    AngelHub._testPrediction={prediction=prediction,queue=queueShot,observe=observeEcho}\n    local function cleanupMainFeatures()');
  const predictor=await Lua.create({sandbox:true});
@@ -77,6 +89,10 @@ shared.AngelHubGui:Destroy()
  for(const mobile of [false,true]) {
   const extra=await Lua.create({sandbox:true});
   extra.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'main-checks.luau')));
+ }
+ for(const mobile of [false,true]){
+  const stab=await Lua.create({sandbox:true});
+  stab.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'kill-all-checks.luau')));
  }
  const movementStart=file.indexOf('local function installMovementFeatures(screenGui)');
  const movementEnd=file.indexOf('\nlocal function initializeScript()',movementStart);
@@ -98,6 +114,10 @@ shared.AngelHubGui:Destroy()
   const knife=await Lua.create({sandbox:true});
   knife.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-checks.luau')));
  }
+ for(const mobile of [false,true]) {
+  const late=await Lua.create({sandbox:true});
+  late.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(__dirname,'mock-setup.luau'))+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'knife-late-checks.luau')));
+ }
  const invalid=await Lua.create({sandbox:true});
  const knifeDebug=src.replace('    -- v139.2: this loop used to run every frame','    AngelHub._knifeTest={resolve=resolveKnifeAim,prediction=prediction}\n    -- v139.2: this loop used to run every frame');
  invalid.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-setup.luau'))+'\n'+knifeDebug+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-invalid.luau')));
@@ -118,7 +138,7 @@ shared.AngelHubGui:Destroy()
  const items=await Lua.create({sandbox:true});
  items.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'item-checks.luau')));
  const actions=await Lua.create({sandbox:true});
- actions.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','actions-checks.luau')));
+ actions.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'actions-checks.luau')));
  const fling=await Lua.create({sandbox:true});
  fling.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'fling-checks.luau')));
  const sheriff=await Lua.create({sandbox:true});

@@ -268,7 +268,7 @@ local function addToggle(parent, text, keybind, default)
 		Size = UDim2.new(1, keybind and -100 or -44, 1, 0),
 		Position = UDim2.fromOffset(32, 0),
 		BackgroundTransparency = 1,
-		Text = pendingControls[text] and (text.." (pendiente)") or text,
+		Text = pendingControls[text] and (text.." (pendiente)") or (text=="Auto Get Gun" and "Auto Pickup Gun" or text),
 		TextColor3 = startState and TEXT_COLOR or OFF_TEXT_COLOR,
 		TextSize = 13,
 		Font = TEXT_FONT,
@@ -3278,7 +3278,7 @@ return Module
     local function rolesNeeded()
         return V["Gun Aimbot"] or V["Gun Aura"] or V["Auto Shoot"] or V["Knife Aura"] or V["Knife Throw"] or V["Auto Knife Throw"]
             or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Auto Get Gun"]
-            or AngelHub.mm2FlingNeedsRoles or V["Auto Win"] or (V["Auto Farm"] and V["Auto Grab Gun And Shoot"])
+            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or V["Auto Win"] or (V["Auto Farm"] and V["Auto Grab Gun And Shoot"])
     end
     local function updateRoles()
         if not isMM2 or stopped or not rolesNeeded() then return end
@@ -3834,7 +3834,9 @@ return Module
         local knifeFeature, options = nil, {}
         local function createUniversalFeature(_,_,_,callback)
             knifeFeature={callback=callback}
-            function knifeFeature:SetStatus() end
+            function knifeFeature:SetStatus(message)
+                if AngelHub.setThrowStatus and message then AngelHub.setThrowStatus(message) end
+            end
             return knifeFeature
         end
         local function addToggleOption(_,name,_,callback) options[name]=callback end
@@ -3889,6 +3891,7 @@ function Module.init(runtime: any): any
     local tracerPart: BasePart? = nil
     local targetDotPart: BasePart? = nil
     local hookedWeaponService: any = nil
+    local redirectBusy, redirectGeneration, redirectAt = false, 0, -math.huge
 
     local function destroyTracerVisuals(): ()
         if tracerPart then
@@ -4561,18 +4564,24 @@ function Module.init(runtime: any): any
         end
     end
     local function installWeaponServiceRedirect(): ()
-        if hookedWeaponService then return end
+        if hookedWeaponService or redirectBusy or not settings.enabled or not V["Knife Throw"] then return end
+        redirectBusy=true
+        local ticket=redirectGeneration
         pcall(function()
             local rs = game:GetService("ReplicatedStorage")
             local folder = rs and rs:FindFirstChild("ClientServices")
             local module = folder and folder:FindFirstChild("WeaponService")
             if not module then return end
             local ok, ws = pcall(require,module)
-            if not ok or type(ws) ~= "table" then return end
-            hookedWeaponService = ws
+            if not ok or type(ws) ~= "table" or ticket~=redirectGeneration or not settings.enabled or not V["Knife Throw"] then return end
             hookNative(ws,"GetMouseTargetCFrame")
             hookNative(ws,"GetTargetPosition")
+            if #ownedHooks>0 then
+                hookedWeaponService=ws
+                if AngelHub.setThrowStatus then AngelHub.setThrowStatus("Knife Throw: redireccion preparada, impacto sin confirmar") end
+            end
         end)
+        redirectBusy=false
     end
     local function uninstallWeaponServiceRedirect(): ()
         for _, h in ipairs(ownedHooks) do
@@ -4710,6 +4719,10 @@ function Module.init(runtime: any): any
         end
 
         local now: number = os.clock()
+        if V["Knife Throw"] and not hookedWeaponService and now>=redirectAt then
+            redirectAt=now+1
+            installWeaponServiceRedirect()
+        end
         local cooldown: number = math.clamp(tonumber(settings.delay) or 0, 0, 10)
         local wantThrow: boolean = settings.autoThrow
             and now - lastThrowAttempt >= cooldown
@@ -4767,10 +4780,12 @@ function Module.init(runtime: any): any
     -- Toggle function
     local function toggleKnifeThrow(enabled: boolean): ()
         settings.enabled = enabled
+        redirectGeneration+=1;redirectAt=-math.huge
         disconnectFeatureConnection("MM2KnifeThrow")
 
         if not enabled then
             uninstallWeaponServiceRedirect()
+            if AngelHub.setThrowStatus then AngelHub.setThrowStatus("Knife Throw apagado") end
             setKnifeStatus(nil)
             hideTracerVisuals()
             destroyTracerVisuals()
@@ -4779,6 +4794,8 @@ function Module.init(runtime: any): any
             return
         end
 
+        if V["Knife Throw"] and AngelHub.setThrowStatus then AngelHub.setThrowStatus("Knife Throw: esperando WeaponService") end
+        if not V["Knife Throw"] and not V["Auto Knife Throw"] and AngelHub.setThrowStatus then AngelHub.setThrowStatus("Knife Throw apagado") end
         installWeaponServiceRedirect()
         featureConnections.MM2KnifeThrow =
             TaskManager:Connect(knifeThrowLoop, nil, "MM2 Knife Throw")
@@ -5079,6 +5096,9 @@ return Module
         end)
     end
     local manualBusy,lastShot=false,-math.huge
+    local function gunStatus(text)
+        if AngelHub.setGunStatus then AngelHub.setGunStatus(text) end
+    end
     -- One sender shared by manual and automatic shots; a refusal never falls
     -- back to a different unchecked constructor. A send error is uncertain.
     local function sendShot(character,root,gun,target,method,wallCheck)
@@ -5156,17 +5176,20 @@ return Module
         local ticket=generation
         local char,human=characterParts()
         local gun=weapon(LocalPlayer,"Gun")
-        if not char or not human or not gun then return end
+        if not char or not human or not gun then gunStatus("Gun Aimbot: necesitas una Gun y personaje vivo");return end
         manualBusy=true
         task.spawn(function()
-            pcall(function()
+            local ok,err=pcall(function()
                 if stopped or ticket~=generation or V["Gun Aimbot"]~=true or LocalPlayer.Character~=char then return end
                 if gun.Parent~=char then human:EquipTool(gun);RunService.Heartbeat:Wait() end
                 local current,aliveHuman,root=characterParts()
                 if stopped or ticket~=generation or V["Gun Aimbot"]~=true or current~=char or not aliveHuman or gun.Parent~=char then return end
-                if os.clock()-lastShot<.22 then return end
-                if sendShot(char,root,gun,nil,nil,nil) then macro(gun,char,ticket) end
+                if os.clock()-lastShot<.22 then gunStatus("Gun Aimbot: espera el disparo anterior");return end
+                if sendShot(char,root,gun,nil,nil,nil) then
+                    gunStatus("Gun Aimbot: disparo enviado, impacto sin confirmar");macro(gun,char,ticket)
+                else gunStatus("Gun Aimbot: sin objetivo, bloqueado o Gun no lista") end
             end)
+            if not ok and not stopped then warn("Angel Hub Gun Aimbot: "..tostring(err));gunStatus("Gun Aimbot: error al disparar") end
             manualBusy=false
         end)
     end
@@ -5185,7 +5208,8 @@ return Module
             local args=table.pack(...)
             if typeof(args[1])~="CFrame" or typeof(args[2])~="CFrame" then return predecessor(remote,...) end
             local ok,a,b,target,info,mode=pcall(frames,char,root,gun,args[1])
-            if not ok or not a or not b then return predecessor(remote,...) end
+            if not ok or not a or not b then gunStatus("Gun Aimbot: sin objetivo o bloqueado; disparo original");return predecessor(remote,...) end
+            gunStatus("Gun Aimbot: disparo redirigido, impacto sin confirmar")
             queueShot(gun,a,b,target,info,mode);args[1],args[2]=a,b
             macro(gun,char,generation)
             return predecessor(remote,table.unpack(args,1,args.n))
@@ -5215,9 +5239,11 @@ return Module
         local on=isMM2 and value==true and not stopped
         generation+=1;oldAim(on)
         if fireButton then fireButton.Visible=on end
-        if on then installHook();observerAt=0;updateRoles();watchEcho()
+        if on then
+            installHook();observerAt=0;updateRoles();watchEcho()
+            gunStatus(installed and "Gun Aimbot listo" or "Gun Aimbot: usa la tecla; hook nativo no disponible")
         else
-            uninstallHook()
+            gunStatus("Gun Aimbot apagado");uninstallHook()
             if not V["Auto Shoot"] then
                 pending=nil
                 if echoConnection then echoConnection:Disconnect();echoConnection=nil end
@@ -5337,23 +5363,104 @@ return Module
                 pcall(state.fireTouchInterest,currentHandle,victim,0);pcall(state.fireTouchInterest,currentHandle,victim,1)
             end
         end)
+        return true
     end
-    AngelHub.actions["Kill Selected"]=function()
-        if stopped or not isMM2 then return end
-        for _,player in ipairs(Players:GetPlayers())do
-            if player~=LocalPlayer and player.Name==V["Kill Player"] then knifeStep(player,true);return end
-        end
+    local killSequence
+    local function knifeStatus(text)
+        if AngelHub.setKnifeStatus then AngelHub.setKnifeStatus(text) end
     end
-    AngelHub.actions["Kill All"]=function()
-        if stopped or not isMM2 then return end
-        local character=LocalPlayer.Character;local generation=knifeGeneration;local n=0
-        for _,player in ipairs(Players:GetPlayers())do if player~=LocalPlayer then
-            local target=player;local delay=n*.9;n+=1
-            task.delay(delay,function()
-                if not stopped and isMM2 and character==LocalPlayer.Character and generation==knifeGeneration then knifeStep(target,true)end
+    local function knifeConflict()
+        return AngelHub.mm2FlingBusy or V["Auto Farm"] or V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"]
+            or V["Noclip"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or V["FreeCam"]
+    end
+    local function finishKills(text)
+        local job=killSequence;killSequence=nil;AngelHub.mm2KnifeKillBusy=false
+        if job and LocalPlayer.Character==job.character and job.human.Health>0 and job.root.Parent
+            and (not AngelHub.findMM2Map or job.map==AngelHub.findMM2Map()) then
+            pcall(function()
+                job.character:PivotTo(job.home)
+                job.root.AssemblyLinearVelocity=Vector3.zero;job.root.AssemblyAngularVelocity=Vector3.zero
             end)
-        end end
+        end
+        if text then knifeStatus(text) end
+        if not rolesNeeded() then unbindRoles() end
     end
+    local function beginKills(selectedOnly)
+        if stopped or not isMM2 then knifeStatus("Knife Stab disponible solo en MM2");return end
+        if killSequence then knifeStatus("Knife Stab ya esta en curso");return end
+        if knifeConflict() then knifeStatus("Apaga Farm, Win o modulos de movimiento");return end
+        local character,human,root=characterParts()
+        if not character or not human or not root or root.Anchored or human.Sit or human.SeatPart then
+            knifeStatus("Tu personaje no esta disponible");return
+        end
+        if human.FloorMaterial==Enum.Material.Air then knifeStatus("Espera a tocar suelo");return end
+        bindRoles()
+        if roundBlocked then knifeStatus("Ronda terminada");return end
+        local knife=weapon(LocalPlayer,"Knife")
+        if not knife then knifeStatus("Necesitas el cuchillo de Murderer");return end
+        if knife.Parent~=character then
+            local ok=pcall(function()human:EquipTool(knife)end)
+            if not ok or knife.Parent~=character then knifeStatus("No se pudo equipar el cuchillo");return end
+        end
+        if core.getPlayerRole(LocalPlayer)~="Murderer" then knifeStatus("Solo Murderer puede usar Knife Stab");return end
+        local targets={}
+        for _,player in ipairs(Players:GetPlayers())do
+            if player~=LocalPlayer and (not selectedOnly or player.Name==V["Kill Player"])
+                and alive(player) and core.getPlayerRole(player)~="Murderer" and not weapon(player,"Knife")
+                and (LocalPlayer.Neutral or not LocalPlayer.Team or player.Team~=LocalPlayer.Team) then
+                table.insert(targets,{player=player,character=player.Character})
+            end
+        end
+        if #targets==0 then knifeStatus(selectedOnly and "Selecciona un jugador vivo" or "No hay objetivos vivos");return end
+        local ok,home=pcall(function()return character:GetPivot()end)
+        if not ok or not home then knifeStatus("No se pudo guardar tu posicion");return end
+        local destroyY=workspace.FallenPartsDestroyHeight
+        if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1e6 then destroyY=-500 end
+        if home.Position.Y<=destroyY+100 then knifeStatus("Knife Stab detenido por proteccion del vacio");return end
+        killSequence={character=character,human=human,root=root,knife=knife,home=home,
+            map=AngelHub.findMM2Map and AngelHub.findMM2Map(),targets=targets,index=0,nextAt=os.clock(),
+            generation=knifeGeneration,destroyY=destroyY,attempts=0}
+        AngelHub.mm2KnifeKillBusy=true;updateRoles();knifeStatus("Knife Stab: preparando "..#targets.." objetivo(s)")
+    end
+    local function stepKills()
+        local job=killSequence;if not job then return end
+        if stopped or roundBlocked or knifeConflict() or job.generation~=knifeGeneration
+            or LocalPlayer.Character~=job.character or not job.root.Parent or job.human.Health<=0
+            or tool(job.character,"Knife")~=job.knife or (AngelHub.findMM2Map and job.map~=AngelHub.findMM2Map()) then
+            finishKills("Knife Stab cancelado");return
+        end
+        local now=os.clock();if now<job.nextAt then return end
+        if job.phase=="stab" then
+            local target=job.target
+            local player=target and target.player
+            local victim=player and player.Character==target.character and alive(player)
+                and target.character:FindFirstChild("HumanoidRootPart")
+            if victim and victim.Position.Y>job.destroyY+100 and now-job.targetAt<2 then
+                local range=math.clamp(tonumber(V["Knife Aura Range"]) or 15,7,30)
+                if (victim.Position-job.root.Position).Magnitude>range then
+                    pcall(function()job.character:PivotTo(CFrame.new(victim.Position+Vector3.new(0,0,2)))end)
+                    job.nextAt=now+.1;return
+                end
+                if knifeStep(player,true) then job.attempts+=1
+                else job.nextAt=now+.1;return end
+            end
+            job.phase="advance";job.nextAt=now+.12;return
+        end
+        job.index+=1
+        local target=job.targets[job.index]
+        if not target then finishKills("Knife Stab: "..job.attempts.." intento(s), sin confirmar impacto");return end
+        job.target=target;job.targetAt=now
+        local player=target.player
+        local victim=player.Character==target.character and alive(player) and target.character:FindFirstChild("HumanoidRootPart")
+        if not victim or core.getPlayerRole(player)=="Murderer" or weapon(player,"Knife")
+            or victim.Position.Y<=job.destroyY+100 then job.nextAt=now;return end
+        local destination=CFrame.new(victim.Position+Vector3.new(0,0,2))
+        local ok=pcall(function()job.character:PivotTo(destination)end)
+        if not ok then finishKills("Knife Stab: no se pudo acercar al objetivo");return end
+        job.phase="stab";job.nextAt=math.max(now+.05,lastKnifeSwing+.86)
+    end
+    AngelHub.actions["Kill Selected"]=function()beginKills(true)end
+    AngelHub.actions["Kill All"]=function()beginKills(false)end
     connectInput(userInputService.InputBegan,function(input,processed)
         if stopped or not V["Knife Aura"] or not V["Knife Hold Mouse"] or processed
             or AngelHub.listening or userInputService:GetFocusedTextBox() then return end
@@ -5375,10 +5482,13 @@ return Module
     connectInput(RunService.Heartbeat,function()
         if stopped then return end
         if V["Auto Shoot"] then autoStep() end
-        if V["Knife Aura"] then knifeStep() end
+        if killSequence then
+            local ok,err=pcall(stepKills)
+            if not ok then warn("Angel Hub Knife Stab: "..tostring(err));finishKills("Error en Knife Stab") end
+        elseif V["Knife Aura"] then knifeStep() end
     end)
     local function cleanupMainFeatures()
-        autoGeneration+=1;knifeGeneration+=1;knifeHeld=false;knifeInput=nil;removeProximity()
+        finishKills();autoGeneration+=1;knifeGeneration+=1;knifeHeld=false;knifeInput=nil;removeProximity()
     end
 
     connectInput(userInputService.InputBegan,function(input,processed)
@@ -7217,7 +7327,7 @@ local function installBasicActions(screenGui)
         return character,human,root
     end
     local function motionConflict()
-        return AngelHub.mm2FlingBusy or V["Enable Fly"] or V["Auto Farm"] or V["Auto Win"] or V["Auto Fling Selected Target"] or V["Walk Fling"] or V["Auto Vote"]
+        return AngelHub.mm2FlingBusy or AngelHub.mm2KnifeKillBusy or V["Enable Fly"] or V["Auto Farm"] or V["Auto Win"] or V["Auto Fling Selected Target"] or V["Walk Fling"] or V["Auto Vote"]
     end
     local function teleport(destination)
         local character,_,root=parts()
@@ -7259,6 +7369,9 @@ local function installBasicActions(screenGui)
         end
     end
     if isMM2 then
+        local function pickupStatus(text)
+            if AngelHub.setPickupStatus then AngelHub.setPickupStatus(text) end
+        end
         AngelHub.actions["Teleport To Map"]=function()
             local map=AngelHub.findMM2Map and AngelHub.findMM2Map()
             local spawn=map and (map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns",true))
@@ -7285,46 +7398,65 @@ local function installBasicActions(screenGui)
             teleport(root)
         end
         AngelHub.actions["Get Gun"]=function()
-            if stopped or type(firetouchinterest)~="function" then return false end
+            if stopped then return false end
+            if type(firetouchinterest)~="function" then pickupStatus("Pickup: touch no disponible en este executor");return false end
             local _,_,root=parts();local drop=AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun()
-            if not root or not drop or not drop:IsDescendantOf(workspace) then return false end
+            if not root then pickupStatus("Pickup: personaje no disponible");return false end
+            if not drop or not drop:IsDescendantOf(workspace) then pickupStatus("Pickup: esperando GunDrop");return false end
             local touch=drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true)
-            if not touch or not touch:IsA("BasePart") or not touch:IsDescendantOf(workspace) then return false end
+            if not touch or not touch:IsA("BasePart") or not touch:IsDescendantOf(workspace) then pickupStatus("Pickup: GunDrop no valido");return false end
             local ok=pcall(firetouchinterest,root,touch,0)
-            pcall(firetouchinterest,root,touch,1)
-            return ok
+            local ended=pcall(firetouchinterest,root,touch,1)
+            pickupStatus(ok and ended and "Pickup: toque enviado, sin confirmar" or "Pickup: fallo al enviar toque")
+            return ok and ended
         end
         connectInput(userInputService.InputBegan,function(input,processed)
             if stopped or processed or AngelHub.listening or userInputService:GetFocusedTextBox()
                 or input.UserInputType~=Enum.UserInputType.Keyboard then return end
-            if input.KeyCode and input.KeyCode.Name==V["Get Gun Key Value"] then AngelHub.actions["Get Gun"]() end
+            local key=input.KeyCode and input.KeyCode.Name
+            if key and key==V["Get Gun Key Value"] then AngelHub.actions["Get Gun"]() end
+            if key and key==V["Auto Pickup Gun Key Value"] then AngelHub.setters["Auto Get Gun"](not V["Auto Get Gun"]) end
         end)
         local function canAutoGrab()
-            if not AngelHub.getMM2Role or AngelHub.getMM2Role(localPlayer)~="Innocent"
-                or not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() then return false end
-            local character,_,root=parts();if not character then return false end
+            if not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() then return false,"Auto Pickup: esperando ronda" end
+            if not AngelHub.getMM2Role or AngelHub.getMM2Role(localPlayer)~="Innocent" then
+                return false,"Auto Pickup: esperando rol Innocent"
+            end
+            local character,_,root=parts();if not character then return false,"Auto Pickup: personaje no disponible" end
             local backpack=localPlayer:FindFirstChildOfClass("Backpack")
             for _,holder in ipairs({character,backpack}) do
-                if holder and (holder:FindFirstChild("Knife") or holder:FindFirstChild("Gun")) then return false end
+                if holder and (holder:FindFirstChild("Knife") or holder:FindFirstChild("Gun")) then return false,"Auto Pickup: ya tienes arma" end
             end
             local map=AngelHub.findMM2Map and AngelHub.findMM2Map()
             local spawns=map and (map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns",true))
-            local mapRef=spawnPart(spawns)
+            local mapRef=spawnPart(spawns) or (map and map:FindFirstChildWhichIsA("BasePart",true))
             local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
             local lobbySpawns=lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true))
-            local lobbyRef=spawnPart(lobbySpawns)
-            if not mapRef or not lobbyRef then return false end
-            return (root.Position-lobbyRef.Position).Magnitude>350 and (root.Position-mapRef.Position).Magnitude<=1500
+            local lobbyRef=spawnPart(lobbySpawns) or (lobby and lobby:FindFirstChildWhichIsA("BasePart",true))
+            if not mapRef or not lobbyRef then return false,"Auto Pickup: no se reconoce mapa o lobby" end
+            if (root.Position-lobbyRef.Position).Magnitude<=350 or (root.Position-mapRef.Position).Magnitude>1500 then
+                return false,"Auto Pickup: espera dentro del mapa"
+            end
+            return true
         end
         local elapsed=0
         connectInput(game:GetService("RunService").Heartbeat,function(dt)
             if stopped or not V["Auto Get Gun"] then return end
             elapsed+=math.max(tonumber(dt) or 0,0)
-            if elapsed>=.25 then elapsed=0;if canAutoGrab() then AngelHub.actions["Get Gun"]() end end
+            if elapsed>=.25 then
+                elapsed=0;local ok,allowed,reason=pcall(canAutoGrab)
+                if not ok then pickupStatus("Auto Pickup: error al detectar mapa o rol");warn("Angel Hub Auto Pickup: "..tostring(allowed))
+                elseif allowed then AngelHub.actions["Get Gun"]()
+                else pickupStatus(reason) end
+            end
         end)
         local old=AngelHub.setters["Auto Get Gun"]
         AngelHub.setters["Auto Get Gun"]=function(value)
-            old(not stopped and value==true);elapsed=.25
+            local on=not stopped and value==true and type(firetouchinterest)=="function"
+            old(on);elapsed=.25
+            if value==true and not on then pickupStatus("Pickup: touch no disponible en este executor")
+            elseif on then pickupStatus("Auto Pickup: esperando ronda y rol Innocent")
+            else pickupStatus("Auto Pickup apagado") end
             if V["Auto Get Gun"] and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()
             elseif AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles() end
         end
@@ -7396,7 +7528,7 @@ local function installMM2Fling(screenGui)
     end
     local function map()return AngelHub.findMM2Map and AngelHub.findMM2Map()end
     local function conflict(owner)
-        return (V["Auto Farm"] and owner~="farm") or (V["Auto Win"] and owner~="win") or V["Walk Fling"] or V["Enable Fly"] or V["Enable Speed"]
+        return AngelHub.mm2KnifeKillBusy or (V["Auto Farm"] and owner~="farm") or (V["Auto Win"] and owner~="win") or V["Walk Fling"] or V["Enable Fly"] or V["Enable Speed"]
             or V["Air Walk"] or V["Air Swim"] or V["Noclip"] or V["FreeCam"] or V["Auto Vote"]
     end
     local function clean()
@@ -9140,6 +9272,12 @@ local function initializeScript()
 	addKeybind(mainLeft, "Aimbot Keybind", "MouseButton2")
 	addToggle(mainLeft, "WallCheck", nil, true)
 	addToggle(mainLeft, "Macro", nil, false)
+    local gunStatusHolder=createCard("Frame",mainLeft,"Gun Aimbot Status",40)
+    local gunStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Gun Aimbot apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},gunStatusHolder)
+    AngelHub.setGunStatus=function(text)gunStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,gunStatusHolder)
 
 	addSection(mainLeft, "Auto Shoot")
 	addModule(mainLeft, "Auto Shoot", nil, false)
@@ -9169,6 +9307,12 @@ local function initializeScript()
 	addButton(mainRight, "Kill All")
 	addList(mainRight, "Kill Player", {}, 70)
 	addButton(mainRight, "Kill Selected")
+    local knifeStatusHolder=createCard("Frame",mainRight,"Knife Status",40)
+    local knifeStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Knife Stab listo",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},knifeStatusHolder)
+    AngelHub.setKnifeStatus=function(text)knifeStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,knifeStatusHolder)
 
 	addSection(mainRight, "Knife Throw")
 	addModule(mainRight, "Knife Throw", nil, false)
@@ -9176,6 +9320,12 @@ local function initializeScript()
 	addModule(mainRight, "Auto Knife Throw", nil, false)
 	addSlider(mainRight, "Throw Delay", 0, 10, 1, 1)
 	addToggle(mainRight, "Knife Tracer", nil, false)
+    local throwStatusHolder=createCard("Frame",mainRight,"Knife Throw Status",40)
+    local throwStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Knife Throw apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},throwStatusHolder)
+    AngelHub.setThrowStatus=function(text)throwStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,throwStatusHolder)
 
 	addSection(mainRight, "Fling")
 	addButton(mainRight, "Fling Murderer")
@@ -9315,7 +9465,15 @@ local function initializeScript()
 	addButton(extraRight, "Teleport To Player")
 	addButton(extraRight, "Get Gun")
 	addKeybind(extraRight, "Get Gun Key", "G")
-	addModule(extraRight, "Auto Get Gun", nil, false)
+	local autoPickupHolder=addModule(extraRight, "Auto Get Gun", nil, false)
+    autoPickupHolder.Name="Auto Pickup Gun" -- Keep the legacy config key while making search match the visible label.
+	addKeybind(extraRight, "Auto Pickup Gun Key", "H")
+    local pickupStatusHolder=createCard("Frame",extraRight,"Pickup Status",40)
+    local pickupStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Auto Pickup apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},pickupStatusHolder)
+    AngelHub.setPickupStatus=function(text)pickupStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,pickupStatusHolder)
 
 	addSection(extraRight, "Movement Toggles")
 	addModule(extraRight, "Noclip", nil, false)
