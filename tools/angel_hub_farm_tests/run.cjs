@@ -6,6 +6,7 @@ const farm=file.slice(file.indexOf('local function installMM2Farm(screenGui)'),f
 const setup=`
 game.PlaceId=142823291;Vector3.zero=Vector3.new(0,0,0)
 AngelHub.connections={}
+run.PreSimulation=event()
 AngelHub.setters["Coins Aura"]=function(v)V["Coins Aura"]=v end
 local function connectInput(signal,callback)local c=signal:Connect(callback);table.insert(AngelHub.connections,c);return c end
 AngelHub.findMM2Map=function()
@@ -22,12 +23,12 @@ end
 (async()=>{
  const prefix=process.env.LUAU_TEST_PREFIX||path.join(root,'tools/luau');
  const {Lua}=await import(pathToFileURL(path.join(prefix,'node_modules/@luau-rs/luau/dist/direct-api.js')).href);
- for(const name of ['farm-counter-checks.luau','farm-progress-checks.luau','farm-reset-checks.luau','farm-combat-checks.luau','../angel_hub_farm_tests/coins-aura-checks.luau','../angel_hub_farm_tests/full-grab-checks.luau']){
+ for(const name of ['farm-counter-checks.luau','farm-reset-checks.luau','../angel_hub_farm_tests/below-checks.luau','../angel_hub_farm_tests/coins-aura-checks.luau','../angel_hub_farm_tests/full-grab-checks.luau']){
   let test=read(path.join(fixture,name)).replaceAll('installGameplay(screenGui)','installMM2Farm(screenGui)');
-  if(name==='farm-combat-checks.luau')test=test.slice(0,test.indexOf('local previous=#touches;AngelHub.setters[\'Coins Aura\']'))+'\nscreenGui.Destroying:Fire()\n';
+
   const lua=await Lua.create({sandbox:true});
   try{lua.execute(read(path.join(fixture,'gameplay-mock.luau'))+'\nlocal fakeNow=100;local os={clock=function()return fakeNow end}\n'+setup+'\n'+farm+'\n'+test)}
   catch(e){console.error(name);throw e}
  }
- console.log('PASS: Farm Walk/Below, Coins Aura, full-bag grab, counters, reset, safe zone, conflict and void checks (mocks only)');
+ console.log('PASS: Farm Below, Coins Aura, full-bag grab, counters, reset, safe zone, conflict and void checks (mocks only)');
 })().catch(e=>{console.error(e);process.exit(1)});

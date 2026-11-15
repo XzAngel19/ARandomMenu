@@ -9,6 +9,7 @@ const fixtures=path.join(root,'tools/angel_hub_partial_tests');
  const compile=await Lua.create({sandbox:true});compile.compile(file);
  assert(!file.includes('addSection(visualsRight, "Notifications")'));
  assert(!file.includes('Require Sprint Key') && file.includes('["MM2 Sprint Tail Box"]=true'));
+ for (const name of ['Farm Mode','ESP Max Distance','Item Max Distance','Nametag Max Distance','HP Max Distance']) assert(!file.includes('"'+name+'"'));
  assert(file.includes('addCycle(mainLeft, "Aim Method", { "Normal", "Instakill" })'));
  const gui=await Lua.create({sandbox:true});
  gui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nplayer.Name="Me";local roster={player};function players:GetPlayers()return roster end\n'+file+`\n
@@ -104,7 +105,7 @@ shared.AngelHubGui:Destroy()
  shield.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','shield-checks.luau')));
  for (const mobile of [false,true]) {
   const visuals=await Lua.create({sandbox:true});
-  visuals.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','visual-checks.luau')));
+  visuals.execute(read(path.join(fixtures,'gameplay-mock.luau'))+`\nlocal mobile=${mobile};local fakeNow=100;local os={clock=function()return fakeNow end}\n`+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'visual-checks.luau')));
  }
  const visualRoles=await Lua.create({sandbox:true});
  visualRoles.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','role-visual-checks.luau')));
@@ -115,7 +116,7 @@ shared.AngelHubGui:Destroy()
  const vote=await Lua.create({sandbox:true});
  vote.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','vote-checks.luau')));
  const items=await Lua.create({sandbox:true});
- items.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','item-checks.luau')));
+ items.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(__dirname,'item-checks.luau')));
  const actions=await Lua.create({sandbox:true});
  actions.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','actions-checks.luau')));
  const fling=await Lua.create({sandbox:true});

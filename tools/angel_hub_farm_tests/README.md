@@ -8,7 +8,7 @@ node tools/angel_hub_farm_tests/unbox.cjs
 node tools/angel_hub_completion_tests/run.cjs
 ```
 
-Cubren Farm Walk/Below, monedas y contadores, reset, lobby, Safe Zone y
+Cubren Farm Below (incluyendo configuración antigua Walk ignorada), monedas y contadores, reset, lobby, Safe Zone y
 restauración; Coins Aura con alcance fijo de 15 studs, touch y restauración;
 y Auto Grab Gun And Shoot exclusivamente con bolsa llena. Auto Win verifica
 plataforma, contadores, Murder/Sheriff, flings optativos y coordinación con el

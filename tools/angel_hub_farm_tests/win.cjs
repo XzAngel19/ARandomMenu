@@ -3,7 +3,7 @@ const root=path.resolve(__dirname,'../..'),read=p=>fs.readFileSync(p,'utf8');con
 const file=read(path.join(root,'Angel-Hub-GUI-Continuacion.txt'));
 const src=file.slice(file.indexOf('local function installMM2Win(screenGui)'),file.indexOf('\nlocal function initializeScript()'));
 const setup=`
-game.PlaceId=142823291;Vector3.zero=Vector3.new(0,0,0);AngelHub.connections={}
+game.PlaceId=142823291;Vector3.zero=Vector3.new(0,0,0);AngelHub.connections={};run.PreSimulation=event()
 AngelHub.setters["Coins Aura"]=function(v)V["Coins Aura"]=v end
 local function connectInput(s,f)local c=s:Connect(f);table.insert(AngelHub.connections,c);return c end
 AngelHub.findMM2Map=function()return map.Parent and map end
