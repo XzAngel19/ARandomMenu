@@ -719,13 +719,276 @@ local function addKeybind(parent, text, default)
 	table.insert(EggHub.searchables, holder)
 end
 
-local function addColor(parent, text, default)
-	local initialColor = default or COLOR_PRESETS[1]
-	local holder = createCard("Frame", parent, text, 68)
+local function openCircularColorPicker(titleText, currentColor, onChange)
+	local gui = EggHub.screenGui
+	if not gui then
+		return
+	end
+
+	if EggHub.colorPickerPopup and EggHub.colorPickerPopup.Parent then
+		local prevTitle = EggHub.colorPickerPopup:GetAttribute("ActiveTarget")
+		EggHub.colorPickerPopup:Destroy()
+		EggHub.colorPickerPopup = nil
+		if prevTitle == titleText then
+			return
+		end
+	end
+
+	local h, s, v = Color3.toHSV(currentColor or Color3.new(1, 1, 1))
+	local wheelSize = 136
+	local radius = wheelSize * 0.5
+
+	local popup = create("Frame", {
+		Name = "EggHubColorWheelPopup",
+		Size = UDim2.fromOffset(186, 206),
+		Position = UDim2.new(0.5, 212, 0.5, -103),
+		BackgroundColor3 = Color3.fromRGB(16, 16, 18),
+		BorderSizePixel = 0,
+		ZIndex = 60,
+	}, gui)
+	popup:SetAttribute("ActiveTarget", titleText)
+	EggHub.colorPickerPopup = popup
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, popup)
+	addStroke(popup, ACCENT_A, 0.25, 1.5)
+
+	local header = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 26),
+		BackgroundTransparency = 1,
+		ZIndex = 61,
+	}, popup)
 
 	create("TextLabel", {
-		Size = UDim2.new(1, -46, 0, 24),
-		Position = UDim2.fromOffset(8, 2),
+		Size = UDim2.new(1, -56, 1, 0),
+		Position = UDim2.fromOffset(10, 0),
+		BackgroundTransparency = 1,
+		Text = titleText,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		ZIndex = 62,
+	}, header)
+
+	local closeBtn = create("TextButton", {
+		Size = UDim2.fromOffset(44, 18),
+		Position = UDim2.new(1, -50, 0, 4),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = "Done",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 11,
+		Font = BOLD_FONT,
+		AutoButtonColor = false,
+		ZIndex = 62,
+	}, header)
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, closeBtn)
+	addStroke(closeBtn, Color3.new(1, 1, 1), 0.7)
+
+	closeBtn.Activated:Connect(function()
+		if popup.Parent then
+			popup:Destroy()
+		end
+		if EggHub.colorPickerPopup == popup then
+			EggHub.colorPickerPopup = nil
+		end
+	end)
+
+	-- Circular HSV color wheel built from 60 radial gradient wedges inside a circular clip.
+	local wheelContainer = create("Frame", {
+		Size = UDim2.fromOffset(wheelSize, wheelSize),
+		Position = UDim2.fromOffset(10, 32),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		ZIndex = 61,
+	}, popup)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, wheelContainer)
+
+	local sliceCount = 60
+	for i = 0, sliceCount - 1 do
+		local frac = i / sliceCount
+		local angleDeg = frac * 360
+		local wedge = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = UDim2.fromScale(0.5, 0.5),
+			Size = UDim2.fromOffset(12, radius + 4),
+			Rotation = angleDeg + 90,
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			ZIndex = 62,
+		}, wheelContainer)
+		create("UIGradient", {
+			Color = ColorSequence.new(Color3.fromHSV(frac, 1, 1), Color3.new(1, 1, 1)),
+			Rotation = 90,
+		}, wedge)
+	end
+
+	-- Brightness overlay on the wheel so dragging Value darkens the wheel smoothly.
+	local wheelShade = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = v,
+		BorderSizePixel = 0,
+		ZIndex = 63,
+	}, wheelContainer)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, wheelShade)
+
+	local wheelBorder = create("Frame", {
+		Size = UDim2.fromOffset(wheelSize, wheelSize),
+		Position = UDim2.fromOffset(10, 32),
+		BackgroundTransparency = 1,
+		ZIndex = 65,
+	}, popup)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, wheelBorder)
+	addStroke(wheelBorder, Color3.new(1, 1, 1), 0.6)
+
+	local wheelDot = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(10, 10),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ZIndex = 66,
+	}, wheelBorder)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, wheelDot)
+	addStroke(wheelDot, Color3.new(0, 0, 0), 0.1, 1.5)
+
+	-- Vertical Value/Brightness slider bar beside the wheel.
+	local valBar = create("Frame", {
+		Size = UDim2.fromOffset(18, wheelSize),
+		Position = UDim2.fromOffset(wheelSize + 20, 32),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ZIndex = 62,
+	}, popup)
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, valBar)
+	addStroke(valBar, Color3.new(1, 1, 1), 0.6)
+	local valGrad = create("UIGradient", {
+		Color = ColorSequence.new(Color3.fromHSV(h, s, 1), Color3.new(0, 0, 0)),
+		Rotation = 90,
+	}, valBar)
+
+	local valKnob = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.new(1, 4, 0, 5),
+		Position = UDim2.new(0.5, 0, 1 - v, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ZIndex = 64,
+	}, valBar)
+	create("UICorner", { CornerRadius = UDim.new(0, 2) }, valKnob)
+	addStroke(valKnob, Color3.new(0, 0, 0), 0.1)
+
+	-- Bottom preview swatch + hex readout.
+	local sampleBox = create("Frame", {
+		Size = UDim2.fromOffset(36, 18),
+		Position = UDim2.fromOffset(10, 178),
+		BackgroundColor3 = currentColor,
+		BorderSizePixel = 0,
+		ZIndex = 62,
+	}, popup)
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, sampleBox)
+	addStroke(sampleBox, Color3.new(1, 1, 1), 0.5)
+
+	local hexLabel = create("TextLabel", {
+		Size = UDim2.new(1, -60, 0, 18),
+		Position = UDim2.fromOffset(54, 178),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = DIM_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 62,
+	}, popup)
+
+	local function refreshVisuals()
+		local chosen = Color3.fromHSV(h, s, v)
+		local radAngle = h * math.pi * 2
+		local rPx = s * (radius - 4)
+		wheelDot.Position = UDim2.fromOffset(radius + math.cos(radAngle) * rPx, radius + math.sin(radAngle) * rPx)
+		wheelShade.BackgroundTransparency = v
+		valGrad.Color = ColorSequence.new(Color3.fromHSV(h, s, 1), Color3.new(0, 0, 0))
+		valKnob.Position = UDim2.new(0.5, 0, 1 - v, 0)
+		sampleBox.BackgroundColor3 = chosen
+		hexLabel.Text = string.format("#%02X%02X%02X", math.round(chosen.R * 255), math.round(chosen.G * 255), math.round(chosen.B * 255))
+		onChange(chosen)
+	end
+
+	local draggingWheel = false
+	local draggingVal = false
+
+	local function updateWheelFromPos(posX, posY)
+		local absPos = wheelBorder.AbsolutePosition
+		local absSize = wheelBorder.AbsoluteSize
+		local cx = absPos.X + absSize.X * 0.5
+		local cy = absPos.Y + absSize.Y * 0.5
+		local dx = posX - cx
+		local dy = posY - cy
+		local dist = math.sqrt(dx * dx + dy * dy)
+		local r = math.max(absSize.X * 0.5, 1)
+		h = (math.atan2(dy, dx) / (2 * math.pi)) % 1
+		s = math.clamp(dist / r, 0, 1)
+		refreshVisuals()
+	end
+
+	local function updateValFromPos(posY)
+		local top = valBar.AbsolutePosition.Y
+		local height = math.max(valBar.AbsoluteSize.Y, 1)
+		v = 1 - math.clamp((posY - top) / height, 0, 1)
+		refreshVisuals()
+	end
+
+	wheelBorder.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingWheel = true
+			updateWheelFromPos(input.Position.X, input.Position.Y)
+		end
+	end)
+
+	valBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingVal = true
+			updateValFromPos(input.Position.Y)
+		end
+	end)
+
+	local changedConn = userInputService.InputChanged:Connect(function(input)
+		if not popup.Parent then
+			return
+		end
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			if draggingWheel then
+				updateWheelFromPos(input.Position.X, input.Position.Y)
+			elseif draggingVal then
+				updateValFromPos(input.Position.Y)
+			end
+		end
+	end)
+
+	local endedConn = userInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			draggingWheel = false
+			draggingVal = false
+		end
+	end)
+
+	popup.Destroying:Connect(function()
+		if changedConn.Connected then changedConn:Disconnect() end
+		if endedConn.Connected then endedConn:Disconnect() end
+	end)
+
+	refreshVisuals()
+end
+
+local function addColor(parent, text, default)
+	local initialColor = default or COLOR_PRESETS[1]
+	local holder = createCard("Frame", parent, text, 28)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -46, 1, 0),
+		Position = UDim2.fromOffset(8, 0),
 		BackgroundTransparency = 1,
 		Text = text,
 		TextColor3 = TEXT_COLOR,
@@ -734,36 +997,17 @@ local function addColor(parent, text, default)
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, holder)
 
-	local preview = create("Frame", {
-		Size = UDim2.fromOffset(28, 16),
-		Position = UDim2.new(1, -36, 0, 6),
+	local swatch = create("TextButton", {
+		Size = UDim2.fromOffset(28, 18),
+		Position = UDim2.new(1, -36, 0.5, -9),
 		BackgroundColor3 = initialColor,
 		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
 	}, holder)
 
-	create("UICorner", { CornerRadius = UDim.new(0, 4) }, preview)
-	addStroke(preview, Color3.new(1, 1, 1), 0.45)
-
-	local paletteRow = create("Frame", {
-		Size = UDim2.new(1, -16, 0, 36),
-		Position = UDim2.fromOffset(8, 27),
-		BackgroundColor3 = ELEMENT_COLOR,
-		BackgroundTransparency = 0.25,
-		BorderSizePixel = 0,
-	}, holder)
-
-	create("UICorner", { CornerRadius = UDim.new(0, 4) }, paletteRow)
-	create("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 5), PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4) }, paletteRow)
-	create("UIGridLayout", {
-		CellSize = UDim2.fromOffset(16, 12),
-		CellPadding = UDim2.fromOffset(4, 4),
-		FillDirection = Enum.FillDirection.Horizontal,
-		HorizontalAlignment = Enum.HorizontalAlignment.Left,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, paletteRow)
-
-	local swatchEntries = {}
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, swatch)
+	addStroke(swatch, Color3.new(1, 1, 1), 0.5)
 
 	local function coerceColor(value)
 		if typeof(value) == "Color3" then
@@ -776,44 +1020,21 @@ local function addColor(parent, text, default)
 		return initialColor
 	end
 
-	local function colorsClose(a, b)
-		return math.abs(a.R - b.R) < 0.02 and math.abs(a.G - b.G) < 0.02 and math.abs(a.B - b.B) < 0.02
-	end
-
 	EggHub.values[text] = initialColor
 	EggHub.defaults[text] = initialColor
 
 	EggHub.setters[text] = function(value)
 		local resolved = coerceColor(value)
-		preview.BackgroundColor3 = resolved
+		swatch.BackgroundColor3 = resolved
 		EggHub.values[text] = resolved
-		for _, entry in swatchEntries do
-			local active = colorsClose(entry.color, resolved)
-			entry.stroke.Transparency = active and 0 or 0.82
-			entry.stroke.Thickness = active and 1.5 or 1
-		end
 	end
 
-	for idx, presetColor in COLOR_PRESETS do
-		local chip = create("TextButton", {
-			Size = UDim2.fromOffset(14, 14),
-			BackgroundColor3 = presetColor,
-			BorderSizePixel = 0,
-			Text = "",
-			AutoButtonColor = false,
-			LayoutOrder = idx,
-		}, paletteRow)
-
-		create("UICorner", { CornerRadius = UDim.new(0, 3) }, chip)
-		local chipStroke = addStroke(chip, Color3.new(1, 1, 1), colorsClose(presetColor, initialColor) and 0 or 0.82, colorsClose(presetColor, initialColor) and 1.5 or 1)
-		table.insert(swatchEntries, { button = chip, stroke = chipStroke, color = presetColor })
-
-		chip.Activated:Connect(function()
-			EggHub.setters[text](presetColor)
+	swatch.Activated:Connect(function()
+		openCircularColorPicker(text, EggHub.values[text] or initialColor, function(newColor)
+			EggHub.setters[text](newColor)
 		end)
-	end
+	end)
 
-	EggHub.setters[text](initialColor)
 	table.insert(EggHub.searchables, holder)
 end
 
@@ -1081,6 +1302,8 @@ local function initializeScript()
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	}, guiParent)
 
+	EggHub.screenGui = screenGui
+
 	if typeof(shared) == "table" then
 		shared.EggHubGui = screenGui
 		shared.EggHub = EggHub
@@ -1097,73 +1320,8 @@ local function initializeScript()
 		table.clear(EggHub.connections)
 	end)
 
-	local toastHolder = create("Frame", {
-		AnchorPoint = Vector2.new(1, 1),
-		Position = UDim2.new(1, -16, 1, -16),
-		Size = UDim2.fromOffset(230, 320),
-		BackgroundTransparency = 1,
-		ZIndex = 20,
-	}, screenGui)
-
-	create("UIListLayout", {
-		Padding = UDim.new(0, 6),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		HorizontalAlignment = Enum.HorizontalAlignment.Right,
-		VerticalAlignment = Enum.VerticalAlignment.Bottom,
-	}, toastHolder)
-
-	EggHub.notify = function(name, enabled)
-		if not toastHolder.Parent then
-			return
-		end
-
-		local toast = create("CanvasGroup", {
-			Size = UDim2.fromOffset(230, 34),
-			BackgroundColor3 = Color3.fromRGB(18, 18, 20),
-			BorderSizePixel = 0,
-			GroupTransparency = 1,
-		}, toastHolder)
-
-		create("UICorner", { CornerRadius = UDim.new(0, 7) }, toast)
-		addStroke(toast, Color3.new(1, 1, 1), 0.8)
-
-		create("Frame", {
-			Size = UDim2.new(0, 3, 1, -12),
-			Position = UDim2.fromOffset(6, 6),
-			BackgroundColor3 = enabled and Color3.fromRGB(120, 220, 140) or Color3.fromRGB(230, 100, 100),
-			BorderSizePixel = 0,
-		}, toast)
-
-		create("TextLabel", {
-			Size = UDim2.new(1, -80, 1, 0),
-			Position = UDim2.fromOffset(18, 0),
-			BackgroundTransparency = 1,
-			Text = name,
-			TextColor3 = TEXT_COLOR,
-			TextSize = 13,
-			Font = TEXT_FONT,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-		}, toast)
-
-		create("TextLabel", {
-			Size = UDim2.fromOffset(46, 34),
-			Position = UDim2.new(1, -54, 0, 0),
-			BackgroundTransparency = 1,
-			Text = enabled and "ON" or "OFF",
-			TextColor3 = enabled and Color3.fromRGB(120, 220, 140) or Color3.fromRGB(230, 100, 100),
-			TextSize = 12,
-			Font = BOLD_FONT,
-			TextXAlignment = Enum.TextXAlignment.Right,
-		}, toast)
-
-		tween(toast, FAST_TWEEN, { GroupTransparency = 0 })
-
-		task.delay(2, function()
-			tween(toast, MEDIUM_TWEEN, { GroupTransparency = 1 }).Completed:Wait()
-			toast:Destroy()
-		end)
-	end
+	-- Toast notifications intentionally disabled per user request.
+	EggHub.notify = function() end
 
 	local window = create("Frame", {
 		Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
@@ -1433,13 +1591,13 @@ local function initializeScript()
 	addSection(extraLeft, "Speed")
 	addToggle(extraLeft, "Enable Speed", nil, false)
 	addCycle(extraLeft, "Speed Mode", { "WalkSpeed", "Velocity", "CFrame" })
-	addSlider(extraLeft, "Speed Value", 16, 1000000000, 16, 0)
+	addSlider(extraLeft, "Speed Value", 16, 300, 32, 0)
 	addToggle(extraLeft, "Speed Auto Match Biome", nil, false)
 
 	addSection(extraLeft, "Fly")
 	addToggle(extraLeft, "Enable Fly", nil, false)
-	addCycle(extraLeft, "Fly Method", { "Velocity", "CFrame", "Humanoid" })
-	addSlider(extraLeft, "Fly Speed", 1, 500, 60, 0)
+	addCycle(extraLeft, "Fly Method", { "Humanoid", "Velocity", "CFrame" })
+	addSlider(extraLeft, "Fly Speed", 16, 200, 50, 0)
 	addKeybind(extraLeft, "Fly Up Key", "Space")
 	addKeybind(extraLeft, "Fly Down Key", "LeftControl")
 
@@ -1462,7 +1620,11 @@ local function initializeScript()
 	addCycle(extraRight, "Min Rarity To Keep", { "Common", "Uncommon", "Rare", "Legendary", "Mythic", "Secret" })
 
 	addSection(extraRight, "Biome Teleport")
-	addList(extraRight, "Biome", { "Forest", "Lake", "Desert", "Jungle", "Snow", "Volcano", "Abyss Ocean", "Prehistoric", "Cosmic" }, 110)
+	addList(extraRight, "Biome", {
+		"Forest", "Lake", "Desert", "Jungle", "Snow", "Volcano",
+		"Abyss Ocean", "Prehistoric", "Stormlands", "Cosmic",
+		"Cherry Blossom", "Titan Temple", "Light Dark", "Enchanted Forest", "Alien"
+	}, 110)
 	addButton(extraRight, "Teleport To Biome")
 
 	addSection(extraRight, "Auto Claim Rare Spawns")
@@ -1917,25 +2079,67 @@ local function initializeScript()
 			return closestDist <= 220 and closestName or nil
 		end
 
-		local function safeTeleportTo(targetCFrame)
-			local _, hum, root = getCharacterParts()
-			if not (hum and root) then
-				return false
+		local airFloorPart = nil
+		local travelToken = 0
+		local currentTravelTask = nil
+
+		local function ensureAirFloor()
+			if airFloorPart and airFloorPart.Parent == workspace then
+				return airFloorPart
 			end
-			local prevAttr = workspace:GetAttribute("ClientObbyAntiTp")
-			workspace:SetAttribute("ClientObbyAntiTp", false)
-			hum.Sit = false
-			root.AssemblyLinearVelocity = Vector3.zero
-			root.AssemblyAngularVelocity = Vector3.zero
-			root.CFrame = targetCFrame
-			task.delay(0.35, function()
-				if not unloaded and not antiTpDisabledByHub then
-					pcall(function()
-						workspace:SetAttribute("ClientObbyAntiTp", prevAttr)
-					end)
+			if airFloorPart then
+				pcall(function() airFloorPart:Destroy() end)
+			end
+			local p = Instance.new("Part")
+			p.Name = "EggHubAirFloor"
+			p.Size = Vector3.new(14, 1, 14)
+			p.Anchored = true
+			p.CanCollide = true
+			p.CanTouch = false
+			p.CanQuery = false
+			p.Transparency = 1
+			p.CastShadow = false
+			p.Material = Enum.Material.Plastic
+			p.Archivable = false
+			p.Parent = workspace
+			airFloorPart = p
+			return p
+		end
+
+		local function destroyAirFloor()
+			if airFloorPart then
+				pcall(function() airFloorPart:Destroy() end)
+				airFloorPart = nil
+			end
+		end
+
+		local function positionAirFloorUnder(root, hum, targetFeetY)
+			local floor = ensureAirFloor()
+			local hip = hum and hum.HipHeight or 2
+			local halfY = root.Size.Y * 0.5
+			local floorCenterY = (targetFeetY or root.Position.Y) - (halfY + hip + 0.5)
+			floor.CFrame = CFrame.new(root.Position.X, floorCenterY, root.Position.Z)
+		end
+
+		local function setBarriersNoclip(enabled)
+			local world = workspace:FindFirstChild("World")
+			local areas = world and world:FindFirstChild("Areas")
+			if areas then
+				local wall = areas:FindFirstChild("WallStartCollision")
+				if wall and wall:IsA("BasePart") then
+					wall.CanCollide = not enabled
 				end
-			end)
-			return true
+			end
+			local plots = workspace:FindFirstChild("Plots")
+			if plots then
+				for _, plotModel in plots:GetChildren() do
+					for _, desc in plotModel:GetDescendants() do
+						if desc:IsA("BasePart") and (desc.Name == "Gate" or desc.Name == "Fence" or desc.Name == "Barrier") then
+							desc.CanCollide = not enabled
+						end
+					end
+				end
+			end
 		end
 
 		local function getLocalPenTargetCFrame()
@@ -1987,78 +2191,152 @@ local function initializeScript()
 			return nil
 		end
 
-		-- Resolve a speed slider value safely (16..1e9) to prevent physics overflow & lagspikes.
+		local function isCarryingEgg()
+			if EggState and type(EggState.ReadCarryState) == "function" then
+				local ok, state = pcall(EggState.ReadCarryState)
+				if ok and state then
+					return state.IsCarrying == true
+				end
+			end
+			local char = localPlayer.Character
+			return char ~= nil and char:GetAttribute("CarryingEgg") == true
+		end
+
+		-- Anticheat-safe step-glide teleport: stays grounded via EggHubAirFloor,
+		-- keeps PlatformStand = false, and adapts speed automatically if rubberbanded.
+		local function safeTeleportTo(targetCFrame, opts)
+			local _, hum, root = getCharacterParts()
+			if not (hum and root and targetCFrame) then
+				return false
+			end
+			local targetPos = targetCFrame.Position
+			local dist = (targetPos - root.Position).Magnitude
+			if dist <= 10 then
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.CFrame = targetCFrame
+				return true
+			end
+
+			travelToken += 1
+			local myToken = travelToken
+			local prevAttr = workspace:GetAttribute("ClientObbyAntiTp")
+			workspace:SetAttribute("ClientObbyAntiTp", false)
+			setBarriersNoclip(true)
+
+			local carrying = isCarryingEgg()
+			local baseWs = math.max(hum.WalkSpeed, 16)
+			local maxSpeed = carrying
+				and math.clamp(math.max(baseWs * 1.85, 36), 36, 175)
+				or math.clamp(math.max(baseWs * 1.9, 115), 115, 250)
+			if opts and type(opts.maxSpeed) == "number" then
+				maxSpeed = math.min(maxSpeed, opts.maxSpeed)
+			end
+			local cruiseSpeed = maxSpeed
+
+			local function runGlide()
+				local lastExpected = root.Position
+				local cruiseY = math.max(root.Position.Y, targetPos.Y, 74)
+				local startedAt = os.clock()
+				while not unloaded and travelToken == myToken do
+					local _, curHum, curRoot = getCharacterParts()
+					if not (curHum and curRoot) or curHum.Health <= 0 then
+						break
+					end
+					if os.clock() - startedAt > 45 then
+						break
+					end
+					local dt = runService.Heartbeat:Wait()
+					dt = math.clamp(dt or 0.016, 0.005, 0.05)
+
+					-- Detect server rubberband and adapt speed down smoothly.
+					if (curRoot.Position - lastExpected).Magnitude > 35 then
+						cruiseSpeed = math.max(32, cruiseSpeed * 0.68)
+						lastExpected = curRoot.Position
+					end
+
+					local curPos = curRoot.Position
+					local flatGoal = Vector3.new(targetPos.X, curPos.Y, targetPos.Z)
+					local flatDelta = flatGoal - curPos
+					local flatDist = flatDelta.Magnitude
+
+					local stepY = targetPos.Y
+					if flatDist > 22 then
+						stepY = cruiseY
+					end
+
+					local nextPos
+					if flatDist <= math.max(cruiseSpeed * dt, 3) then
+						nextPos = targetPos
+					else
+						local dir = flatDelta.Unit
+						local nextXZ = curPos + dir * (cruiseSpeed * dt)
+						local nextY = curPos.Y + math.clamp(stepY - curPos.Y, -60 * dt, 60 * dt)
+						nextPos = Vector3.new(nextXZ.X, nextY, nextXZ.Z)
+					end
+
+					curHum.Sit = false
+					curHum.PlatformStand = false
+					curRoot.AssemblyLinearVelocity = Vector3.zero
+					curRoot.AssemblyAngularVelocity = Vector3.zero
+					curRoot.CFrame = CFrame.new(nextPos) * targetCFrame.Rotation
+					positionAirFloorUnder(curRoot, curHum, nextPos.Y)
+					lastExpected = nextPos
+
+					if (nextPos - targetPos).Magnitude <= 4 then
+						curRoot.CFrame = targetCFrame
+						break
+					end
+				end
+
+				if travelToken == myToken then
+					setBarriersNoclip(false)
+					if not EggHub.values["Enable Fly"] then
+						destroyAirFloor()
+					end
+					if not unloaded and not antiTpDisabledByHub then
+						pcall(function()
+							workspace:SetAttribute("ClientObbyAntiTp", prevAttr)
+						end)
+					end
+				end
+			end
+
+			if opts and opts.blocking then
+				runGlide()
+			else
+				currentTravelTask = task.spawn(runGlide)
+			end
+			return true
+		end
+
+		-- Resolve Speed Value safely on the natural 16..300 WalkSpeed scale.
 		local function resolveEffectiveWalkSpeed()
 			local _, _, root = getCharacterParts()
 			if EggHub.values["Speed Auto Match Biome"] and root then
 				local biome = getCurrentBiomeName(root.Position)
 				if biome then
-					return math.clamp(getBiomeSpeed(biome) + 12, 16, 420)
+					return math.clamp(getBiomeSpeed(biome) + 4, 16, 300)
 				end
 			end
-			local raw = tonumber(EggHub.values["Speed Value"]) or 16
-			if raw <= 450 then
-				return math.clamp(raw, 16, 450)
+			local raw = tonumber(EggHub.values["Speed Value"]) or 32
+			if raw <= 300 then
+				return math.clamp(raw, 16, 300)
 			end
 			if TreadmillUtil and type(TreadmillUtil.SpeedPowerToWalkSpeed) == "function" then
 				local ok, ws = pcall(TreadmillUtil.SpeedPowerToWalkSpeed, raw)
 				if ok and type(ws) == "number" then
-					return math.clamp(ws, 16, 450)
+					return math.clamp(ws, 16, 300)
 				end
 			end
-			return math.clamp(16 + math.log10(raw / 16) * 48, 16, 450)
+			return math.clamp(16 + math.log10(raw / 16) * 40, 16, 300)
 		end
 
 		-- =================================================================
-		-- 1) SPEED & FLY (Anti-Lagspike & Anti-Anticheat Spike)
+		-- 1) SPEED & FLY (Stealth AirFloor Fly + Natural WalkSpeed Bypass)
 		-- =================================================================
 		local savedWalkSpeed = nil
-		local flyAttachment = nil
-		local flyVelocity = nil
-		local flyAlign = nil
+		local flyTargetY = nil
 		local wasFlying = false
-
-		local function destroyFlyConstraints()
-			if flyVelocity then
-				pcall(function() flyVelocity:Destroy() end)
-				flyVelocity = nil
-			end
-			if flyAlign then
-				pcall(function() flyAlign:Destroy() end)
-				flyAlign = nil
-			end
-			if flyAttachment then
-				pcall(function() flyAttachment:Destroy() end)
-				flyAttachment = nil
-			end
-		end
-
-		local function ensureFlyConstraints(root)
-			if flyAttachment and flyAttachment.Parent == root and flyVelocity and flyAlign then
-				return
-			end
-			destroyFlyConstraints()
-			flyAttachment = Instance.new("Attachment")
-			flyAttachment.Name = "EggHubFlyAttachment"
-			flyAttachment.Parent = root
-
-			flyVelocity = Instance.new("LinearVelocity")
-			flyVelocity.Name = "EggHubFlyVelocity"
-			flyVelocity.Attachment0 = flyAttachment
-			flyVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-			flyVelocity.MaxForce = 1e6
-			flyVelocity.VectorVelocity = Vector3.zero
-			flyVelocity.Parent = root
-
-			flyAlign = Instance.new("AlignOrientation")
-			flyAlign.Name = "EggHubFlyAlign"
-			flyAlign.Mode = Enum.OrientationAlignmentMode.OneAttachment
-			flyAlign.Attachment0 = flyAttachment
-			flyAlign.MaxTorque = 1e6
-			flyAlign.Responsiveness = 50
-			flyAlign.CFrame = root.CFrame
-			flyAlign.Parent = root
-		end
 
 		local function keyNameToEnum(keyName)
 			if type(keyName) ~= "string" or keyName == "" then
@@ -2067,41 +2345,43 @@ local function initializeScript()
 			return Enum.KeyCode[keyName]
 		end
 
-		local function getFlyDirection(hum)
+		local function getFlyMoveVector(hum)
 			local cam = workspace.CurrentCamera
-			if not cam then
-				return Vector3.zero
+			local horiz = Vector3.zero
+			if cam then
+				local look = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+				local right = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z)
+				look = look.Magnitude > 0.01 and look.Unit or Vector3.new(0, 0, -1)
+				right = right.Magnitude > 0.01 and right.Unit or Vector3.new(1, 0, 0)
+				if userInputService:IsKeyDown(Enum.KeyCode.W) then horiz += look end
+				if userInputService:IsKeyDown(Enum.KeyCode.S) then horiz -= look end
+				if userInputService:IsKeyDown(Enum.KeyCode.D) then horiz += right end
+				if userInputService:IsKeyDown(Enum.KeyCode.A) then horiz -= right end
 			end
-			local dir = Vector3.zero
-			local look = cam.CFrame.LookVector
-			local right = cam.CFrame.RightVector
-			if userInputService:IsKeyDown(Enum.KeyCode.W) then dir += look end
-			if userInputService:IsKeyDown(Enum.KeyCode.S) then dir -= look end
-			if userInputService:IsKeyDown(Enum.KeyCode.D) then dir += right end
-			if userInputService:IsKeyDown(Enum.KeyCode.A) then dir -= right end
-
-			-- Support mobile / thumbstick move direction if no WASD pressed.
-			if dir.Magnitude < 0.01 and hum and hum.MoveDirection.Magnitude > 0.05 then
-				dir += hum.MoveDirection
+			if horiz.Magnitude < 0.01 and hum and hum.MoveDirection.Magnitude > 0.05 then
+				horiz = Vector3.new(hum.MoveDirection.X, 0, hum.MoveDirection.Z)
 			end
+			horiz = horiz.Magnitude > 0.01 and horiz.Unit or Vector3.zero
 
+			local vert = 0
 			local upKey = keyNameToEnum(EggHub.values["Fly Up Key Value"] or "Space")
 			local downKey = keyNameToEnum(EggHub.values["Fly Down Key Value"] or "LeftControl")
 			if upKey and userInputService:IsKeyDown(upKey) then
-				dir += Vector3.new(0, 1, 0)
+				vert += 1
 			end
 			if downKey and userInputService:IsKeyDown(downKey) then
-				dir -= Vector3.new(0, 1, 0)
+				vert -= 1
 			end
-			return dir.Magnitude > 0.01 and dir.Unit or Vector3.zero
+			return horiz, vert
 		end
 
 		local function stopFlyState(hum, root)
-			destroyFlyConstraints()
+			flyTargetY = nil
+			destroyAirFloor()
 			if hum then
 				hum.PlatformStand = false
-				if hum:GetState() == Enum.HumanoidStateType.Physics then
-					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+				if savedWalkSpeed and not EggHub.values["Enable Speed"] then
+					pcall(function() hum.WalkSpeed = savedWalkSpeed end)
 				end
 			end
 			if root then
@@ -2110,7 +2390,9 @@ local function initializeScript()
 		end
 
 		addCleanup(function()
-			destroyFlyConstraints()
+			travelToken += 1
+			setBarriersNoclip(false)
+			destroyAirFloor()
 			local _, hum, root = getCharacterParts()
 			if hum then
 				hum.PlatformStand = false
@@ -2133,7 +2415,8 @@ local function initializeScript()
 
 			local _, hum, root = getCharacterParts()
 			if not (hum and root) then
-				destroyFlyConstraints()
+				destroyAirFloor()
+				flyTargetY = nil
 				wasFlying = false
 				return
 			end
@@ -2143,36 +2426,45 @@ local function initializeScript()
 
 			if flyEnabled then
 				wasFlying = true
-				local flyMethod = EggHub.values["Fly Method"] or "Velocity"
-				local flySpeed = math.clamp(tonumber(EggHub.values["Fly Speed"]) or 60, 1, 450)
-				local moveDir = getFlyDirection(hum)
-				local cam = workspace.CurrentCamera
-				local camRot = cam and CFrame.lookAt(Vector3.zero, Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Magnitude > 0.01 and Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z) or root.CFrame.LookVector) or root.CFrame.Rotation
+				local flyMethod = EggHub.values["Fly Method"] or "Humanoid"
+				local flySpeed = math.clamp(tonumber(EggHub.values["Fly Speed"]) or 50, 16, 200)
+				local horizDir, vertDir = getFlyMoveVector(hum)
 
-				if flyMethod == "Velocity" then
-					hum.PlatformStand = true
-					ensureFlyConstraints(root)
-					flyVelocity.VectorVelocity = moveDir * flySpeed
-					flyAlign.CFrame = camRot
-				elseif flyMethod == "CFrame" then
-					destroyFlyConstraints()
-					hum.PlatformStand = true
+				if savedWalkSpeed == nil then
+					savedWalkSpeed = hum.WalkSpeed
+				end
+				if flyTargetY == nil then
+					flyTargetY = root.Position.Y
+				end
+				if vertDir ~= 0 then
+					flyTargetY += vertDir * math.min(flySpeed * 0.75, 85) * dt
+				end
+
+				-- Never set PlatformStand = true or Physics state; keep grounded on EggHubAirFloor.
+				hum.PlatformStand = false
+				positionAirFloorUnder(root, hum, flyTargetY)
+
+				if flyMethod == "Humanoid" then
+					if math.abs(hum.WalkSpeed - flySpeed) > 0.1 then
+						hum.WalkSpeed = flySpeed
+					end
+					if vertDir ~= 0 then
+						root.CFrame = CFrame.new(root.Position.X, flyTargetY, root.Position.Z) * root.CFrame.Rotation
+					end
+				elseif flyMethod == "Velocity" then
+					local vel = root.AssemblyLinearVelocity
+					root.AssemblyLinearVelocity = Vector3.new(horizDir.X * flySpeed, (flyTargetY - root.Position.Y) * 10, horizDir.Z * flySpeed)
+					if horizDir.Magnitude < 0.01 and vertDir == 0 then
+						root.AssemblyLinearVelocity = Vector3.new(0, math.clamp((flyTargetY - root.Position.Y) * 8, -20, 20), 0)
+					else
+						local _ = vel
+					end
+				else -- CFrame
 					root.AssemblyLinearVelocity = Vector3.zero
 					root.AssemblyAngularVelocity = Vector3.zero
-					if moveDir.Magnitude > 0.01 then
-						local step = math.min(flySpeed * dt, 20)
-						root.CFrame = CFrame.new(root.Position + moveDir * step) * camRot
-					else
-						root.CFrame = CFrame.new(root.Position) * camRot
-					end
-				else -- Humanoid
-					destroyFlyConstraints()
-					hum.PlatformStand = false
-					if hum:GetState() ~= Enum.HumanoidStateType.Physics then
-						hum:ChangeState(Enum.HumanoidStateType.Physics)
-					end
-					root.AssemblyLinearVelocity = moveDir * flySpeed + Vector3.new(0, 0.4, 0)
-					root.AssemblyAngularVelocity = Vector3.zero
+					local stepXZ = horizDir * math.min(flySpeed * dt, 16)
+					local nextPos = Vector3.new(root.Position.X + stepXZ.X, flyTargetY, root.Position.Z + stepXZ.Z)
+					root.CFrame = CFrame.new(nextPos) * root.CFrame.Rotation
 				end
 			elseif wasFlying then
 				wasFlying = false
@@ -2197,14 +2489,14 @@ local function initializeScript()
 							local curVel = root.AssemblyLinearVelocity
 							root.AssemblyLinearVelocity = Vector3.new(moveDir.X * targetSpeed, curVel.Y, moveDir.Z * targetSpeed)
 						elseif mode == "CFrame" then
-							local step = math.min(math.max(targetSpeed - hum.WalkSpeed, 0) * dt, 18)
+							local step = math.min(math.max(targetSpeed - hum.WalkSpeed, 0) * dt, 12)
 							if step > 0.01 then
 								root.CFrame = root.CFrame + moveDir * step
 							end
 						end
 					end
 				end
-			elseif savedWalkSpeed ~= nil then
+			elseif savedWalkSpeed ~= nil and not flyEnabled then
 				if math.abs(hum.WalkSpeed - savedWalkSpeed) > 0.1 then
 					hum.WalkSpeed = savedWalkSpeed
 				end
@@ -2441,6 +2733,7 @@ local function initializeScript()
 		-- =================================================================
 		local lastStealAttempt = 0
 		local returningAt = nil
+		local activeReturnGlide = false
 
 		local function getFieldEggList()
 			if EggState and type(EggState.ReadFieldEggs) == "function" then
@@ -2452,15 +2745,16 @@ local function initializeScript()
 			return {}
 		end
 
-		local function isCarryingEgg()
-			if EggState and type(EggState.ReadCarryState) == "function" then
-				local ok, state = pcall(EggState.ReadCarryState)
-				if ok and state then
-					return state.IsCarrying == true
+		local function findFieldEggModel(uid)
+			local strUid = tostring(uid)
+			local slotFolder = workspace:FindFirstChild("AreaEggSlotsClient")
+			if slotFolder then
+				local inSlot = slotFolder:FindFirstChild(strUid)
+				if inSlot then
+					return inSlot
 				end
 			end
-			local char = localPlayer.Character
-			return char ~= nil and char:GetAttribute("CarryingEgg") == true
+			return workspace:FindFirstChild(strUid)
 		end
 
 		local function carryFieldEgg(record)
@@ -2487,8 +2781,7 @@ local function initializeScript()
 				end
 			end
 			if type(fireproximityprompt) == "function" then
-				local slotFolder = workspace:FindFirstChild("AreaEggSlotsClient")
-				local eggModel = slotFolder and slotFolder:FindFirstChild(tostring(record.Uid))
+				local eggModel = findFieldEggModel(record.Uid)
 				local prompt = eggModel and eggModel:FindFirstChildWhichIsA("ProximityPrompt", true)
 				if prompt then
 					pcall(fireproximityprompt, prompt)
@@ -2499,6 +2792,9 @@ local function initializeScript()
 		end
 
 		local function runReturnToPen()
+			if activeReturnGlide then
+				return
+			end
 			local deliveryCf = getSafeDeliveryCFrame()
 			if not deliveryCf then
 				return
@@ -2508,7 +2804,11 @@ local function initializeScript()
 				return
 			end
 			if EggHub.values["Return Pathing"] == "Teleport" then
-				safeTeleportTo(deliveryCf)
+				activeReturnGlide = true
+				task.spawn(function()
+					pcall(safeTeleportTo, deliveryCf, { blocking = true })
+					activeReturnGlide = false
+				end)
 			else
 				hum:MoveTo(deliveryCf.Position)
 			end
@@ -2527,7 +2827,7 @@ local function initializeScript()
 						local delaySecs = tonumber(EggHub.values["Return Delay"]) or 0
 						returningAt = now + delaySecs
 					end
-					if now >= returningAt then
+					if now >= returningAt and not activeReturnGlide then
 						runReturnToPen()
 						returningAt = now + 0.5
 					end
@@ -2536,7 +2836,7 @@ local function initializeScript()
 			end
 			returningAt = nil
 
-			if now - lastStealAttempt < 0.45 then
+			if activeReturnGlide or now - lastStealAttempt < 0.45 then
 				return
 			end
 
@@ -2563,16 +2863,19 @@ local function initializeScript()
 				end
 				if bestRare then
 					lastStealAttempt = now
-					if bestDist > 10 then
-						safeTeleportTo(bestRare.BoundsCFrame + Vector3.new(0, 3, 0))
-						task.wait(0.08)
-					end
-					if carryFieldEgg(bestRare) then
-						local deliveryCf = getSafeDeliveryCFrame()
-						if deliveryCf then
-							safeTeleportTo(deliveryCf)
+					activeReturnGlide = true
+					task.spawn(function()
+						if bestDist > 10 then
+							pcall(safeTeleportTo, CFrame.new(bestRare.BoundsCFrame.Position + Vector3.new(0, 3, 0)), { blocking = true })
 						end
-					end
+						if carryFieldEgg(bestRare) then
+							local deliveryCf = getSafeDeliveryCFrame()
+							if deliveryCf then
+								pcall(safeTeleportTo, deliveryCf, { blocking = true })
+							end
+						end
+						activeReturnGlide = false
+					end)
 					return
 				end
 			end
@@ -2620,6 +2923,7 @@ local function initializeScript()
 		-- 7) AUTO TRAIN SPEED / AUTO HATCH / AUTO COLLECT / AUTO SELL / BIOME TP
 		-- =================================================================
 		local lastTrainAt = 0
+		local trainingActive = false
 		local lastHatchAt = 0
 		local hatchedCooldown = {}
 		local lastCollectAt = 0
@@ -2627,7 +2931,12 @@ local function initializeScript()
 		local lastSellAt = 0
 
 		local function runAutoTrain()
+			local doffRemote = (Remotes and Remotes.Treadmill and Remotes.Treadmill.AskDoff) or getNetworkingRemote("RF/Treadmill/AskDoff")
 			if not EggHub.values["Enable Auto Train"] then
+				if trainingActive and doffRemote then
+					trainingActive = false
+					task.spawn(function() pcall(function() doffRemote:InvokeServer() end) end)
+				end
 				return
 			end
 			local now = os.clock()
@@ -2636,18 +2945,32 @@ local function initializeScript()
 			end
 			local targetSpeed = tonumber(EggHub.values["Target Speed"]) or 10000
 			local curSpeedPower = 0
+			local treadmillLevel = 1
 			if SpeedPowerProjection and type(SpeedPowerProjection.ReadProjected) == "function" then
 				local ok, val = pcall(SpeedPowerProjection.ReadProjected)
 				if ok and type(val) == "number" then
 					curSpeedPower = val
 				end
-			elseif SaveMod and type(SaveMod.Await) == "function" then
+			end
+			if SaveMod and type(SaveMod.Await) == "function" then
 				local ok, save = pcall(SaveMod.Await)
-				if ok and save and type(save.SpeedPower) == "number" then
-					curSpeedPower = save.SpeedPower
+				if ok and save then
+					if curSpeedPower == 0 and type(save.SpeedPower) == "number" then
+						curSpeedPower = save.SpeedPower
+					end
+					if type(save.TreadmillUpgradeLevel) == "number" then
+						treadmillLevel = save.TreadmillUpgradeLevel
+					end
 				end
 			end
+			if treadmillLevel <= 0 then
+				return
+			end
 			if curSpeedPower >= targetSpeed then
+				if trainingActive and doffRemote then
+					trainingActive = false
+					task.spawn(function() pcall(function() doffRemote:InvokeServer() end) end)
+				end
 				return
 			end
 			lastTrainAt = now
@@ -2655,24 +2978,27 @@ local function initializeScript()
 			local plot = PlotState and type(PlotState.ResolvePlot) == "function" and select(2, pcall(PlotState.ResolvePlot)) or nil
 			local treadmillBottom = plot and plot.PlotFolder and plot.PlotFolder:FindFirstChild("TreadmillBottom")
 			local trainMode = EggHub.values["Train Mode"] or "Treadmill"
-			local _, _, root = getCharacterParts()
-
-			if trainMode == "Treadmill" and treadmillBottom and treadmillBottom:IsA("BasePart") and root then
-				if (root.Position - treadmillBottom.Position).Magnitude > 6 then
-					safeTeleportTo(treadmillBottom.CFrame + Vector3.new(0, 3.5, 0))
-				end
-			end
-
 			local wearRemote = (Remotes and Remotes.Treadmill and Remotes.Treadmill.AskWearStill) or getNetworkingRemote("RF/Treadmill/AskWearStill")
+
 			if wearRemote then
 				task.spawn(function()
+					local _, _, root = getCharacterParts()
+					if trainMode == "Treadmill" and treadmillBottom and treadmillBottom:IsA("BasePart") and root then
+						if (root.Position - treadmillBottom.Position).Magnitude > 6 then
+							pcall(safeTeleportTo, treadmillBottom.CFrame + Vector3.new(0, 3.5, 0), { blocking = true })
+						end
+					end
 					local ok, entered = pcall(function()
 						return wearRemote:InvokeServer()
 					end)
-					if not (ok and entered == true) and trainMode == "Instant" and treadmillBottom and treadmillBottom:IsA("BasePart") then
-						safeTeleportTo(treadmillBottom.CFrame + Vector3.new(0, 3.5, 0))
-						task.wait(0.1)
-						pcall(function() wearRemote:InvokeServer() end)
+					if ok and entered == true then
+						trainingActive = true
+					elseif trainMode == "Instant" and treadmillBottom and treadmillBottom:IsA("BasePart") then
+						pcall(safeTeleportTo, treadmillBottom.CFrame + Vector3.new(0, 3.5, 0), { blocking = true })
+						local ok2, entered2 = pcall(function() return wearRemote:InvokeServer() end)
+						if ok2 and entered2 == true then
+							trainingActive = true
+						end
 					end
 				end)
 			end
@@ -2788,8 +3114,20 @@ local function initializeScript()
 
 			local equippedSet = {}
 			if type(save.EquippedAssets) == "table" then
-				for _, uid in save.EquippedAssets do
-					equippedSet[uid] = true
+				for k, v in save.EquippedAssets do
+					if type(v) == "string" then
+						equippedSet[v] = true
+					elseif type(k) == "string" and v == true then
+						equippedSet[k] = true
+					end
+				end
+			end
+			if AssetRoster and type(AssetRoster.ReadOwnerAssets) == "function" then
+				local rOk, ownerAssets = pcall(AssetRoster.ReadOwnerAssets, localPlayer.UserId)
+				if rOk and type(ownerAssets) == "table" then
+					for uid in ownerAssets do
+						equippedSet[uid] = true
+					end
 				end
 			end
 
@@ -2799,7 +3137,7 @@ local function initializeScript()
 			local toSell = {}
 
 			for uid, rawItem in save.Inventory do
-				if not equippedSet[uid] and type(rawItem) == "table" and not rawItem.Favorite and not rawItem.Locked then
+				if not equippedSet[uid] and type(rawItem) == "table" and not rawItem.IsFavorite and not rawItem.Favorite and not rawItem.InFuse and not rawItem.Locked then
 					local cat = rawItem.Category or rawItem.AssetCategory or rawItem.c
 					local scale = tonumber(rawItem.Scale or rawItem.AssetScale or rawItem.s) or 1
 					local _, rank = getRarityInfo(cat)
@@ -2834,12 +3172,10 @@ local function initializeScript()
 			local biomeName = EggHub.values["Biome"] or "Forest"
 			local guardAreas = getGuardAreasFolder()
 			if not guardAreas then
-				EggHub.notify("Biome folder missing", false)
 				return
 			end
 			local area = guardAreas:FindFirstChild(biomeName)
 			if not area then
-				EggHub.notify("Biome not found: " .. biomeName, false)
 				return
 			end
 			local exitPt = area:FindFirstChild("ClosestExitPoint")
@@ -2850,22 +3186,33 @@ local function initializeScript()
 			elseif bounds and bounds:IsA("BasePart") then
 				targetCf = CFrame.new(bounds.Position.X, bounds.Position.Y + bounds.Size.Y * 0.5 + 4, bounds.Position.Z)
 			end
-			if targetCf and safeTeleportTo(targetCf) then
-				EggHub.notify("TP -> " .. biomeName, true)
-			else
-				EggHub.notify("Teleport failed", false)
+			if targetCf then
+				safeTeleportTo(targetCf)
 			end
 		end
 
 		-- =================================================================
 		-- 8) VISUALS: EGG ESP / PET ESP / PLAYER ESP / GUARDIAN ESP / BIOME BOUNDARY
+		-- Highlights & SelectionBoxes live in workspace.CurrentCamera (renders immediately without respawn).
+		-- BillboardGuis live in PlayerGui ScreenGui (ResetOnSpawn = false).
 		-- =================================================================
-		local espParent = localPlayer:FindFirstChildOfClass("PlayerGui") or workspace.CurrentCamera or workspace
+		local espGuiParent = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 3) or coreGui
 		local espFolder = Instance.new("ScreenGui")
 		espFolder.Name = "EggHubESP"
 		espFolder.ResetOnSpawn = false
 		espFolder.IgnoreGuiInset = true
-		espFolder.Parent = espParent
+		espFolder.Parent = espGuiParent
+
+		local espWorldFolder = Instance.new("Folder")
+		espWorldFolder.Name = "EggHubWorldESP"
+		espWorldFolder.Archivable = false
+		espWorldFolder.Parent = workspace.CurrentCamera or workspace
+
+		connectFeature(workspace:GetPropertyChangedSignal("CurrentCamera"), function()
+			if not unloaded and espWorldFolder.Parent ~= nil then
+				espWorldFolder.Parent = workspace.CurrentCamera or workspace
+			end
+		end)
 
 		local eggEspMap = {}
 		local petEspMap = {}
@@ -2880,7 +3227,7 @@ local function initializeScript()
 				if entry.box then pcall(function() entry.box:Destroy() end) end
 				if entry.drawings then
 					for _, d in entry.drawings do
-						pcall(function() d:Remove() end)
+						pcall(function() d.Visible = false; d:Remove() end)
 					end
 				end
 				map[key] = nil
@@ -2894,6 +3241,7 @@ local function initializeScript()
 			bb.Size = size or UDim2.fromOffset(140, 32)
 			bb.StudsOffset = offset or Vector3.new(0, 2.5, 0)
 			bb.AlwaysOnTop = true
+			bb.MaxDistance = 5000
 			bb.Parent = espFolder
 
 			local lbl = Instance.new("TextLabel")
@@ -2902,7 +3250,7 @@ local function initializeScript()
 			lbl.Font = Enum.Font.SourceSansBold
 			lbl.TextSize = 13
 			lbl.TextColor3 = textColor or Color3.new(1, 1, 1)
-			lbl.TextStrokeTransparency = 0.25
+			lbl.TextStrokeTransparency = 0.2
 			lbl.Text = ""
 			lbl.Parent = bb
 			return bb, lbl
@@ -2915,9 +3263,9 @@ local function initializeScript()
 			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 			hl.FillColor = color
 			hl.OutlineColor = color
-			hl.FillTransparency = 0.78
-			hl.OutlineTransparency = 0.1
-			hl.Parent = espFolder
+			hl.FillTransparency = 0.72
+			hl.OutlineTransparency = 0.05
+			hl.Parent = espWorldFolder
 			return hl
 		end
 
@@ -2938,35 +3286,54 @@ local function initializeScript()
 			local maxDist = tonumber(EggHub.values["Egg ESP Max Distance"]) or 1000
 			local byRarity = EggHub.values["Colour By Rarity"] ~= false
 			local customColor = EggHub.values["Egg ESP Colour"] or Color3.fromRGB(255, 210, 70)
-			local slotFolder = workspace:FindFirstChild("AreaEggSlotsClient")
 			local fieldByUid = {}
-			for _, rec in getFieldEggList() do
-				fieldByUid[rec.Uid] = rec
+			local records = getFieldEggList()
+			for _, rec in records do
+				fieldByUid[tostring(rec.Uid)] = rec
+			end
+
+			local candidates = {}
+			local slotFolder = workspace:FindFirstChild("AreaEggSlotsClient")
+			if slotFolder then
+				for _, child in slotFolder:GetChildren() do
+					candidates[child] = fieldByUid[child.Name] or false
+				end
+			end
+			for uidStr, rec in fieldByUid do
+				local worldEgg = workspace:FindFirstChild(uidStr)
+				if worldEgg and not candidates[worldEgg] then
+					candidates[worldEgg] = rec
+				end
+			end
+			local placedFolder = workspace:FindFirstChild("PlacedEggRenders")
+			if placedFolder then
+				for _, child in placedFolder:GetChildren() do
+					if not candidates[child] then
+						candidates[child] = fieldByUid[child.Name] or false
+					end
+				end
 			end
 
 			local seen = {}
-			if slotFolder then
-				for _, eggModel in slotFolder:GetChildren() do
-					local part = getModelPart(eggModel)
-					if part then
-						local dist = (part.Position - rootPos).Magnitude
-						if dist <= maxDist then
-							seen[eggModel] = true
-							local rec = fieldByUid[eggModel.Name]
-							local cat = rec and rec.AssetCategory or eggModel:GetAttribute("AssetCategory") or eggModel.Name
-							local rarityName, _, rarityColor = getRarityInfo(cat)
-							local col = byRarity and rarityColor or customColor
-							local entry = eggEspMap[eggModel]
-							if not entry then
-								local bb, lbl = makeBillboard("EggESP", part, UDim2.fromOffset(160, 32), Vector3.new(0, 2.8, 0), col)
-								entry = { highlight = makeHighlight("EggHL", eggModel, col), billboard = bb, label = lbl }
-								eggEspMap[eggModel] = entry
-							end
-							entry.highlight.FillColor = col
-							entry.highlight.OutlineColor = col
-							entry.label.TextColor3 = col
-							entry.label.Text = string.format("%s [%s]\n%.0fm", tostring(cat), rarityName, dist)
+			for eggModel, rec in candidates do
+				local part = getModelPart(eggModel)
+				if part then
+					local dist = (part.Position - rootPos).Magnitude
+					if dist <= maxDist then
+						seen[eggModel] = true
+						local cat = (type(rec) == "table" and rec.AssetCategory) or eggModel:GetAttribute("AssetCategory") or eggModel.Name
+						local rarityName, _, rarityColor = getRarityInfo(cat)
+						local col = byRarity and rarityColor or customColor
+						local entry = eggEspMap[eggModel]
+						if not entry then
+							local bb, lbl = makeBillboard("EggESP", part, UDim2.fromOffset(160, 34), Vector3.new(0, 2.8, 0), col)
+							entry = { highlight = makeHighlight("EggHL", eggModel, col), billboard = bb, label = lbl }
+							eggEspMap[eggModel] = entry
 						end
+						entry.highlight.FillColor = col
+						entry.highlight.OutlineColor = col
+						entry.label.TextColor3 = col
+						entry.label.Text = string.format("%s [%s]\n%.0fm", tostring(cat), rarityName, dist)
 					end
 				end
 			end
@@ -3044,6 +3411,14 @@ local function initializeScript()
 			if guardAreas then
 				for _, areaModel in guardAreas:GetChildren() do
 					local guard = areaModel:FindFirstChild("ForestGuardStaging") or areaModel:FindFirstChild("Guard")
+					if not guard then
+						for _, ch in areaModel:GetChildren() do
+							if ch:IsA("Model") and ch:FindFirstChildOfClass("Humanoid") then
+								guard = ch
+								break
+							end
+						end
+					end
 					local part = getModelPart(guard)
 					if guard and part then
 						seen[guard] = true
@@ -3092,9 +3467,9 @@ local function initializeScript()
 							local sb = Instance.new("SelectionBox")
 							sb.Name = "BiomeBoundaryBox"
 							sb.Adornee = bounds
-							sb.LineThickness = 0.12
+							sb.LineThickness = 0.14
 							sb.SurfaceTransparency = 0.88
-							sb.Parent = espFolder
+							sb.Parent = espWorldFolder
 							entry = { box = sb }
 							boundaryMap[bounds] = entry
 						end
@@ -3103,12 +3478,61 @@ local function initializeScript()
 					end
 				end
 			end
+			local sep = getSeparationLine()
+			if sep and sep:IsA("BasePart") then
+				seen[sep] = true
+				local entry = boundaryMap[sep]
+				if not entry then
+					local sb = Instance.new("SelectionBox")
+					sb.Name = "SeparationLineBox"
+					sb.Adornee = sep
+					sb.LineThickness = 0.14
+					sb.SurfaceTransparency = 0.85
+					sb.Parent = espWorldFolder
+					entry = { box = sb }
+					boundaryMap[sep] = entry
+				end
+				entry.box.Color3 = col
+				entry.box.SurfaceColor3 = col
+			end
 			for key, entry in boundaryMap do
 				if not seen[key] or not key.Parent then
 					pcall(function() entry.box:Destroy() end)
 					boundaryMap[key] = nil
 				end
 			end
+		end
+
+		local hasDrawing = type(Drawing) == "table" or type(Drawing) == "function"
+		local function newLineDrawing(col)
+			if not hasDrawing then
+				return nil
+			end
+			local ok, line = pcall(Drawing.new, "Line")
+			if not ok or not line then
+				return nil
+			end
+			line.Thickness = 1.6
+			line.Color = col
+			line.Transparency = 1
+			line.Visible = false
+			return line
+		end
+
+		local function ensurePlayerDrawings(entry, col)
+			if entry.drawings or not hasDrawing then
+				return
+			end
+			local lines = {}
+			for i = 1, 8 do
+				local ln = newLineDrawing(col)
+				if not ln then
+					for _, prev in lines do pcall(function() prev:Remove() end) end
+					return
+				end
+				lines[i] = ln
+			end
+			entry.drawings = lines
 		end
 
 		local function updatePlayerEsp(rootPos)
@@ -3128,9 +3552,16 @@ local function initializeScript()
 						local entry = playerEspMap[plr]
 						local col = style == "Corner" and Color3.fromRGB(110, 225, 255) or Color3.fromRGB(255, 255, 255)
 						if not entry then
-							local bb, lbl = makeBillboard("PlayerESP", tRoot, UDim2.fromOffset(140, 28), Vector3.new(0, 3.2, 0), col)
+							local bb, lbl = makeBillboard("PlayerESP", tRoot, UDim2.fromOffset(150, 28), Vector3.new(0, 3.2, 0), col)
 							entry = { highlight = makeHighlight("PlayerHL", plr.Character, col), billboard = bb, label = lbl }
+							ensurePlayerDrawings(entry, col)
 							playerEspMap[plr] = entry
+						end
+						if entry.highlight.Adornee ~= plr.Character then
+							entry.highlight.Adornee = plr.Character
+						end
+						if entry.billboard.Adornee ~= tRoot then
+							entry.billboard.Adornee = tRoot
 						end
 						entry.highlight.FillTransparency = style == "Full" and 0.65 or 0.92
 						entry.highlight.OutlineColor = col
@@ -3141,13 +3572,88 @@ local function initializeScript()
 				end
 			end
 			for key, entry in playerEspMap do
-				if not seen[key] or not key.Parent then
+				if not seen[key] or not key.Character or not key.Character.Parent then
 					pcall(function() entry.highlight:Destroy() end)
 					pcall(function() entry.billboard:Destroy() end)
+					if entry.drawings then
+						for _, d in entry.drawings do
+							pcall(function() d.Visible = false; d:Remove() end)
+						end
+					end
 					playerEspMap[key] = nil
 				end
 			end
 		end
+
+		connectFeature(runService.RenderStepped, function()
+			if unloaded then return end
+			local style = EggHub.values["Player ESP Style"] or "Corner"
+			local enabled = EggHub.values["Enable Player ESP"] == true and style ~= "Off"
+			local cam = workspace.CurrentCamera
+			if not enabled or not cam then
+				for _, entry in playerEspMap do
+					if entry.drawings then
+						for _, d in entry.drawings do d.Visible = false end
+					end
+				end
+				return
+			end
+			for plr, entry in playerEspMap do
+				if entry.drawings then
+					local char = plr.Character
+					local tRoot = char and char:FindFirstChild("HumanoidRootPart")
+					if tRoot then
+						local topPos, onScreenTop = cam:WorldToViewportPoint(tRoot.Position + Vector3.new(0, 3, 0))
+						local botPos, onScreenBot = cam:WorldToViewportPoint(tRoot.Position - Vector3.new(0, 3, 0))
+						if onScreenTop or onScreenBot then
+							local h = math.max(math.abs(botPos.Y - topPos.Y), 16)
+							local w = h * 0.58
+							local x = topPos.X - w * 0.5
+							local y = topPos.Y
+							local col = style == "Corner" and Color3.fromRGB(110, 225, 255) or Color3.fromRGB(255, 255, 255)
+							local lines = entry.drawings
+							if style == "Full" then
+								local pts = {
+									{ Vector2.new(x, y), Vector2.new(x + w, y) },
+									{ Vector2.new(x + w, y), Vector2.new(x + w, y + h) },
+									{ Vector2.new(x + w, y + h), Vector2.new(x, y + h) },
+									{ Vector2.new(x, y + h), Vector2.new(x, y) },
+								}
+								for i = 1, 8 do
+									local ln = lines[i]
+									if i <= 4 then
+										ln.From, ln.To, ln.Color, ln.Visible = pts[i][1], pts[i][2], col, true
+									else
+										ln.Visible = false
+									end
+								end
+							else
+								local cw = math.max(w * 0.28, 4)
+								local ch = math.max(h * 0.22, 4)
+								local pts = {
+									{ Vector2.new(x, y), Vector2.new(x + cw, y) },
+									{ Vector2.new(x, y), Vector2.new(x, y + ch) },
+									{ Vector2.new(x + w, y), Vector2.new(x + w - cw, y) },
+									{ Vector2.new(x + w, y), Vector2.new(x + w, y + ch) },
+									{ Vector2.new(x, y + h), Vector2.new(x + cw, y + h) },
+									{ Vector2.new(x, y + h), Vector2.new(x, y + h - ch) },
+									{ Vector2.new(x + w, y + h), Vector2.new(x + w - cw, y + h) },
+									{ Vector2.new(x + w, y + h), Vector2.new(x + w, y + h - ch) },
+								}
+								for i = 1, 8 do
+									local ln = lines[i]
+									ln.From, ln.To, ln.Color, ln.Visible = pts[i][1], pts[i][2], col, true
+								end
+							end
+						else
+							for _, d in entry.drawings do d.Visible = false end
+						end
+					else
+						for _, d in entry.drawings do d.Visible = false end
+					end
+				end
+			end
+		end)
 
 		addCleanup(function()
 			clearVisualMap(eggEspMap)
@@ -3155,6 +3661,9 @@ local function initializeScript()
 			clearVisualMap(guardEspMap)
 			clearVisualMap(boundaryMap)
 			clearVisualMap(playerEspMap)
+			if espWorldFolder.Parent then
+				pcall(function() espWorldFolder:Destroy() end)
+			end
 			if espFolder.Parent then
 				espFolder:Destroy()
 			end
@@ -3204,6 +3713,20 @@ local function initializeScript()
 				connectFeature(hum.StateChanged, function()
 					if EggHub.values["Anti Ragdoll"] then
 						enforceAntiRagdoll(char, hum)
+					end
+				end)
+				connectFeature(hum:GetPropertyChangedSignal("WalkSpeed"), function()
+					if unloaded then return end
+					if EggHub.values["Enable Fly"] and (EggHub.values["Fly Method"] or "Humanoid") == "Humanoid" then
+						local fs = math.clamp(tonumber(EggHub.values["Fly Speed"]) or 50, 16, 200)
+						if math.abs(hum.WalkSpeed - fs) > 0.1 then
+							hum.WalkSpeed = fs
+						end
+					elseif EggHub.values["Enable Speed"] and (EggHub.values["Speed Mode"] or "WalkSpeed") == "WalkSpeed" then
+						local ws = resolveEffectiveWalkSpeed()
+						if math.abs(hum.WalkSpeed - ws) > 0.1 then
+							hum.WalkSpeed = ws
+						end
 					end
 				end)
 			end
