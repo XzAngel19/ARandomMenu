@@ -1,4 +1,4 @@
-# Auto Farm, Auto Win y Auto Unbox: pruebas simuladas
+# Auto Farm, Auto Win, Fling y Auto Unbox: pruebas simuladas
 
 ```sh
 bash tools/luau/setup.sh
@@ -8,16 +8,18 @@ node tools/angel_hub_farm_tests/unbox.cjs
 node tools/angel_hub_completion_tests/run.cjs
 ```
 
-Reutilizan fixtures de `angel_hub_partial_tests` y comprueban Walk/Below,
-progreso/atasco, monedas y contadores, bolsa llena y reset, lobby, Safe Zone,
-retorno y guardas de vacío. Auto Win: plataforma y retorno, eventos de victoria,
-contador por ronda, Murder/restauración ante cancelación y conflicto con Farm;
-Sheriff usa pruebas del predictor integrado y WallCheck en completion_tests.
-Auto Unbox: catálogo/precios/saldo, bloqueo de peticiones y cancelación con
-operaciones asíncronas. Las cuatro automatizaciones de movimiento/gasto no se
-reactivan automáticamente al cargar la configuración al inyectar.
+Cubren Farm Walk/Below, monedas y contadores, reset, lobby, Safe Zone y
+restauración; Coins Aura con alcance fijo de 15 studs, touch y restauración;
+y Auto Grab Gun And Shoot exclusivamente con bolsa llena. Auto Win verifica
+plataforma, contadores, Murder/Sheriff, flings optativos y coordinación con el
+motor Fling: volver a la plataforma, tocar GunDrop, cancelar al acabar ronda,
+retaliación tras muerte y regreso al punto de respawn, y conflictos con Farm.
+Auto Unbox comprueba catálogo/saldo y peticiones asíncronas. Las pruebas usan
+fixtures de `angel_hub_partial_tests` y `angel_hub_completion_tests`.
 
-Son mocks: no verifican físicas, validaciones del servidor, compras, premios,
-impactos, victorias o compatibilidad real con Roblox/executores. Las opciones
-pendientes siguen bloqueadas, incluidos ambos flings de Auto Win y los extras
-de bolsa llena que no están conectados.
+Los mocks no verifican físicas, validaciones del servidor, recogidas, compras,
+impactos, victorias ni compatibilidad real con Roblox/executores. El Fling
+Murder If Dead intenta el movimiento desde el lugar del respawn, incluido lobby,
+solo después de una muerte detectada y con el interruptor activado. En Auto
+Farm no se hace esa salida desde el lobby. Los flings y Kill All tras bolsa
+llena de Farm y otros controles siguen bloqueados.

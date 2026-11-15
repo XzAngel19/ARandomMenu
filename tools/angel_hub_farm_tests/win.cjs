@@ -4,6 +4,7 @@ const file=read(path.join(root,'Angel-Hub-GUI-Continuacion.txt'));
 const src=file.slice(file.indexOf('local function installMM2Win(screenGui)'),file.indexOf('\nlocal function initializeScript()'));
 const setup=`
 game.PlaceId=142823291;Vector3.zero=Vector3.new(0,0,0);AngelHub.connections={}
+AngelHub.setters["Coins Aura"]=function(v)V["Coins Aura"]=v end
 local function connectInput(s,f)local c=s:Connect(f);table.insert(AngelHub.connections,c);return c end
 AngelHub.findMM2Map=function()return map.Parent and map end
 AngelHub.setters['Auto Farm']=function(v)V['Auto Farm']=v end
@@ -19,5 +20,8 @@ AngelHub.setters['Insta Kill As Sheriff']=function(v)V['Insta Kill As Sheriff']=
  const farm=file.slice(file.indexOf('local function installMM2Farm(screenGui)'),file.indexOf('local function installMM2Unbox(screenGui)'));
  const conflict=await Lua.create({sandbox:true});
  conflict.execute(read(path.join(fixture,'gameplay-mock.luau'))+'\nlocal fakeNow=100;local os={clock=function()return fakeNow end}\n'+setup+'\n'+farm+'\n'+src+'\n'+read(path.join(__dirname,'conflict-checks.luau')));
- console.log('PASS: Auto Win platform, counters, attacks, restoration and Farm conflicts (mocks only)');
+ const fling=file.slice(file.indexOf('local function installMM2Fling(screenGui)'),file.indexOf('\n-- Auto Farm MM2'));
+ const owned=await Lua.create({sandbox:true});
+ owned.execute(read(path.join(fixture,'gameplay-mock.luau'))+'\nlocal fakeNow=100;local os={clock=function()return fakeNow end};local httpService={}\n'+setup+'\n'+fling+'\n'+src+'\n'+read(path.join(__dirname,'owned-fling-checks.luau')));
+ console.log('PASS: Auto Win platform, counters, owned Fling, restoration and Farm conflicts (mocks only)');
 })().catch(e=>{console.error(e);process.exit(1)});
