@@ -3232,21 +3232,50 @@ return Module
         if weapon(player,"Gun") then return "Sheriff" end
         return nil
     end
+    local function extractPerkName(value)
+        if type(value)=="string" and value~="" then return value end
+        if type(value)=="table" then
+            local candidate=value.Name or value.name or value.Perk or value.Id or value[1]
+            if type(candidate)=="string" and candidate~="" then return candidate end
+        end
+        return nil
+    end
     AngelHub.getMM2Perk=function(player)
         if not player or roundBlocked then return nil end
         local character=player.Character
-        local ok,attr=pcall(function()return (character and character:GetAttribute("Perk")) or player:GetAttribute("Perk")end)
-        if ok and type(attr)=="string" and attr~="" then return attr end
+        for _,attrName in ipairs({"Perk","EquippedPerk","MurdererPerk","Power","Effect"})do
+            local ok,attr=pcall(function()return (character and character:GetAttribute(attrName)) or player:GetAttribute(attrName)end)
+            if ok and type(attr)=="string" and attr~="" then return attr end
+        end
+        for _,container in ipairs({player,character})do
+            if container then
+                for _,valName in ipairs({"Perk","EquippedPerk","MurdererPerk","Effect"})do
+                    local ok,found=pcall(function()return container:FindFirstChild(valName)end)
+                    if ok and found and found:IsA("StringValue") and type(found.Value)=="string" and found.Value~="" then return found.Value end
+                end
+            end
+        end
         for key,record in pairs(roles)do
             if type(record)=="table" and (tostring(key)==player.Name or tostring(key)==tostring(player.UserId)
                 or record.Name==player.Name or (record.UserId and tostring(record.UserId)==tostring(player.UserId))) then
-                local perk=record.Perk or record.EquippedPerk or record.perk
-                if type(perk)=="string" and perk~="" then return perk end
+                local perk=extractPerkName(record.Perk or record.EquippedPerk or record.MurdererPerk or record.Power or record.Effect or record.perk)
+                if not perk and type(record.Equipped)=="table" then
+                    perk=extractPerkName(record.Equipped.Perk or record.Equipped.Power or record.Equipped.Effect)
+                end
+                if not perk and type(record.Weapons)=="table" then
+                    perk=extractPerkName(record.Weapons.Perk)
+                end
+                if perk then return perk end
             end
         end
         local backpack=player:FindFirstChildOfClass("Backpack")
-        for _,name in ipairs({"Trap","FakeGun"})do
+        for _,name in ipairs({"Trap","FakeGun","Fake Gun","Ghost","Sprint","SprintTrail","Sleight","Haste","XRay","Footsteps","DeadSilent"})do
             if (character and character:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name)) then return name end
+        end
+        if character then
+            local torso=character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+            local human=character:FindFirstChildOfClass("Humanoid")
+            if torso and human and human.Health>0 and torso:IsA("BasePart") and torso.Transparency>=0.45 then return "Ghost" end
         end
     end
     local function unbindRoles()
@@ -3286,7 +3315,7 @@ return Module
     end
     local function rolesNeeded()
         return V["Gun Aimbot"] or V["Gun Aura"] or V["Auto Shoot"] or V["Knife Aura"] or V["Knife Throw"] or V["Auto Knife Throw"]
-            or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Auto Get Gun"]
+            or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Chams Show Perk"] or V["Auto Get Gun"]
             or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Win"]
             or (V["Auto Farm"] and (V["Auto Grab Gun And Shoot"] or V["Auto Kill All When Full Bag"]
                 or V["Fling Murder After Full Bag"] or V["Fling Sheriff After Full Bag"]))
@@ -5696,8 +5725,29 @@ local function installMovementFeatures(screenGui)
         if speed.right then pcall(function()speed.right:Destroy()end);speed.right=nil end
         speed.trailRoot=nil
     end
+    local windowFocused = true
+    local function isSprintBindingHeld()
+        if not windowFocused or AngelHub.listening or userInputService:GetFocusedTextBox() then return false end
+        local keyName = V["Sprint Key Value"]
+        if type(keyName) ~= "string" or keyName == "" then return false end
+        if type(userInputService.IsKeyDown) == "function" then
+            local okKey, keyEnum = pcall(function() return Enum.KeyCode[keyName] end)
+            if okKey and keyEnum then
+                local okDown, down = pcall(userInputService.IsKeyDown, userInputService, keyEnum)
+                if okDown and down == true then return true end
+            end
+        end
+        if type(userInputService.IsMouseButtonPressed) == "function" then
+            local okBtn, btnEnum = pcall(function() return Enum.UserInputType[keyName] end)
+            if okBtn and btnEnum then
+                local okDown, down = pcall(userInputService.IsMouseButtonPressed, userInputService, btnEnum)
+                if okDown and down == true then return true end
+            end
+        end
+        return false
+    end
     local function sprintHeld()
-        return mm2 and ((speed.sprintKey~=nil and speed.sprintKey==V["Sprint Key Value"]) or next(speed.touch)~=nil)
+        return mm2 and ((speed.sprintKey~=nil and speed.sprintKey==V["Sprint Key Value"]) or isSprintBindingHeld() or next(speed.touch)~=nil)
     end
     local function updateSprintTrail(root,moving)
         if speed.trailRoot~=root then clearSprintTrail() end
@@ -5878,41 +5928,53 @@ local function installMovementFeatures(screenGui)
         button.InputEnded:Connect(function(input)speed.touch[input]=nil;stopSprintIfReleased() end)
     end
     connectInput(userInputService.InputBegan,function(input,processed)
-        if stopped or processed or AngelHub.listening or userInputService:GetFocusedTextBox()
-            or input.UserInputType~=Enum.UserInputType.Keyboard then return end
-        local name=input.KeyCode and input.KeyCode.Name
-        if not name then return end
+        windowFocused=true
+        if stopped or AngelHub.listening or userInputService:GetFocusedTextBox() then return end
+        local isKeyboard=input.UserInputType==Enum.UserInputType.Keyboard
+        local name=(isKeyboard and input.KeyCode and input.KeyCode.Name) or (input.UserInputType and input.UserInputType.Name)
+        if not name or name=="" or name=="Unknown" then return end
+        if mm2 and name==V["Sprint Key Value"] then speed.sprintKey=name end
+        if processed or not isKeyboard then return end
         if V["Enable Fly"] and name==V["Fly Up Key Value"] then fly.up[input.KeyCode]=true end
         if V["Enable Fly"] and name==V["Fly Down Key Value"] then fly.down[input.KeyCode]=true end
-        if mm2 and name==V["Sprint Key Value"] then speed.sprintKey=name end
     end)
     connectInput(userInputService.InputEnded,function(input)
+        local keyName=input.KeyCode and input.KeyCode.Name
+        local typeName=input.UserInputType and input.UserInputType.Name
         if input.KeyCode then
             fly.up[input.KeyCode]=nil;fly.down[input.KeyCode]=nil
-            if input.KeyCode.Name==speed.sprintKey then speed.sprintKey=nil;stopSprintIfReleased() end
+        end
+        if speed.sprintKey and (keyName==speed.sprintKey or typeName==speed.sprintKey) then
+            speed.sprintKey=nil;stopSprintIfReleased()
         end
         fly.up[input]=nil;fly.down[input]=nil
         if speed.touch[input] then speed.touch[input]=nil;stopSprintIfReleased() end
     end)
-    local function clearKeys()clearFlyInput();speed.sprintKey=nil;table.clear(speed.touch);stopSprintIfReleased() end
+    local function clearKeys()windowFocused=false;clearFlyInput();speed.sprintKey=nil;table.clear(speed.touch);stopSprintIfReleased() end
     connectInput(userInputService.WindowFocusReleased,clearKeys)
-    connectInput(userInputService.TextBoxFocused,clearKeys)
+    if userInputService.WindowFocused then connectInput(userInputService.WindowFocused,function()windowFocused=true end) end
+    connectInput(userInputService.TextBoxFocused,function()clearFlyInput();speed.sprintKey=nil;table.clear(speed.touch);stopSprintIfReleased() end)
     local function runMovement(step,name,dt)
         if not V[name] then return end
         local ok,err=pcall(step,dt)
         if not ok then warn("Angel Hub "..name..": "..tostring(err));AngelHub.setters[name](false) end
     end
+    local wasSprinting=false
     connectInput(run.Heartbeat,function(dt)
         if stopped then return end
         dt=math.clamp(tonumber(dt) or 0,0,.1)
         if dt<=0 then return end
-        if V["Enable Speed"] or sprintHeld() then
+        local sprinting=sprintHeld()
+        if V["Enable Speed"] or sprinting then
             local ok,err=pcall(speedStep,dt)
             if not ok then
                 warn("Angel Hub Speed/Sprint: "..tostring(err));speed.sprintKey=nil;table.clear(speed.touch)
                 clearSprintTrail();AngelHub.setters["Enable Speed"](false)
             end
+        elseif wasSprinting then
+            stopSprintIfReleased()
         end
+        wasSprinting=sprinting
         runMovement(flyStep,"Enable Fly",dt)
         runMovement(gravityStep,"Enable Gravity",dt)
     end)
@@ -6624,12 +6686,33 @@ local function installChams(screenGui)
     local elapsed=0
     local function remove(player)
         local item=highlights[player];highlights[player]=nil
-        if item then item:Destroy() end
-        local label=perks[player];perks[player]=nil;if label then label.billboard:Destroy()end
+        if item then pcall(function()item:Destroy()end) end
+        local label=perks[player];perks[player]=nil;if label then pcall(function()label.billboard:Destroy()end) end
     end
-    local function clear()for player in pairs(highlights)do remove(player)end end
+    local function clearHighlights()
+        for player,item in pairs(highlights)do
+            highlights[player]=nil
+            pcall(function()item:Destroy()end)
+        end
+    end
+    local function clearPerks()
+        for player,label in pairs(perks)do
+            perks[player]=nil
+            pcall(function()label.billboard:Destroy()end)
+        end
+    end
+    local function clear()clearHighlights();clearPerks() end
+    local function safeHighlightParent()
+        return workspace.CurrentCamera or screenGui
+    end
+    local function safeBillboardParent()
+        local ok,pg=pcall(function()return localPlayer:FindFirstChildOfClass("PlayerGui")end)
+        return (ok and pg) or workspace.CurrentCamera or screenGui
+    end
     local function update()
-        local seen={}
+        local showChams=V["Chams"]==true
+        local showPerk=mm2 and V["Chams Show Perk"]==true
+        local seenChams,seenPerks={},{}
         for _,player in ipairs(playersService:GetPlayers())do
             local character=player.Character
             local human=character and character:FindFirstChildOfClass("Humanoid")
@@ -6637,43 +6720,55 @@ local function installChams(screenGui)
                 local role=mm2 and ((human.Health<=0 and "Dead") or (AngelHub.getMM2Role and AngelHub.getMM2Role(player))) or nil
                 local accepted=not role or V[role.." ESP"]~=false
                 if accepted and (human.Health>0 or role=="Dead") then
-                    seen[player]=true
-                    local h=highlights[player]
-                    if not h then h=Instance.new("Highlight");h.Name="AngelHubChams";h.Parent=screenGui;highlights[player]=h end
-                    local color=(role and V["Role Colours"] and V[role.." Colour"]) or Color3.fromRGB(235,235,235)
-                    h.Adornee=character;h.FillColor=color;h.OutlineColor=color
-                    h.FillTransparency=math.clamp(tonumber(V["Chams Fill Transparency"]) or .5,0,1)
-                    h.OutlineTransparency=math.clamp(tonumber(V["Chams Outline Transparency"]) or 0,0,1)
-                    h.DepthMode=V["Chams Through Walls"] and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
-                    local perk=mm2 and role=="Murderer" and V["Chams Show Perk"] and AngelHub.getMM2Perk and AngelHub.getMM2Perk(player)
+                    if showChams then
+                        seenChams[player]=true
+                        local h=highlights[player]
+                        if not h then h=Instance.new("Highlight");h.Name="AngelHubChams";h.Parent=safeHighlightParent();highlights[player]=h end
+                        local color=(role and V["Role Colours"] and V[role.." Colour"]) or Color3.fromRGB(235,235,235)
+                        h.Adornee=character;h.FillColor=color;h.OutlineColor=color
+                        h.FillTransparency=math.clamp(tonumber(V["Chams Fill Transparency"]) or .5,0,1)
+                        h.OutlineTransparency=math.clamp(tonumber(V["Chams Outline Transparency"]) or 0,0,1)
+                        h.DepthMode=V["Chams Through Walls"] and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+                    end
+                    local perk=showPerk and role=="Murderer" and AngelHub.getMM2Perk and AngelHub.getMM2Perk(player)
                     local head=perk and (character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart"))
                     if head and type(perk)=="string" and perk~="" then
+                        seenPerks[player]=true
                         local item=perks[player]
                         if not item then
                             local billboard=Instance.new("BillboardGui");billboard.Name="AngelHubChamsPerk"
                             billboard.Size=UDim2.fromOffset(160,24);billboard.StudsOffset=Vector3.new(0,3,0)
-                            billboard.AlwaysOnTop=true;billboard.Parent=screenGui
+                            billboard.AlwaysOnTop=true;billboard.Parent=safeBillboardParent()
                             local label=Instance.new("TextLabel");label.Name="Perk";label.Size=UDim2.fromScale(1,1)
                             label.BackgroundTransparency=1;label.TextColor3=Color3.fromRGB(255,255,255)
                             label.TextStrokeTransparency=0.3;label.Font=Enum.Font.SourceSansBold;label.TextSize=14;label.Parent=billboard
                             item={billboard=billboard,label=label};perks[player]=item
                         end
                         item.billboard.Adornee=head;item.label.Text=string.sub(perk,1,48)
-                        item.billboard.AlwaysOnTop=V["Chams Through Walls"]==true
-                    elseif perks[player] then perks[player].billboard:Destroy();perks[player]=nil end
+                        item.billboard.AlwaysOnTop=(not showChams) or (V["Chams Through Walls"]==true)
+                    end
                 end
             end
         end
-        for player in pairs(highlights)do if not seen[player]then remove(player)end end
+        for player in pairs(highlights)do if not seenChams[player]then local item=highlights[player];highlights[player]=nil;pcall(function()item:Destroy()end)end end
+        for player in pairs(perks)do if not seenPerks[player]then local label=perks[player];perks[player]=nil;pcall(function()label.billboard:Destroy()end)end end
     end
     local old=AngelHub.setters["Chams"]
     AngelHub.setters["Chams"]=function(value)
         local on=not stopped and value==true;old(on);elapsed=.2
         if on then if mm2 and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles() end
-        else clear();if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
+        else clearHighlights();if not V["Chams Show Perk"] then clearPerks() end;if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
+    end
+    local oldPerk=AngelHub.setters["Chams Show Perk"]
+    if oldPerk then
+        AngelHub.setters["Chams Show Perk"]=function(value)
+            local on=not stopped and value==true;oldPerk(on);elapsed=.2
+            if on then if mm2 and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles() end
+            else clearPerks();if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
+        end
     end
     connectInput(run.Heartbeat,function(dt)
-        if stopped or not V["Chams"] then return end
+        if stopped or (not V["Chams"] and not (mm2 and V["Chams Show Perk"])) then return end
         elapsed+=math.max(tonumber(dt) or 0,0);if elapsed<.2 then return end;elapsed=0
         local ok,err=pcall(update)
         if not ok then warn("Angel Hub Chams: "..tostring(err));AngelHub.setters["Chams"](false)end
