@@ -1808,15 +1808,17 @@ local function initializeScript()
 			end
 			local pushback = char:FindFirstChild("AntiCollisionHighSeedPushBack")
 			if pushback and pushback:IsA("LocalScript") then
-				if disabled then
-					if not pushback.Disabled then
-						disabledPushbackScripts[pushback] = true
-						pushback.Disabled = true
+				pcall(function()
+					if disabled then
+						if not pushback.Disabled then
+							disabledPushbackScripts[pushback] = true
+							pushback.Disabled = true
+						end
+					elseif disabledPushbackScripts[pushback] then
+						pushback.Disabled = false
+						disabledPushbackScripts[pushback] = nil
 					end
-				elseif disabledPushbackScripts[pushback] then
-					pushback.Disabled = false
-					disabledPushbackScripts[pushback] = nil
-				end
+				end)
 			end
 		end
 
@@ -2378,6 +2380,12 @@ local function initializeScript()
 		-- =================================================================
 		local lastSpawnCountdown = nil
 		local notifiedRareUids = {}
+		local pendingNotifies = {}
+		local pendingIncomeDelta = 0
+
+		local function queueNotify(msg, okFlag)
+			table.insert(pendingNotifies, { msg = msg, ok = okFlag })
+		end
 
 		local function playNotifySound()
 			if not EggHub.values["Notify Sound"] then
@@ -2418,7 +2426,7 @@ local function initializeScript()
 				notifiedRareUids[record.Uid] = true
 				if EggHub.values["Enable Rare Egg Notification"] then
 					local areaLabel = record.AreaId or "Field"
-					EggHub.notify(tostring(record.AssetCategory or rarityName) .. " (" .. rarityName .. ") @ " .. areaLabel, true)
+					queueNotify(tostring(record.AssetCategory or rarityName) .. " (" .. rarityName .. ") @ " .. areaLabel, true)
 					playNotifySound()
 				end
 			end
@@ -2726,7 +2734,7 @@ local function initializeScript()
 				if EggHub.values["Enable Auto Collect"] and type(list) == "table" then
 					for _, item in list do
 						if item and item.amount then
-							addCollectedIncome(item.amount)
+							pendingIncomeDelta += (tonumber(item.amount) or 0)
 						end
 					end
 				end
@@ -2852,9 +2860,12 @@ local function initializeScript()
 		-- =================================================================
 		-- 8) VISUALS: EGG ESP / PET ESP / PLAYER ESP / GUARDIAN ESP / BIOME BOUNDARY
 		-- =================================================================
-		local espFolder = Instance.new("Folder")
+		local espParent = localPlayer:FindFirstChildOfClass("PlayerGui") or workspace.CurrentCamera or workspace
+		local espFolder = Instance.new("ScreenGui")
 		espFolder.Name = "EggHubESP"
-		espFolder.Parent = screenGui
+		espFolder.ResetOnSpawn = false
+		espFolder.IgnoreGuiInset = true
+		espFolder.Parent = espParent
 
 		local eggEspMap = {}
 		local petEspMap = {}
@@ -3203,51 +3214,66 @@ local function initializeScript()
 			task.spawn(bindCharacter, localPlayer.Character)
 		end
 
-		local lastLogicTick = 0
-		local lastVisualTick = 0
-		connectFeature(runService.Heartbeat, function()
+		local function stepFeaturesOnce()
 			if unloaded or not screenGui.Parent then
-				return
+				return false
 			end
 			local now = os.clock()
-			if now - lastLogicTick >= 0.12 then
-				lastLogicTick = now
-				local char, hum = getCharacterParts()
-				if EggHub.values["Anti Ragdoll"] and char and hum then
-					enforceAntiRagdoll(char, hum)
-				end
-				applyAntiGuardianPass()
-				applyAntiBearTrapPass()
-				if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.45 then
-					lastBatSwing = now
-					swingBatOnce()
-				end
-				runAutoStealAndRareClaim()
-				runAutoTrain()
-				runAutoHatch()
-				runAutoCollect()
-				runAutoSell()
 
-				-- Egg Spawn Timer update
-				local rem = math.ceil(getNextEggResetSeconds())
-				if EggHub.setters["Next Spawn In"] and EggHub.values["Next Spawn In"] ~= rem then
-					EggHub.setters["Next Spawn In"](rem)
+			if pendingIncomeDelta > 0 then
+				local delta = pendingIncomeDelta
+				pendingIncomeDelta = 0
+				addCollectedIncome(delta)
+			end
+			if #pendingNotifies > 0 then
+				for _, item in pendingNotifies do
+					EggHub.notify(item.msg, item.ok)
 				end
-				if lastSpawnCountdown ~= nil and rem > lastSpawnCountdown + 15 and EggHub.values["Notify On Reset"] then
-					EggHub.notify("Eggs Respawned!", true)
-				end
-				lastSpawnCountdown = rem
+				table.clear(pendingNotifies)
 			end
 
-			if now - lastVisualTick >= 0.2 then
-				lastVisualTick = now
-				local _, _, root = getCharacterParts()
-				local rootPos = root and root.Position or (workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position or Vector3.zero)
-				updateEggEsp(rootPos)
-				updatePetEsp(rootPos)
-				updateGuardianEsp(rootPos)
-				updateBiomeBoundary()
-				updatePlayerEsp(rootPos)
+			local char, hum = getCharacterParts()
+			if EggHub.values["Anti Ragdoll"] and char and hum then
+				enforceAntiRagdoll(char, hum)
+			end
+			applyAntiGuardianPass()
+			applyAntiBearTrapPass()
+			if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.45 then
+				lastBatSwing = now
+				swingBatOnce()
+			end
+			runAutoStealAndRareClaim()
+			runAutoTrain()
+			runAutoHatch()
+			runAutoCollect()
+			runAutoSell()
+
+			-- Egg Spawn Timer update
+			local rem = math.ceil(getNextEggResetSeconds())
+			if EggHub.setters["Next Spawn In"] and EggHub.values["Next Spawn In"] ~= rem then
+				EggHub.setters["Next Spawn In"](rem)
+			end
+			if lastSpawnCountdown ~= nil and rem > lastSpawnCountdown + 15 and EggHub.values["Notify On Reset"] then
+				EggHub.notify("Eggs Respawned!", true)
+			end
+			lastSpawnCountdown = rem
+
+			local _, _, root = getCharacterParts()
+			local rootPos = root and root.Position or (workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position or Vector3.zero)
+			updateEggEsp(rootPos)
+			updatePetEsp(rootPos)
+			updateGuardianEsp(rootPos)
+			updateBiomeBoundary()
+			updatePlayerEsp(rootPos)
+			return true
+		end
+
+		EggHub._stepFeaturesOnce = stepFeaturesOnce
+
+		task.spawn(function()
+			while not unloaded and screenGui.Parent do
+				pcall(stepFeaturesOnce)
+				task.wait(0.15)
 			end
 		end)
 	end
