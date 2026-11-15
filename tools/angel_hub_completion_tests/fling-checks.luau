@@ -39,7 +39,7 @@ assert(#created==0 and not AngelHub.mm2FlingBusy)
 -- Missing map/lobby refs no longer silently reject selected targets.
 AngelHub.findMM2Map=function()return nil end
 AngelHub.actions['Fling']();local first=created[#created];assert(first and first.Parent==root and status:find('Alice'))
-heartbeat:Fire(.1);assert(root.Velocity.X==140)
+heartbeat:Fire(.1);assert(root.Velocity.X==240)
 AngelHub.setters['Noclip'](true);assert(first.destroyed and character.lastPivot==home);AngelHub.setters['Noclip'](false)
 AngelHub.findMM2Map=function()return map end
 V['Fling Target']='Nobody';AngelHub.actions['Fling']();assert(status:find('Selecciona'))
@@ -48,8 +48,8 @@ humanoid.FloorMaterial=Enum.Material.Ground
 
 AngelHub.actions['Fling']();local pin=created[#created]
 assert(pin.class=='BodyVelocity' and pin.Parent==root and not humanoid.seated and shieldCalls==2)
-assert(pin.Velocity.X==140 and pin.Velocity.Y==110 and pin.MaxForce.X<=60000 and pin.P==400)
-heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and root.Velocity.X==140 and root.RotVelocity.Magnitude<110 and not pin.destroyed)
+assert(pin.Velocity.X==240 and pin.Velocity.Y==160 and pin.MaxForce.X<=60000 and pin.P==400)
+heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and root.Velocity.X==240 and root.RotVelocity.Magnitude<150 and not pin.destroyed)
 local previousPose=character.lastPivot;heartbeat:Fire(.1);assert(character.lastPivot==previousPose) -- max 30 poses/second
 head.AssemblyLinearVelocity=Vector3.new(900,0,0);head.AssemblyAngularVelocity=Vector3.new(0,900,0)
 AngelHub.setters['Noclip'](true);assert(pin.destroyed and humanoid.seated and character.lastPivot==home and not AngelHub.mm2FlingBusy)
@@ -60,7 +60,7 @@ AngelHub.actions['Fling']();pin=created[#created];victimRoot.AssemblyLinearVeloc
 heartbeat:Fire(.1);assert(pin.destroyed and humanoid.seated)
 victimRoot.AssemblyLinearVelocity=Vector3.zero
 -- Excess local speed or spin cancels promptly and clears assembly motion.
-AngelHub.actions['Fling']();pin=created[#created];root.AssemblyAngularVelocity=Vector3.new(0,300,0)
+AngelHub.actions['Fling']();pin=created[#created];root.AssemblyAngularVelocity=Vector3.new(0,350,0)
 heartbeat:Fire(.1);assert(pin.destroyed and root.AssemblyAngularVelocity.Magnitude==0 and root.AssemblyLinearVelocity.Magnitude==0)
 AngelHub.setters['Auto Fling Selected Target'](true);fakeNow+=5;heartbeat:Fire(.1)
 pin=created[#created];assert(not pin.destroyed)
@@ -82,5 +82,11 @@ victimRoot.Position=Vector3.new(20,0,0);AngelHub.actions['Fling']();pin=created[
 function playersService:GetPlayers()return {localPlayer}end
 heartbeat:Fire(.1);assert(pin.destroyed)
 function playersService:GetPlayers()return {localPlayer,other}end
+-- Like the supplied SkidFling, fall back to a head if root is unavailable.
+local originalFind=target.FindFirstChild
+function target:FindFirstChild(n)if n=='Head'then return victimRoot end end
+AngelHub.actions['Fling']();pin=created[#created];assert(not pin.destroyed)
+AngelHub.setters['Noclip'](true);assert(pin.destroyed);AngelHub.setters['Noclip'](false)
+target.FindFirstChild=originalFind
 AngelHub.actions['Fling']();pin=created[#created];screenGui.Destroying:Fire();assert(pin.destroyed and humanoid.seated)
 assert(#errors==0)

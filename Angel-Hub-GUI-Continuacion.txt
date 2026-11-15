@@ -224,9 +224,6 @@ end
 
 -- Controls not yet integrated are labelled and cannot claim to be active.
 local pendingControls={
-    ["Stay Under When Round Starts"]=true,
-    ["Fling Murder After Full Bag"]=true,["Fling Sheriff After Full Bag"]=true,
-    ["Auto Kill All When Full Bag"]=true,
 }
 local pendingButtons={
 }
@@ -3290,7 +3287,9 @@ return Module
     local function rolesNeeded()
         return V["Gun Aimbot"] or V["Gun Aura"] or V["Auto Shoot"] or V["Knife Aura"] or V["Knife Throw"] or V["Auto Knife Throw"]
             or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Auto Get Gun"]
-            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Blurt"] or V["Auto Win"] or (V["Auto Farm"] and V["Auto Grab Gun And Shoot"])
+            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Blurt"] or V["Auto Win"]
+            or (V["Auto Farm"] and (V["Auto Grab Gun And Shoot"] or V["Auto Kill All When Full Bag"]
+                or V["Fling Murder After Full Bag"] or V["Fling Sheriff After Full Bag"]))
     end
     local function updateRoles()
         if not isMM2 or stopped or not rolesNeeded() then return end
@@ -5338,7 +5337,7 @@ return Module
         local other=player.Character:FindFirstChild("HumanoidRootPart")
         if other and (other.Position-root.Position).Magnitude<=range then return other end
     end
-    local function knifeStep(requested,oneShot)
+    local function knifeStep(requested,oneShot,stillValid)
         if stopped or roundBlocked or (not oneShot and (not V["Knife Aura"]
             or (V["Knife Hold Mouse"] and not knifeHeld))) or os.clock()-lastKnifeSwing<.86 then return end
         local character,humanoid,root=characterParts()
@@ -5359,7 +5358,7 @@ return Module
         if not pcall(function()knife:Activate()end) then return end
         lastKnifeSwing=os.clock()
         task.delay(.025,function()
-            if stopped or (not oneShot and not V["Knife Aura"]) or targetGeneration~=knifeGeneration or roundBlocked
+            if stopped or (stillValid and not stillValid()) or (not oneShot and not V["Knife Aura"]) or targetGeneration~=knifeGeneration or roundBlocked
                 or LocalPlayer.Character~=character or target.Character~=victimCharacter
                 or (not oneShot and V["Knife Hold Mouse"] and not knifeHeld) then return end
             local current,human,currentRoot=characterParts()
@@ -5381,12 +5380,13 @@ return Module
     local function knifeStatus(text)
         if AngelHub.setKnifeStatus then AngelHub.setKnifeStatus(text) end
     end
-    local function knifeConflict()
-        return AngelHub.mm2FlingBusy or V["Auto Farm"] or V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"]
-            or V["Noclip"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or V["FreeCam"]
+    local function knifeConflict(owner)
+        return AngelHub.mm2FlingBusy or (V["Auto Farm"] and owner~="farm") or V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"]
+            or V["Noclip"] or V["Air Walk"] or V["Air Swim"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or V["FreeCam"]
     end
     local function finishKills(text)
-        local job=killSequence;killSequence=nil;AngelHub.mm2KnifeKillBusy=false
+        local job=killSequence;killSequence=nil;AngelHub.mm2KnifeKillBusy=false;AngelHub.mm2KnifeKillOwner=nil
+        if job then knifeGeneration+=1 end
         if job and LocalPlayer.Character==job.character and job.human.Health>0 and job.root.Parent
             and (not AngelHub.findMM2Map or job.map==AngelHub.findMM2Map()) then
             pcall(function()
@@ -5397,10 +5397,14 @@ return Module
         if text then knifeStatus(text) end
         if not rolesNeeded() then unbindRoles() end
     end
-    local function beginKills(selectedOnly)
+    local function killTargetAllowed(owner,player,map)
+        if owner~="farm" then return true end
+        return AngelHub.farmTargetAllowed and AngelHub.farmTargetAllowed(player,map)==true
+    end
+    local function beginKills(selectedOnly,owner,stillValid)
         if stopped or not isMM2 then knifeStatus("Knife Stab disponible solo en MM2");return end
         if killSequence then knifeStatus("Knife Stab ya esta en curso");return end
-        if knifeConflict() then knifeStatus("Apaga Farm, Win o modulos de movimiento");return end
+        if knifeConflict(owner) or (owner and (type(stillValid)~="function" or not stillValid())) then knifeStatus("Apaga Farm, Win o modulos de movimiento");return end
         local character,human,root=characterParts()
         if not character or not human or not root or root.Anchored or human.Sit or human.SeatPart then
             knifeStatus("Tu personaje no esta disponible");return
@@ -5419,6 +5423,7 @@ return Module
         for _,player in ipairs(Players:GetPlayers())do
             if player~=LocalPlayer and (not selectedOnly or player.Name==V["Kill Player"])
                 and alive(player) and core.getPlayerRole(player)~="Murderer" and not weapon(player,"Knife")
+                and killTargetAllowed(owner,player,AngelHub.findMM2Map and AngelHub.findMM2Map())
                 and (LocalPlayer.Neutral or not LocalPlayer.Team or player.Team~=LocalPlayer.Team) then
                 table.insert(targets,{player=player,character=player.Character})
             end
@@ -5431,12 +5436,13 @@ return Module
         if home.Position.Y<=destroyY+100 then knifeStatus("Knife Stab detenido por proteccion del vacio");return end
         killSequence={character=character,human=human,root=root,knife=knife,home=home,
             map=AngelHub.findMM2Map and AngelHub.findMM2Map(),targets=targets,index=0,nextAt=os.clock(),
-            generation=knifeGeneration,destroyY=destroyY,attempts=0}
-        AngelHub.mm2KnifeKillBusy=true;updateRoles();knifeStatus("Knife Stab: preparando "..#targets.." objetivo(s)")
+            generation=knifeGeneration,destroyY=destroyY,attempts=0,owner=owner,stillValid=stillValid}
+        AngelHub.mm2KnifeKillBusy=true;AngelHub.mm2KnifeKillOwner=owner
+        updateRoles();knifeStatus("Knife Stab: preparando "..#targets.." objetivo(s)");return true
     end
     local function stepKills()
         local job=killSequence;if not job then return end
-        if stopped or roundBlocked or knifeConflict() or job.generation~=knifeGeneration
+        if stopped or roundBlocked or knifeConflict(job.owner) or (job.owner and not job.stillValid()) or job.generation~=knifeGeneration
             or LocalPlayer.Character~=job.character or not job.root.Parent or job.human.Health<=0
             or tool(job.character,"Knife")~=job.knife or (AngelHub.findMM2Map and job.map~=AngelHub.findMM2Map()) then
             finishKills("Knife Stab cancelado");return
@@ -5446,14 +5452,15 @@ return Module
             local target=job.target
             local player=target and target.player
             local victim=player and player.Character==target.character and alive(player)
-                and target.character:FindFirstChild("HumanoidRootPart")
+                and killTargetAllowed(job.owner,player,job.map) and target.character:FindFirstChild("HumanoidRootPart")
             if victim and victim.Position.Y>job.destroyY+100 and now-job.targetAt<2 then
                 local range=math.clamp(tonumber(V["Knife Aura Range"]) or 15,7,30)
                 if (victim.Position-job.root.Position).Magnitude>range then
                     pcall(function()job.character:PivotTo(CFrame.new(victim.Position+Vector3.new(0,0,2)))end)
                     job.nextAt=now+.1;return
                 end
-                if knifeStep(player,true) then job.attempts+=1
+                local stillValid=job.owner and function()return job.stillValid() and killTargetAllowed(job.owner,player,job.map)end or nil
+                if knifeStep(player,true,stillValid) then job.attempts+=1
                 else job.nextAt=now+.1;return end
             end
             job.phase="advance";job.nextAt=now+.12;return
@@ -5463,7 +5470,8 @@ return Module
         if not target then finishKills("Knife Stab: "..job.attempts.." intento(s), sin confirmar impacto");return end
         job.target=target;job.targetAt=now
         local player=target.player
-        local victim=player.Character==target.character and alive(player) and target.character:FindFirstChild("HumanoidRootPart")
+        local victim=player.Character==target.character and alive(player) and killTargetAllowed(job.owner,player,job.map)
+            and target.character:FindFirstChild("HumanoidRootPart")
         if not victim or core.getPlayerRole(player)=="Murderer" or weapon(player,"Knife")
             or victim.Position.Y<=job.destroyY+100 then job.nextAt=now;return end
         local destination=CFrame.new(victim.Position+Vector3.new(0,0,2))
@@ -5471,6 +5479,8 @@ return Module
         if not ok then finishKills("Knife Stab: no se pudo acercar al objetivo");return end
         job.phase="stab";job.nextAt=math.max(now+.05,lastKnifeSwing+.86)
     end
+    AngelHub.mm2StartFarmKills=function(stillValid) return beginKills(false,"farm",stillValid) end
+    AngelHub.mm2CancelFarmKills=function()if killSequence and killSequence.owner=="farm" then finishKills("Knife Stab de Farm cancelado")end end
     AngelHub.actions["Kill Selected"]=function()beginKills(true)end
     AngelHub.actions["Kill All"]=function()beginKills(false)end
     connectInput(userInputService.InputBegan,function(input,processed)
@@ -5530,7 +5540,7 @@ return Module
         unbindRoles()
         if auraFeature then auraFeature.enabled=false;AuraModule.destroy() end
         PredictionModule.destroy()
-        AngelHub.mm2RoundEpoch=nil;AngelHub.getMM2Perk=nil;AngelHub.getMM2Role=nil;AngelHub.isMM2RoundActive=nil;AngelHub.refreshMM2Roles=nil;AngelHub.releaseMM2Roles=nil;AngelHub.findMM2DroppedGun=nil;AngelHub.winShoot=nil;AngelHub.cancelWinShot=nil;AngelHub.farmGrabShoot=nil
+        AngelHub.mm2StartFarmKills=nil;AngelHub.mm2CancelFarmKills=nil;AngelHub.mm2RoundEpoch=nil;AngelHub.getMM2Perk=nil;AngelHub.getMM2Role=nil;AngelHub.isMM2RoundActive=nil;AngelHub.refreshMM2Roles=nil;AngelHub.releaseMM2Roles=nil;AngelHub.findMM2DroppedGun=nil;AngelHub.winShoot=nil;AngelHub.cancelWinShot=nil;AngelHub.farmGrabShoot=nil
     end)
 end
 
@@ -7531,9 +7541,11 @@ local function installMM2Fling(screenGui)
     local roundEnded,bound,nextBind,roundConnections=false,nil,0,{}
     -- Bounded contact physics: extreme 1e9 velocities can destabilize the
     -- local assembly and produce long stalls. These do not guarantee a fling.
-    local LINEAR=Vector3.new(140,110,140)
-    local SPIN=Vector3.new(55,70,55)
-    local BURST_SECONDS=.9
+    -- Adapted from Kilasik/zqyDSUWX: rotating contact offsets and motion lead,
+    -- but deliberately not its 9e7/9e8 velocity or NaN destroy-height hack.
+    local LINEAR=Vector3.new(240,160,240)
+    local SPIN=Vector3.new(75,90,75)
+    local BURST_SECONDS=1.35
     local AUTO_BACKOFF=4
     local function status(text)
         if AngelHub.setFlingStatus then AngelHub.setFlingStatus(text) end
@@ -7646,6 +7658,16 @@ local function installMM2Fling(screenGui)
         for _,candidate in ipairs(playersService:GetPlayers()) do if candidate==player then return true end end
         return false
     end
+    local function contactPart(character)
+        if not character then return nil end
+        for _,name in ipairs({"HumanoidRootPart","Head"})do
+            local part=character:FindFirstChild(name)
+            if part and part:IsA("BasePart") then return part end
+        end
+        local accessory=character:FindFirstChildOfClass("Accessory")
+        local handle=accessory and accessory:FindFirstChild("Handle")
+        return handle and handle:IsA("BasePart") and handle or nil
+    end
     local function start(player,automatic,owner,stillValid,allowLobby,selectedAction)
         bindRound()
         local function reject(reason)
@@ -7660,7 +7682,7 @@ local function installMM2Fling(screenGui)
         if owner and (type(stillValid)~="function" or not stillValid()) then return false end
         local character,human,root=characterParts()
         local target=player.Character;local victim=target and target:FindFirstChildOfClass("Humanoid")
-        local targetRoot=target and target:FindFirstChild("HumanoidRootPart")
+        local targetRoot=contactPart(target)
         local currentMap=map()
         if not human or not root then return reject("Tu personaje no esta disponible") end
         if root.Anchored or human.Sit or human.SeatPart then return reject("Sal del asiento y libera el personaje") end
@@ -7751,8 +7773,8 @@ local function installMM2Fling(screenGui)
                 clean();nextAuto=now+AUTO_BACKOFF;return
             end
             local velocity=targetRoot.AssemblyLinearVelocity
-            if velocity.Magnitude>80 or root.AssemblyLinearVelocity.Magnitude>350
-                or root.AssemblyAngularVelocity.Magnitude>250 then
+            if velocity.Magnitude>80 or root.AssemblyLinearVelocity.Magnitude>600
+                or root.AssemblyAngularVelocity.Magnitude>300 then
                 clean();nextAuto=now+AUTO_BACKOFF;return
             end
             if now-state.start>=BURST_SECONDS then
@@ -7762,7 +7784,14 @@ local function installMM2Fling(screenGui)
             if now<state.nextPose then return end
             state.nextPose=now+1/30
             state.phase+=1;local offset=offsets[(state.phase-1)%#offsets+1]
-            local lead=Vector3.new(velocity.X,0,velocity.Z)*.15
+            -- The source alternates contact above/below and leads walking targets;
+            -- keep its lead bounded so fast movement cannot send us into the void.
+            local lead=Vector3.new(velocity.X,0,velocity.Z)*.08
+            local direction=victim.MoveDirection
+            if direction and direction.Magnitude>0 then
+                lead=lead+Vector3.new(direction.X,0,direction.Z)*math.min(velocity.Magnitude/1.25,4)
+            end
+            if lead.Magnitude>6 then lead=lead.Unit*6 end
             local frame=CFrame.new(targetRoot.Position+lead)*CFrame.new(offset[1],offset[2],offset[3])*CFrame.Angles(math.rad(state.phase*100),0,0)
             -- Pose via the model pivot, compensating for the root-to-pivot offset.
             local pivot=state.character:GetPivot()
@@ -7856,13 +7885,15 @@ local function installMM2Farm(screenGui)
     local farmTickElapsed, farmScanElapsed, farmCoins = 0, 0, {}
     local farmDone, farmBagSampleKnown = false, false
     local farmGeneration,grabNext=0,0
-    extensionSteps.farmFull = {resetDone=false}
+    extensionSteps.farmFull = {resetDone=false,done={}}
     local farmBelowEngaged, farmHomeCFrame, farmHoverTarget = false, nil, nil
+    local farmInitialHold, farmStartedCoins = false, false
     local farmCollision = setmetatable({}, {__mode = "k"})
     local farmOnMap = function() return false end
     local leaveFarmPark = function() return true end
     local farmBlacklist = setmetatable({}, {__mode = "k"})
     local farmTarget, farmTargetAt, farmBestDistance
+    local cancelFullActions=function()end
     local farmCounterSetters = {
         ["Coins Collected"] = AngelHub.setters["Coins Collected"],
         ["Farm Time"] = AngelHub.setters["Farm Time"],
@@ -7892,7 +7923,7 @@ local function installMM2Farm(screenGui)
     end
     local function farmStopMovement()
         local wasBelow, previousCharacter, home = farmBelowEngaged, farmCharacter, farmHomeCFrame
-        farmBelowEngaged, farmHoverTarget, farmHomeCFrame = false, nil, nil
+        farmBelowEngaged, farmHoverTarget, farmHomeCFrame, farmInitialHold = false, nil, nil, false
         restore("farmBody"); restore("farmSize")
         for part, original in pairs(farmCollision) do
             pcall(function() if part.CanCollide == false then part.CanCollide = original end end)
@@ -7910,12 +7941,13 @@ local function installMM2Farm(screenGui)
         end
     end
     local function farmStop()
-        farmGeneration+=1
+        farmGeneration+=1;cancelFullActions()
         for _, connection in ipairs(farmConnections) do connection:Disconnect() end
         table.clear(farmConnections)
         farmStopMovement()
         leaveFarmPark()
         farmMap, farmCharacter, farmRoundMap, farmWaitingMap, farmTarget = nil, nil, nil, nil, nil
+        farmStartedCoins=false
         table.clear(farmCoins); table.clear(farmBlacklist)
     end
     local function farmLobbyRef()
@@ -7940,6 +7972,16 @@ local function installMM2Farm(screenGui)
         if not lobbyRef or not reference then return false end
         return (root.Position - lobbyRef.Position).Magnitude > 350
             and (root.Position - reference.Position).Magnitude <= 1500
+    end
+    AngelHub.farmTargetAllowed=function(player,map)
+        local present=false
+        for _,candidate in ipairs(playersService:GetPlayers())do if candidate==player then present=true;break end end
+        if not present then return false end
+        local character=player and player.Character
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        return map~=nil and map==mm2Map() and humanoid~=nil and humanoid.Health>0
+            and root~=nil and root:IsA("BasePart") and farmOnMap(root,map)
     end
     local farmPark
     leaveFarmPark = function()
@@ -8042,7 +8084,10 @@ local function installMM2Farm(screenGui)
             local character, humanoid, root = characterParts()
             local map = mm2Map()
             if not humanoid or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then return end
-            if farmRoundMap ~= map then farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false end
+            if farmRoundMap ~= map then
+                farmGeneration+=1;cancelFullActions();farmStartedCoins=false
+                farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false
+            end
             if farmMap ~= map or character ~= farmCharacter then
                 farmStopMovement()
                 farmMap, farmCharacter = map, character
@@ -8061,24 +8106,100 @@ local function installMM2Farm(screenGui)
                 if amount < math.max(50, farmLimit) then
                     farmDone = false
                     extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
+                    cancelFullActions()
                 end
             end
         end))
-        table.insert(farmConnections, ended.OnClientEvent:Connect(function()
+        local function endFarmRound()
             if not enabled["Auto Farm"] then return end
-            farmWaitingMap = farmMap or mm2Map();farmGeneration+=1
+            farmWaitingMap = farmMap or mm2Map();farmGeneration+=1;farmStartedCoins=false;cancelFullActions()
             extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
             farmStopMovement(); leaveFarmPark(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
             table.clear(farmCoins)
-        end))
+        end
+        table.insert(farmConnections, ended.OnClientEvent:Connect(endFarmRound))
         for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew", "CoinsStarted"}) do
             local remote = gameplay:FindFirstChild(name)
             if remote and remote:IsA("RemoteEvent") then
                 table.insert(farmConnections, remote.OnClientEvent:Connect(function(duration)
-                    if name ~= "RoundStart" or (tonumber(duration) and tonumber(duration) > 0) then farmWaitingMap = nil end
+                    if name == "RoundStart" and (not tonumber(duration) or tonumber(duration)<=0) then endFarmRound()
+                    else farmWaitingMap = nil end
                 end))
             end
         end
+    end
+    local fullOrder={"Auto Kill All When Full Bag","Fling Murder After Full Bag","Fling Sheriff After Full Bag"}
+    cancelFullActions=function()
+        local full=extensionSteps.farmFull
+        full.active=nil;full.waitName=nil;full.waitAt=nil;full.returnFrame=nil;full.done={}
+        if AngelHub.mm2CancelOwnedFling then AngelHub.mm2CancelOwnedFling("farm")end
+        if AngelHub.mm2CancelFarmKills then AngelHub.mm2CancelFarmKills()end
+    end
+    local function fullPending()
+        local full=extensionSteps.farmFull
+        if full.active then return true end
+        for _,name in ipairs(fullOrder)do if V[name] and not full.done[name] then return true end end
+        return false
+    end
+    local function fullActionStep(character,human,root,map)
+        local full=extensionSteps.farmFull
+        if full.active then
+            if (AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner=="farm")
+                or (AngelHub.mm2KnifeKillBusy and AngelHub.mm2KnifeKillOwner=="farm") then return true end
+            full.active=nil
+        end
+        local name
+        for _,candidate in ipairs(fullOrder)do if V[candidate] and not full.done[candidate] then name=candidate;break end end
+        if not name then return false end
+        if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
+        if full.waitName~=name then full.waitName=name;full.waitAt=os.clock() end
+        local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
+        local target
+        if name~="Auto Kill All When Full Bag" then
+            local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
+            for _,player in ipairs(playersService:GetPlayers())do
+                if player~=localPlayer then
+                    local found=AngelHub.getMM2Role and AngelHub.getMM2Role(player)
+                    if found==wanted or (wanted=="Sheriff" and found=="Hero") then target=player;break end
+                end
+            end
+        end
+        local ticket=farmGeneration
+        local function valid()
+            local c,h,r=characterParts()
+            if stopped or not enabled["Auto Farm"] or V[name]~=true or farmGeneration~=ticket
+                or full.active~=name or c~=character or h~=human or r~=root or mm2Map()~=map
+                or farmAmount<math.max(50,farmLimit) or (farmWaitingMap and farmWaitingMap==map)
+                or not farmOnMap(root,map) then return false end
+            if name=="Auto Kill All When Full Bag" then
+                return AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)=="Murderer"
+            end
+            if target then
+                local current=AngelHub.getMM2Role and AngelHub.getMM2Role(target)
+                local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
+                return (current==wanted or (wanted=="Sheriff" and current=="Hero"))
+                    and AngelHub.farmTargetAllowed(target,map)==true
+            end
+            return true
+        end
+        local started=false
+        full.active=name
+        if name=="Auto Kill All When Full Bag" then
+            if role=="Murderer" and AngelHub.mm2StartFarmKills then started=AngelHub.mm2StartFarmKills(valid)==true end
+        elseif target and AngelHub.mm2StartOwnedFling then
+            started=AngelHub.mm2StartOwnedFling("farm",target,valid,false)==true
+        end
+        if started then
+            full.done[name]=true;full.waitName=nil;full.waitAt=nil
+            message(name..": intento iniciado; resultado no confirmado")
+            return true
+        end
+        full.active=nil
+        if os.clock()-full.waitAt>=4 then
+            full.done[name]=true;full.waitName=nil;full.waitAt=nil
+            message(name..": objetivo o accion no disponible")
+        end
+        return true
     end
     AngelHub.farmFullTicket=function()return farmGeneration end
     AngelHub.farmFullAllowed=function()
@@ -8086,6 +8207,21 @@ local function installMM2Farm(screenGui)
         return not stopped and enabled["Auto Farm"] and V["Auto Grab Gun And Shoot"] and farmAmount>=math.max(50,farmLimit)
             and character~=nil and human~=nil and root~=nil and not root.Anchored and not human.Sit
             and farmOnMap(root,map) and not (farmWaitingMap and farmWaitingMap==map) and not AngelHub.mm2FlingBusy
+    end
+    local function engageBelow(character,humanoid,root)
+        if not farmBelowEngaged then
+            if humanoid.FloorMaterial==Enum.Material.Air then return false end
+            farmHomeCFrame, farmBelowEngaged = root.CFrame, true
+        end
+        for _,object in ipairs(character:GetDescendants()) do
+            if object:IsA("BasePart") then
+                if farmCollision[object]==nil then farmCollision[object]=object.CanCollide end
+                object.CanCollide=false
+            end
+        end
+        apply("farmBody",humanoid,{PlatformStand=true,AutoRotate=false})
+        apply("farmSize",root,{Size=Vector3.new(4,8,4)})
+        return true
     end
     mm2FarmStep = function(dt, character, humanoid, root)
         if not enabled["Auto Farm"] then return end
@@ -8097,7 +8233,7 @@ local function installMM2Farm(screenGui)
         local elapsed = farmTickElapsed
         farmTickElapsed = 0
         local map = mm2Map()
-        if V["Auto Grab Gun And Shoot"] and os.clock()>=grabNext and AngelHub.farmFullAllowed() then
+        if V["Auto Grab Gun And Shoot"] and not fullPending() and os.clock()>=grabNext and AngelHub.farmFullAllowed() then
             grabNext=os.clock()+.25
             if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
             local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
@@ -8108,15 +8244,23 @@ local function installMM2Farm(screenGui)
             elseif role=="Innocent" and not knife and AngelHub.actions["Get Gun"] then AngelHub.actions["Get Gun"]()end
         end
         if farmPark then
-            if V["Farm Safe Zone"] and character == farmPark.character and humanoid and root
+            if V["Farm Safe Zone"] and not fullPending() and character == farmPark.character and humanoid and root
                 and farmPark.map == map and (root.Position - farmPark.position).Magnitude <= 120 then return end
             if not leaveFarmPark() then return end
+        end
+        if farmCharacter and (character~=farmCharacter or not humanoid or not root) then
+            farmGeneration+=1;cancelFullActions();farmStartedCoins=false
+            farmAmount,farmDone,farmBagSampleKnown=0,false,false
+            extensionSteps.farmFull.resetDone,extensionSteps.farmFull.resetAt=false,nil
         end
         if not character or not humanoid or not root or root.Anchored or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then
             farmStopMovement(); farmMap, farmCharacter, farmTarget = nil, nil, nil
             return
         end
-        if farmRoundMap ~= map then farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false end
+        if farmRoundMap ~= map then
+            farmGeneration+=1;cancelFullActions();farmStartedCoins=false
+            farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 50, false, false
+        end
         if map ~= farmMap or character ~= farmCharacter then
             farmStopMovement()
             farmMap, farmCharacter = map, character
@@ -8124,8 +8268,13 @@ local function installMM2Farm(screenGui)
             table.clear(farmCoins); table.clear(farmBlacklist)
         end
         if farmAmount >= math.max(50, farmLimit) then
+            if extensionSteps.farmFull.active then
+                if fullActionStep(character,humanoid,root,map) then return end
+            end
             local wasBelow, belowHome = farmBelowEngaged, farmHomeCFrame
+            if belowHome then extensionSteps.farmFull.returnFrame=belowHome end
             farmStopMovement()
+            if fullActionStep(character,humanoid,root,map) then return end
             if V["Reset When Full Coin Bag"] == true and not extensionSteps.farmFull.resetDone then
                 local full = extensionSteps.farmFull
                 if not full.resetAt then full.resetAt = os.clock() + (V["Auto Grab Gun And Shoot"] == true and 2.2 or 0) end
@@ -8142,9 +8291,9 @@ local function installMM2Farm(screenGui)
                 local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
                 local part = spawnPart(spawns)
                 if V["Farm Safe Zone"] then
-                    local returnFrame = belowHome or (part and (part.CFrame + Vector3.new(0, 3, 0)))
+                    local returnFrame = extensionSteps.farmFull.returnFrame or belowHome or (part and (part.CFrame + Vector3.new(0, 3, 0)))
                     if not parkFarmCharacter(character, root, map, returnFrame) then message("Safe Zone unavailable") end
-                elseif not wasBelow and part and farmOnMap(root, map) then
+                elseif not wasBelow and not extensionSteps.farmFull.returnFrame and part and farmOnMap(root, map) then
                     characterTeleport(part)
                 end
             end
@@ -8162,6 +8311,17 @@ local function installMM2Farm(screenGui)
         end
         if not best then
             farmTarget = nil
+            if not farmStartedCoins and V["Stay Under When Round Starts"] then
+                local destroyY=workspace.FallenPartsDestroyHeight
+                if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1000000 then destroyY=-500 end
+                if root.Position.Y>destroyY+100 and engageBelow(character,humanoid,root) then
+                    farmInitialHold=true
+                    local home=farmHomeCFrame.Position
+                    farmHoverTarget=Vector3.new(home.X,math.max(home.Y-8,destroyY+80),home.Z)
+                end
+                return
+            end
+            if farmInitialHold then farmStopMovement();return end
             if farmBelowEngaged then
                 local y = farmHoverTarget and farmHoverTarget.Y or root.Position.Y
                 farmHoverTarget = Vector3.new(root.Position.X, y, root.Position.Z)
@@ -8182,18 +8342,8 @@ local function installMM2Farm(screenGui)
             return
         end
         do -- Below is the only Auto Farm movement mode.
-            if not farmBelowEngaged then
-                if humanoid.FloorMaterial == Enum.Material.Air then return end
-                farmHomeCFrame, farmBelowEngaged = root.CFrame, true
-            end
-            for _, object in ipairs(character:GetDescendants()) do
-                if object:IsA("BasePart") then
-                    if farmCollision[object] == nil then farmCollision[object] = object.CanCollide end
-                    object.CanCollide = false
-                end
-            end
-            apply("farmBody", humanoid, {PlatformStand = true, AutoRotate = false})
-            apply("farmSize", root, {Size = Vector3.new(4, 8, 4)})
+            if not engageBelow(character,humanoid,root) then return end
+            farmStartedCoins=true;farmInitialHold=false
             local destroyY = workspace.FallenPartsDestroyHeight
             if type(destroyY) ~= "number" or destroyY ~= destroyY or math.abs(destroyY) > 1000000 then destroyY = -500 end
             local low = math.max(destroyY + 40, farmHomeCFrame.Position.Y - 90)
@@ -8237,6 +8387,7 @@ local function installMM2Farm(screenGui)
     end
     local auraCoins, auraScanElapsed, auraTickElapsed = {}, 0, 0
     local auraCurrent, auraState
+    local auraMap, auraCursor = nil, 1
     local function restoreCoinAura()
         local coin, saved = auraCurrent, auraState
         auraCurrent, auraState = nil, nil
@@ -8252,6 +8403,7 @@ local function installMM2Farm(screenGui)
     end
     local function resetCoinAura()
         restoreCoinAura(); table.clear(auraCoins); auraScanElapsed, auraTickElapsed = 0.5, 0
+        auraMap, auraCursor = nil, 1
     end
     local function mm2CoinAuraStep(dt, root)
         if not enabled["Coins Aura"] then return end
@@ -8260,6 +8412,9 @@ local function installMM2Farm(screenGui)
         local elapsed = auraTickElapsed; auraTickElapsed = 0
         local map = mm2Map()
         if not root or root.Anchored or not farmOnMap(root, map) then restoreCoinAura(); return end
+        if auraMap~=map then resetCoinAura();auraMap=map;auraScanElapsed=.5 end
+        if enabled["Auto Farm"] and (farmPark or (farmWaitingMap and farmWaitingMap==map)
+            or farmAmount>=math.max(50,farmLimit) or AngelHub.mm2KnifeKillBusy) then restoreCoinAura();return end
         auraScanElapsed += elapsed
         if auraScanElapsed >= 0.5 then
             auraScanElapsed = 0; table.clear(auraCoins)
@@ -8268,6 +8423,25 @@ local function installMM2Farm(screenGui)
                     table.insert(auraCoins, object)
                 end
             end
+        end
+        -- Farm owns the coin positions it navigates toward. Aura must never
+        -- move/anchor those targets: pulse nearby server parts in bounded batches.
+        if enabled["Auto Farm"] then
+            restoreCoinAura()
+            local count=#auraCoins
+            if count>0 then
+                local examined, touched = 0,0
+                if auraCursor>count then auraCursor=1 end
+                while examined<count and touched<12 do
+                    local coin=auraCoins[auraCursor]
+                    auraCursor=auraCursor%count+1;examined+=1
+                    if farmUsable(coin,map) and (coin.Position-root.Position).Magnitude<=15 then
+                        pcall(firetouchinterest,root,coin,0);pcall(firetouchinterest,root,coin,1)
+                        touched+=1
+                    end
+                end
+            end
+            return
         end
         local best, nearest
         for _, coin in ipairs(auraCoins) do
@@ -8304,7 +8478,9 @@ local function installMM2Farm(screenGui)
     local oldFarm=AngelHub.setters["Auto Farm"]
     local function conflict()
         return V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"] or V["Noclip"] or V["Air Walk"] or V["Air Swim"]
-            or V["FreeCam"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or AngelHub.mm2FlingBusy
+            or V["FreeCam"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"]
+            or (AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner~="farm")
+            or (AngelHub.mm2KnifeKillBusy and AngelHub.mm2KnifeKillOwner~="farm")
     end
     AngelHub.setters["Auto Farm"]=function(value)
         local on=isMM2 and not stopped and value==true
@@ -8315,7 +8491,8 @@ local function installMM2Farm(screenGui)
             end
             local gameplay,collected,ended=farmEvents()
             if not gameplay then oldFarm(false);message("Auto Farm: señales de MM2 no disponibles");return false end
-            oldFarm(true);farmStart(gameplay,collected,ended)
+            -- Undo any standalone Aura relocation before Farm scans targets.
+            resetCoinAura();oldFarm(true);farmStart(gameplay,collected,ended)
             if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
         else oldFarm(false);farmStop();if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end end
     end
@@ -8327,6 +8504,27 @@ local function installMM2Farm(screenGui)
         if V["Auto Farm"] and V["Auto Grab Gun And Shoot"] and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()
         elseif AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
     end
+    for _,name in ipairs(fullOrder)do
+        local oldOption=AngelHub.setters[name]
+        if oldOption then AngelHub.setters[name]=function(value)
+            local on=isMM2 and not stopped and value==true
+            oldOption(on)
+            local full=extensionSteps.farmFull
+            if not on and full.active==name then
+                if name=="Auto Kill All When Full Bag" then
+                    if AngelHub.mm2CancelFarmKills then AngelHub.mm2CancelFarmKills()end
+                elseif AngelHub.mm2CancelOwnedFling then AngelHub.mm2CancelOwnedFling("farm")end
+                full.active=nil
+            end
+            if on and V["Auto Farm"] and farmAmount>=math.max(50,farmLimit) and not full.done[name] then farmDone=false end
+            if V["Auto Farm"] and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
+        end end
+    end
+    local oldStayUnder=AngelHub.setters["Stay Under When Round Starts"]
+    if oldStayUnder then AngelHub.setters["Stay Under When Round Starts"]=function(value)
+        oldStayUnder(isMM2 and not stopped and value==true)
+        if not value and farmInitialHold then farmStopMovement() end
+    end end
     local oldSafe=AngelHub.setters["Farm Safe Zone"]
     AngelHub.setters["Farm Safe Zone"]=function(value)
         oldSafe(value==true)
@@ -8363,7 +8561,7 @@ local function installMM2Farm(screenGui)
     end)
     screenGui.Destroying:Connect(function()
         stopped=true;oldFarm(false);oldAura(false);resetCoinAura();farmStop()
-        AngelHub.farmFullTicket=nil;AngelHub.farmFullAllowed=nil
+        AngelHub.farmFullTicket=nil;AngelHub.farmFullAllowed=nil;AngelHub.farmTargetAllowed=nil
     end)
 end
 

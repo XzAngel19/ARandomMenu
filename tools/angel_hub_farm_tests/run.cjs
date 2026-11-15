@@ -23,12 +23,15 @@ end
 (async()=>{
  const prefix=process.env.LUAU_TEST_PREFIX||path.join(root,'tools/luau');
  const {Lua}=await import(pathToFileURL(path.join(prefix,'node_modules/@luau-rs/luau/dist/direct-api.js')).href);
- for(const name of ['farm-counter-checks.luau','farm-reset-checks.luau','../angel_hub_farm_tests/below-checks.luau','../angel_hub_farm_tests/coins-aura-checks.luau','../angel_hub_farm_tests/full-grab-checks.luau']){
+ for(const name of ['farm-counter-checks.luau','farm-reset-checks.luau','../angel_hub_farm_tests/below-checks.luau','../angel_hub_farm_tests/coins-aura-checks.luau','../angel_hub_farm_tests/full-grab-checks.luau','../angel_hub_farm_tests/full-actions-checks.luau']){
   let test=read(path.join(fixture,name)).replaceAll('installGameplay(screenGui)','installMM2Farm(screenGui)');
 
   const lua=await Lua.create({sandbox:true});
   try{lua.execute(read(path.join(fixture,'gameplay-mock.luau'))+'\nlocal fakeNow=100;local os={clock=function()return fakeNow end}\n'+setup+'\n'+farm+'\n'+test)}
   catch(e){console.error(name);throw e}
  }
- console.log('PASS: Farm Below, Coins Aura, full-bag grab, counters, reset, safe zone, conflict and void checks (mocks only)');
+ const owned=await Lua.create({sandbox:true});
+ const fling=file.slice(file.indexOf('local function installMM2Fling(screenGui)'),file.indexOf('\n-- Auto Farm MM2'));
+ owned.execute(read(path.join(fixture,'gameplay-mock.luau'))+'\nlocal fakeNow=100;local os={clock=function()return fakeNow end};local httpService={}\n'+setup+'\n'+fling+'\n'+farm+'\n'+read(path.join(__dirname,'real-owned-fling-checks.luau')));
+ console.log('PASS: Farm Below, Coins Aura, full-bag grab and ordered actions, counters, reset, safe zone, conflict and void checks (mocks only)');
 })().catch(e=>{console.error(e);process.exit(1)});

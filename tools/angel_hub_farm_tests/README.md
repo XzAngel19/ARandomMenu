@@ -9,7 +9,10 @@ node tools/angel_hub_completion_tests/run.cjs
 ```
 
 Cubren Farm Below (incluyendo configuración antigua Walk ignorada), monedas y contadores, reset, lobby, Safe Zone y
-restauración; Coins Aura con alcance fijo de 15 studs, touch y restauración;
+restauración y espera bajo el mapa al inicio de ronda; Coins Aura con alcance fijo de 15 studs,
+touch y restauración. Con Farm activo, Aura no mueve monedas y pulsa por lotes
+las monedas próximas; se prueban ambos órdenes de activación. También cubren
+las acciones cancelables al llenar la bolsa (Kill All, Fling Murder, Fling Sheriff)
 y Auto Grab Gun And Shoot exclusivamente con bolsa llena. Auto Win verifica
 plataforma, contadores, Murder/Sheriff, flings optativos y coordinación con el
 motor Fling: volver a la plataforma, tocar GunDrop, cancelar al acabar ronda,
@@ -21,5 +24,6 @@ Los mocks no verifican físicas, validaciones del servidor, recogidas, compras,
 impactos, victorias ni compatibilidad real con Roblox/executores. El Fling
 Murder If Dead intenta el movimiento desde el lugar del respawn, incluido lobby,
 solo después de una muerte detectada y con el interruptor activado. En Auto
-Farm no se hace esa salida desde el lobby. Los flings y Kill All tras bolsa
-llena de Farm y otros controles siguen bloqueados.
+Farm no se hace esa salida desde el lobby. Los flings de bolsa llena comprueban
+el rol y objetivo en el mapa, y la secuencia se cancela al apagar Farm, cambiar
+ronda o perder la validez del objetivo. Solo se comprueban intentos simulados.

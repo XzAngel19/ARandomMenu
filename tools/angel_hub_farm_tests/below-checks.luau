@@ -8,7 +8,7 @@ AngelHub.moduleNames['Knife Aura']=true;setting('Knife Aura',false)
 AngelHub.moduleNames['Coins Aura']=true;setting('Coins Aura',false)
 setting('Knife Aura Range',15);setting('Knife Hold Mouse',false)
 V['Farm Mode']='Walk';setting('Farm Speed',22);setting('Farm Safe Zone',false)
-setting('Coins Collected',0);setting('Farm Time',0)
+setting('Coins Collected',0);setting('Farm Time',0);setting('Stay Under When Round Starts',false)
 local collected={OnClientEvent=event()};function collected:IsA(c)return c=='RemoteEvent'end
 local ended={OnClientEvent=event()};function ended:IsA(c)return c=='RemoteEvent'end
 local started={OnClientEvent=event()};function started:IsA(c)return c=='RemoteEvent'end
@@ -33,7 +33,28 @@ installGameplay(screenGui)
 local originalRootSize=root.Size
 humanoid.PlatformStand=false;humanoid.AutoRotate=true;humanoid.FloorMaterial=Enum.Material.Ground
 root.Position=Vector3.new(0,0,0);root.CFrame={Position=root.Position};local homeFrame=root.CFrame
+-- Optional round-start hold is only on the map and only until coins appear.
+map.descendants={};AngelHub.setters['Stay Under When Round Starts'](true)
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(.6);run.PreSimulation:Fire()
+assert(V['Auto Farm'] and humanoid.PlatformStand and root.AssemblyLinearVelocity.Y<0)
+character.lastPivot=nil;AngelHub.setters['Stay Under When Round Starts'](false)
+assert(character.lastPivot==homeFrame and root.CanCollide and not humanoid.PlatformStand)
+AngelHub.setters['Stay Under When Round Starts'](true);heartbeat:Fire(.6)
+map.descendants={coin};heartbeat:Fire(.6);run.PreSimulation:Fire()
+assert(V['Auto Farm'] and root.AssemblyLinearVelocity.X>0)
+AngelHub.setters['Auto Farm'](false);AngelHub.setters['Stay Under When Round Starts'](false)
+root.Position=Vector3.zero;root.CFrame=homeFrame
+-- Aura may be active before Farm; restore its moved coin before Farm scans.
+AngelHub.setters['Coins Aura'](true);heartbeat:Fire(.6)
+assert(coin.CFrame==root.CFrame and not coin.CanCollide and visual.Anchored and not weld.Enabled)
 AngelHub.setters['Auto Farm'](true);assert(V['Auto Farm'])
+assert(coin.CFrame==originalCoinFrame and coin.CanCollide and not visual.Anchored and weld.Enabled)
+local before=#touches
+heartbeat:Fire(0.11)
+assert(#touches>before and coin.CFrame==originalCoinFrame and coin.CanCollide and not visual.Anchored and weld.Enabled)
+AngelHub.setters['Coins Aura'](false);AngelHub.setters['Coins Aura'](true)
+heartbeat:Fire(.11);assert(V['Auto Farm'] and coin.CFrame==originalCoinFrame and coin.CanCollide)
+AngelHub.setters['Coins Aura'](false)
 heartbeat:Fire(0.11)
 assert(not root.CanCollide and not head.CanCollide and root.Size.Y==8 and humanoid.PlatformStand and not humanoid.AutoRotate)
 run.PreSimulation:Fire();assert(root.AssemblyLinearVelocity.X==22 and root.AssemblyLinearVelocity.Y<0)

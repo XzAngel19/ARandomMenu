@@ -18,5 +18,6 @@ Vote y texto del perk en Chams cuando los datos están disponibles. Las demás p
 
 Los mocks no verifican física, streaming, validaciones del servidor, contratos
 cambiantes de MM2, daño, captura de GunDrop ni compatibilidad con un executor
-real. Los intentos no confirman impactos. Otros controles permanecen marcados
-como pendientes, incluidos los flings y Kill All de Farm con bolsa llena.
+real. Los intentos no confirman impactos. Fling adapta la estrategia de contacto
+alterno del archivo Kilasik/zqyDSUWX proporcionado, sin GUI adicional ni sus
+velocidades extremas o desactivación de FallenPartsDestroyHeight.

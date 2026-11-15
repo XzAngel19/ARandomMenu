@@ -21,6 +21,9 @@ h.setters['Kill Player']('Bob');h.setters['Fling Target']('Bob');assert(h.values
 table.remove(roster,2);run.Heartbeat:Fire(1.1);assert(h.values['Kill Player']=='Alice' and h.values['Fling Target']=='Alice')
 h.setters['Kill Player']('Nobody');assert(h.values['Kill Player']=='Alice')
 table.remove(roster,2);run.Heartbeat:Fire(1.1);assert(h.values['Kill Player']==nil and h.values['Fling Target']==nil)
+for _,name in ipairs({'Stay Under When Round Starts','Fling Murder After Full Bag','Fling Sheriff After Full Bag','Auto Kill All When Full Bag'})do
+ assert(h.values[name]==false);h.setters[name](true);assert(h.values[name]==true);h.setters[name](false)
+end
 assert(h.values['Gun Aimbot']==false and h.values['Gun Aura']==false)
 assert(h.values['Auto Pickup Gun Key Value']=='H' and h.values['Auto Get Gun']==false)
 local foundPickup=false;for _,c in ipairs(h.searchables)do if c.Name=='Auto Pickup Gun' then foundPickup=true end end;assert(foundPickup)

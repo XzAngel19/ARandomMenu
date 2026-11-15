@@ -50,6 +50,14 @@ fakeNow+=.2;heartbeat:Fire(.1);assert(not AngelHub.mm2KnifeKillBusy and root.Pos
 -- Respawn/death, round motion conflicts, cancellation and destruction do not leave a running sequence.
 fakeNow+=2;AngelHub.actions['Kill All']();heartbeat:Fire(.1);V['Auto Farm']=true
 heartbeat:Fire(.1);assert(not AngelHub.mm2KnifeKillBusy and root.Position.X==0);V['Auto Farm']=false
+-- Farm can own a cancellable Kill All sequence, while manual Kill All stays blocked.
+fakeNow+=2;V['Auto Farm']=true;local valid=true;AngelHub.farmTargetAllowed=function(player)return player~=second end
+AngelHub.actions['Kill All']();assert(not AngelHub.mm2KnifeKillBusy)
+assert(AngelHub.mm2StartFarmKills(function()return valid end) and AngelHub.mm2KnifeKillOwner=='farm')
+heartbeat:Fire(.1);assert(root.Position.X==70);fakeNow+=1;heartbeat:Fire(.1)
+local pendingBefore=#hits;valid=false;AngelHub.mm2CancelFarmKills();drain()
+assert(#hits==pendingBefore and not AngelHub.mm2KnifeKillBusy and root.Position.X==0)
+V['Auto Farm']=false
 fakeNow+=2;AngelHub.actions['Kill All']();heartbeat:Fire(.1);fakeNow+=.1;heartbeat:Fire(.1)
 local before=#hits;screenGui.Destroying:Fire();drain()
 assert(not AngelHub.mm2KnifeKillBusy and root.Position.X==0 and #hits==before)
