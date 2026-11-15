@@ -224,14 +224,14 @@ end
 
 -- Controls not yet integrated are labelled and cannot claim to be active.
 local pendingControls={
-    ["Auto Blurt"]=true,["Air Swim"]=true,["Air Walk"]=true,
+    ["Auto Blurt"]=true,["Air Swim"]=true,
     ["Chams Show Perk"]=true,["Zoom Through Walls"]=true,
     ["Stay Under When Round Starts"]=true,
     ["Fling Murder After Full Bag"]=true,["Fling Sheriff After Full Bag"]=true,
     ["Auto Kill All When Full Bag"]=true,["Repeat On Change"]=true,["Fake Blurt Roles"]=true,
 }
 local pendingButtons={
-    ["Blurt Roles"]=true,["Play Emote"]=true,["Get All Emotes"]=true,
+    ["Blurt Roles"]=true,["Get All Emotes"]=true,
 }
 local function addToggle(parent, text, keybind, default)
 	local startState = default == true
@@ -7496,6 +7496,12 @@ local function installMM2Fling(screenGui)
     local stopped=false
     local current,pendingRole,pendingAt,queue,nextAuto=nil,nil,0,{},0
     local roundEnded,bound,nextBind,roundConnections=false,nil,0,{}
+    -- Bounded contact physics: extreme 1e9 velocities can destabilize the
+    -- local assembly and produce long stalls. These do not guarantee a fling.
+    local LINEAR=Vector3.new(140,110,140)
+    local SPIN=Vector3.new(55,70,55)
+    local BURST_SECONDS=.9
+    local AUTO_BACKOFF=4
     local function status(text)
         if AngelHub.setFlingStatus then AngelHub.setFlingStatus(text) end
     end
@@ -7527,15 +7533,35 @@ local function installMM2Fling(screenGui)
         return AngelHub.mm2KnifeKillBusy or (V["Auto Farm"] and owner~="farm") or (V["Auto Win"] and owner~="win") or V["Walk Fling"] or V["Enable Fly"] or V["Enable Speed"]
             or V["Air Walk"] or V["Air Swim"] or V["Noclip"] or V["FreeCam"] or V["Auto Vote"]
     end
+    local function settle(character,root)
+        local seen={}
+        local function stopPart(part)
+            if not part or seen[part] then return end
+            seen[part]=true
+            pcall(function()part.AssemblyLinearVelocity=Vector3.zero end)
+            pcall(function()part.AssemblyAngularVelocity=Vector3.zero end)
+            pcall(function()part.Velocity=Vector3.zero end)
+            pcall(function()part.RotVelocity=Vector3.zero end)
+        end
+        stopPart(root)
+        pcall(function()
+            local count=0
+            for _,part in ipairs(character:GetDescendants())do
+                if part:IsA("BasePart") and not part.Anchored then
+                    local assembly=part.AssemblyRootPart or part
+                    if not seen[assembly] then count+=1;stopPart(assembly)end
+                    if count>=100 then break end
+                end
+            end
+        end)
+    end
     local function clean()
         local state=current;current=nil
         AngelHub.mm2FlingBusy=false;AngelHub.mm2FlingOwner=nil
         if not state then return end
         if state.pin then pcall(function()state.pin:Destroy()end)end
-        if state.human and state.seated~=nil then pcall(function()state.human:SetStateEnabled(Enum.HumanoidStateType.Seated,state.seated)end)end
         if localPlayer.Character==state.character and state.root and state.root.Parent then pcall(function()
-            state.root.Velocity=Vector3.zero;state.root.RotVelocity=Vector3.zero
-            state.root.AssemblyLinearVelocity=Vector3.zero;state.root.AssemblyAngularVelocity=Vector3.zero
+            settle(state.character,state.root)
             local safeReturn=state.map==map()
             if not safeReturn and state.owner=="win" and AngelHub.winReturnSafe then
                 safeReturn=AngelHub.winReturnSafe(state.character,state.home)==true
@@ -7547,8 +7573,11 @@ local function installMM2Fling(screenGui)
             end
             if state.human.Health>0 and safeReturn and state.home.Position.Y>state.destroyY+40 then
                 state.character:PivotTo(state.home)
+                settle(state.character,state.root)
             end
         end)end
+        if state.human and state.seated~=nil then pcall(function()state.human:SetStateEnabled(Enum.HumanoidStateType.Seated,state.seated)end)end
+        if state.selectedAction then status("Fling terminado; impacto sin confirmar")end
     end
     local function cancel()
         pendingRole=nil;AngelHub.mm2FlingNeedsRoles=false;table.clear(queue);clean();nextAuto=os.clock()+.7
@@ -7626,12 +7655,15 @@ local function installMM2Fling(screenGui)
             pin=Instance.new("BodyVelocity")
             local okGuid,guid=pcall(function()return httpService:GenerateGUID(false)end)
             pin.Name=okGuid and guid or "AngelFlingVelocity"
-            pin.Velocity=Vector3.new(1.8e9,1.8e9,1.8e9);pin.MaxForce=Vector3.new(9e9,9e9,9e9)
+            local mass=tonumber(root.AssemblyMass) or 10
+            if mass~=mass or mass<=0 or mass>1000 then mass=10 end
+            local force=math.clamp(mass*600,1000,60000)
+            pin.Velocity=LINEAR;pin.MaxForce=Vector3.new(force,force,force);pin.P=400
             local seated;pcall(function()seated=human:GetStateEnabled(Enum.HumanoidStateType.Seated)end)
             current={character=character,human=human,root=root,home=home,map=currentMap,player=player,
                 target=target,targetRoot=targetRoot,victim=victim,pin=pin,seated=seated,destroyY=destroyY,
-                start=os.clock(),phase=0,automatic=automatic,owner=owner,stillValid=stillValid,returnToLobby=returnToLobby,selectedAction=selectedAction,
-                retries=owner and 0 or math.clamp(math.floor(tonumber(V["Fling Retries"]) or 1),0,3)}
+                start=os.clock(),nextPose=0,phase=0,automatic=automatic,owner=owner,stillValid=stillValid,returnToLobby=returnToLobby,selectedAction=selectedAction,
+                retries=owner and 0 or math.clamp(math.floor(tonumber(V["Fling Retries"]) or 0),0,1)}
             AngelHub.mm2FlingBusy=true;AngelHub.mm2FlingOwner=owner
             if AngelHub.suspendAntiFling then AngelHub.suspendAntiFling()end
             pcall(function()human:SetStateEnabled(Enum.HumanoidStateType.Seated,false)end)
@@ -7683,14 +7715,19 @@ local function installMM2Fling(screenGui)
                 or not targetRoot.Parent or state.map~=map() or (not state.selectedAction and not onMap(targetRoot,state.map))
                 or root.Position.Y<=state.destroyY+40 or targetRoot.Position.Y<=state.destroyY+40
                 or (state.automatic and (not V["Auto Fling Selected Target"] or selected()~=state.player)) then
-                clean();nextAuto=now+.7;return
+                clean();nextAuto=now+AUTO_BACKOFF;return
             end
             local velocity=targetRoot.AssemblyLinearVelocity
-            if velocity.Magnitude>500 then clean();nextAuto=now+1;return end
-            if now-state.start>=3 then
-                if state.retries<=0 then clean();nextAuto=now+.7;return end
+            if velocity.Magnitude>80 or root.AssemblyLinearVelocity.Magnitude>350
+                or root.AssemblyAngularVelocity.Magnitude>250 then
+                clean();nextAuto=now+AUTO_BACKOFF;return
+            end
+            if now-state.start>=BURST_SECONDS then
+                if state.retries<=0 then clean();nextAuto=now+AUTO_BACKOFF;return end
                 state.retries-=1;state.start=now
             end
+            if now<state.nextPose then return end
+            state.nextPose=now+1/30
             state.phase+=1;local offset=offsets[(state.phase-1)%#offsets+1]
             local lead=Vector3.new(velocity.X,0,velocity.Z)*.15
             local frame=CFrame.new(targetRoot.Position+lead)*CFrame.new(offset[1],offset[2],offset[3])*CFrame.Angles(math.rad(state.phase*100),0,0)
@@ -7699,12 +7736,12 @@ local function installMM2Fling(screenGui)
             local rootToPivot=root.CFrame:ToObjectSpace(pivot)
             root.CFrame=frame
             state.character:PivotTo(frame*rootToPivot)
-            root.Velocity=Vector3.new(1.8e8,1.8e9,1.8e8)
-            root.RotVelocity=Vector3.new(1.8e9,1.8e9,1.8e9)
+            root.Velocity=LINEAR
+            root.RotVelocity=SPIN
             return
         end
         while #queue>0 do local target=table.remove(queue,1);if start(target,false) then return end end
-        if V["Auto Fling Selected Target"] and os.clock()>=nextAuto and not conflict() then nextAuto=os.clock()+1;start(selected(),true,nil,nil,false,true)end
+        if V["Auto Fling Selected Target"] and os.clock()>=nextAuto and not conflict() then nextAuto=os.clock()+AUTO_BACKOFF;start(selected(),true,nil,nil,false,true)end
     end
     local old=AngelHub.setters["Auto Fling Selected Target"]
     AngelHub.setters["Auto Fling Selected Target"]=function(value)
@@ -9261,6 +9298,129 @@ local function installFreeCam(screenGui)
     screenGui.Destroying:Connect(function()stopped=true;freecam.cleanup()end)
 end
 
+-- Air Walk uses an opt-in local support platform and releases it on disable.
+local function installAirWalk(screenGui)
+    local V=AngelHub.values
+    local enabled=V
+    local run=game:GetService("RunService")
+    local stopped=false
+    local airWalk = {}
+    do
+        local platform, controls, tracked, airY = nil, nil, nil, nil
+        local heldUp, heldDown, controlConnections = {}, {}, {}
+        local function clearInput() table.clear(heldUp); table.clear(heldDown) end
+        local function destroyPlatform()
+            if platform then pcall(function() platform:Destroy() end); platform = nil end
+            tracked, airY = nil, nil
+        end
+        local function destroyControls()
+            for _, connection in ipairs(controlConnections) do connection:Disconnect() end
+            table.clear(controlConnections)
+            if controls then pcall(function() controls:Destroy() end); controls = nil end
+        end
+        function airWalk.toggle(value)
+            destroyPlatform(); destroyControls(); clearInput()
+            if not value or not userInputService.TouchEnabled then return end
+            controls = Instance.new("Frame")
+            controls.Name = "AngelHubAirWalkControls"; controls.Size = UDim2.fromScale(1, 1)
+            controls.BackgroundTransparency = 1; controls.Parent = screenGui
+            for _, spec in ipairs({{"Up", "+", -152, heldUp}, {"Down", "−", -96, heldDown}}) do
+                local button = Instance.new("TextButton")
+                button.Name = spec[1]; button.Text = spec[2]
+                button.Position = UDim2.new(1, -70, 1, spec[3]); button.Size = UDim2.fromOffset(48, 48)
+                button.TextSize = 18; button.TextColor3 = Color3.new(1, 1, 1)
+                button.BackgroundColor3 = Color3.fromRGB(25, 25, 25); button.BackgroundTransparency = 0.3
+                button.ZIndex = 31; button.Parent = controls
+                local bucket = spec[4]
+                table.insert(controlConnections, button.InputBegan:Connect(function(input)
+                    if enabled["Air Walk"] and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then bucket[input] = true end
+                end))
+                table.insert(controlConnections, button.InputEnded:Connect(function(input) bucket[input] = nil end))
+            end
+        end
+        function airWalk.step(dt, character, humanoid, root)
+            if not enabled["Air Walk"] then return end
+            if not character or not character.Parent or not humanoid or humanoid.Health<=0 or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then destroyPlatform(); clearInput(); return end
+            local hip = tonumber(humanoid.HipHeight) or 2
+            if hip <= 0 then hip = 2 end
+            local foot = root.Position.Y - hip - root.Size.Y * 0.5 - 0.5
+            if tracked ~= character or not airY then tracked, airY = character, foot end
+            if not platform or not platform.Parent then
+                platform = Instance.new("Part")
+                platform.Name = "AngelHubAirWalkPlatform"; platform.Anchored = true; platform.CanCollide = true
+                platform.CanQuery = false; platform.CanTouch = false; platform.CastShadow = false
+                platform.Size = Vector3.new(16, 1, 16); platform.Transparency = 1; platform.Parent = workspace
+            end
+            local up, down = next(heldUp) ~= nil, next(heldDown) ~= nil
+            local step = math.clamp(tonumber(dt) or 0, 0, 0.1)
+            local velocity = root.AssemblyLinearVelocity
+            if up and not down then
+                airY = math.max(airY, foot) + 22 * step
+                if velocity.Y < 22 then root.AssemblyLinearVelocity = Vector3.new(velocity.X, 22, velocity.Z) end
+            elseif down and not up then
+                airY = foot - 22 * step - 1.4
+                if velocity.Y > -22 then root.AssemblyLinearVelocity = Vector3.new(velocity.X, -22, velocity.Z) end
+            else
+                airY = math.max(airY, foot)
+            end
+            platform.CFrame = CFrame.new(root.Position.X, airY, root.Position.Z)
+        end
+        function airWalk.inputBegan(input, processed)
+            if not enabled["Air Walk"] or processed or AngelHub.listening or userInputService:GetFocusedTextBox() then return end
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                if input.KeyCode == Enum.KeyCode.Space then heldUp[input.KeyCode] = true
+                elseif input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then heldDown[input.KeyCode] = true end
+            end
+        end
+        function airWalk.inputEnded(input)
+            heldUp[input], heldDown[input] = nil, nil
+            if input.UserInputType == Enum.UserInputType.Keyboard then heldUp[input.KeyCode], heldDown[input.KeyCode] = nil, nil end
+        end
+        function airWalk.clearInput() clearInput() end
+        function airWalk.cleanup() airWalk.toggle(false) end
+    end
+
+    local function conflict()
+        return AngelHub.mm2FlingBusy or AngelHub.mm2KnifeKillBusy or V["Auto Farm"] or V["Auto Win"] or V["Auto Vote"]
+            or V["Enable Fly"] or V["Noclip"] or V["Air Swim"] or V["Walk Fling"] or V["FreeCam"] or V["Auto Fling Selected Target"]
+    end
+    local old=AngelHub.setters["Air Walk"]
+    AngelHub.setters["Air Walk"]=function(value)
+        if value==true and (stopped or conflict()) then
+            old(false);airWalk.cleanup();if AngelHub.setAirWalkStatus then AngelHub.setAirWalkStatus("Air Walk: desactiva movimiento incompatible")end;return false
+        end
+        old(not stopped and value==true)
+        local ok,err=pcall(airWalk.toggle,V["Air Walk"]==true)
+        if not ok then old(false);airWalk.cleanup();warn("Angel Hub Air Walk: "..tostring(err));return false end
+        if AngelHub.setAirWalkStatus then AngelHub.setAirWalkStatus(V["Air Walk"] and "Air Walk activo" or "Air Walk apagado")end
+        return V["Air Walk"]
+    end
+    for _,name in ipairs({"Noclip","Enable Fly","Air Swim","Walk Fling","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+        local setter=AngelHub.setters[name]
+        if setter then AngelHub.setters[name]=function(value)
+            if value==true and V["Air Walk"] then if AngelHub.status then AngelHub.status("Desactiva Air Walk primero")end;return false end
+            return setter(value)
+        end end
+    end
+    local connections={}
+    local function listen(signal,fn)if signal then table.insert(connections,signal:Connect(fn))end end
+    listen(userInputService.InputBegan,airWalk.inputBegan)
+    listen(userInputService.InputEnded,airWalk.inputEnded)
+    listen(userInputService.WindowFocusReleased,airWalk.clearInput)
+    listen(userInputService.TextBoxFocused,airWalk.clearInput)
+    listen(run.Heartbeat,function(dt)
+        if stopped or not V["Air Walk"] then return end
+        local character=localPlayer.Character
+        local human=character and character:FindFirstChildOfClass("Humanoid")
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local ok,err=pcall(airWalk.step,dt,character,human,root)
+        if not ok then warn("Angel Hub Air Walk: "..tostring(err));AngelHub.setters["Air Walk"](false)end
+    end)
+    screenGui.Destroying:Connect(function()
+        stopped=true;airWalk.cleanup();for _,c in ipairs(connections)do c:Disconnect()end
+    end)
+end
+
 -- Voluntary fixed-power Walk Fling; restore every owned property on disable.
 local function installWalkFling(screenGui)
     local V=AngelHub.values
@@ -9277,7 +9437,9 @@ local function installWalkFling(screenGui)
             if not state then return end
             pcall(function()
                 local value = state.root.AssemblyLinearVelocity
-                if value == state.spike or value == state.oscillated then
+                local nearSpike=value==state.spike or (value-state.spike).Magnitude<=15
+                local nearOscillation=state.oscillated and (value==state.oscillated or (value-state.oscillated).Magnitude<=1)
+                if nearSpike or nearOscillation then
                     state.root.AssemblyLinearVelocity = state.velocity
                     state.root.Velocity = state.velocity
                 end
@@ -9307,7 +9469,10 @@ local function installWalkFling(screenGui)
                 end
             end
             local velocity = root.AssemblyLinearVelocity
-            local spike = velocity * 30000 + Vector3.new(0, 30000, 0)
+            if velocity.Magnitude>220 then restoreCollisions();return end
+            -- Fixed, bounded pulse instead of multiplying by 30000.
+            local spike = Vector3.new(math.clamp(velocity.X*3,-160,160),
+                math.clamp(velocity.Y+110,-160,160),math.clamp(velocity.Z*3,-160,160))
             pulse = {character=character, root=root, velocity=velocity, spike=spike}
             root.Velocity = spike; root.AssemblyLinearVelocity = spike
         end
@@ -9661,6 +9826,63 @@ local function installFPSOptions(screenGui)
     end)
 end
 
+-- Local emote playback is a request, not a grant of server ownership.
+local function installEmotes(screenGui)
+    local V=AngelHub.values
+    local stopped,generation,track=false,0,nil
+    local defs={
+        ["Sit"]={id="sit",command="sit2",asset="rbxassetid://2431845940",looped=true},
+        ["Ninja Rest"]={id="ninja",command="ninja",asset="rbxassetid://2431864798",looped=true},
+        ["Zen"]={id="zen",command="zen",asset="rbxassetid://2431812646",looped=true},
+        ["Dab"]={id="dab",command="dab",asset="rbxassetid://2445521505"},
+        ["Floss"]={id="floss",command="floss",asset="rbxassetid://2452938820",looped=true},
+        ["Zombie"]={id="zombie",command="zombie",asset="rbxassetid://2513692312",looped=true},
+        ["Headless"]={id="headless",command="headless",asset="rbxassetid://2513664073"},
+    }
+    local function status(text)if AngelHub.setEmoteStatus then AngelHub.setEmoteStatus(text)end end
+    local function stopTrack()
+        local old=track;track=nil
+        if old then pcall(function()old:Stop(.1);old:Destroy()end)end
+    end
+    AngelHub.actions["Play Emote"]=function()
+        if stopped or game.PlaceId~=142823291 then status("Emotes disponibles solo en MM2");return end
+        local def=defs[V["Select Emote"]]
+        if not def then status("Selecciona un emote valido");return end
+        generation+=1;local ticket=generation;stopTrack()
+        local character=localPlayer.Character
+        local human=character and character:FindFirstChildOfClass("Humanoid")
+        if not human or human.Health<=0 then status("Emote: personaje no disponible");return end
+        local okStorage,storage=pcall(function()return game:GetService("ReplicatedStorage")end)
+        local remotes=okStorage and storage and storage:FindFirstChild("Remotes")
+        local misc=remotes and remotes:FindFirstChild("Misc")
+        local event=misc and misc:FindFirstChild("PlayEmote")
+        if event and event:IsA("BindableEvent") then
+            local ok=pcall(function()event:Fire(def.id)end)
+            status(ok and "Emote solicitado; replicacion no confirmada" or "Emote: solicitud incierta")
+            return
+        end
+        local animation,loaded
+        local ok,err=pcall(function()
+            animation=Instance.new("Animation");animation.Name=def.command;animation.AnimationId=def.asset
+            local animator=human:FindFirstChildOfClass("Animator")
+            loaded=animator and animator:LoadAnimation(animation) or human:LoadAnimation(animation)
+            if not loaded then error("animation unavailable")end
+            if stopped or ticket~=generation or localPlayer.Character~=character then return end
+            track=loaded;loaded.Looped=def.looped==true;loaded:Play(.1)
+        end)
+        if animation then pcall(function()animation:Destroy()end)end
+        if stopped or ticket~=generation or localPlayer.Character~=character then
+            if loaded then pcall(function()loaded:Stop(.1);loaded:Destroy()end)end
+            return
+        end
+        if not ok then
+            if track==loaded then stopTrack() elseif loaded then pcall(function()loaded:Destroy()end)end
+            warn("Angel Hub Emote: "..tostring(err));status("Emote no disponible; revisa permisos")
+        else status("Emote local solicitado; replicacion no confirmada")end
+    end
+    screenGui.Destroying:Connect(function()stopped=true;generation+=1;stopTrack()end)
+end
+
 local function initializeScript()
 	if typeof(shared) == "table" and shared.AngelHubGui then
 		pcall(function()
@@ -10012,7 +10234,7 @@ local function initializeScript()
 	addList(mainRight, "Fling Target", {}, 70)
 	addButton(mainRight, "Fling")
 	addModule(mainRight, "Auto Fling Selected Target", nil, false)
-	addSlider(mainRight, "Fling Retries", 0, 3, 1, 0)
+	addSlider(mainRight, "Fling Retries", 0, 1, 0, 0)
     local flingStatusHolder=createCard("Frame",mainRight,"Fling Status",40)
     local flingStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
         BackgroundTransparency=1,Text="Selecciona un jugador",TextColor3=OFF_TEXT_COLOR,TextSize=12,
@@ -10086,6 +10308,12 @@ local function initializeScript()
 	addCycle(extraLeft, "Select Emote", { "Sit", "Ninja Rest", "Zen", "Dab", "Floss", "Zombie", "Headless" })
 	addButton(extraLeft, "Play Emote")
 	addButton(extraLeft, "Get All Emotes")
+    local emoteStatusHolder=createCard("Frame",extraLeft,"Emote Status",34)
+    local emoteStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Elige un emote",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},emoteStatusHolder)
+    AngelHub.setEmoteStatus=function(text)emoteStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,emoteStatusHolder)
 
 	addSection(extraRight, "Fly")
 	addModule(extraRight, "Enable Fly", nil, false)
@@ -10157,6 +10385,12 @@ local function initializeScript()
 	addModule(extraRight, "Noclip", nil, false)
 	addModule(extraRight, "Air Swim", nil, false)
 	addModule(extraRight, "Air Walk", nil, false)
+    local airWalkStatusHolder=createCard("Frame",extraRight,"Air Walk Status",30)
+    local airWalkStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Air Walk apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},airWalkStatusHolder)
+    AngelHub.setAirWalkStatus=function(text)airWalkStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,airWalkStatusHolder)
 	addModule(extraRight, "Walk Fling", nil, false)
     local walkStatusHolder=createCard("Frame",extraRight,"Walk Fling Status",34)
     local walkStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
@@ -10468,15 +10702,17 @@ local function initializeScript()
 	installMM2Farm(screenGui)
 	installMM2Unbox(screenGui)
 	installMM2Win(screenGui)
+    installAirWalk(screenGui)
     installWalkFling(screenGui)
     installFreeCam(screenGui)
     installXRay(screenGui)
     installFPSOptions(screenGui)
+    installEmotes(screenGui)
 
 	-- Apply the autosaved config on startup if Autoload was enabled.
 	local savedData = readConfig(CONFIG_FILE)
 	if savedData and savedData.Autoload == true then
-        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam"}) do savedData[name]=false end
+        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam","Air Walk"}) do savedData[name]=false end
 		applyConfig(savedData)
 	end
 

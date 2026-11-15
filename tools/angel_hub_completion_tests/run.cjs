@@ -25,7 +25,7 @@ assert(h.values['Gun Aimbot']==false and h.values['Gun Aura']==false)
 assert(h.values['Auto Pickup Gun Key Value']=='H' and h.values['Auto Get Gun']==false)
 local foundPickup=false;for _,c in ipairs(h.searchables)do if c.Name=='Auto Pickup Gun' then foundPickup=true end end;assert(foundPickup)
 -- Exercise the actual GUI Activated dispatch, not just direct action calls.
-for _,name in ipairs({'Kill All','Kill Selected','Fling','Get Gun'})do
+for _,name in ipairs({'Kill All','Kill Selected','Fling','Get Gun','Play Emote'})do
  local calls=0;local previous=h.actions[name];h.actions[name]=function()calls+=1 end
  local card;for _,c in ipairs(h.searchables)do if c.Name==name then card=c end end
  assert(card and card:FindFirstChildOfClass('TextButton'))
@@ -59,8 +59,8 @@ shared.AngelHubGui:Destroy()
  const autoload=await Lua.create({sandbox:true});
  autoload.execute(read(path.join(fixtures,'gui-mock.luau'))+`\nfunction players:GetPlayers()return {player}end
  isfile=function()return true end;readfile=function()return '{}' end
- function services.HttpService:JSONDecode()return {Autoload=true,['Auto Farm']=true,['Auto Win']=true,['Auto Unbox']=true,['Auto Fling Selected Target']=true,['Walk Fling']=true,['FreeCam']=true}end\n`+file+`\n
- local v=shared.AngelHub.values;assert(not v['Auto Farm'] and not v['Auto Win'] and not v['Auto Unbox'] and not v['Auto Fling Selected Target'] and not v['Walk Fling'] and not v['FreeCam'])
+ function services.HttpService:JSONDecode()return {Autoload=true,['Auto Farm']=true,['Auto Win']=true,['Auto Unbox']=true,['Auto Fling Selected Target']=true,['Walk Fling']=true,['FreeCam']=true,['Air Walk']=true}end\n`+file+`\n
+ local v=shared.AngelHub.values;assert(not v['Auto Farm'] and not v['Auto Win'] and not v['Auto Unbox'] and not v['Auto Fling Selected Target'] and not v['Walk Fling'] and not v['FreeCam'] and not v['Air Walk'])
  shared.AngelHubGui:Destroy()\n`);
  const otherGui=await Lua.create({sandbox:true});
  otherGui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nfunction players:GetPlayers()return {player} end;game.PlaceId=1\n'+file+`\n

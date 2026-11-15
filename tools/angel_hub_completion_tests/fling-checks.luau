@@ -39,7 +39,7 @@ assert(#created==0 and not AngelHub.mm2FlingBusy)
 -- Missing map/lobby refs no longer silently reject selected targets.
 AngelHub.findMM2Map=function()return nil end
 AngelHub.actions['Fling']();local first=created[#created];assert(first and first.Parent==root and status:find('Alice'))
-heartbeat:Fire(.1);assert(root.Velocity.X==180000000)
+heartbeat:Fire(.1);assert(root.Velocity.X==140)
 AngelHub.setters['Noclip'](true);assert(first.destroyed and character.lastPivot==home);AngelHub.setters['Noclip'](false)
 AngelHub.findMM2Map=function()return map end
 V['Fling Target']='Nobody';AngelHub.actions['Fling']();assert(status:find('Selecciona'))
@@ -48,19 +48,26 @@ humanoid.FloorMaterial=Enum.Material.Ground
 
 AngelHub.actions['Fling']();local pin=created[#created]
 assert(pin.class=='BodyVelocity' and pin.Parent==root and not humanoid.seated and shieldCalls==2)
-heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and root.Velocity.X==180000000 and not pin.destroyed)
+assert(pin.Velocity.X==140 and pin.Velocity.Y==110 and pin.MaxForce.X<=60000 and pin.P==400)
+heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and root.Velocity.X==140 and root.RotVelocity.Magnitude<110 and not pin.destroyed)
+local previousPose=character.lastPivot;heartbeat:Fire(.1);assert(character.lastPivot==previousPose) -- max 30 poses/second
+head.AssemblyLinearVelocity=Vector3.new(900,0,0);head.AssemblyAngularVelocity=Vector3.new(0,900,0)
 AngelHub.setters['Noclip'](true);assert(pin.destroyed and humanoid.seated and character.lastPivot==home and not AngelHub.mm2FlingBusy)
+assert(root.AssemblyLinearVelocity.Magnitude==0 and root.AssemblyAngularVelocity.Magnitude==0 and head.AssemblyLinearVelocity.Magnitude==0 and head.AssemblyAngularVelocity.Magnitude==0)
 AngelHub.actions['Fling']();assert(created[#created]==pin and status:find('Apaga'))
 AngelHub.setters['Noclip'](false)
 AngelHub.actions['Fling']();pin=created[#created];victimRoot.AssemblyLinearVelocity=Vector3.new(600,0,0)
 heartbeat:Fire(.1);assert(pin.destroyed and humanoid.seated)
 victimRoot.AssemblyLinearVelocity=Vector3.zero
-AngelHub.setters['Auto Fling Selected Target'](true);fakeNow+=2;heartbeat:Fire(.1)
+-- Excess local speed or spin cancels promptly and clears assembly motion.
+AngelHub.actions['Fling']();pin=created[#created];root.AssemblyAngularVelocity=Vector3.new(0,300,0)
+heartbeat:Fire(.1);assert(pin.destroyed and root.AssemblyAngularVelocity.Magnitude==0 and root.AssemblyLinearVelocity.Magnitude==0)
+AngelHub.setters['Auto Fling Selected Target'](true);fakeNow+=5;heartbeat:Fire(.1)
 pin=created[#created];assert(not pin.destroyed)
 V['Fling Target']='Nobody';heartbeat:Fire(.1);assert(pin.destroyed)
-V['Fling Target']='Alice';fakeNow+=2;heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed)
+V['Fling Target']='Alice';fakeNow+=5;heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed)
 victimHuman.Health=0;heartbeat:Fire(.1);assert(pin.destroyed)
-victimHuman.Health=100;fakeNow+=2;heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed)
+victimHuman.Health=100;fakeNow+=5;heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed)
 AngelHub.setters['Auto Fling Selected Target'](false);assert(pin.destroyed)
 AngelHub.actions['Fling Murderer']();assert(roleCalls==1);heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed and released>0)
 fakeNow+=3.1;heartbeat:Fire(.1);assert(not pin.destroyed)

@@ -2,10 +2,12 @@ const fs=require('node:fs'),path=require('node:path'),{pathToFileURL}=require('n
 const root=path.resolve(__dirname,'../..'),read=p=>fs.readFileSync(p,'utf8');
 const src=read(path.join(root,'Angel-Hub-GUI-Continuacion.txt'));
 const slice=(a,b)=>{const x=src.indexOf(a),y=src.indexOf(b,x);if(x<0||y<x)throw Error(a);return src.slice(x,y)};
-const free=slice('local function installFreeCam(screenGui)','-- Voluntary fixed-power Walk Fling');
+const free=slice('local function installFreeCam(screenGui)','-- Air Walk uses an opt-in local support platform');
+const air=slice('local function installAirWalk(screenGui)','-- Voluntary fixed-power Walk Fling');
 const walk=slice('local function installWalkFling(screenGui)','-- Local-only X-Ray');
 const xray=slice('local function installXRay(screenGui)','-- Reversible local visual performance options.');
-const fps=slice('local function installFPSOptions(screenGui)','local function initializeScript()');
+const fps=slice('local function installFPSOptions(screenGui)','-- Local emote playback');
+const emotes=slice('local function installEmotes(screenGui)','local function initializeScript()');
 const mock=read(path.join(root,'tools/angel_hub_partial_tests/gameplay-mock.luau'));
 const names=['Enable Speed','Infinite Jump','Enable Fly','Air Walk','Air Swim','Walk Fling','Auto Farm','Auto Win','Auto Fling Selected Target','Auto Vote','Noclip'];
 const setup=`\nVector3.zero=Vector3.new(0,0,0)\nfor _,name in ipairs(${`{${names.map(n=>`'${n}'`).join(',')}}`})do AngelHub.setters[name]=function(v)V[name]=v end end\n`;
@@ -17,8 +19,10 @@ const setup=`\nVector3.zero=Vector3.new(0,0,0)\nfor _,name in ipairs(${`{${names
  }
  const yieldTest=await Lua.create({sandbox:true});
  yieldTest.execute(mock+'\nlocal controlRequire;local require=function(m)return controlRequire(m)end\n'+setup+free+'\n'+read(path.join(root,'tools/angel_hub_partial_tests/freecam-yield-checks.luau')).replace('installGameplay(screenGui)','installFreeCam(screenGui)'));
+ const airTest=await Lua.create({sandbox:true});
+ airTest.execute(mock+'\n'+setup+air+'\ncharacter.Parent=workspace\n'+read(path.join(root,'tools/angel_hub_partial_tests/airwalk-checks.luau')).replace('installGameplay(screenGui)','installAirWalk(screenGui)'));
  const walkTest=await Lua.create({sandbox:true});
- walkTest.execute(mock+'\n'+setup+walk+'\n'+read(path.join(root,'tools/angel_hub_partial_tests/walkfling-checks.luau')).replace('installGameplay(screenGui)','installWalkFling(screenGui)'));
+ walkTest.execute(mock+'\n'+setup+walk+'\n'+read(path.join(__dirname,'walkfling-checks.luau')).replace('installGameplay(screenGui)','installWalkFling(screenGui)'));
  const xr=await Lua.create({sandbox:true});
  xr.execute(mock+'\n'+setup+xray+'\n'+read(path.join(__dirname,'xray-checks.luau')));
  const fpsLua=await Lua.create({sandbox:true});
@@ -28,5 +32,9 @@ const setup=`\nVector3.zero=Vector3.new(0,0,0)\nfor _,name in ipairs(${`{${names
  fpsBatch.execute(mock+fpsSetup+fps+'\n'+read(path.join(root,'tools/angel_hub_partial_tests/fps-batch-checks.luau')).replace('installGameplay(screenGui)','installFPSOptions(screenGui)'));
  const overlap=await Lua.create({sandbox:true});
  overlap.execute(mock+fpsSetup+xray+fps+'\n'+read(path.join(__dirname,'overlap-checks.luau')));
- console.log('PASS FreeCam/spectate PC/mobile, ownership and yield; Walk Fling cleanup; X-Ray streaming and restoration, FPS options and 200-item batching (mocks only)');
+ const em=await Lua.create({sandbox:true});
+ em.execute(mock+'\nAngelHub.actions={};game.PlaceId=142823291\n'+emotes+'\n'+read(path.join(__dirname,'emote-checks.luau')));
+ const emYield=await Lua.create({sandbox:true});
+ emYield.execute(mock+'\nAngelHub.actions={};game.PlaceId=142823291\n'+emotes+'\n'+read(path.join(__dirname,'emote-yield-checks.luau')));
+ console.log('PASS FreeCam/spectate PC/mobile, ownership and yield; Air Walk controls; Walk Fling cleanup; X-Ray streaming and restoration, FPS options and 200-item batching, emote playback (mocks only)');
 })().catch(e=>{console.error(e);process.exit(1)});
