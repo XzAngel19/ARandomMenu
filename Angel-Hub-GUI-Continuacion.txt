@@ -3287,7 +3287,7 @@ return Module
     local function rolesNeeded()
         return V["Gun Aimbot"] or V["Gun Aura"] or V["Auto Shoot"] or V["Knife Aura"] or V["Knife Throw"] or V["Auto Knife Throw"]
             or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Auto Get Gun"]
-            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Blurt"] or V["Auto Win"]
+            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Win"]
             or (V["Auto Farm"] and (V["Auto Grab Gun And Shoot"] or V["Auto Kill All When Full Bag"]
                 or V["Fling Murder After Full Bag"] or V["Fling Sheriff After Full Bag"]))
     end
@@ -5381,18 +5381,26 @@ return Module
         if AngelHub.setKnifeStatus then AngelHub.setKnifeStatus(text) end
     end
     local function knifeConflict(owner)
-        return AngelHub.mm2FlingBusy or (V["Auto Farm"] and owner~="farm") or V["Auto Win"] or V["Enable Fly"] or V["Enable Speed"]
-            or V["Noclip"] or V["Air Walk"] or V["Air Swim"] or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or V["FreeCam"]
+        return AngelHub.mm2FlingBusy or (V["Auto Farm"] and owner~="farm")
+    end
+    local function restoreBrought(brought)
+        if type(brought)~="table" then return end
+        for _,entry in ipairs(brought)do
+            pcall(function()
+                if entry.part and entry.part.Parent then
+                    entry.part.CFrame=entry.frame
+                    entry.part.Anchored=entry.anchored
+                    entry.part.CanCollide=entry.collide
+                end
+            end)
+        end
     end
     local function finishKills(text)
         local job=killSequence;killSequence=nil;AngelHub.mm2KnifeKillBusy=false;AngelHub.mm2KnifeKillOwner=nil
-        if job then knifeGeneration+=1 end
-        if job and LocalPlayer.Character==job.character and job.human.Health>0 and job.root.Parent
-            and (not AngelHub.findMM2Map or job.map==AngelHub.findMM2Map()) then
-            pcall(function()
-                job.character:PivotTo(job.home)
-                job.root.AssemblyLinearVelocity=Vector3.zero;job.root.AssemblyAngularVelocity=Vector3.zero
-            end)
+        if job then
+            knifeGeneration+=1
+            restoreBrought(job.saved)
+            job.saved=nil
         end
         if text then knifeStatus(text) end
         if not rolesNeeded() then unbindRoles() end
@@ -5404,12 +5412,11 @@ return Module
     local function beginKills(selectedOnly,owner,stillValid)
         if stopped or not isMM2 then knifeStatus("Knife Stab disponible solo en MM2");return end
         if killSequence then knifeStatus("Knife Stab ya esta en curso");return end
-        if knifeConflict(owner) or (owner and (type(stillValid)~="function" or not stillValid())) then knifeStatus("Apaga Farm, Win o modulos de movimiento");return end
+        if knifeConflict(owner) or (owner and (type(stillValid)~="function" or not stillValid())) then knifeStatus("Apaga Farm o Fling primero");return end
         local character,human,root=characterParts()
-        if not character or not human or not root or root.Anchored or human.Sit or human.SeatPart then
+        if not character or not human or not root or human.Health<=0 then
             knifeStatus("Tu personaje no esta disponible");return
         end
-        if human.FloorMaterial==Enum.Material.Air then knifeStatus("Espera a tocar suelo");return end
         bindRoles()
         if roundBlocked then knifeStatus("Ronda terminada");return end
         local knife=weapon(LocalPlayer,"Knife")
@@ -5429,14 +5436,9 @@ return Module
             end
         end
         if #targets==0 then knifeStatus(selectedOnly and "Selecciona un jugador vivo" or "No hay objetivos vivos");return end
-        local ok,home=pcall(function()return character:GetPivot()end)
-        if not ok or not home then knifeStatus("No se pudo guardar tu posicion");return end
-        local destroyY=workspace.FallenPartsDestroyHeight
-        if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1e6 then destroyY=-500 end
-        if home.Position.Y<=destroyY+100 then knifeStatus("Knife Stab detenido por proteccion del vacio");return end
-        killSequence={character=character,human=human,root=root,knife=knife,home=home,
-            map=AngelHub.findMM2Map and AngelHub.findMM2Map(),targets=targets,index=0,nextAt=os.clock(),
-            generation=knifeGeneration,destroyY=destroyY,attempts=0,owner=owner,stillValid=stillValid}
+        killSequence={character=character,human=human,root=root,knife=knife,
+            map=AngelHub.findMM2Map and AngelHub.findMM2Map(),targets=targets,nextAt=os.clock(),
+            generation=knifeGeneration,attempts=0,owner=owner,stillValid=stillValid}
         AngelHub.mm2KnifeKillBusy=true;AngelHub.mm2KnifeKillOwner=owner
         updateRoles();knifeStatus("Knife Stab: preparando "..#targets.." objetivo(s)");return true
     end
@@ -5448,36 +5450,62 @@ return Module
             finishKills("Knife Stab cancelado");return
         end
         local now=os.clock();if now<job.nextAt then return end
-        if job.phase=="stab" then
-            local target=job.target
-            local player=target and target.player
-            local victim=player and player.Character==target.character and alive(player)
-                and killTargetAllowed(job.owner,player,job.map) and target.character:FindFirstChild("HumanoidRootPart")
-            if victim and victim.Position.Y>job.destroyY+100 and now-job.targetAt<2 then
-                local range=math.clamp(tonumber(V["Knife Aura Range"]) or 15,7,30)
-                if (victim.Position-job.root.Position).Magnitude>range then
-                    pcall(function()job.character:PivotTo(CFrame.new(victim.Position+Vector3.new(0,0,2)))end)
-                    job.nextAt=now+.1;return
-                end
-                local stillValid=job.owner and function()return job.stillValid() and killTargetAllowed(job.owner,player,job.map)end or nil
-                if knifeStep(player,true,stillValid) then job.attempts+=1
-                else job.nextAt=now+.1;return end
-            end
-            job.phase="advance";job.nextAt=now+.12;return
+        if job.phase=="done" then
+            finishKills("Knife Stab: "..job.attempts.." intento(s), sin confirmar impacto");return
         end
-        job.index+=1
-        local target=job.targets[job.index]
-        if not target then finishKills("Knife Stab: "..job.attempts.." intento(s), sin confirmar impacto");return end
-        job.target=target;job.targetAt=now
-        local player=target.player
-        local victim=player.Character==target.character and alive(player) and killTargetAllowed(job.owner,player,job.map)
-            and target.character:FindFirstChild("HumanoidRootPart")
-        if not victim or core.getPlayerRole(player)=="Murderer" or weapon(player,"Knife")
-            or victim.Position.Y<=job.destroyY+100 then job.nextAt=now;return end
-        local destination=CFrame.new(victim.Position+Vector3.new(0,0,2))
-        local ok=pcall(function()job.character:PivotTo(destination)end)
-        if not ok then finishKills("Knife Stab: no se pudo acercar al objetivo");return end
-        job.phase="stab";job.nextAt=math.max(now+.05,lastKnifeSwing+.86)
+        if job.knife:GetAttribute("Disabled")==true or job.knife.Enabled==false then
+            job.nextAt=now+.05;return
+        end
+        local handle=job.knife:FindFirstChild("Handle")
+        if not handle or not handle:IsA("BasePart") then
+            finishKills("Knife Stab: Handle no disponible");return
+        end
+        local look=(job.root.CFrame and job.root.CFrame.LookVector) or Vector3.new(0,0,-1)
+        local frontCF=CFrame.new(job.root.Position+look*1.5)
+        local brought={}
+        for _,target in ipairs(job.targets)do
+            local player=target.player
+            local victim=player and player.Character==target.character and alive(player)
+                and killTargetAllowed(job.owner,player,job.map)
+                and core.getPlayerRole(player)~="Murderer" and not weapon(player,"Knife")
+                and target.character:FindFirstChild("HumanoidRootPart")
+            if victim and victim:IsA("BasePart") and not victim.Anchored then
+                table.insert(brought,{part=victim,frame=victim.CFrame,anchored=victim.Anchored,collide=victim.CanCollide})
+                pcall(function()
+                    victim.Anchored=true
+                    victim.CanCollide=false
+                    victim.CFrame=frontCF
+                end)
+            end
+        end
+        if #brought==0 then
+            finishKills("No hay objetivos vivos");return
+        end
+        job.saved=brought
+        job.knife:Activate()
+        local stab=job.knife:FindFirstChild("Stab")
+        if stab and stab:IsA("RemoteEvent") then pcall(function()stab:FireServer("Slash")end) end
+        lastKnifeSwing=now
+        local gen=job.generation
+        local knife=job.knife
+        task.spawn(function()
+            if stopped or gen~=knifeGeneration then return end
+            local events=knife:FindFirstChild("Events")
+            local remote=events and events:FindFirstChild("HandleTouched")
+            local curHandle=knife:FindFirstChild("Handle")
+            for _,entry in ipairs(brought)do
+                if stopped or gen~=knifeGeneration then break end
+                local sent=remote and remote:IsA("RemoteEvent") and pcall(function()remote:FireServer(entry.part)end)
+                if not sent and curHandle and curHandle:IsA("BasePart") and type(state.fireTouchInterest)=="function" then
+                    pcall(state.fireTouchInterest,curHandle,entry.part,0)
+                    pcall(state.fireTouchInterest,curHandle,entry.part,1)
+                end
+            end
+            restoreBrought(brought)
+            if killSequence==job then job.saved=nil end
+        end)
+        job.attempts+=#brought
+        job.phase="done";job.nextAt=now+.05
     end
     AngelHub.mm2StartFarmKills=function(stillValid) return beginKills(false,"farm",stillValid) end
     AngelHub.mm2CancelFarmKills=function()if killSequence and killSequence.owner=="farm" then finishKills("Knife Stab de Farm cancelado")end end
@@ -7461,20 +7489,10 @@ local function installBasicActions(screenGui)
             if not AngelHub.getMM2Role or AngelHub.getMM2Role(localPlayer)~="Innocent" then
                 return false,"Auto Pickup: esperando rol Innocent"
             end
-            local character,_,root=parts();if not character then return false,"Auto Pickup: personaje no disponible" end
+            local character,_,root=parts();if not character or not root then return false,"Auto Pickup: personaje no disponible" end
             local backpack=localPlayer:FindFirstChildOfClass("Backpack")
             for _,holder in ipairs({character,backpack}) do
                 if holder and (holder:FindFirstChild("Knife") or holder:FindFirstChild("Gun")) then return false,"Auto Pickup: ya tienes arma" end
-            end
-            local map=AngelHub.findMM2Map and AngelHub.findMM2Map()
-            local spawns=map and (map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns",true))
-            local mapRef=spawnPart(spawns) or (map and map:FindFirstChildWhichIsA("BasePart",true))
-            local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
-            local lobbySpawns=lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true))
-            local lobbyRef=spawnPart(lobbySpawns) or (lobby and lobby:FindFirstChildWhichIsA("BasePart",true))
-            if not mapRef or not lobbyRef then return false,"Auto Pickup: no se reconoce mapa o lobby" end
-            if (root.Position-lobbyRef.Position).Magnitude<=350 or (root.Position-mapRef.Position).Magnitude>1500 then
-                return false,"Auto Pickup: espera dentro del mapa"
             end
             return true
         end
@@ -9057,25 +9075,24 @@ local function installMM2Win(screenGui)
             local backpack = localPlayer:FindFirstChildOfClass("Backpack")
             local knife = character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
             if not knife or not knife:IsA("Tool") or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
-            local selected, selectedRoot
+            local batch = {}
             local now = os.clock()
             for _, player in ipairs(playersService:GetPlayers()) do
                 local targetRoot = knifeTargetValid(player, root, math.huge)
                 if targetRoot and farmOnMap(targetRoot, safe.map) and now >= (murderCooldown[player] or 0) then
-                    selected, selectedRoot = player, targetRoot; break
+                    table.insert(batch, {player = player, root = targetRoot, character = player.Character})
                 end
             end
-            if not selected then return end
+            if #batch == 0 then return end
             murderBusy = true
-            local generation, parked, targetCharacter = murderGeneration, safe, selected.Character
-            murderCooldown[selected] = now + 0.9
+            local generation, parked = murderGeneration, safe
+            for _, entry in ipairs(batch) do murderCooldown[entry.player] = now + 0.9 end
             task.spawn(function()
                 local function stillValid()
                     return not stopped and enabled["Auto Win"] and enabled["Insta Kill As Murder"] and not roundBlocked
                         and generation == murderGeneration and safe == parked and parked.part.Parent == workspace and parked.map == mm2Map()
                         and localPlayer.Character == character and humanoid.Health > 0 and not root.Anchored
-                        and (root.Position - parked.position).Magnitude <= 30 and selected.Character == targetCharacter
-                        and knifeTargetValid(selected, root, math.huge) == selectedRoot and farmOnMap(selectedRoot, parked.map)
+                        and (root.Position - parked.position).Magnitude <= 30
                 end
                 local ok, err = pcall(function()
                     if not stillValid() then return end
@@ -9089,25 +9106,34 @@ local function installMM2Win(screenGui)
                     local touched = events and events:FindFirstChild("HandleTouched")
                     if not handle or not handle:IsA("BasePart") or not (touched and touched:IsA("RemoteEvent")) and type(firetouchinterest) ~= "function" then return end
                     knife:Activate()
+                    local stab = knife:FindFirstChild("Stab")
+                    if stab and stab:IsA("RemoteEvent") then pcall(function() stab:FireServer("Slash") end) end
                     if not stillValid() or knife.Parent ~= character or knife.Enabled == false or knife:GetAttribute("Disabled") == true then return end
-                    if selectedRoot.Anchored then return end
-                    local snapshot = {frame = selectedRoot.CFrame, anchored = selectedRoot.Anchored,
-                        collide = selectedRoot.CanCollide, appliedFrame = handle.CFrame}
-                    victims[selectedRoot] = snapshot
-                    local sent, sendError = pcall(function()
-                        selectedRoot.Anchored = true; selectedRoot.CanCollide = false; selectedRoot.CFrame = snapshot.appliedFrame
-                        if touched and touched:IsA("RemoteEvent") then
-                            touched:FireServer(selectedRoot)
-                        else
-                            firetouchinterest(handle, selectedRoot, 0)
-                            if stillValid() then firetouchinterest(handle, selectedRoot, 1) end
-                        end
-                    end)
-                    restoreVictim(selectedRoot, snapshot)
-                    if not sent then
-                        warn("Angel Hub Murder attack uncertain: " .. tostring(sendError))
-                        if generation == murderGeneration and enabled["Insta Kill As Murder"] then
-                            AngelHub.setters["Insta Kill As Murder"](false); message("Auto Win Murder stopped: attack uncertain")
+                    for _, entry in ipairs(batch) do
+                        local selected, selectedRoot, targetCharacter = entry.player, entry.root, entry.character
+                        if stillValid() and selected.Character == targetCharacter
+                            and knifeTargetValid(selected, root, math.huge) == selectedRoot
+                            and farmOnMap(selectedRoot, parked.map) and not selectedRoot.Anchored then
+                            local snapshot = {frame = selectedRoot.CFrame, anchored = selectedRoot.Anchored,
+                                collide = selectedRoot.CanCollide, appliedFrame = handle.CFrame}
+                            victims[selectedRoot] = snapshot
+                            local sent, sendError = pcall(function()
+                                selectedRoot.Anchored = true; selectedRoot.CanCollide = false; selectedRoot.CFrame = snapshot.appliedFrame
+                                if touched and touched:IsA("RemoteEvent") then
+                                    touched:FireServer(selectedRoot)
+                                else
+                                    firetouchinterest(handle, selectedRoot, 0)
+                                    if stillValid() then firetouchinterest(handle, selectedRoot, 1) end
+                                end
+                            end)
+                            restoreVictim(selectedRoot, snapshot)
+                            if not sent then
+                                warn("Angel Hub Murder attack uncertain: " .. tostring(sendError))
+                                if generation == murderGeneration and enabled["Insta Kill As Murder"] then
+                                    AngelHub.setters["Insta Kill As Murder"](false); message("Auto Win Murder stopped: attack uncertain")
+                                end
+                                break
+                            end
                         end
                     end
                 end)
@@ -9333,7 +9359,7 @@ local function installFreeCam(screenGui)
         local controls, controlsEnabled, touchGui, touchEnabled, overlay
         local connections, held = {}, {}
         local dragging, mouseMode, mouseIcon, moveTouch, lookTouch, stickX, stickY = false,nil,nil,nil,nil,0,0
-        local serial, targetPlayer, targetOffset, listElapsed, lastNames = 0,nil,nil,0,nil
+        local serial = 0
         local directions = {
             W="Forward", Up="Forward", S="Back", Down="Back", A="Left", Left="Left", D="Right", Right="Right",
             E="Up", Space="Up", Q="Down", LeftControl="Down",
@@ -9377,7 +9403,7 @@ local function installFreeCam(screenGui)
             table.clear(connections)
             releaseControls(); restoreCamera()
             if overlay then pcall(function() overlay:Destroy() end); overlay = nil end
-            position,yaw,pitch,targetPlayer,targetOffset,lastNames = nil,nil,nil,nil,nil,nil
+            position,yaw,pitch = nil,nil,nil
         end
         function freecam.available()
             local ok, svc = pcall(function() return game:GetService("ContextActionService") end)
@@ -9399,24 +9425,6 @@ local function installFreeCam(screenGui)
             local a,s = window.AbsolutePosition,window.AbsoluteSize
             return a and s and p.X >= a.X and p.Y >= a.Y and p.X <= a.X+s.X and p.Y <= a.Y+s.Y
         end
-        local function refreshPlayers()
-            if not AngelHub.listOptions or not AngelHub.listOptions["Spectate Player"] then return end
-            local names = {}
-            for _, player in ipairs(playersService:GetPlayers()) do if player ~= localPlayer then table.insert(names,player.Name) end end
-            table.sort(names)
-            local signature = table.concat(names,"\0")
-            if signature ~= lastNames then lastNames = signature; AngelHub.listOptions["Spectate Player"](names) end
-        end
-        local function selectedTarget()
-            if not V["FreeCam Spectate"] then return end
-            for _, player in ipairs(playersService:GetPlayers()) do
-                if player ~= localPlayer and player.Name == V["Spectate Player"] then
-                    local char = player.Character
-                    local root = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head"))
-                    if char and char.Parent and root and root:IsA("BasePart") then return player,root end
-                end
-            end
-        end
         local function render(dt)
             if stopped or not enabled["FreeCam"] then return end
             if camera ~= workspace.CurrentCamera then restoreCamera(); camera = workspace.CurrentCamera end
@@ -9433,8 +9441,6 @@ local function installFreeCam(screenGui)
             elseif writtenFrame and camera.CFrame ~= writtenFrame then
                 saved.frame,saved.focus = camera.CFrame,camera.Focus
             end
-            listElapsed += math.max(0,dt)
-            if listElapsed >= 1 then listElapsed = 0; refreshPlayers() end
             if userInputService.TouchEnabled then
                 local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
                 local currentTouch = playerGui and playerGui:FindFirstChild("TouchGui")
@@ -9447,15 +9453,6 @@ local function installFreeCam(screenGui)
             local char = localPlayer.Character
             local human = char and char:FindFirstChildOfClass("Humanoid")
             if not controls and human then pcall(function() human:Move(Vector3.new(0,0,0),false) end) end
-            local target, targetRoot = selectedTarget()
-            if target ~= targetPlayer then
-                targetPlayer,targetOffset = target,nil
-                if targetRoot then
-                    targetOffset = position-targetRoot.Position
-                    if targetOffset.Magnitude < 4 or targetOffset.Magnitude > 30 then targetOffset = Vector3.new(0,5,12) end
-                end
-            end
-            if targetRoot and targetOffset then position = targetRoot.Position + targetOffset end
             local rotation = CFrame.fromOrientation(pitch,yaw,0)
             if not userInputService:GetFocusedTextBox() and not AngelHub.listening then
                 local movement = Vector3.new((active("Right") and 1 or 0)-(active("Left") and 1 or 0)+stickX,
@@ -9465,20 +9462,13 @@ local function installFreeCam(screenGui)
                 if direction.Magnitude > 1 then direction = direction.Unit end
                 position += direction * math.clamp(tonumber(V["FreeCam Speed"]) or 50,-10000,250) * math.clamp(dt,0,.1)
             end
-            local frame
-            if targetRoot and (targetRoot.Position-position).Magnitude > .01 then
-                targetOffset = position-targetRoot.Position
-                frame = CFrame.lookAt(position,targetRoot.Position)
-                local look = frame.LookVector
-                pitch,yaw = math.asin(math.clamp(look.Y,-1,1)),math.atan2(-look.X,-look.Z)
-            else frame = CFrame.new(position) * rotation end
+            local frame = CFrame.new(position) * rotation
             camera.CameraType = Enum.CameraType.Scriptable
             camera.CFrame = frame; camera.Focus = frame * CFrame.new(0,0,-16)
             writtenFrame,writtenFocus = camera.CFrame,camera.Focus
         end
         function freecam.start()
             freecam.cleanup(); serial += 1; local ticket = serial
-            refreshPlayers(); listElapsed = 0
             local keyCodes = {Enum.KeyCode.W,Enum.KeyCode.Up,Enum.KeyCode.S,Enum.KeyCode.Down,Enum.KeyCode.A,Enum.KeyCode.Left,
                 Enum.KeyCode.D,Enum.KeyCode.Right,Enum.KeyCode.E,Enum.KeyCode.Space,Enum.KeyCode.Q,Enum.KeyCode.LeftControl}
             actionService:BindActionAtPriority(actionId,function(_,state,input)
@@ -9496,7 +9486,7 @@ local function installFreeCam(screenGui)
                 end
             end)
             connect(userInputService.InputChanged,function(input)
-                if dragging and input.UserInputType == Enum.UserInputType.MouseMovement and not userInputService:GetFocusedTextBox() and not AngelHub.listening and not V["FreeCam Spectate"] then pan(input.Delta) end
+                if dragging and input.UserInputType == Enum.UserInputType.MouseMovement and not userInputService:GetFocusedTextBox() and not AngelHub.listening then pan(input.Delta) end
             end)
             connect(userInputService.InputEnded,function(input) if input.UserInputType == Enum.UserInputType.MouseButton2 then releaseMouse() end end)
             connect(userInputService.WindowFocusReleased,resetInput); connect(userInputService.TextBoxFocused,resetInput)
@@ -9533,7 +9523,7 @@ local function installFreeCam(screenGui)
                 end)
                 connect(userInputService.TouchMoved,function(input)
                     if input == moveTouch then move(input)
-                    elseif input == lookTouch and position and not V["FreeCam Spectate"] and not AngelHub.listening and not userInputService:GetFocusedTextBox() then pan(input.Delta) end
+                    elseif input == lookTouch and position and not AngelHub.listening and not userInputService:GetFocusedTextBox() then pan(input.Delta) end
                 end)
                 connect(userInputService.TouchEnded,function(input)
                     hold("Up",input,false); hold("Down",input,false)
@@ -9588,7 +9578,7 @@ local function installFreeCam(screenGui)
             old(true)
             local ok,err=pcall(freecam.start)
             if not ok then freecam.cleanup();old(false);warn("Angel Hub FreeCam: "..tostring(err));if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam: error al iniciar")end;return false end
-            if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam activo; Spectate sigue al jugador elegido") end
+            if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam activo") end
             return true
         end
         old(false);freecam.cleanup();if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam apagado")end;return true
@@ -10456,9 +10446,8 @@ local function installZoomThroughWalls(screenGui)
     screenGui.Destroying:Connect(function()stopped=true;generation+=1;connection:Disconnect();restore()end)
 end
 
--- Blurt Roles explicitly sends to public chat only on manual or opt-in Auto.
+-- Blurt Roles explicitly sends to public chat only on manual request.
 local function installBlurt(screenGui)
-    local V=AngelHub.values;local enabled=V
     local isMM2=game.PlaceId==142823291;local stopped=false
     local run=game:GetService("RunService")
     local function message(text)if AngelHub.setBlurtStatus then AngelHub.setBlurtStatus(text)end end
@@ -10466,17 +10455,14 @@ local function installBlurt(screenGui)
         epoch=function()return AngelHub.mm2RoundEpoch or 0 end}
     local blurt = {}
     do
-        local manualUntil, dueAt, scheduled, lastSignature, roundId = nil, nil, nil, nil, nil
-        local sentThisRound, busy, serial, lastAttempt = false, false, 0, -math.huge
+        local manualUntil, roundId = nil, nil
+        local busy, serial, lastAttempt = false, 0, -math.huge
         function blurt.manual()
             if busy or manualUntil then message("Blurt Roles: request already pending"); return end
             manualUntil = os.clock() + 5; AngelHub.mm2BlurtNeedsRoles = true
             message("Blurt Roles: checking roles for public chat")
         end
-        function blurt.toggle()
-            serial += 1; dueAt, scheduled = nil, nil
-        end
-        function blurt.cleanup() serial += 1; manualUntil, dueAt, scheduled = nil, nil, nil; AngelHub.mm2BlurtNeedsRoles = false end
+        function blurt.cleanup() serial += 1; manualUntil = nil; AngelHub.mm2BlurtNeedsRoles = false end
         local function roles()
             local murderer, sheriff
             for _, player in ipairs(playersService:GetPlayers()) do
@@ -10490,45 +10476,33 @@ local function installBlurt(screenGui)
             return murderer, sheriff
         end
         function blurt.step()
-            if not isMM2 or (not enabled["Auto Blurt"] and not manualUntil) then return end
+            if not isMM2 or not manualUntil then return end
             local now = os.clock()
             if not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() then
-                dueAt, scheduled = nil, nil
-                if manualUntil and now>=manualUntil then manualUntil=nil;AngelHub.mm2BlurtNeedsRoles=false;message("Blurt: no hay ronda activa") end
+                if now>=manualUntil then manualUntil=nil;AngelHub.mm2BlurtNeedsRoles=false;message("Blurt: no hay ronda activa") end
                 return
             end
             local epoch = notifications.epoch()
-            if epoch ~= roundId then
-                roundId, sentThisRound, lastSignature, dueAt, scheduled = epoch, false, nil, nil, nil
-            end
+            if epoch ~= roundId then roundId = epoch end
             local murderer, sheriff = roles()
             if not murderer and not sheriff then
-                dueAt, scheduled = nil, nil
-                if manualUntil and now >= manualUntil then manualUntil = nil; AngelHub.mm2BlurtNeedsRoles = false; message("Blurt Roles: no roles available") end
+                if now >= manualUntil then manualUntil = nil; AngelHub.mm2BlurtNeedsRoles = false; message("Blurt Roles: no roles available") end
                 return
             end
-            local fake = V["Fake Blurt Roles"] == true
-            local m, s = murderer or "?", sheriff or "?"
-            if fake then m, s = s, m end
-            local signature = (fake and "fake/" or "real/") .. m .. "/" .. s
-            local manual = manualUntil ~= nil
-            if not manual and (sentThisRound and (not V["Repeat On Change"] or signature == lastSignature)) then
-                dueAt, scheduled = nil, nil; return
-            end
-            if not manual then
-                if scheduled ~= signature then scheduled, dueAt = signature, now + math.clamp(tonumber(V["Blurt Delay"]) or 3, 0, 15) end
-                if now < dueAt then return end
-            end
             if busy or now - lastAttempt < 2.5 then return end
+            local m, s = murderer or "?", sheriff or "?"
             local text = string.format('Murder; "%s" Sheriff; "%s"', m, s)
-            manualUntil, dueAt, scheduled = nil, nil, nil
+            manualUntil = nil
             busy, lastAttempt = true, now
             local ticket, expectedEpoch = serial, epoch
             task.spawn(function()
-                if stopped or ticket ~= serial or expectedEpoch ~= notifications.epoch() or not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() or (not manual and not enabled["Auto Blurt"]) then busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end; return end
+                if stopped or ticket ~= serial or expectedEpoch ~= notifications.epoch() or not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() then
+                    busy = false; AngelHub.mm2BlurtNeedsRoles = false; return
+                end
                 local currentMurderer, currentSheriff = roles()
-                if currentMurderer ~= murderer or currentSheriff ~= sheriff or (V["Fake Blurt Roles"] == true) ~= fake then busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end; return end
-                sentThisRound, lastSignature = true, signature
+                if currentMurderer ~= murderer or currentSheriff ~= sheriff then
+                    busy = false; AngelHub.mm2BlurtNeedsRoles = false; return
+                end
                 local sent, attempted = false, false
                 pcall(function()
                     local chat = game:GetService("TextChatService")
@@ -10545,7 +10519,7 @@ local function installBlurt(screenGui)
                         if remote and remote:IsA("RemoteEvent") then remote:FireServer(text, "All"); sent = true end
                     end)
                 end
-                busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end
+                busy = false; AngelHub.mm2BlurtNeedsRoles = false
                 if not stopped then message(sent and "Blurt Roles: public chat request sent" or "Blurt Roles: chat unavailable or refused") end
             end)
         end
@@ -10555,20 +10529,13 @@ local function installBlurt(screenGui)
         if stopped or not isMM2 then message("Blurt: disponible solo en MM2");return end
         blurt.manual();if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
     end
-    local old=AngelHub.setters["Auto Blurt"]
-    AngelHub.setters["Auto Blurt"]=function(value)
-        old(isMM2 and not stopped and value==true);blurt.toggle()
-        if V["Auto Blurt"] and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()
-        elseif AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
-        message(V["Auto Blurt"] and "Auto Blurt activo: publica roles en el chat" or "Auto Blurt apagado")
-    end
     local elapsed=0
     local connection=run.Heartbeat:Connect(function(dt)
         if stopped or not isMM2 then return end
         elapsed+=math.max(tonumber(dt) or 0,0);if elapsed<.2 then return end;elapsed=0
         local ok,err=pcall(blurt.step)
-        if not ok then warn("Angel Hub Blurt: "..tostring(err));AngelHub.setters["Auto Blurt"](false);blurt.cleanup();message("Blurt: error")end
-        if not V["Auto Blurt"] and not AngelHub.mm2BlurtNeedsRoles and AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
+        if not ok then warn("Angel Hub Blurt: "..tostring(err));blurt.cleanup();message("Blurt: error")end
+        if not AngelHub.mm2BlurtNeedsRoles and AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
     end)
     screenGui.Destroying:Connect(function()stopped=true;connection:Disconnect();blurt.cleanup();AngelHub.mm2BlurtNeedsRoles=false end)
 end
@@ -10972,10 +10939,6 @@ local function initializeScript()
 	addButton(extraLeft, "Report Boxes And Coin")
 
 	addSection(extraLeft, "Blurt Roles")
-	addModule(extraLeft, "Auto Blurt", nil, false)
-	addSlider(extraLeft, "Blurt Delay", 0, 15, 3, 0)
-	addToggle(extraLeft, "Repeat On Change", nil, false)
-	addToggle(extraLeft, "Fake Blurt Roles", nil, false)
 	addButton(extraLeft, "Blurt Roles")
 
 	addSection(extraLeft, "Coins Aura")
@@ -11159,8 +11122,6 @@ local function initializeScript()
 	addModule(visualsRight, "FreeCam", nil, false)
 	addSlider(visualsRight, "FreeCam Speed", 1, 250, 50, 0)
 	addSlider(visualsRight, "FreeCam Sensitivity", 0.05, 0.6, 0.2, 2)
-	addToggle(visualsRight, "FreeCam Spectate", nil, false)
-	addList(visualsRight, "Spectate Player", {}, 60)
 
 
 	-- Config tab.
@@ -11362,7 +11323,7 @@ local function initializeScript()
 	-- Apply the autosaved config on startup if Autoload was enabled.
 	local savedData = readConfig(CONFIG_FILE)
 	if savedData and savedData.Autoload == true then
-        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam","Air Walk","Air Swim","Auto Blurt","Zoom Through Walls"}) do savedData[name]=false end
+        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam","Air Walk","Air Swim","Zoom Through Walls"}) do savedData[name]=false end
 		applyConfig(savedData)
 	end
 

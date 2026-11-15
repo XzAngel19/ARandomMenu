@@ -17,7 +17,7 @@ const setup=`\nVector3.zero=Vector3.new(0,0,0)\nfor _,name in ipairs(${`{${names
 (async()=>{
  const prefix=process.env.LUAU_TEST_PREFIX||path.join(root,'tools/luau');const {Lua}=await import(pathToFileURL(path.join(prefix,'node_modules/@luau-rs/luau/dist/direct-api.js')).href);
  for(const mobile of [false,true]){
-  const lua=await Lua.create({sandbox:true});let test=read(path.join(root,'tools/angel_hub_partial_tests/freecam-checks.luau')).replace('installGameplay(screenGui)','installFreeCam(screenGui)');
+  const lua=await Lua.create({sandbox:true});let test=read(path.join(__dirname,'freecam-checks.luau')).replace('installGameplay(screenGui)','installFreeCam(screenGui)');
   lua.execute(mock+`\nlocal mobile=${mobile}; local require=function(m)return m.data end\n`+setup+free+'\n'+test);
  }
  const yieldTest=await Lua.create({sandbox:true});
