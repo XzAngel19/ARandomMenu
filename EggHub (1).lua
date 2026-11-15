@@ -1826,12 +1826,24 @@ local function initializeScript()
 		end
 
 		local function connectFeature(signal, fn)
-			local conn = signal:Connect(fn)
+			if not signal then
+				warn("[Egg Hub] connect skipped: nil signal")
+				return nil
+			end
+			local ok, conn = pcall(function()
+				return signal:Connect(fn)
+			end)
+			if not ok or not conn then
+				warn("[Egg Hub] connect failed: " .. tostring(conn))
+				return nil
+			end
 			table.insert(EggHub.connections, conn)
 			addCleanup(function()
-				if conn.Connected then
-					conn:Disconnect()
-				end
+				pcall(function()
+					if conn.Connected then
+						conn:Disconnect()
+					end
+				end)
 			end)
 			return conn
 		end
@@ -3196,12 +3208,17 @@ local function initializeScript()
 		-- Highlights & SelectionBoxes live in workspace.CurrentCamera (renders immediately without respawn).
 		-- BillboardGuis live in PlayerGui ScreenGui (ResetOnSpawn = false).
 		-- =================================================================
-		local espGuiParent = localPlayer:FindFirstChildOfClass("PlayerGui") or localPlayer:WaitForChild("PlayerGui", 3) or coreGui
+		local espGuiParent = localPlayer:FindFirstChildOfClass("PlayerGui")
+			or localPlayer:WaitForChild("PlayerGui", 3)
+			or (typeof(gethui) == "function" and select(2, pcall(gethui)))
+			or coreGui
 		local espFolder = Instance.new("ScreenGui")
 		espFolder.Name = "EggHubESP"
 		espFolder.ResetOnSpawn = false
 		espFolder.IgnoreGuiInset = true
-		espFolder.Parent = espGuiParent
+		pcall(function()
+			espFolder.Parent = espGuiParent
+		end)
 
 		local espWorldFolder = Instance.new("Folder")
 		espWorldFolder.Name = "EggHubWorldESP"
@@ -3737,57 +3754,84 @@ local function initializeScript()
 			task.spawn(bindCharacter, localPlayer.Character)
 		end
 
+		local warned = {}
+		local function safe(name, fn, ...)
+			local ok, err = pcall(fn, ...)
+			if not ok and not warned[name] then
+				warned[name] = true
+				warn("[Egg Hub] " .. name .. ": " .. tostring(err))
+			end
+		end
+
+		task.delay(3, function()
+			if unloaded or not screenGui.Parent then
+				return
+			end
+			print("[Egg Hub] eggs:", workspace:FindFirstChild("AreaEggSlotsClient"))
+			print("[Egg Hub] pets:", workspace:FindFirstChild("ClientRenderedAssets"))
+			print("[Egg Hub] guards:", getGuardAreasFolder())
+			print("[Egg Hub] Remotes:", Remotes, "EggState:", EggState, "PlotState:", PlotState)
+		end)
+
 		local function stepFeaturesOnce()
 			if unloaded or not screenGui.Parent then
 				return false
 			end
 			local now = os.clock()
 
-			if pendingIncomeDelta > 0 then
-				local delta = pendingIncomeDelta
-				pendingIncomeDelta = 0
-				addCollectedIncome(delta)
-			end
-			if #pendingNotifies > 0 then
-				for _, item in pendingNotifies do
-					EggHub.notify(item.msg, item.ok)
+			safe("IncomeSync", function()
+				if pendingIncomeDelta > 0 then
+					local delta = pendingIncomeDelta
+					pendingIncomeDelta = 0
+					addCollectedIncome(delta)
 				end
-				table.clear(pendingNotifies)
-			end
+				if #pendingNotifies > 0 then
+					for _, item in pendingNotifies do
+						EggHub.notify(item.msg, item.ok)
+					end
+					table.clear(pendingNotifies)
+				end
+			end)
 
 			local char, hum = getCharacterParts()
-			if EggHub.values["Anti Ragdoll"] and char and hum then
-				enforceAntiRagdoll(char, hum)
-			end
-			applyAntiGuardianPass()
-			applyAntiBearTrapPass()
-			if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.45 then
-				lastBatSwing = now
-				swingBatOnce()
-			end
-			runAutoStealAndRareClaim()
-			runAutoTrain()
-			runAutoHatch()
-			runAutoCollect()
-			runAutoSell()
+			safe("AntiRagdoll", function()
+				if EggHub.values["Anti Ragdoll"] and char and hum then
+					enforceAntiRagdoll(char, hum)
+				end
+			end)
+			safe("AntiGuardian", applyAntiGuardianPass)
+			safe("AntiBearTrap", applyAntiBearTrapPass)
+			safe("Bat", function()
+				if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.45 then
+					lastBatSwing = now
+					swingBatOnce()
+				end
+			end)
+			safe("AutoSteal", runAutoStealAndRareClaim)
+			safe("AutoTrain", runAutoTrain)
+			safe("AutoHatch", runAutoHatch)
+			safe("AutoCollect", runAutoCollect)
+			safe("AutoSell", runAutoSell)
 
 			-- Egg Spawn Timer update
-			local rem = math.ceil(getNextEggResetSeconds())
-			if EggHub.setters["Next Spawn In"] and EggHub.values["Next Spawn In"] ~= rem then
-				EggHub.setters["Next Spawn In"](rem)
-			end
-			if lastSpawnCountdown ~= nil and rem > lastSpawnCountdown + 15 and EggHub.values["Notify On Reset"] then
-				EggHub.notify("Eggs Respawned!", true)
-			end
-			lastSpawnCountdown = rem
+			safe("Timer", function()
+				local rem = math.ceil(getNextEggResetSeconds())
+				if EggHub.setters["Next Spawn In"] and EggHub.values["Next Spawn In"] ~= rem then
+					EggHub.setters["Next Spawn In"](rem)
+				end
+				if lastSpawnCountdown ~= nil and rem > lastSpawnCountdown + 15 and EggHub.values["Notify On Reset"] then
+					EggHub.notify("Eggs Respawned!", true)
+				end
+				lastSpawnCountdown = rem
+			end)
 
 			local _, _, root = getCharacterParts()
 			local rootPos = root and root.Position or (workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position or Vector3.zero)
-			updateEggEsp(rootPos)
-			updatePetEsp(rootPos)
-			updateGuardianEsp(rootPos)
-			updateBiomeBoundary()
-			updatePlayerEsp(rootPos)
+			safe("EggESP", updateEggEsp, rootPos)
+			safe("PetESP", updatePetEsp, rootPos)
+			safe("GuardESP", updateGuardianEsp, rootPos)
+			safe("Boundary", updateBiomeBoundary)
+			safe("PlayerESP", updatePlayerEsp, rootPos)
 			return true
 		end
 
@@ -3827,7 +3871,10 @@ local function initializeScript()
 		end
 	end)
 
-	installFeatures()
+	local okF, errF = pcall(installFeatures)
+	if not okF then
+		warn("[Egg Hub] installFeatures: " .. tostring(errF))
+	end
 
 	if readfile and isfile and isfile(CONFIG_FILE) then
 		pcall(function()
