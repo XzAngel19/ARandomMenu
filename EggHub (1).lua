@@ -4,18 +4,18 @@ local userInputService = game:GetService("UserInputService")
 local tweenService = game:GetService("TweenService")
 local httpService = game:GetService("HttpService")
 
-local WINDOW_WIDTH = 620
-local WINDOW_HEIGHT = 560
+local WINDOW_WIDTH = 400
+local WINDOW_HEIGHT = 600
 local TITLE_HEIGHT = 34
 local TAB_HEIGHT = 30
-local MIN_WIDTH = 460
-local MIN_HEIGHT = 420
-local MAX_WIDTH = 980
-local MAX_HEIGHT = 860
+local MIN_WIDTH = 320
+local MIN_HEIGHT = 480
+local MAX_WIDTH = 700
+local MAX_HEIGHT = 1050
 local CONFIG_FOLDER = "EggHub"
 local CONFIG_FILE = "EggHub/EggHub.json"
 local TAB_NAMES = { "Main", "Extra", "Visuals", "Config" }
-local TITLE_TEXT = "Egg Hub | Steal an Egg"
+local TITLE_TEXT = "Angel Hub | Steal an Egg"
 
 local ACCENT_A = Color3.fromRGB(225, 225, 225)
 local ACCENT_B = Color3.fromRGB(110, 110, 116)
