@@ -224,14 +224,11 @@ end
 
 -- Controls not yet integrated are labelled and cannot claim to be active.
 local pendingControls={
-    ["Auto Blurt"]=true,["Air Swim"]=true,
-    ["Chams Show Perk"]=true,["Zoom Through Walls"]=true,
     ["Stay Under When Round Starts"]=true,
     ["Fling Murder After Full Bag"]=true,["Fling Sheriff After Full Bag"]=true,
-    ["Auto Kill All When Full Bag"]=true,["Repeat On Change"]=true,["Fake Blurt Roles"]=true,
+    ["Auto Kill All When Full Bag"]=true,
 }
 local pendingButtons={
-    ["Blurt Roles"]=true,["Get All Emotes"]=true,
 }
 local function addToggle(parent, text, keybind, default)
 	local startState = default == true
@@ -606,7 +603,7 @@ local function addButton(parent, text, callback)
 		Position = UDim2.fromOffset(8, 5),
 		BackgroundColor3 = ELEMENT_COLOR,
 		BorderSizePixel = 0,
-		Text = pendingButtons[text] and (text.." (pendiente)") or text,
+		Text = pendingButtons[text] and (text.." (pendiente)") or (text=="Get All Emotes" and "Get All Emotes (local)" or text),
 		TextColor3 = TEXT_COLOR,
 		TextSize = 13,
 		Font = TEXT_FONT,
@@ -3209,6 +3206,7 @@ return Module
     end
     local roles, roleAt, roleBusy, roleGeneration, roundBlocked = {},0,false,0,false
     local roleConnections, roleBound = {},nil
+    AngelHub.mm2RoundEpoch=0
     local function gameplay()
         local ok,rs=pcall(function()return game:GetService("ReplicatedStorage") end)
         local remotes=ok and rs and rs:FindFirstChild("Remotes")
@@ -3237,6 +3235,23 @@ return Module
         if weapon(player,"Gun") then return "Sheriff" end
         return nil
     end
+    AngelHub.getMM2Perk=function(player)
+        if not player or roundBlocked then return nil end
+        local character=player.Character
+        local ok,attr=pcall(function()return (character and character:GetAttribute("Perk")) or player:GetAttribute("Perk")end)
+        if ok and type(attr)=="string" and attr~="" then return attr end
+        for key,record in pairs(roles)do
+            if type(record)=="table" and (tostring(key)==player.Name or tostring(key)==tostring(player.UserId)
+                or record.Name==player.Name or (record.UserId and tostring(record.UserId)==tostring(player.UserId))) then
+                local perk=record.Perk or record.EquippedPerk or record.perk
+                if type(perk)=="string" and perk~="" then return perk end
+            end
+        end
+        local backpack=player:FindFirstChildOfClass("Backpack")
+        for _,name in ipairs({"Trap","FakeGun"})do
+            if (character and character:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name)) then return name end
+        end
+    end
     local function unbindRoles()
         for _,c in ipairs(roleConnections) do c:Disconnect() end
         table.clear(roleConnections); roleBound=nil; roleGeneration+=1; roles={}
@@ -3256,15 +3271,16 @@ return Module
         end
         local ended=g:FindFirstChild("RoundEndFade")
         if ended and ended:IsA("RemoteEvent") then table.insert(roleConnections,ended.OnClientEvent:Connect(function()
-            roleGeneration+=1; roles={}; roundBlocked=true
+            roleGeneration+=1; roles={}; roundBlocked=true;AngelHub.mm2RoundEpoch+=1
         end)) end
         for _,name in ipairs({"RoundStart","RoleSelect","ShowRoleSelect","ShowRoleSelectNew"}) do
             local remote=g:FindFirstChild(name)
             if remote and remote:IsA("RemoteEvent") then table.insert(roleConnections,remote.OnClientEvent:Connect(function(duration,data)
                 if name=="RoundStart" and (not tonumber(duration) or tonumber(duration)<=0) then
-                    roleGeneration+=1;roles={};roundBlocked=true;return
+                    roleGeneration+=1;roles={};roundBlocked=true;AngelHub.mm2RoundEpoch+=1;return
                 end
                 roleGeneration+=1; roles=type(data)=="table" and data or {}; roundBlocked=false; roleAt=0
+                if name=="RoundStart" then AngelHub.mm2RoundEpoch+=1 end
                 if name=="RoleSelect" and type(duration)=="string" then
                     roles[LocalPlayer.Name]={Name=LocalPlayer.Name, Role=duration}
                 end
@@ -3274,7 +3290,7 @@ return Module
     local function rolesNeeded()
         return V["Gun Aimbot"] or V["Gun Aura"] or V["Auto Shoot"] or V["Knife Aura"] or V["Knife Throw"] or V["Auto Knife Throw"]
             or V["Player ESP"] or V["Nametags"] or V["HP Players"] or V["Chams"] or V["Auto Get Gun"]
-            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or V["Auto Win"] or (V["Auto Farm"] and V["Auto Grab Gun And Shoot"])
+            or AngelHub.mm2FlingNeedsRoles or AngelHub.mm2KnifeKillBusy or AngelHub.mm2BlurtNeedsRoles or V["Auto Blurt"] or V["Auto Win"] or (V["Auto Farm"] and V["Auto Grab Gun And Shoot"])
     end
     local function updateRoles()
         if not isMM2 or stopped or not rolesNeeded() then return end
@@ -5514,7 +5530,7 @@ return Module
         unbindRoles()
         if auraFeature then auraFeature.enabled=false;AuraModule.destroy() end
         PredictionModule.destroy()
-        AngelHub.getMM2Role=nil;AngelHub.isMM2RoundActive=nil;AngelHub.refreshMM2Roles=nil;AngelHub.releaseMM2Roles=nil;AngelHub.findMM2DroppedGun=nil;AngelHub.winShoot=nil;AngelHub.cancelWinShot=nil;AngelHub.farmGrabShoot=nil
+        AngelHub.mm2RoundEpoch=nil;AngelHub.getMM2Perk=nil;AngelHub.getMM2Role=nil;AngelHub.isMM2RoundActive=nil;AngelHub.refreshMM2Roles=nil;AngelHub.releaseMM2Roles=nil;AngelHub.findMM2DroppedGun=nil;AngelHub.winShoot=nil;AngelHub.cancelWinShot=nil;AngelHub.farmGrabShoot=nil
     end)
 end
 
@@ -6537,12 +6553,13 @@ local function installChams(screenGui)
     local V=AngelHub.values
     local mm2=game.PlaceId==142823291
     local run=game:GetService("RunService")
-    local highlights={}
+    local highlights,perks={},{}
     local stopped=false
     local elapsed=0
     local function remove(player)
         local item=highlights[player];highlights[player]=nil
         if item then item:Destroy() end
+        local label=perks[player];perks[player]=nil;if label then label.billboard:Destroy()end
     end
     local function clear()for player in pairs(highlights)do remove(player)end end
     local function update()
@@ -6562,6 +6579,22 @@ local function installChams(screenGui)
                     h.FillTransparency=math.clamp(tonumber(V["Chams Fill Transparency"]) or .5,0,1)
                     h.OutlineTransparency=math.clamp(tonumber(V["Chams Outline Transparency"]) or 0,0,1)
                     h.DepthMode=V["Chams Through Walls"] and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+                    local perk=mm2 and role=="Murderer" and V["Chams Show Perk"] and AngelHub.getMM2Perk and AngelHub.getMM2Perk(player)
+                    local head=perk and (character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart"))
+                    if head and type(perk)=="string" and perk~="" then
+                        local item=perks[player]
+                        if not item then
+                            local billboard=Instance.new("BillboardGui");billboard.Name="AngelHubChamsPerk"
+                            billboard.Size=UDim2.fromOffset(160,24);billboard.StudsOffset=Vector3.new(0,3,0)
+                            billboard.AlwaysOnTop=true;billboard.Parent=screenGui
+                            local label=Instance.new("TextLabel");label.Name="Perk";label.Size=UDim2.fromScale(1,1)
+                            label.BackgroundTransparency=1;label.TextColor3=Color3.fromRGB(255,255,255)
+                            label.TextStrokeTransparency=0.3;label.Font=Enum.Font.SourceSansBold;label.TextSize=14;label.Parent=billboard
+                            item={billboard=billboard,label=label};perks[player]=item
+                        end
+                        item.billboard.Adornee=head;item.label.Text=string.sub(perk,1,48)
+                        item.billboard.AlwaysOnTop=V["Chams Through Walls"]==true
+                    elseif perks[player] then perks[player].billboard:Destroy();perks[player]=nil end
                 end
             end
         end
@@ -9421,6 +9454,116 @@ local function installAirWalk(screenGui)
     end)
 end
 
+-- Air Swim changes only empty voxels locally, tracking and restoring each one.
+local function installAirSwim(screenGui)
+    local V=AngelHub.values;local enabled=V
+    local run=game:GetService("RunService");local stopped=false
+    local function message(text)if AngelHub.setSwimStatus then AngelHub.setSwimStatus(text)elseif AngelHub.status then AngelHub.status(text)end end
+    local airSwim = {}
+    do
+        local terrain, active, tracked, lastKey, elapsed = nil, nil, nil, nil, 0
+        local function restore()
+            local old = active
+            if not old then return true end
+            local ok = pcall(function()
+                local materials, occupancy = old.terrain:ReadVoxels(old.region,4)
+                local changed = false
+                for _, cell in ipairs(old.cells) do
+                    local x,y,z = cell[1],cell[2],cell[3]
+                    if materials[x][y][z] == Enum.Material.Water and occupancy[x][y][z] == 1 then
+                        materials[x][y][z] = Enum.Material.Air; occupancy[x][y][z] = 0; changed = true
+                    end
+                end
+                if changed then old.terrain:WriteVoxels(old.region,4,materials,occupancy) end
+            end)
+            if ok then active = nil; return true end
+            return false
+        end
+        function airSwim.available()
+            local ok, result = pcall(function() return workspace:FindFirstChildOfClass("Terrain") end)
+            if not ok or not result then return false end
+            terrain = result; return true
+        end
+        function airSwim.toggle()
+            tracked, lastKey, elapsed = nil,nil,1
+            return restore()
+        end
+        function airSwim.cleanup()
+            tracked, lastKey = nil,nil
+            return restore()
+        end
+        function airSwim.step(dt, character, human, root)
+            if not enabled["Air Swim"] then return end
+            if not character or not character.Parent or not human or not root or root.Anchored or human.Sit or human.SeatPart then
+                tracked, lastKey = nil,nil
+                if not restore() then error("terrain restoration failed") end
+                return
+            end
+            elapsed += math.max(0,dt); if elapsed < .2 then return end; elapsed = 0
+            local pos = root.Position - Vector3.new(0,1,0)
+            local size = 6
+            local gx,gy,gz = math.floor(pos.X/4),math.floor(pos.Y/4),math.floor(pos.Z/4)
+            local key = tostring(gx)..":"..tostring(gy)..":"..tostring(gz)..":"..tostring(size)
+            if character == tracked and key == lastKey then return end
+            if not restore() then error("terrain restoration failed") end
+            if not terrain or not terrain.Parent then error("terrain unavailable") end
+            local center = Vector3.new(gx*4,gy*4,gz*4)
+            local extent = Vector3.new(size,size,size)
+            local region = Region3.new(center-extent,center+extent):ExpandToGrid(4)
+            local materials, occupancy = terrain:ReadVoxels(region,4)
+            local cells = {}
+            for x, plane in ipairs(materials) do for y, row in ipairs(plane) do for z, material in ipairs(row) do
+                if material == Enum.Material.Air and occupancy[x][y][z] == 0 then
+                    table.insert(cells,{x,y,z}); materials[x][y][z] = Enum.Material.Water; occupancy[x][y][z] = 1
+                end
+            end end end
+            if #cells > 0 then
+                active = {terrain=terrain,region=region,cells=cells}
+                terrain:WriteVoxels(region,4,materials,occupancy)
+            end
+            tracked,lastKey = character,key
+        end
+    end
+
+    local function conflict()
+        return AngelHub.mm2FlingBusy or AngelHub.mm2KnifeKillBusy or V["Auto Farm"] or V["Auto Win"] or V["Auto Vote"]
+            or V["Enable Fly"] or V["Noclip"] or V["Air Walk"] or V["Walk Fling"] or V["FreeCam"] or V["Auto Fling Selected Target"]
+    end
+    local old=AngelHub.setters["Air Swim"]
+    AngelHub.setters["Air Swim"]=function(value)
+        if value==true and (stopped or conflict() or not airSwim.available()) then
+            old(false);airSwim.toggle();message("Air Swim: terreno no disponible o movimiento incompatible");return false
+        end
+        local restored=airSwim.toggle()
+        old(restored and not stopped and value==true)
+        message(not restored and "Air Swim: restauracion pendiente; reintentando" or (V["Air Swim"] and "Air Swim activo; terreno local temporal" or "Air Swim apagado"))
+        return V["Air Swim"]
+    end
+    for _,name in ipairs({"Noclip","Enable Fly","Air Walk","Walk Fling","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+        local setter=AngelHub.setters[name]
+        if setter then AngelHub.setters[name]=function(value)
+            if value==true and V["Air Swim"] then message("Desactiva Air Swim primero");return false end
+            return setter(value)
+        end end
+    end
+    local retry=0
+    local connection=run.Heartbeat:Connect(function(dt)
+        if stopped then return end
+        if not V["Air Swim"] then
+            retry+=math.max(tonumber(dt) or 0,0)
+            if retry>=1 then retry=0;if airSwim.cleanup() then return end;message("Air Swim: restauracion pendiente; reintentando")end
+            return
+        end
+        local character=localPlayer.Character
+        local human=character and character:FindFirstChildOfClass("Humanoid")
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if human and human.Health<=0 then human=nil end
+        local ok,err=pcall(airSwim.step,dt,character,human,root)
+        if not ok then warn("Angel Hub Air Swim: "..tostring(err));AngelHub.setters["Air Swim"](false);message("Air Swim detenido: error de terreno")end
+    end)
+    screenGui.Destroying:Connect(function()stopped=true;connection:Disconnect();if not airSwim.cleanup() then warn("Angel Hub Air Swim: terrain restore failed")end end)
+end
+
 -- Voluntary fixed-power Walk Fling; restore every owned property on disable.
 local function installWalkFling(screenGui)
     local V=AngelHub.values
@@ -9830,6 +9973,7 @@ end
 local function installEmotes(screenGui)
     local V=AngelHub.values
     local stopped,generation,track=false,0,nil
+    local grantBusy=false
     local defs={
         ["Sit"]={id="sit",command="sit2",asset="rbxassetid://2431845940",looped=true},
         ["Ninja Rest"]={id="ninja",command="ninja",asset="rbxassetid://2431864798",looped=true},
@@ -9839,6 +9983,11 @@ local function installEmotes(screenGui)
         ["Zombie"]={id="zombie",command="zombie",asset="rbxassetid://2513692312",looped=true},
         ["Headless"]={id="headless",command="headless",asset="rbxassetid://2513664073"},
     }
+    local order={"Sit","Ninja Rest","Zen","Dab","Floss","Zombie","Headless"}
+    local function storage()
+        local ok,rs=pcall(function()return game:GetService("ReplicatedStorage")end)
+        return ok and rs or nil
+    end
     local function status(text)if AngelHub.setEmoteStatus then AngelHub.setEmoteStatus(text)end end
     local function stopTrack()
         local old=track;track=nil
@@ -9880,7 +10029,271 @@ local function installEmotes(screenGui)
             warn("Angel Hub Emote: "..tostring(err));status("Emote no disponible; revisa permisos")
         else status("Emote local solicitado; replicacion no confirmada")end
     end
+    AngelHub.actions["Get All Emotes"]=function()
+            if stopped or game.PlaceId~=142823291 or grantBusy then return end
+            grantBusy = true
+            local ticket = generation
+            task.spawn(function()
+                local ok, count, signalled = pcall(function()
+                    local rs = storage()
+                    if not rs then return nil end
+                    local database = rs:FindFirstChild("Database")
+                    local sync = database and database:FindFirstChild("Sync")
+                    local catalogModule = sync and sync:FindFirstChild("Emotes")
+                    if catalogModule and catalogModule:IsA("ModuleScript") then
+                        local catalogOk, catalog = pcall(require, catalogModule)
+                        if stopped or ticket ~= generation then return nil end
+                        if catalogOk and type(catalog) == "table" then
+                            local defaults = {back=true, wave=true, cheer=true, laugh=true, point=true, dance=true, dance1=true, dance2=true, dance3=true}
+                            local known = {}
+                            for _, def in pairs(defs) do known[def.id] = true end
+                            local extras = {}
+                            for id, item in pairs(catalog) do
+                                if type(id) == "string" and not known[id] and not defaults[string.lower(id)]
+                                    and type(item) == "table" and type(item.Command) == "string" and item.Command ~= ""
+                                    and not defaults[string.lower(item.Command)] then
+                                    local asset = item.AnimationID
+                                    if type(asset) == "number" and asset > 0 and asset < math.huge then
+                                        asset = "rbxassetid://" .. string.format("%.0f", asset)
+                                    elseif type(asset) == "string" and string.match(asset, "^%d+$") then
+                                        asset = "rbxassetid://" .. asset
+                                    end
+                                    if type(asset) == "string" and asset ~= "" then table.insert(extras, {id=id, data=item, asset=asset}) end
+                                end
+                            end
+                            table.sort(extras, function(a, b) return a.id < b.id end)
+                            for _, extra in ipairs(extras) do
+                                local item = extra.data
+                                local label = type(item.Name) == "string" and item.Name ~= "" and item.Name or extra.id
+                                if defs[label] then label = label .. " (" .. extra.id .. ")" end
+                                if not defs[label] then
+                                    defs[label] = {id=extra.id, command=item.Command, asset=extra.asset, looped=item.Loop == true}
+                                    table.insert(order, label)
+                                end
+                            end
+                            local refresh = AngelHub.cycleOptions and AngelHub.cycleOptions["Select Emote"]
+                            if refresh then refresh(order) end
+                        end
+                    end
+                    local modules = rs:FindFirstChild("Modules")
+                    local module = modules and modules:FindFirstChild("ProfileData")
+                    if not module or not module:IsA("ModuleScript") then return nil end
+                    local profile = require(module)
+                    if stopped or ticket ~= generation then return nil end
+                    if type(profile) ~= "table" or type(profile.Emotes) ~= "table" or type(profile.Emotes.Owned) ~= "table" then return nil end
+                    local owned, known, added = profile.Emotes.Owned, {}, {}
+                    for _, id in ipairs(owned) do if type(id) == "string" then known[id] = true end end
+                    for _, label in ipairs(order) do
+                        local id = defs[label].id
+                        if not known[id] then table.insert(owned, id); table.insert(added, id); known[id] = true end
+                    end
+                    local remotes = rs:FindFirstChild("Remotes")
+                    local inventory = remotes and remotes:FindFirstChild("Inventory")
+                    local changed = inventory and inventory:FindFirstChild("InventoryDataChanged")
+                    local didSignal = false
+                    if changed and changed:IsA("BindableEvent") then
+                        local signalIds = #added > 0 and added or {defs[order[1]].id}
+                        for _, id in ipairs(signalIds) do
+                            local fired = pcall(function() changed:Fire("Emotes", id, 1) end)
+                            didSignal = didSignal or fired
+                        end
+                    end
+                    return #added, didSignal
+                end)
+                grantBusy = false
+                if stopped or ticket ~= generation then return end
+                if not ok or count == nil then status("Emotes: local profile not available; try later"); return end
+                status("Emotes: " .. tostring(count) .. " local entries added" .. (signalled and "; UI notified" or "") .. "; server ownership not verified")
+            end)
+        end
     screenGui.Destroying:Connect(function()stopped=true;generation+=1;stopTrack()end)
+end
+
+-- Reversible camera occlusion override, adapted from CameraAccess.
+local function installZoomThroughWalls(screenGui)
+    local V=AngelHub.values;local old=AngelHub.setters["Zoom Through Walls"]
+    local run=game:GetService("RunService")
+    local stopped=false;local generation=0;local patch;local pending=false;local retryAt=0
+    local function status(text)if AngelHub.setZoomStatus then AngelHub.setZoomStatus(text)end end
+    local function restore()
+        local p=patch;patch=nil
+        if not p then return end
+        pcall(function()
+            if p.object.Update==p.replacement then
+                p.object.Update=p.update
+                if p.enabled and type(p.object.Enable)=="function" then p.object:Enable(true)end
+            end
+        end)
+    end
+    local function refresh()
+        if stopped or not V["Zoom Through Walls"] or pending or os.clock()<retryAt then return end
+        retryAt=os.clock()+1;pending=true;local ticket=generation
+        task.spawn(function()
+            local ok,obj=pcall(function()
+                local scripts=localPlayer:FindFirstChild("PlayerScripts")
+                local source=scripts and scripts:FindFirstChild("PlayerModule")
+                if not source then return nil end
+                local success,mod=pcall(require,source)
+                local cameras=success and type(mod)=="table" and type(mod.GetCameras)=="function" and mod:GetCameras()
+                local occlusion=type(cameras)=="table" and cameras.activeOcclusionModule
+                if type(occlusion)=="table" and type(occlusion.Update)=="function" then return occlusion end
+                local cameraModule=source:FindFirstChild("CameraModule")
+                local popper=cameraModule and cameraModule:FindFirstChild("Poppercam")
+                if popper then local good,result=pcall(require,popper);if good then return result end end
+            end)
+            pending=false
+            if stopped or ticket~=generation or not V["Zoom Through Walls"] then return end
+            if not ok or type(obj)~="table" or type(obj.Update)~="function" then
+                restore();old(false);status("Zoom Through Walls no disponible en esta camara");return
+            end
+            if patch and patch.object==obj and obj.Update==patch.replacement then return end
+            restore()
+            local wasEnabled=false
+            if type(obj.GetEnabled)=="function" and type(obj.Enable)=="function" then
+                local worked,value=pcall(obj.GetEnabled,obj);wasEnabled=worked and value==true
+                if wasEnabled then pcall(obj.Enable,obj,false)end
+            end
+            local cleaned=setmetatable({}, {__mode="k"})
+            local replacement=function(instance,_,cameraFrame,focus)
+                if not cleaned[instance] then cleaned[instance]=true;if type(instance.Cleanup)=="function" then pcall(instance.Cleanup,instance)end end
+                local extrapolator=instance.focusExtrapolator
+                if extrapolator and type(extrapolator.Reset)=="function" then pcall(extrapolator.Reset,extrapolator)end
+                return cameraFrame,focus
+            end
+            local update=obj.Update
+            local applied=pcall(function()obj.Update=replacement end)
+            if not applied then
+                if wasEnabled then pcall(obj.Enable,obj,true)end
+                old(false);status("Zoom Through Walls: camara protegida");return
+            end
+            patch={object=obj,update=update,replacement=replacement,enabled=wasEnabled}
+            status("Zoom Through Walls activo")
+        end)
+    end
+    AngelHub.setters["Zoom Through Walls"]=function(value)
+        generation+=1;retryAt=0;old(not stopped and value==true)
+        if V["Zoom Through Walls"] then status("Zoom: buscando camara");refresh()
+        else restore();status("Zoom Through Walls apagado")end
+    end
+    local connection=run.Heartbeat:Connect(function()refresh()end)
+    screenGui.Destroying:Connect(function()stopped=true;generation+=1;connection:Disconnect();restore()end)
+end
+
+-- Blurt Roles explicitly sends to public chat only on manual or opt-in Auto.
+local function installBlurt(screenGui)
+    local V=AngelHub.values;local enabled=V
+    local isMM2=game.PlaceId==142823291;local stopped=false
+    local run=game:GetService("RunService")
+    local function message(text)if AngelHub.setBlurtStatus then AngelHub.setBlurtStatus(text)end end
+    local notifications={role=function(player)return AngelHub.getMM2Role and AngelHub.getMM2Role(player)end,
+        epoch=function()return AngelHub.mm2RoundEpoch or 0 end}
+    local blurt = {}
+    do
+        local manualUntil, dueAt, scheduled, lastSignature, roundId = nil, nil, nil, nil, nil
+        local sentThisRound, busy, serial, lastAttempt = false, false, 0, -math.huge
+        function blurt.manual()
+            if busy or manualUntil then message("Blurt Roles: request already pending"); return end
+            manualUntil = os.clock() + 5; AngelHub.mm2BlurtNeedsRoles = true
+            message("Blurt Roles: checking roles for public chat")
+        end
+        function blurt.toggle()
+            serial += 1; dueAt, scheduled = nil, nil
+        end
+        function blurt.cleanup() serial += 1; manualUntil, dueAt, scheduled = nil, nil, nil; AngelHub.mm2BlurtNeedsRoles = false end
+        local function roles()
+            local murderer, sheriff
+            for _, player in ipairs(playersService:GetPlayers()) do
+                local role = notifications.role(player)
+                local human = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                if not human or human.Health > 0 then
+                    if role == "Murderer" then murderer = player.Name
+                    elseif role == "Sheriff" or role == "Hero" then sheriff = player.Name end
+                end
+            end
+            return murderer, sheriff
+        end
+        function blurt.step()
+            if not isMM2 or (not enabled["Auto Blurt"] and not manualUntil) then return end
+            local now = os.clock()
+            if not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() then
+                dueAt, scheduled = nil, nil
+                if manualUntil and now>=manualUntil then manualUntil=nil;AngelHub.mm2BlurtNeedsRoles=false;message("Blurt: no hay ronda activa") end
+                return
+            end
+            local epoch = notifications.epoch()
+            if epoch ~= roundId then
+                roundId, sentThisRound, lastSignature, dueAt, scheduled = epoch, false, nil, nil, nil
+            end
+            local murderer, sheriff = roles()
+            if not murderer and not sheriff then
+                dueAt, scheduled = nil, nil
+                if manualUntil and now >= manualUntil then manualUntil = nil; AngelHub.mm2BlurtNeedsRoles = false; message("Blurt Roles: no roles available") end
+                return
+            end
+            local fake = V["Fake Blurt Roles"] == true
+            local m, s = murderer or "?", sheriff or "?"
+            if fake then m, s = s, m end
+            local signature = (fake and "fake/" or "real/") .. m .. "/" .. s
+            local manual = manualUntil ~= nil
+            if not manual and (sentThisRound and (not V["Repeat On Change"] or signature == lastSignature)) then
+                dueAt, scheduled = nil, nil; return
+            end
+            if not manual then
+                if scheduled ~= signature then scheduled, dueAt = signature, now + math.clamp(tonumber(V["Blurt Delay"]) or 3, 0, 15) end
+                if now < dueAt then return end
+            end
+            if busy or now - lastAttempt < 2.5 then return end
+            local text = string.format('Murder; "%s" Sheriff; "%s"', m, s)
+            manualUntil, dueAt, scheduled = nil, nil, nil
+            busy, lastAttempt = true, now
+            local ticket, expectedEpoch = serial, epoch
+            task.spawn(function()
+                if stopped or ticket ~= serial or expectedEpoch ~= notifications.epoch() or not AngelHub.isMM2RoundActive or not AngelHub.isMM2RoundActive() or (not manual and not enabled["Auto Blurt"]) then busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end; return end
+                local currentMurderer, currentSheriff = roles()
+                if currentMurderer ~= murderer or currentSheriff ~= sheriff or (V["Fake Blurt Roles"] == true) ~= fake then busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end; return end
+                sentThisRound, lastSignature = true, signature
+                local sent, attempted = false, false
+                pcall(function()
+                    local chat = game:GetService("TextChatService")
+                    if chat.ChatVersion ~= Enum.ChatVersion.TextChatService then return end
+                    local channels = chat:FindFirstChild("TextChannels")
+                    local channel = channels and (channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel"))
+                    if channel and channel:IsA("TextChannel") then attempted = true; channel:SendAsync(text); sent = true end
+                end)
+                if not attempted then
+                    pcall(function()
+                        local storage = game:GetService("ReplicatedStorage")
+                        local events = storage:FindFirstChild("DefaultChatSystemChatEvents")
+                        local remote = events and events:FindFirstChild("SayMessageRequest")
+                        if remote and remote:IsA("RemoteEvent") then remote:FireServer(text, "All"); sent = true end
+                    end)
+                end
+                busy = false; if manual then AngelHub.mm2BlurtNeedsRoles = false end
+                if not stopped then message(sent and "Blurt Roles: public chat request sent" or "Blurt Roles: chat unavailable or refused") end
+            end)
+        end
+    end
+
+    AngelHub.actions["Blurt Roles"]=function()
+        if stopped or not isMM2 then message("Blurt: disponible solo en MM2");return end
+        blurt.manual();if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
+    end
+    local old=AngelHub.setters["Auto Blurt"]
+    AngelHub.setters["Auto Blurt"]=function(value)
+        old(isMM2 and not stopped and value==true);blurt.toggle()
+        if V["Auto Blurt"] and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()
+        elseif AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
+        message(V["Auto Blurt"] and "Auto Blurt activo: publica roles en el chat" or "Auto Blurt apagado")
+    end
+    local elapsed=0
+    local connection=run.Heartbeat:Connect(function(dt)
+        if stopped or not isMM2 then return end
+        elapsed+=math.max(tonumber(dt) or 0,0);if elapsed<.2 then return end;elapsed=0
+        local ok,err=pcall(blurt.step)
+        if not ok then warn("Angel Hub Blurt: "..tostring(err));AngelHub.setters["Auto Blurt"](false);blurt.cleanup();message("Blurt: error")end
+        if not V["Auto Blurt"] and not AngelHub.mm2BlurtNeedsRoles and AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
+    end)
+    screenGui.Destroying:Connect(function()stopped=true;connection:Disconnect();blurt.cleanup();AngelHub.mm2BlurtNeedsRoles=false end)
 end
 
 local function initializeScript()
@@ -10300,6 +10713,12 @@ local function initializeScript()
 	addToggle(extraLeft, "Repeat On Change", nil, false)
 	addToggle(extraLeft, "Fake Blurt Roles", nil, false)
 	addButton(extraLeft, "Blurt Roles")
+    local blurtStatusHolder=createCard("Frame",extraLeft,"Blurt Status",34)
+    local blurtStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Blurt publica roles en el chat",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},blurtStatusHolder)
+    AngelHub.setBlurtStatus=function(text)blurtStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,blurtStatusHolder)
 
 	addSection(extraLeft, "Coins Aura")
 	addModule(extraLeft, "Coins Aura", nil, false)
@@ -10384,6 +10803,12 @@ local function initializeScript()
 	addSection(extraRight, "Movement Toggles")
 	addModule(extraRight, "Noclip", nil, false)
 	addModule(extraRight, "Air Swim", nil, false)
+    local swimStatusHolder=createCard("Frame",extraRight,"Air Swim Status",30)
+    local swimStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Air Swim apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},swimStatusHolder)
+    AngelHub.setSwimStatus=function(text)swimStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,swimStatusHolder)
 	addModule(extraRight, "Air Walk", nil, false)
     local airWalkStatusHolder=createCard("Frame",extraRight,"Air Walk Status",30)
     local airWalkStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
@@ -10501,6 +10926,12 @@ local function initializeScript()
 	addSlider(visualsRight, "Zoom Min Distance", 0.5, 50, 0.5, 1)
 	addToggle(visualsRight, "Unlock Forced First Person", nil, false)
 	addToggle(visualsRight, "Zoom Through Walls", nil, false)
+    local zoomStatusHolder=createCard("Frame",visualsRight,"Zoom Status",30)
+    local zoomStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),BackgroundTransparency=1,
+        Text="Zoom Through Walls apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,Font=TEXT_FONT,TextWrapped=true,
+        TextXAlignment=Enum.TextXAlignment.Left},zoomStatusHolder)
+    AngelHub.setZoomStatus=function(text)zoomStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,zoomStatusHolder)
 
 	addSection(visualsRight, "FreeCam")
 	addModule(visualsRight, "FreeCam", nil, false)
@@ -10703,16 +11134,19 @@ local function initializeScript()
 	installMM2Unbox(screenGui)
 	installMM2Win(screenGui)
     installAirWalk(screenGui)
+    installAirSwim(screenGui)
     installWalkFling(screenGui)
     installFreeCam(screenGui)
     installXRay(screenGui)
     installFPSOptions(screenGui)
     installEmotes(screenGui)
+    installZoomThroughWalls(screenGui)
+    installBlurt(screenGui)
 
 	-- Apply the autosaved config on startup if Autoload was enabled.
 	local savedData = readConfig(CONFIG_FILE)
 	if savedData and savedData.Autoload == true then
-        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam","Air Walk"}) do savedData[name]=false end
+        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam","Air Walk","Air Swim","Auto Blurt","Zoom Through Walls"}) do savedData[name]=false end
 		applyConfig(savedData)
 	end
 

@@ -13,7 +13,7 @@ WallCheck, hook nativo y arma en mochila. Knife Throw prueba el predictor,
 WallCheck, restauración del hook y carga tardía de WeaponService en ambos
 perfiles. Auto Pickup Gun prueba la tecla configurable, ausencia de API,
 roles, lobby y touch. Incluye Fling manual/automático, ESP, movimiento y Auto
-Vote. Las demás pruebas están en `tools/angel_hub_farm_tests`.
+Vote y texto del perk en Chams cuando los datos están disponibles. Las demás pruebas están en `tools/angel_hub_farm_tests`.
 `LUAU_TEST_PREFIX` permite otra instalación de Luau.
 
 Los mocks no verifican física, streaming, validaciones del servidor, contratos
