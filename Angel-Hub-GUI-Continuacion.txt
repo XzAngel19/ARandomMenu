@@ -224,15 +224,11 @@ end
 
 -- Controls not yet integrated are labelled and cannot claim to be active.
 local pendingControls={
-    ["Auto Blurt"]=true,["Air Swim"]=true,["Air Walk"]=true,["Walk Fling"]=true,
-    ["X-Ray"]=true,["FreeCam"]=true,["FreeCam Spectate"]=true,["Chams Show Perk"]=true,["Zoom Through Walls"]=true,
+    ["Auto Blurt"]=true,["Air Swim"]=true,["Air Walk"]=true,
+    ["Chams Show Perk"]=true,["Zoom Through Walls"]=true,
     ["Stay Under When Round Starts"]=true,
     ["Fling Murder After Full Bag"]=true,["Fling Sheriff After Full Bag"]=true,
     ["Auto Kill All When Full Bag"]=true,["Repeat On Change"]=true,["Fake Blurt Roles"]=true,
-    ["Remove Textures"]=true,["Disable Particles"]=true,["Disable Shadows"]=true,["Simple Materials"]=true,
-    ["Lowest Render Quality"]=true,["Low Detail Meshes"]=true,["Hide Distant Scenery"]=true,["Simplify Terrain"]=true,
-    ["Disable Post Effects"]=true,["Simple Lighting"]=true,["Disable Local Lights"]=true,["Simplify Game UI"]=true,
-    ["Hide World UI"]=true,["Hide Game UI"]=true,["Hide Roblox Panels"]=true,
 }
 local pendingButtons={
     ["Blurt Roles"]=true,["Play Emote"]=true,["Get All Emotes"]=true,
@@ -8983,6 +8979,688 @@ local function installMM2Win(screenGui)
     screenGui.Destroying:Connect(function()stopped=true;old(false);autoWin.cleanup();AngelHub.winSafe=nil;AngelHub.winReturnSafe=nil end)
 end
 
+-- Independent free camera with PC and touch controls; no player movement on injection.
+local function installFreeCam(screenGui)
+    local V=AngelHub.values
+    local enabled=V
+    local run=game:GetService("RunService")
+    local stopped=false
+        local freecam = {}
+        local actionId = "AngelHubFreeCam_" .. tostring(screenGui):gsub("[^%w]", "")
+        local actionService, camera, saved, writtenFrame, writtenFocus, position, yaw, pitch
+        local controls, controlsEnabled, touchGui, touchEnabled, overlay
+        local connections, held = {}, {}
+        local dragging, mouseMode, mouseIcon, moveTouch, lookTouch, stickX, stickY = false,nil,nil,nil,nil,0,0
+        local serial, targetPlayer, targetOffset, listElapsed, lastNames = 0,nil,nil,0,nil
+        local directions = {
+            W="Forward", Up="Forward", S="Back", Down="Back", A="Left", Left="Left", D="Right", Right="Right",
+            E="Up", Space="Up", Q="Down", LeftControl="Down",
+        }
+        local function connect(signal, fn)
+            if signal then table.insert(connections,signal:Connect(fn)) end
+        end
+        local function releaseMouse()
+            if not dragging then return end
+            dragging = false
+            pcall(function()
+                if userInputService.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then userInputService.MouseBehavior = mouseMode end
+                if userInputService.MouseIconEnabled == false then userInputService.MouseIconEnabled = mouseIcon end
+            end)
+        end
+        local function resetInput()
+            table.clear(held); moveTouch,lookTouch,stickX,stickY = nil,nil,0,0
+            releaseMouse()
+        end
+        local function restoreCamera()
+            if camera and saved then pcall(function()
+                if camera.CameraType == Enum.CameraType.Scriptable then
+                    camera.CameraType = saved.kind
+                    if camera.CFrame == writtenFrame then camera.CFrame = saved.frame end
+                    if camera.Focus == writtenFocus then camera.Focus = saved.focus end
+                end
+            end) end
+            camera,saved,writtenFrame,writtenFocus = nil,nil,nil,nil
+        end
+        local function releaseControls()
+            if controls and controlsEnabled then pcall(function() controls:Enable() end) end
+            controls,controlsEnabled = nil,nil
+            if touchGui then pcall(function() if touchGui.Enabled == false then touchGui.Enabled = touchEnabled end end) end
+            touchGui,touchEnabled = nil,nil
+        end
+        function freecam.cleanup()
+            serial += 1; resetInput()
+            if actionService then pcall(function() actionService:UnbindAction(actionId) end) end
+            pcall(function() run:UnbindFromRenderStep(actionId) end)
+            for _, connection in ipairs(connections) do connection:Disconnect() end
+            table.clear(connections)
+            releaseControls(); restoreCamera()
+            if overlay then pcall(function() overlay:Destroy() end); overlay = nil end
+            position,yaw,pitch,targetPlayer,targetOffset,lastNames = nil,nil,nil,nil,nil,nil
+        end
+        function freecam.available()
+            local ok, svc = pcall(function() return game:GetService("ContextActionService") end)
+            if not ok or not svc or not run.BindToRenderStep or not run.UnbindFromRenderStep or not workspace.CurrentCamera then return false end
+            actionService = svc; return true
+        end
+        local function hold(name, source, down)
+            if not name then return end
+            held[name] = held[name] or {}; held[name][source] = down and true or nil
+        end
+        local function active(name) return held[name] and next(held[name]) ~= nil end
+        local function pan(delta)
+            local sens = math.rad(math.clamp(tonumber(V["FreeCam Sensitivity"]) or .2,.05,.6))
+            yaw -= delta.X*sens; pitch = math.clamp(pitch-delta.Y*sens,-math.rad(89),math.rad(89))
+        end
+        local function overMenu(p)
+            local window = AngelHub.mainWindow
+            if not p or not window or not window.Visible then return false end
+            local a,s = window.AbsolutePosition,window.AbsoluteSize
+            return a and s and p.X >= a.X and p.Y >= a.Y and p.X <= a.X+s.X and p.Y <= a.Y+s.Y
+        end
+        local function refreshPlayers()
+            if not AngelHub.listOptions or not AngelHub.listOptions["Spectate Player"] then return end
+            local names = {}
+            for _, player in ipairs(playersService:GetPlayers()) do if player ~= localPlayer then table.insert(names,player.Name) end end
+            table.sort(names)
+            local signature = table.concat(names,"\0")
+            if signature ~= lastNames then lastNames = signature; AngelHub.listOptions["Spectate Player"](names) end
+        end
+        local function selectedTarget()
+            if not V["FreeCam Spectate"] then return end
+            for _, player in ipairs(playersService:GetPlayers()) do
+                if player ~= localPlayer and player.Name == V["Spectate Player"] then
+                    local char = player.Character
+                    local root = char and (char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Head"))
+                    if char and char.Parent and root and root:IsA("BasePart") then return player,root end
+                end
+            end
+        end
+        local function render(dt)
+            if stopped or not enabled["FreeCam"] then return end
+            if camera ~= workspace.CurrentCamera then restoreCamera(); camera = workspace.CurrentCamera end
+            if not camera then return end
+            if not saved then
+                saved = {kind=camera.CameraType,frame=camera.CFrame,focus=camera.Focus}
+                if not position then
+                    position = camera.CFrame.Position
+                    local look = camera.CFrame.LookVector
+                    pitch,yaw = math.asin(math.clamp(look.Y,-1,1)),math.atan2(-look.X,-look.Z)
+                end
+            elseif writtenFrame and camera.CameraType ~= Enum.CameraType.Scriptable then
+                saved = {kind=camera.CameraType,frame=camera.CFrame,focus=camera.Focus}
+            elseif writtenFrame and camera.CFrame ~= writtenFrame then
+                saved.frame,saved.focus = camera.CFrame,camera.Focus
+            end
+            listElapsed += math.max(0,dt)
+            if listElapsed >= 1 then listElapsed = 0; refreshPlayers() end
+            if userInputService.TouchEnabled then
+                local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+                local currentTouch = playerGui and playerGui:FindFirstChild("TouchGui")
+                if currentTouch ~= touchGui then
+                    if touchGui then pcall(function() if touchGui.Enabled == false then touchGui.Enabled = touchEnabled end end) end
+                    touchGui = currentTouch; touchEnabled = touchGui and touchGui.Enabled
+                end
+                if touchGui and touchGui.Enabled ~= false then touchGui.Enabled = false end
+            end
+            local char = localPlayer.Character
+            local human = char and char:FindFirstChildOfClass("Humanoid")
+            if not controls and human then pcall(function() human:Move(Vector3.new(0,0,0),false) end) end
+            local target, targetRoot = selectedTarget()
+            if target ~= targetPlayer then
+                targetPlayer,targetOffset = target,nil
+                if targetRoot then
+                    targetOffset = position-targetRoot.Position
+                    if targetOffset.Magnitude < 4 or targetOffset.Magnitude > 30 then targetOffset = Vector3.new(0,5,12) end
+                end
+            end
+            if targetRoot and targetOffset then position = targetRoot.Position + targetOffset end
+            local rotation = CFrame.fromOrientation(pitch,yaw,0)
+            if not userInputService:GetFocusedTextBox() and not AngelHub.listening then
+                local movement = Vector3.new((active("Right") and 1 or 0)-(active("Left") and 1 or 0)+stickX,
+                    (active("Up") and 1 or 0)-(active("Down") and 1 or 0),
+                    (active("Back") and 1 or 0)-(active("Forward") and 1 or 0)+stickY)
+                local direction = rotation:VectorToWorldSpace(Vector3.new(movement.X,0,movement.Z)) + Vector3.new(0,movement.Y,0)
+                if direction.Magnitude > 1 then direction = direction.Unit end
+                position += direction * math.clamp(tonumber(V["FreeCam Speed"]) or 50,-10000,250) * math.clamp(dt,0,.1)
+            end
+            local frame
+            if targetRoot and (targetRoot.Position-position).Magnitude > .01 then
+                targetOffset = position-targetRoot.Position
+                frame = CFrame.lookAt(position,targetRoot.Position)
+                local look = frame.LookVector
+                pitch,yaw = math.asin(math.clamp(look.Y,-1,1)),math.atan2(-look.X,-look.Z)
+            else frame = CFrame.new(position) * rotation end
+            camera.CameraType = Enum.CameraType.Scriptable
+            camera.CFrame = frame; camera.Focus = frame * CFrame.new(0,0,-16)
+            writtenFrame,writtenFocus = camera.CFrame,camera.Focus
+        end
+        function freecam.start()
+            freecam.cleanup(); serial += 1; local ticket = serial
+            refreshPlayers(); listElapsed = 0
+            local keyCodes = {Enum.KeyCode.W,Enum.KeyCode.Up,Enum.KeyCode.S,Enum.KeyCode.Down,Enum.KeyCode.A,Enum.KeyCode.Left,
+                Enum.KeyCode.D,Enum.KeyCode.Right,Enum.KeyCode.E,Enum.KeyCode.Space,Enum.KeyCode.Q,Enum.KeyCode.LeftControl}
+            actionService:BindActionAtPriority(actionId,function(_,state,input)
+                local key = input.KeyCode and input.KeyCode.Name
+                local direction = directions[key]
+                if userInputService:GetFocusedTextBox() or AngelHub.listening then hold(direction,key,false); return Enum.ContextActionResult.Pass end
+                hold(direction,key,state == Enum.UserInputState.Begin or state == Enum.UserInputState.Change)
+                return Enum.ContextActionResult.Sink
+            end,false,Enum.ContextActionPriority.High.Value+1,table.unpack(keyCodes))
+            connect(userInputService.InputBegan,function(input,processed)
+                if processed or not position or AngelHub.listening or userInputService:GetFocusedTextBox() or overMenu(input.Position) then return end
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    dragging = true; mouseMode,mouseIcon = userInputService.MouseBehavior,userInputService.MouseIconEnabled
+                    userInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition; userInputService.MouseIconEnabled = false
+                end
+            end)
+            connect(userInputService.InputChanged,function(input)
+                if dragging and input.UserInputType == Enum.UserInputType.MouseMovement and not userInputService:GetFocusedTextBox() and not AngelHub.listening and not V["FreeCam Spectate"] then pan(input.Delta) end
+            end)
+            connect(userInputService.InputEnded,function(input) if input.UserInputType == Enum.UserInputType.MouseButton2 then releaseMouse() end end)
+            connect(userInputService.WindowFocusReleased,resetInput); connect(userInputService.TextBoxFocused,resetInput)
+            if userInputService.TouchEnabled then
+                overlay = Instance.new("Frame"); overlay.Name = "AngelHubFreeCamControls"; overlay.Size = UDim2.fromScale(1,1)
+                overlay.BackgroundTransparency = 1; overlay.ZIndex = 30; overlay.Parent = screenGui
+                local function button(name,text,positionValue,sizeValue)
+                    local obj = Instance.new("TextButton"); obj.Name = name; obj.Text = text; obj.Position = positionValue; obj.Size = sizeValue
+                    obj.Font = Enum.Font.SourceSansBold; obj.TextSize = 20; obj.TextColor3 = Color3.new(1,1,1)
+                    obj.BackgroundColor3 = Color3.fromRGB(25,25,25); obj.BackgroundTransparency = .3; obj.ZIndex = 31; obj.Parent = overlay
+                    return obj
+                end
+                local pad = button("Move","",UDim2.new(0,20,1,-150),UDim2.fromOffset(104,104))
+                local knob = Instance.new("Frame"); knob.Name="Stick"; knob.Size=UDim2.fromOffset(26,26)
+                knob.AnchorPoint=Vector2.new(.5,.5); knob.Position=UDim2.fromScale(.5,.5); knob.BackgroundColor3=Color3.fromRGB(220,220,220); knob.ZIndex=32; knob.Parent=pad
+                local function move(input)
+                    local center = pad.AbsolutePosition+pad.AbsoluteSize*.5
+                    local v = (Vector2.new(input.Position.X,input.Position.Y)-center)/42
+                    if v.Magnitude > 1 then v = v.Unit end
+                    if v.Magnitude < .12 then v = Vector2.new(0,0) end
+                    stickX,stickY = v.X,v.Y; knob.Position = UDim2.new(.5,v.X*36,.5,v.Y*36)
+                end
+                connect(pad.InputBegan,function(input) if input.UserInputType == Enum.UserInputType.Touch and not moveTouch then moveTouch=input; move(input) end end)
+                for _, definition in ipairs({{"Up","+",-152},{"Down","−",-96}}) do
+                    local obj = button(definition[1],definition[2],UDim2.new(1,-70,1,definition[3]),UDim2.fromOffset(48,48))
+                    connect(obj.InputBegan,function(input) if input.UserInputType == Enum.UserInputType.Touch then hold(definition[1],input,true) end end)
+                    connect(obj.InputEnded,function(input) hold(definition[1],input,false) end)
+                end
+                local exit = button("Exit","Exit FreeCam",UDim2.new(.5,-66,0,48),UDim2.fromOffset(132,30))
+                connect(exit.Activated,function() if AngelHub.setters["FreeCam"] then AngelHub.setters["FreeCam"](false) end end)
+                connect(userInputService.TouchStarted,function(input,processed)
+                    if not processed and not lookTouch and input ~= moveTouch and workspace.CurrentCamera and not overMenu(input.Position)
+                        and input.Position.X > workspace.CurrentCamera.ViewportSize.X*.45 and not userInputService:GetFocusedTextBox() then lookTouch=input end
+                end)
+                connect(userInputService.TouchMoved,function(input)
+                    if input == moveTouch then move(input)
+                    elseif input == lookTouch and position and not V["FreeCam Spectate"] and not AngelHub.listening and not userInputService:GetFocusedTextBox() then pan(input.Delta) end
+                end)
+                connect(userInputService.TouchEnded,function(input)
+                    hold("Up",input,false); hold("Down",input,false)
+                    if input == moveTouch then moveTouch=nil;stickX,stickY=0,0;knob.Position=UDim2.fromScale(.5,.5) end
+                    if input == lookTouch then lookTouch=nil end
+                end)
+                local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+                touchGui = playerGui and playerGui:FindFirstChild("TouchGui")
+                if touchGui then touchEnabled = touchGui.Enabled; touchGui.Enabled = false end
+            end
+            task.spawn(function()
+                if stopped or serial ~= ticket or not enabled["FreeCam"] then return end
+                local ok, result = pcall(function()
+                    local scripts = localPlayer:FindFirstChild("PlayerScripts")
+                    local module = scripts and scripts:FindFirstChild("PlayerModule")
+                    return module and require(module):GetControls()
+                end)
+                if not ok or stopped or serial ~= ticket or not enabled["FreeCam"] or type(result) ~= "table" then return end
+                if type(result.Disable) == "function" and type(result.Enable) == "function" and type(result.controlsEnabled) == "boolean" then
+                    local prior = result.controlsEnabled
+                    controls,controlsEnabled = result,prior
+                    local success = pcall(function() result:Disable() end)
+                    if serial ~= ticket or stopped or not enabled["FreeCam"] then
+                        if prior then
+                            if not stopped and enabled["FreeCam"] and controls == result then controlsEnabled = true
+                            else pcall(function() result:Enable() end) end
+                        end
+                    elseif not success then
+                        if prior then pcall(function() result:Enable() end) end
+                        controls,controlsEnabled = nil,nil
+                    end
+                end
+            end)
+            run:BindToRenderStep(actionId,Enum.RenderPriority.Camera.Value+1,function(dt)
+                local ok, err = pcall(render,dt)
+                if not ok then warn("Angel Hub FreeCam: "..tostring(err)); if AngelHub.setters["FreeCam"] then AngelHub.setters["FreeCam"](false) end end
+            end)
+        end
+
+    local function conflict()
+        return AngelHub.mm2FlingBusy or AngelHub.mm2KnifeKillBusy or V["Auto Farm"] or V["Auto Win"]
+            or V["Enable Speed"] or V["Infinite Jump"] or V["Enable Fly"] or V["Air Walk"] or V["Air Swim"]
+            or V["Walk Fling"] or V["Auto Fling Selected Target"] or V["Auto Vote"] or V["Noclip"]
+    end
+    local old=AngelHub.setters["FreeCam"]
+    AngelHub.setters["FreeCam"]=function(value)
+        if value==true then
+            if stopped or conflict() or not freecam.available() then
+                old(false); if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam: desactiva movimiento o comprueba la camara") end;return false
+            end
+            if V["FreeCam"] then return true end
+            old(true)
+            local ok,err=pcall(freecam.start)
+            if not ok then freecam.cleanup();old(false);warn("Angel Hub FreeCam: "..tostring(err));if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam: error al iniciar")end;return false end
+            if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam activo; Spectate sigue al jugador elegido") end
+            return true
+        end
+        old(false);freecam.cleanup();if AngelHub.setFreeCamStatus then AngelHub.setFreeCamStatus("FreeCam apagado")end;return true
+    end
+    for _,name in ipairs({"Enable Speed","Infinite Jump","Enable Fly","Air Walk","Air Swim","Walk Fling","Auto Farm","Auto Win","Auto Fling Selected Target","Auto Vote","Noclip"})do
+        local setter=AngelHub.setters[name]
+        if setter then AngelHub.setters[name]=function(value)
+            if value==true and V["FreeCam"] then if AngelHub.status then AngelHub.status("Desactiva FreeCam primero") end;return false end
+            return setter(value)
+        end end
+    end
+    screenGui.Destroying:Connect(function()stopped=true;freecam.cleanup()end)
+end
+
+-- Voluntary fixed-power Walk Fling; restore every owned property on disable.
+local function installWalkFling(screenGui)
+    local V=AngelHub.values
+    local enabled=V
+    local run=game:GetService("RunService")
+    local stopped=false
+    local walkFling = {}
+    do
+        local collisions = setmetatable({}, {__mode = "k"})
+        local trackedCharacter, pulse = nil, nil
+        local oscillation = 0.1
+        local function restorePulse()
+            local state = pulse; pulse = nil
+            if not state then return end
+            pcall(function()
+                local value = state.root.AssemblyLinearVelocity
+                if value == state.spike or value == state.oscillated then
+                    state.root.AssemblyLinearVelocity = state.velocity
+                    state.root.Velocity = state.velocity
+                end
+            end)
+        end
+        local function restoreCollisions()
+            for part, original in pairs(collisions) do
+                pcall(function() if part.CanCollide == false then part.CanCollide = original end end)
+                collisions[part] = nil
+            end
+            trackedCharacter = nil
+        end
+        function walkFling.cleanup()
+            restorePulse(); restoreCollisions(); oscillation = 0.1
+        end
+        function walkFling.heartbeat(character, humanoid, root)
+            if not enabled["Walk Fling"] then return end
+            restorePulse()
+            if not character or not character.Parent or not humanoid or not root or root.Anchored or humanoid.Sit or humanoid.SeatPart then
+                restoreCollisions(); return
+            end
+            if trackedCharacter ~= character then restoreCollisions(); trackedCharacter = character end
+            for _, part in ipairs(character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    if collisions[part] == nil then collisions[part] = part.CanCollide end
+                    part.CanCollide = false
+                end
+            end
+            local velocity = root.AssemblyLinearVelocity
+            local spike = velocity * 30000 + Vector3.new(0, 30000, 0)
+            pulse = {character=character, root=root, velocity=velocity, spike=spike}
+            root.Velocity = spike; root.AssemblyLinearVelocity = spike
+        end
+        function walkFling.render()
+            local state = pulse
+            if not enabled["Walk Fling"] or not state or state.character ~= localPlayer.Character then return end
+            pcall(function()
+                if state.root.AssemblyLinearVelocity == state.spike then
+                    state.root.Velocity = state.velocity; state.root.AssemblyLinearVelocity = state.velocity
+                    state.restored = true
+                end
+            end)
+        end
+        function walkFling.stepped()
+            local state = pulse
+            if not enabled["Walk Fling"] or not state or not state.restored or state.character ~= localPlayer.Character then return end
+            pcall(function()
+                if state.root.AssemblyLinearVelocity == state.velocity then
+                    local motion = state.velocity + Vector3.new(0, oscillation, 0)
+                    state.oscillated = motion
+                    state.root.Velocity = motion; state.root.AssemblyLinearVelocity = motion
+                    oscillation = -oscillation
+                end
+            end)
+        end
+    end
+
+    local function conflict()
+        return AngelHub.mm2FlingBusy or AngelHub.mm2KnifeKillBusy or V["Auto Farm"] or V["Auto Win"] or V["Auto Vote"]
+            or V["Enable Fly"] or V["Enable Speed"] or V["Noclip"] or V["Air Walk"] or V["Air Swim"]
+            or V["Auto Fling Selected Target"] or V["FreeCam"]
+    end
+    local old=AngelHub.setters["Walk Fling"]
+    AngelHub.setters["Walk Fling"]=function(value)
+        if value==true and (stopped or conflict() or not run.RenderStepped or not run.Stepped) then
+            old(false);walkFling.cleanup();if AngelHub.setWalkFlingStatus then AngelHub.setWalkFlingStatus("Walk Fling: desactiva movimiento o revisa fisica") end;return false
+        end
+        old(value==true and not stopped);walkFling.cleanup()
+        if V["Walk Fling"] and AngelHub.suspendAntiFling then AngelHub.suspendAntiFling() end
+        if AngelHub.setWalkFlingStatus then AngelHub.setWalkFlingStatus(V["Walk Fling"] and "Walk Fling activo" or "Walk Fling apagado") end
+        return V["Walk Fling"]
+    end
+    for _,name in ipairs({"Enable Fly","Enable Speed","Noclip","Air Walk","Air Swim","Auto Farm","Auto Win","Auto Vote","Auto Fling Selected Target"})do
+        local setter=AngelHub.setters[name]
+        if setter then AngelHub.setters[name]=function(value)
+            if value==true and V["Walk Fling"] then if AngelHub.status then AngelHub.status("Desactiva Walk Fling primero") end;return false end
+            return setter(value)
+        end end
+    end
+    local connections={}
+    local function listen(signal,fn)if signal then table.insert(connections,signal:Connect(fn))end end
+    local function safe(fn,...)
+        local ok,err=pcall(fn,...)
+        if not ok then warn("Angel Hub Walk Fling: "..tostring(err));AngelHub.setters["Walk Fling"](false) end
+    end
+    listen(run.Heartbeat,function()
+        if stopped or not V["Walk Fling"] then return end
+        local character=localPlayer.Character
+        local human=character and character:FindFirstChildOfClass("Humanoid")
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if human and human.Health<=0 then human=nil end
+        safe(walkFling.heartbeat,character,human,root)
+    end)
+    listen(run.RenderStepped,function()if not stopped then safe(walkFling.render)end end)
+    listen(run.Stepped,function()if not stopped then safe(walkFling.stepped)end end)
+    screenGui.Destroying:Connect(function()
+        stopped=true;walkFling.cleanup();for _,c in ipairs(connections)do c:Disconnect()end
+    end)
+end
+
+-- Local-only X-Ray; bounded work per frame and conditional restoration.
+local function installXRay(screenGui)
+    local V=AngelHub.values
+    local run=game:GetService("RunService")
+    local stopped=false
+    local records,indexed=setmetatable({}, {__mode="k"}),setmetatable({}, {__mode="k"})
+    local parts,cursor,pause,generation={},1,0,0
+    local function restore(part)
+        local record=records[part];if not record then return end
+        pcall(function()if part.LocalTransparencyModifier==record.applied then part.LocalTransparencyModifier=record.base end end)
+        records[part]=nil
+    end
+    local function clear()
+        for part in pairs(records)do restore(part)end
+        table.clear(parts);table.clear(indexed);cursor,pause=1,0
+    end
+    local function add(part)
+        if part:IsA("BasePart") and not indexed[part] then indexed[part]=true;table.insert(parts,part)end
+    end
+    local function step(dt)
+        if stopped or not V["X-Ray"] then return end
+        pause=math.max(0,pause-math.max(tonumber(dt) or 0,0));if pause>0 then return end
+        for _=1,200 do
+            local part=parts[cursor]
+            if not part then cursor=1;pause=.2;break end
+            if not part.Parent or not part:IsDescendantOf(workspace) then
+                restore(part);indexed[part]=nil;parts[cursor]=parts[#parts];parts[#parts]=nil
+            else
+                local valid=part.Transparency<.98 and part.Anchored
+                local ancestor=part.Parent
+                while valid and ancestor and ancestor~=workspace do
+                    if ancestor:IsA("Tool") or (ancestor:IsA("Model") and ancestor:FindFirstChildOfClass("Humanoid")) then valid=false end
+                    ancestor=ancestor.Parent
+                end
+                if valid then
+                    local current=part.LocalTransparencyModifier;local record=records[part]
+                    if not record then record={base=current};records[part]=record
+                    elseif current~=record.applied then record.base=current end
+                    record.applied=math.max(record.base,math.clamp(tonumber(V["XRay Transparency"]) or .5,0,1))
+                    if current~=record.applied then part.LocalTransparencyModifier=record.applied end
+                else restore(part)end
+                cursor+=1
+            end
+        end
+    end
+    local old=AngelHub.setters["X-Ray"]
+    AngelHub.setters["X-Ray"]=function(value)
+        generation+=1;clear();old(not stopped and value==true)
+        if V["X-Ray"] then
+            local ticket=generation
+            task.spawn(function()
+                local ok,err=pcall(function()
+                    for i,part in ipairs(workspace:GetDescendants())do
+                        if stopped or ticket~=generation then return end
+                        add(part);if i%200==0 then task.wait()end
+                    end
+                end)
+                if not ok then warn("Angel Hub X-Ray: "..tostring(err));if ticket==generation then AngelHub.setters["X-Ray"](false)end end
+            end)
+        end
+    end
+    local added=workspace.DescendantAdded:Connect(function(part)if V["X-Ray"] then add(part)end end)
+    local heartbeat=run.Heartbeat:Connect(function(dt)
+        local ok,err=pcall(step,dt)
+        if not ok then warn("Angel Hub X-Ray: "..tostring(err));AngelHub.setters["X-Ray"](false)end
+    end)
+    screenGui.Destroying:Connect(function()stopped=true;generation+=1;added:Disconnect();heartbeat:Disconnect();clear()end)
+end
+
+-- Reversible local visual performance options.
+local function installFPSOptions(screenGui)
+    local V=AngelHub.values
+    local run=game:GetService("RunService")
+    local lighting=game:GetService("Lighting")
+    local stopped=false
+    local connections={}
+    local function listen(signal,callback)if signal then table.insert(connections,signal:Connect(callback))end end
+    local function message(text)if AngelHub.status then AngelHub.status(text)else warn("Angel Hub: "..tostring(text))end end
+    local function characterParts()
+        local character=localPlayer.Character
+        local human=character and character:FindFirstChildOfClass("Humanoid")
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        return character,human,root
+    end
+            local fps = {}
+            local names = {
+                "Remove Textures","Disable Particles","Disable Shadows","Simple Materials","Lowest Render Quality",
+                "Low Detail Meshes","Hide Distant Scenery","Simplify Terrain","Disable Post Effects","Simple Lighting",
+                "Disable Local Lights","Simplify Game UI","Hide World UI","Hide Game UI","Hide Roblox Panels",
+            }
+            local enabledOptions, saved, jobs, scenery, coreSaved = {}, {}, {}, {}, {}
+            local sequence, elapsed = 0, 0
+            local function own(option,object,property,value)
+                if not object then return end
+                pcall(function()
+                    local records = saved[option] or {}; saved[option] = records
+                    local entry = records[object] or {}; records[object] = entry
+                    if not entry[property] then entry[property] = {original=object[property],applied=value}
+                    elseif object[property] ~= entry[property].applied then entry[property].original = object[property] end
+                    object[property] = value; entry[property].applied = value
+                end)
+            end
+            local function restoreProperty(option,object,property)
+                local records = saved[option]; local entry = records and records[object]; local record = entry and entry[property]
+                if not record then return end
+                pcall(function() if object[property] == record.applied then object[property] = record.original end end)
+                entry[property] = nil
+                if not next(entry) then records[object] = nil end
+            end
+            local function restore(option)
+                local records = saved[option]; saved[option] = nil
+                if records then for object,entry in pairs(records) do for property,record in pairs(entry) do
+                    pcall(function() if object[property] == record.applied then object[property] = record.original end end)
+                end end end
+            end
+            local function protected(object)
+                local cur = object
+                while cur do
+                    if cur == screenGui or cur.Name == "TouchGui" or cur.Name == "Chat" or cur.Name == "BubbleChat" then return true end
+                    cur = cur.Parent
+                end
+                return false
+            end
+            local function staticMapPart(part)
+                if not part.Anchored or not part.CanCollide then return false end
+                local cur = part.Parent
+                while cur and cur ~= workspace do
+                    if cur:IsA("Tool") or cur:IsA("Accessory") or cur:FindFirstChildOfClass("Humanoid") then return false end
+                    cur = cur.Parent
+                end
+                return cur == workspace
+            end
+            local function sceneryUpdate(part)
+                if not enabledOptions["Hide Distant Scenery"] then return end
+                local _,human,root = characterParts()
+                if part.Parent and human and root and staticMapPart(part) and (part.Position-root.Position).Magnitude > 350 then
+                    own("Hide Distant Scenery",part,"LocalTransparencyModifier",1)
+                else restoreProperty("Hide Distant Scenery",part,"LocalTransparencyModifier") end
+            end
+            local function applyOne(option,object)
+                if not enabledOptions[option] or not object then return end
+                pcall(function()
+                    if object ~= workspace and object ~= lighting and object.Parent == nil then return end
+                    if option == "Remove Textures" then
+                        if object:IsA("Decal") or object:IsA("Texture") then own(option,object,"Transparency",1)
+                        elseif object:IsA("MeshPart") then own(option,object,"TextureID","")
+                        elseif object:IsA("SpecialMesh") then own(option,object,"TextureId","") end
+                    elseif option == "Disable Particles" and (object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam") or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles")) then
+                        own(option,object,"Enabled",false)
+                    elseif option == "Disable Shadows" then
+                        if object == lighting then own(option,object,"GlobalShadows",false)
+                        elseif object:IsA("BasePart") then own(option,object,"CastShadow",false) end
+                    elseif option == "Simple Materials" and object:IsA("BasePart") then
+                        own(option,object,"Material",Enum.Material.SmoothPlastic); own(option,object,"Reflectance",0)
+                    elseif option == "Low Detail Meshes" and (object:IsA("MeshPart") or object:IsA("PartOperation")) then
+                        own(option,object,"RenderFidelity",Enum.RenderFidelity.Performance)
+                    elseif option == "Hide Distant Scenery" and object:IsA("BasePart") then
+                        scenery[object] = true; sceneryUpdate(object)
+                    elseif option == "Simplify Terrain" and object:IsA("Terrain") then
+                        own(option,object,"Decoration",false); own(option,object,"WaterWaveSize",0)
+                        own(option,object,"WaterWaveSpeed",0); own(option,object,"WaterReflectance",0)
+                    elseif option == "Disable Post Effects" and object:IsA("PostEffect") then own(option,object,"Enabled",false)
+                    elseif option == "Simple Lighting" and object == lighting then
+                        own(option,object,"EnvironmentDiffuseScale",0); own(option,object,"EnvironmentSpecularScale",0)
+                    elseif option == "Disable Local Lights" and object:IsA("Light") then own(option,object,"Enabled",false)
+                    elseif not protected(object) then
+                        if option == "Simplify Game UI" then
+                            if object:IsA("UIStroke") or object:IsA("UIGradient") then own(option,object,"Enabled",false)
+                            elseif object:IsA("ViewportFrame") then own(option,object,"Visible",false) end
+                        elseif option == "Hide World UI" and (object:IsA("BillboardGui") or object:IsA("SurfaceGui")) then own(option,object,"Enabled",false)
+                        elseif option == "Hide Game UI" and object:IsA("ScreenGui") then own(option,object,"Enabled",false) end
+                    end
+                end)
+            end
+            local function containers()
+                local out = {workspace,lighting}
+                local gui = localPlayer:FindFirstChildOfClass("PlayerGui")
+                if gui then table.insert(out,gui) end
+                return out
+            end
+            local function queue(option)
+                sequence += 1; local token = sequence
+                local items = {}
+                for _, container in ipairs(containers()) do
+                    table.insert(items,container)
+                    local ok, descendants = pcall(function() return container:GetDescendants() end)
+                    if ok and type(descendants) == "table" then for _,object in ipairs(descendants) do table.insert(items,object) end end
+                end
+                jobs[option] = {items=items,index=1,token=token}
+            end
+            local function restorePanels()
+                local starter = coreSaved.service
+                if starter then for kind,value in pairs(coreSaved) do if kind ~= "service" then
+                    pcall(function() if starter:GetCoreGuiEnabled(kind) == false then starter:SetCoreGuiEnabled(kind,value) end end)
+                end end end
+                table.clear(coreSaved)
+            end
+            function fps.toggle(option,on)
+                if not on then
+                    enabledOptions[option] = nil; jobs[option] = nil
+                    if option == "Hide Roblox Panels" then restorePanels() end
+                    if option == "Hide Distant Scenery" then table.clear(scenery) end
+                    restore(option); return true
+                end
+                if enabledOptions[option] then return true end
+                if option == "Lowest Render Quality" then
+                    local ok, rendering = pcall(function() return settings().Rendering end)
+                    if not ok or not rendering then return false end
+                    local okRead, original = pcall(function() return rendering.QualityLevel end)
+                    local okWrite = okRead and pcall(function() rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+                    if not okWrite then return false end
+                    saved[option] = {[rendering]={QualityLevel={original=original,applied=Enum.QualityLevel.Level01}}}
+                elseif option == "Hide Roblox Panels" then
+                    local ok, starter = pcall(function() return game:GetService("StarterGui") end)
+                    if not ok or not starter then return false end
+                    coreSaved.service = starter
+                    local successes = 0
+                    for _,kind in ipairs({Enum.CoreGuiType.PlayerList,Enum.CoreGuiType.Backpack,Enum.CoreGuiType.Chat,Enum.CoreGuiType.EmotesMenu}) do
+                        local good, original = pcall(function() return starter:GetCoreGuiEnabled(kind) end)
+                        if good and type(original) == "boolean" then
+                            local changed = pcall(function() starter:SetCoreGuiEnabled(kind,false) end)
+                            if changed then coreSaved[kind] = original; successes += 1 end
+                        end
+                    end
+                    if successes == 0 then table.clear(coreSaved); return false end
+                else
+                    enabledOptions[option] = true; queue(option)
+                end
+                enabledOptions[option] = true; return true
+            end
+            function fps.step(dt)
+                local budget = 200
+                for option,job in pairs(jobs) do
+                    while budget > 0 and job.index <= #job.items do
+                        applyOne(option,job.items[job.index]); job.index += 1; budget -= 1
+                    end
+                    if job.index > #job.items then jobs[option] = nil end
+                    if budget == 0 then break end
+                end
+                elapsed += math.max(0,dt)
+                if elapsed >= 1 then
+                    elapsed = 0
+                    if enabledOptions["Hide Distant Scenery"] and not jobs["Hide Distant Scenery"] then
+                        local items = {}; for part in pairs(scenery) do table.insert(items,part) end
+                        jobs["Hide Distant Scenery"] = {items=items,index=1}
+                    end
+                end
+            end
+            function fps.cleanup()
+                for _,name in ipairs(names) do fps.toggle(name,false) end
+            end
+            for _,container in ipairs(containers()) do
+                if container.DescendantAdded then listen(container.DescendantAdded,function(object)
+                    for option in pairs(enabledOptions) do applyOne(option,object) end
+                end) end
+            end
+            for _,name in ipairs(names) do
+                local old = AngelHub.setters[name]
+                if old then AngelHub.setters[name] = function(value)
+                    local on = value == true
+                    if on and name=="Hide Distant Scenery" and V["X-Ray"] then message("Desactiva X-Ray primero");return false end
+                    if stopped and on then return false end
+                    local ok,result=pcall(fps.toggle,name,on)
+                    if not ok or not result then fps.toggle(name,false);old(false);message(name..": unavailable on this client");return false end
+                    old(on);return true
+                end end
+            end
+
+    local xray=AngelHub.setters["X-Ray"]
+    AngelHub.setters["X-Ray"]=function(value)
+        if value==true and V["Hide Distant Scenery"] then message("Desactiva Hide Distant Scenery primero");return false end
+        return xray(value)
+    end
+    listen(run.Heartbeat,function(dt)
+        if stopped then return end
+        local ok,err=pcall(fps.step,dt)
+        if not ok then warn("Angel Hub FPS: "..tostring(err))end
+    end)
+    screenGui.Destroying:Connect(function()
+        stopped=true;for _,c in ipairs(connections)do c:Disconnect()end;fps.cleanup()
+    end)
+end
+
 local function initializeScript()
 	if typeof(shared) == "table" and shared.AngelHubGui then
 		pcall(function()
@@ -9480,6 +10158,12 @@ local function initializeScript()
 	addModule(extraRight, "Air Swim", nil, false)
 	addModule(extraRight, "Air Walk", nil, false)
 	addModule(extraRight, "Walk Fling", nil, false)
+    local walkStatusHolder=createCard("Frame",extraRight,"Walk Fling Status",34)
+    local walkStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="Walk Fling apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},walkStatusHolder)
+    AngelHub.setWalkFlingStatus=function(text)walkStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,walkStatusHolder)
 
 	-- Visuals tab.
 	local visualsLeft = createColumn(AngelHub.pages.Visuals, UDim2.fromOffset(0, 0))
@@ -9589,7 +10273,13 @@ local function initializeScript()
 	addSlider(visualsRight, "FreeCam Speed", 1, 250, 50, 0)
 	addSlider(visualsRight, "FreeCam Sensitivity", 0.05, 0.6, 0.2, 2)
 	addToggle(visualsRight, "FreeCam Spectate", nil, false)
-	addList(visualsRight, "Spectate Player", { "Player1", "Player2" }, 60)
+	addList(visualsRight, "Spectate Player", {}, 60)
+    local camStatusHolder=createCard("Frame",visualsRight,"FreeCam Status",34)
+    local camStatusLabel=create("TextLabel",{Size=UDim2.new(1,-16,1,0),Position=UDim2.fromOffset(8,0),
+        BackgroundTransparency=1,Text="FreeCam apagado",TextColor3=OFF_TEXT_COLOR,TextSize=12,
+        Font=TEXT_FONT,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left},camStatusHolder)
+    AngelHub.setFreeCamStatus=function(text)camStatusLabel.Text=tostring(text)end
+    table.insert(AngelHub.searchables,camStatusHolder)
 
 
 	-- Config tab.
@@ -9778,11 +10468,15 @@ local function initializeScript()
 	installMM2Farm(screenGui)
 	installMM2Unbox(screenGui)
 	installMM2Win(screenGui)
+    installWalkFling(screenGui)
+    installFreeCam(screenGui)
+    installXRay(screenGui)
+    installFPSOptions(screenGui)
 
 	-- Apply the autosaved config on startup if Autoload was enabled.
 	local savedData = readConfig(CONFIG_FILE)
 	if savedData and savedData.Autoload == true then
-        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target"}) do savedData[name]=false end
+        for _,name in ipairs({"Auto Farm","Auto Win","Auto Unbox","Auto Fling Selected Target","Walk Fling","FreeCam"}) do savedData[name]=false end
 		applyConfig(savedData)
 	end
 

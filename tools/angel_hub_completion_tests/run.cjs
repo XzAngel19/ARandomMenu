@@ -59,8 +59,8 @@ shared.AngelHubGui:Destroy()
  const autoload=await Lua.create({sandbox:true});
  autoload.execute(read(path.join(fixtures,'gui-mock.luau'))+`\nfunction players:GetPlayers()return {player}end
  isfile=function()return true end;readfile=function()return '{}' end
- function services.HttpService:JSONDecode()return {Autoload=true,['Auto Farm']=true,['Auto Win']=true,['Auto Unbox']=true,['Auto Fling Selected Target']=true}end\n`+file+`\n
- local v=shared.AngelHub.values;assert(not v['Auto Farm'] and not v['Auto Win'] and not v['Auto Unbox'] and not v['Auto Fling Selected Target'])
+ function services.HttpService:JSONDecode()return {Autoload=true,['Auto Farm']=true,['Auto Win']=true,['Auto Unbox']=true,['Auto Fling Selected Target']=true,['Walk Fling']=true,['FreeCam']=true}end\n`+file+`\n
+ local v=shared.AngelHub.values;assert(not v['Auto Farm'] and not v['Auto Win'] and not v['Auto Unbox'] and not v['Auto Fling Selected Target'] and not v['Walk Fling'] and not v['FreeCam'])
  shared.AngelHubGui:Destroy()\n`);
  const otherGui=await Lua.create({sandbox:true});
  otherGui.execute(read(path.join(fixtures,'gui-mock.luau'))+'\nfunction players:GetPlayers()return {player} end;game.PlaceId=1\n'+file+`\n
