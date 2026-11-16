@@ -3359,12 +3359,13 @@ return Module
         if ended and ended:IsA("RemoteEvent") then table.insert(roleConnections,ended.OnClientEvent:Connect(function()
             roleGeneration+=1; roles={}; roundBlocked=true;AngelHub.mm2RoundEpoch+=1
         end)) end
-        for _,name in ipairs({"RoundStart","RoleSelect","ShowRoleSelect","ShowRoleSelectNew"}) do
+        for _,name in ipairs({"RoundStart","RoleSelect","ShowRoleSelect","ShowRoleSelectNew","CoinsStarted"}) do
             local remote=g:FindFirstChild(name)
             if remote and remote:IsA("RemoteEvent") then table.insert(roleConnections,remote.OnClientEvent:Connect(function(duration,data)
-                if name=="RoundStart" and (not tonumber(duration) or tonumber(duration)<=0) then
+                if name=="RoundStart" and duration~=nil and (not tonumber(duration) or tonumber(duration)<=0) then
                     roleGeneration+=1;roles={};roundBlocked=true;AngelHub.mm2RoundEpoch+=1;return
                 end
+                if name=="CoinsStarted" then roundBlocked=false;roleAt=0;return end
                 roleGeneration+=1; roles=type(data)=="table" and data or {}; roundBlocked=false; roleAt=0
                 if name=="RoundStart" then AngelHub.mm2RoundEpoch+=1 end
                 if name=="RoleSelect" and type(duration)=="string" then
@@ -3380,10 +3381,11 @@ return Module
             or (V["Auto Farm"] and (V["Auto Grab Gun And Shoot"] or V["Auto Kill All When Full Bag"]
                 or V["Fling Murder After Full Bag"] or V["Fling Sheriff After Full Bag"]))
     end
-    local function updateRoles()
+    local function updateRoles(force)
         if not isMM2 or stopped or not rolesNeeded() then return end
         bindRoles()
         local now=os.clock()
+        if force==true then roleAt=0 end
         if roundBlocked or roleBusy or now<roleAt or not roleBound then return end
         roleAt=now+2
         local remote=roleBound:FindFirstChild("GetCurrentPlayerData")
@@ -7967,10 +7969,10 @@ local function installMM2Fling(screenGui)
         if not gameplay then return end
         local ended=gameplay:FindFirstChild("RoundEndFade")
         if ended and ended:IsA("RemoteEvent") then table.insert(roundConnections,ended.OnClientEvent:Connect(function()roundEnded=true;cancel()end))end
-        for _,name in ipairs({"RoundStart","RoleSelect","ShowRoleSelect","ShowRoleSelectNew"})do
+        for _,name in ipairs({"RoundStart","RoleSelect","ShowRoleSelect","ShowRoleSelectNew","CoinsStarted"})do
             local event=gameplay:FindFirstChild(name)
             if event and event:IsA("RemoteEvent") then table.insert(roundConnections,event.OnClientEvent:Connect(function(duration)
-                if name=="RoundStart" and (not tonumber(duration) or tonumber(duration)<=0) then
+                if name=="RoundStart" and duration~=nil and (not tonumber(duration) or tonumber(duration)<=0) then
                     roundEnded=true;cancel()
                 else roundEnded=false end
             end))end
@@ -8044,7 +8046,7 @@ local function installMM2Fling(screenGui)
         if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1e6 then destroyY=-500 end
         if root.Position.Y<=destroyY+40 or targetRoot.Position.Y<=destroyY+40 then return reject("Fling detenido por proteccion del vacio") end
         if owner=="farm" or owner=="win" then settle(character,root) end
-        if partVelocity(root).Magnitude>=50 then return reject("Espera a que tu personaje se estabilice") end
+        if owner~="farm" and owner~="win" and partVelocity(root).Magnitude>=50 then return reject("Espera a que tu personaje se estabilice") end
         local home=root.CFrame
         if not home then
             local ok,piv=pcall(function()return character:GetPivot()end)
@@ -8612,30 +8614,52 @@ local function installMM2Farm(screenGui)
         local name
         for _,candidate in ipairs(fullOrder)do if V[candidate] and not full.done[candidate] then name=candidate;break end end
         if not name then return false end
-        if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
+        local function hasWeapon(player,toolName)
+            local c=player and player.Character
+            local bp=player and player:FindFirstChildOfClass("Backpack")
+            return (c and c:FindFirstChild(toolName)~=nil) or (bp and bp:FindFirstChild(toolName)~=nil)
+        end
+        local function findFullTarget(wanted)
+            for _,player in ipairs(playersService:GetPlayers())do
+                if player~=localPlayer then
+                    local found=AngelHub.getMM2Role and AngelHub.getMM2Role(player)
+                    if found==wanted or (wanted=="Sheriff" and found=="Hero") then return player end
+                end
+            end
+            local toolName=wanted=="Murderer" and "Knife" or "Gun"
+            for _,player in ipairs(playersService:GetPlayers())do
+                if player~=localPlayer and hasWeapon(player,toolName) then
+                    local c=player.Character
+                    local h=c and c:FindFirstChildOfClass("Humanoid")
+                    if h and h.Health>0 then return player end
+                end
+            end
+            return nil
+        end
         if full.waitName~=name then full.waitName=name;full.waitAt=os.clock() end
         local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
         local target
         if name~="Auto Kill All When Full Bag" then
             local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
-            for _,player in ipairs(playersService:GetPlayers())do
-                if player~=localPlayer then
-                    local found=AngelHub.getMM2Role and AngelHub.getMM2Role(player)
-                    if found==wanted or (wanted=="Sheriff" and found=="Hero") then target=player;break end
-                end
+            if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles(false) end
+            target=findFullTarget(wanted)
+            if not target and AngelHub.refreshMM2Roles then
+                AngelHub.refreshMM2Roles(true)
+                target=findFullTarget(wanted)
             end
+        elseif AngelHub.refreshMM2Roles then
+            AngelHub.refreshMM2Roles(false)
         end
         local ticket=farmGeneration
         local function hasKnife()
-            local bp=localPlayer:FindFirstChildOfClass("Backpack")
-            return (character and character:FindFirstChild("Knife")~=nil) or (bp and bp:FindFirstChild("Knife")~=nil)
+            return hasWeapon(localPlayer,"Knife")
         end
         local function valid()
             local c,h,r=characterParts()
             if stopped or not enabled["Auto Farm"] or V[name]~=true or farmGeneration~=ticket
                 or full.active~=name or c~=character or h~=human or r~=root or mm2Map()~=map
-                or farmAmount<math.max(1,farmLimit) or (farmWaitingMap and farmWaitingMap==map)
-                or not farmOnMap(root,map) then return false end
+                or farmAmount<math.max(1,farmLimit) or (farmWaitingMap and farmWaitingMap==map) then return false end
+            if not farmOnMap(r,map) and not (AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner=="farm") then return false end
             if name=="Auto Kill All When Full Bag" then
                 local currentRole=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
                 return currentRole=="Murderer" or (currentRole==nil and hasKnife())
@@ -8643,8 +8667,10 @@ local function installMM2Farm(screenGui)
             if target then
                 local current=AngelHub.getMM2Role and AngelHub.getMM2Role(target)
                 local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
-                return (current==wanted or (wanted=="Sheriff" and current=="Hero"))
-                    and AngelHub.farmTargetAllowed(target,map)==true
+                local toolName=wanted=="Murderer" and "Knife" or "Gun"
+                local matchesRole=(current==wanted or (wanted=="Sheriff" and current=="Hero"))
+                    or (current==nil and hasWeapon(target,toolName))
+                return matchesRole and AngelHub.farmTargetAllowed(target,map)==true
             end
             return true
         end
@@ -8663,7 +8689,7 @@ local function installMM2Farm(screenGui)
             return true
         end
         full.active=nil
-        if os.clock()-full.waitAt>=4 then
+        if os.clock()-full.waitAt>=10 then
             full.done[name]=true;full.waitName=nil;full.waitAt=nil
             message(name..": objetivo o accion no disponible")
         end
@@ -8671,6 +8697,26 @@ local function installMM2Farm(screenGui)
     end
     syncBagFromGui = function()
         pcall(function()
+            local function checkText(text)
+                if type(text)~="string" or text=="" then return false end
+                local cur,cap=text:match("(%d+)%s*/%s*(%d+)")
+                if cur and cap then
+                    local a,b=tonumber(cur),tonumber(cap)
+                    if b and b>=1 then farmLimit=b end
+                    if a and a>=0 and a>farmAmount then farmAmount,farmBagSampleKnown=a,true end
+                    return farmAmount>=math.max(1,farmLimit)
+                end
+                if string.find(string.lower(text),"full",1,true) then
+                    farmAmount,farmBagSampleKnown=math.max(1,farmLimit),true
+                    return true
+                end
+                local single=tonumber(text:match("(%d+)"))
+                if single and single>=0 and single>farmAmount then
+                    farmAmount,farmBagSampleKnown=single,true
+                    return farmAmount>=math.max(1,farmLimit)
+                end
+                return false
+            end
             local pg=localPlayer:FindFirstChildOfClass("PlayerGui")
             local main=pg and pg:FindFirstChild("MainGUI")
             local gameGui=main and main:FindFirstChild("Game")
@@ -8681,14 +8727,19 @@ local function installMM2Farm(screenGui)
                 local child=bag:FindFirstChild(name)
                 if child then
                     if child:IsA("TextLabel") and checkText(child.Text) then break end
-                    if (child:IsA("IntValue") or child:IsA("NumberValue")) and type(child.Value)=="number" and child.Value>=math.max(1,farmLimit) and farmAmount<child.Value then
-                        farmAmount,farmBagSampleKnown=child.Value,true;break
+                    if (child:IsA("IntValue") or child:IsA("NumberValue")) and type(child.Value)=="number" and child.Value>farmAmount then
+                        farmAmount,farmBagSampleKnown=child.Value,true
+                        if farmAmount>=math.max(1,farmLimit) then break end
                     end
                 end
             end
             if farmAmount<math.max(1,farmLimit) and bag.GetDescendants then
                 for _,desc in ipairs(bag:GetDescendants())do
                     if desc:IsA("TextLabel") and checkText(desc.Text) then break end
+                    if (desc:IsA("IntValue") or desc:IsA("NumberValue")) and type(desc.Value)=="number" and desc.Value>farmAmount then
+                        farmAmount,farmBagSampleKnown=desc.Value,true
+                        if farmAmount>=math.max(1,farmLimit) then break end
+                    end
                 end
             elseif farmAmount<math.max(1,farmLimit) then
                 local label=bag:FindFirstChildWhichIsA("TextLabel",true)
@@ -8782,7 +8833,33 @@ local function installMM2Farm(screenGui)
             local gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
             local knife=character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
             if gun and AngelHub.farmGrabShoot then AngelHub.farmGrabShoot()
-            elseif (not role or role=="Innocent") and not knife and AngelHub.actions and AngelHub.actions["Get Gun"] then AngelHub.actions["Get Gun"]()end
+            elseif (not role or role=="Innocent") and not knife then
+                if AngelHub.actions and AngelHub.actions["Get Gun"] then AngelHub.actions["Get Gun"]() end
+                gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+                if not gun then
+                    local drop=AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun()
+                    local touch=drop and (drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true))
+                    if touch and touch:IsA("BasePart") and touch:IsDescendantOf(workspace) and farmOnMap(touch,map) then
+                        local destroyY=workspace.FallenPartsDestroyHeight
+                        if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1000000 then destroyY=-500 end
+                        if touch.Position.Y>destroyY+40 then
+                            local returnCf=extensionSteps.farmFull.returnFrame or root.CFrame
+                            extensionSteps.farmFull.returnFrame=returnCf
+                            pcall(function()
+                                character:PivotTo(touch.CFrame)
+                                root.AssemblyLinearVelocity=Vector3.zero
+                                root.AssemblyAngularVelocity=Vector3.zero
+                            end)
+                            if type(firetouchinterest)=="function" then
+                                pcall(firetouchinterest,root,touch,0)
+                                pcall(firetouchinterest,root,touch,1)
+                            end
+                            gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+                            if gun and AngelHub.farmGrabShoot then AngelHub.farmGrabShoot() end
+                        end
+                    end
+                end
+            end
         end
         if farmPark then
             if V["Farm Safe Zone"] and not fullPending() and character == farmPark.character and humanoid and root

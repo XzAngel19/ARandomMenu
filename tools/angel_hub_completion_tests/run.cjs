@@ -242,5 +242,73 @@ local aimPt=pred.knifeAim(enemy2,Vector3.new(0,0,0),96)
 assert(aimPt~=nil and aimPt.Z<45)
 screenGui.Destroying:Fire()
 `);
+ const farmFullGui=await Lua.create({sandbox:true});
+ farmFullGui.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+`
+local function setting(n,v)V[n]=v;AngelHub.setters[n]=function(x)V[n]=x end end
+run.Stepped=event()
+for _,n in ipairs({'Auto Farm','Coins Aura','Farm Safe Zone','Auto Grab Gun And Shoot','Reset When Full Coin Bag',
+ 'Stay Under When Round Starts','Auto Kill All When Full Bag','Fling Murder After Full Bag','Fling Sheriff After Full Bag',
+ 'Auto Fling Selected Target','Enable Speed','Enable Fly','Noclip','Auto Vote'})do setting(n,false)end
+setting('Farm Speed',22);setting('Coins Collected',0);setting('Farm Time',0);V['Fling Retries']=0
+local fmt={};fmt.__index=fmt;fmt.__mul=function(a,b)return setmetatable({Position=a.Position+b.Position},fmt)end
+function fmt:ToObjectSpace(b)return CFrame.new(b.Position-self.Position)end
+function CFrame.new(x,y,z)local p=type(x)=='table' and x or Vector3.new(x or 0,y or 0,z or 0);return setmetatable({Position=p},fmt)end
+function CFrame.Angles()return CFrame.new(0,0,0)end
+Enum.HumanoidStateType={Seated='seated',GettingUp='gettingup'};humanoid.FloorMaterial=Enum.Material.Ground;humanoid.seated=true
+function humanoid:GetStateEnabled()return self.seated end;function humanoid:SetStateEnabled(_,v)self.seated=v end;function humanoid:ChangeState()end
+character.Parent=workspace;root.Parent=character;root.Position=Vector3.zero;root.CFrame=CFrame.new(root.Position)
+root.AssemblyAngularVelocity=Vector3.zero;root.AssemblyLinearVelocity=Vector3.zero;root.Velocity=Vector3.zero;root.RotVelocity=Vector3.zero
+function character:GetPivot()return root.CFrame end
+function character:PivotTo(cf)self.lastPivot=cf;root.CFrame=cf;root.Position=cf.Position end
+local murd={Name='Murd',UserId=2,Character={Parent=workspace}}
+local mr={Position=Vector3.new(20,0,0),AssemblyLinearVelocity=Vector3.zero};function mr:IsA(c)return c=='BasePart'end
+local mh={Health=100,Sit=false,MoveDirection=Vector3.zero};mr.Parent=murd.Character
+function murd.Character:FindFirstChildOfClass(n)if n=='Humanoid'then return mh end end
+function murd.Character:FindFirstChild(n)if n=='HumanoidRootPart'then return mr end end
+local sher={Name='Sher',UserId=3,Character={Parent=workspace}}
+local sr={Position=Vector3.new(30,0,0),AssemblyLinearVelocity=Vector3.zero};function sr:IsA(c)return c=='BasePart'end
+local sh={Health=100,Sit=false,MoveDirection=Vector3.zero};sr.Parent=sher.Character
+function sher.Character:FindFirstChildOfClass(n)if n=='Humanoid'then return sh end end
+function sher.Character:FindFirstChild(n)if n=='HumanoidRootPart'then return sr end end
+function playersService:GetPlayers()return {localPlayer,murd,sher} end
+local coinLbl={Text='40/40'};function coinLbl:IsA(c)return c=='TextLabel'end
+local coinBag={};function coinBag:FindFirstChild(n)if n=='Coins'then return coinLbl end end
+function coinBag:GetDescendants()return {coinLbl} end
+local gameGui={};function gameGui:FindFirstChild(n)if n=='CoinBag'then return coinBag end end
+local mainGui={};function mainGui:FindFirstChild(n)if n=='Game' or n=='CoinBag' then return n=='Game' and gameGui or coinBag end end
+function playerGui:FindFirstChild(n)if n=='MainGUI'then return mainGui end end
+local oldLpClass=localPlayer.FindFirstChildOfClass
+function localPlayer:FindFirstChildOfClass(n)if n=='PlayerGui'then return playerGui end return oldLpClass(self,n) end
+local collected={OnClientEvent=event()};function collected:IsA(c)return c=='RemoteEvent'end
+local ended={OnClientEvent=event()};function ended:IsA(c)return c=='RemoteEvent'end
+local started={OnClientEvent=event()};function started:IsA(c)return c=='RemoteEvent'end
+local coinsStarted={OnClientEvent=event()};function coinsStarted:IsA(c)return c=='RemoteEvent'end
+local gameplay={};function gameplay:FindFirstChild(n)return ({CoinCollected=collected,RoundEndFade=ended,RoundStart=started,CoinsStarted=coinsStarted})[n]end
+local remotes={};function remotes:FindFirstChild(n)if n=='Gameplay'then return gameplay end end
+local storage={};function storage:FindFirstChild(n)if n=='Remotes'then return remotes end end;services.ReplicatedStorage=storage
+AngelHub.getMM2Role=function(p)if p==murd then return 'Murderer' elseif p==sher then return 'Sheriff' end end
+AngelHub.findMM2Map=function()return map.Parent and map end
+AngelHub.refreshMM2Roles=function()end;AngelHub.releaseMM2Roles=function()end
+local drop={Position=Vector3.new(45,0,0),CFrame=CFrame.new(Vector3.new(45,0,0))};function drop:IsA(c)return c=='BasePart'end;function drop:IsDescendantOf(w)return w==workspace end
+local grabbed=false;local shots=0
+AngelHub.findMM2DroppedGun=function()return (not grabbed) and drop or nil end
+AngelHub.actions={['Get Gun']=function()return true end}
+AngelHub.farmGrabShoot=function()shots+=1 end
+installMM2Fling(screenGui);installMM2Farm(screenGui)
+-- Simulate prior round end followed by RoundStart(nil) / CoinsStarted: must NOT leave roundEnded=true
+ended.OnClientEvent:Fire();started.OnClientEvent:Fire();coinsStarted.OnClientEvent:Fire()
+AngelHub.setters['Fling Murder After Full Bag'](true);AngelHub.setters['Fling Sheriff After Full Bag'](true)
+AngelHub.setters['Auto Grab Gun And Shoot'](true);AngelHub.setters['Auto Farm'](true)
+-- No CoinCollected event: GUI '40/40' alone triggers Fling Murderer while alive!
+heartbeat:Fire(.2)
+local pin1=created[#created];assert(pin1 and pin1.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_PIN1')
+-- Finish Murder fling -> transitions to Sheriff fling!
+fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.2;heartbeat:Fire(.2)
+local pin2=created[#created];assert(pin2~=pin1 and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_PIN2')
+-- Finish Sheriff fling -> Auto Grab Gun pivots directly onto GunDrop when firetouchinterest alone didn't grant Gun!
+fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
+assert(character.lastPivot and character.lastPivot.Position.X==45,'FAIL_PIVOT')
+screenGui.Destroying:Fire()
+`);
  console.log('PASS: lists, Fling, Auto Win Sheriff, safe autoload, visual and prior GUI regressions (PC/mobile mocks only)');
 })().catch(err=>{console.error(err);process.exit(1)});
