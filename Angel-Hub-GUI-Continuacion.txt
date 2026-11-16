@@ -1982,13 +1982,62 @@ function Module.init(runtime: any): any
         return direction * length
     end
 
+    -- TestingStuff calibration replays (136 scored knife throws) showed
+    -- quadratic acceleration over 0.4-1.5 s knife flights caused 43 large
+    -- overshoots (mean 15.3 studs vs 4.7 for constant velocity). Cap the
+    -- acceleration ramp to 0.25 s and bound total speed by the walk envelope
+    -- when input history is unavailable; gunAim keeps leadHorizontal untouched.
+    local function knifeLeadHorizontal(motion: Motion, span: number): Vector3
+        if span <= 0 then
+            return Vector3.zero
+        end
+        if motion.hasInputHistory then
+            return leadHorizontal(motion, span)
+        end
+        local speed: number = motion.horizontal.Magnitude
+        if speed < 1e-4 then
+            return Vector3.zero
+        end
+        local accelMagnitude: number = math.sqrt(
+            motion.accelX * motion.accelX + motion.accelZ * motion.accelZ
+        )
+        if accelMagnitude >= 4 then
+            local applied: Vector3 = Vector3.new(motion.accelX, 0, motion.accelZ)
+            if accelMagnitude > 60 then
+                applied *= 60 / accelMagnitude
+            end
+            local accelSpan: number = math.min(span, 0.25)
+            local displacement: Vector3 = motion.horizontal * span
+                + applied * (motion.fitLag * span + 0.5 * accelSpan * accelSpan
+                    + accelSpan * math.max(0, span - accelSpan))
+            if motion.brakeSeconds and span > motion.brakeSeconds then
+                local direction: Vector3 = motion.horizontal.Unit
+                local alongDistance: number = displacement:Dot(direction)
+                local along: number = math.min(0, motion.longitudinalAccel)
+                local speedNow: number = math.max(0, speed + along * motion.fitLag)
+                local stopDistance: number = speedNow * motion.brakeSeconds * 0.5
+                if alongDistance > stopDistance then
+                    displacement -= direction * (alongDistance - stopDistance)
+                end
+            end
+            local maxDist: number = math.max(speed, 24) * span
+            local mag: number = displacement.Magnitude
+            if mag > maxDist and mag > 1e-4 then
+                displacement *= maxDist / mag
+            end
+            return displacement
+        end
+        return leadHorizontal(motion, span)
+    end
+
     local function predictedRoot(
         track: Track,
         motion: Motion,
-        horizon: number
+        horizon: number,
+        horizontalFn: ((Motion, number) -> Vector3)?
     ): Vector3
         local last: Sample = track.samples[#track.samples]
-        local lead: Vector3 = leadHorizontal(motion, horizon)
+        local lead: Vector3 = (horizontalFn or leadHorizontal)(motion, horizon)
         local x: number = last.position.X + lead.X
         local z: number = last.position.Z + lead.Z
         local y: number = last.position.Y
@@ -2613,13 +2662,13 @@ function Module.init(runtime: any): any
             -- Ground is observed at the projected XZ, so do not reuse a
             -- possibly stale historical "grounded" height from another ledge.
             local last: Sample = track.samples[#track.samples]
-            local lead: Vector3 = leadHorizontal(motion, span)
+            local lead: Vector3 = knifeLeadHorizontal(motion, span)
             local y: number = last.position.Y + motion.vertical * span
                 - 0.5 * workspace.Gravity * span * span
             if floorY then y = math.max(y, floorY) end
             return Vector3.new(last.position.X + lead.X, y, last.position.Z + lead.Z)
         end
-        return predictedRoot(track, motion, span)
+        return predictedRoot(track, motion, span, knifeLeadHorizontal)
     end
 
     local function knifeFloorIntercept(
@@ -2744,7 +2793,12 @@ function Module.init(runtime: any): any
             MAX_HORIZON
         )
         local last: Sample = track.samples[#track.samples]
-        local aimStart: Vector3 = last.position + last.aimOffset
+        local aimOffset: Vector3 = last.aimOffset
+        local freshAimPart: BasePart? = findAimPart(track.character)
+        if freshAimPart then
+            aimOffset = freshAimPart.Position - track.root.Position
+        end
+        local aimStart: Vector3 = last.position + aimOffset
         local initial: Vector3 = motion.velocity
         local flight: number? = predictionMath.interceptTime(
             aimStart + initial * horizon - origin,
@@ -2774,7 +2828,7 @@ function Module.init(runtime: any): any
         -- which is the one property a straight constant-speed blade has to
         -- satisfy. It converges in two or three passes; the cap is a guard.
         local span: number = horizon + flight
-        local lead: Vector3 = leadHorizontal(motion, span)
+        local lead: Vector3 = knifeLeadHorizontal(motion, span)
         local vertical: number = motion.verticalLead and motion.vertical or 0
         if motion.verticalLead then
             vertical -= 0.5 * workspace.Gravity * span
@@ -2801,7 +2855,7 @@ function Module.init(runtime: any): any
                 break
             end
             span = horizon + flight
-            lead = leadHorizontal(motion, span)
+            lead = knifeLeadHorizontal(motion, span)
             vertical = motion.verticalLead and motion.vertical or 0
             if motion.verticalLead then
                 vertical -= 0.5 * workspace.Gravity * span
@@ -2823,7 +2877,7 @@ function Module.init(runtime: any): any
             )
             local probeFlight: number = lateralFlight or flight
             local spanAtProbe: number = horizon + probeFlight
-            local probePoint: Vector3 = predictedRoot(track, motion, spanAtProbe)
+            local probePoint: Vector3 = predictedRoot(track, motion, spanAtProbe, knifeLeadHorizontal)
             local possibleSpan: number = horizon + math.max(probeFlight, flight)
             local rawY: number = last.position.Y + motion.vertical * possibleSpan
                 - 0.5 * workspace.Gravity * possibleSpan * possibleSpan
@@ -2919,7 +2973,7 @@ function Module.init(runtime: any): any
                     - 0.5 * workspace.Gravity * correctedSpan * correctedSpan
                 if not floorY or unboundedY > floorY then return nil, nil, "unreachable" end
             end
-            endpoint = solvedRoot + last.aimOffset
+            endpoint = solvedRoot + aimOffset
             -- The score/telemetry must describe the point actually returned.
             flight = (endpoint - origin).Magnitude / resolvedSpeed
         end
@@ -2927,7 +2981,7 @@ function Module.init(runtime: any): any
             endpoint = endpoint,
             targetPosition = endpoint,
             capturedPosition = aimStart,
-            rootPosition = endpoint - last.aimOffset,
+            rootPosition = endpoint - aimOffset,
             velocity = motion.velocity,
             leadSeconds = horizon,
             flightSeconds = flight,
@@ -3224,7 +3278,13 @@ return Module
             if type(record)=="table" and (tostring(key)==player.Name or tostring(key)==tostring(player.UserId)
                 or record.Name==player.Name or (record.UserId and tostring(record.UserId)==tostring(player.UserId))) then
                 if player~=LocalPlayer and (record.Dead or record.Killed) then return "Dead" end
-                if type(record.Role)=="string" then return record.Role end
+                if type(record.Role)=="string" then
+                    if record.Role=="Innocent" then
+                        if weapon(player,"Knife") then return "Murderer" end
+                        if weapon(player,"Gun") then return "Hero" end
+                    end
+                    return record.Role
+                end
                 if record.Dead or record.Killed then return "Dead" end
             end
         end
@@ -4296,21 +4356,20 @@ function Module.init(runtime: any): any
     end
 
     -- Find best target for knife throw
-    local function findTarget(): Player?
+    local function findTarget(requireFullLos: boolean?): (Player?, Vector3?)
         local localChar: Model? = LocalPlayer and LocalPlayer.Character
         if not localChar then
-            return nil
+            return nil, nil
         end
         local localRoot: BasePart? = localChar:FindFirstChild("HumanoidRootPart") :: BasePart?
         if not localRoot then
-            return nil
+            return nil, nil
         end
         local knife: Tool? = getKnife()
         local originCF: CFrame? = getThrowOriginCFrame(knife)
         local originPos: Vector3 = originCF and originCF.Position or localRoot.Position
 
-        local bestTarget: Player? = nil
-        local bestScore: number = math.huge
+        local candidates: {{player: Player, score: number}} = {}
 
         for _, player: Player in ipairs(Players:GetPlayers()) do
             if isValidTarget(player) then
@@ -4330,17 +4389,29 @@ function Module.init(runtime: any): any
                             -- still does, and the sooner the blade lands, the
                             -- smaller every prediction error is.
                             local score: number = flight or (distance / 96)
-                            if score < bestScore then
-                                bestScore = score
-                                bestTarget = player
-                            end
+                            table.insert(candidates, {player = player, score = score})
                         end
                     end
                 end
             end
         end
 
-        return bestTarget
+        if #candidates == 0 then
+            return nil, nil
+        end
+        table.sort(candidates, function(a, b)
+            return a.score < b.score
+        end)
+        if not requireFullLos then
+            return candidates[1].player, nil
+        end
+        for _, entry in ipairs(candidates) do
+            local aimPoint: Vector3? = resolveKnifeAim(entry.player, originPos, knife, false)
+            if aimPoint then
+                return entry.player, aimPoint
+            end
+        end
+        return candidates[1].player, nil
     end
 
     -- The solve is throttled, but its result used to jump at each update. This is
@@ -4581,9 +4652,10 @@ function Module.init(runtime: any): any
         local character: Model? = LocalPlayer.Character
         if not knife or not character or knife.Parent ~= character then return nil end
         local originCF: CFrame? = getThrowOriginCFrame(knife)
-        local target: Player? = findTarget()
-        if not originCF or not target then return nil end
-        return resolveKnifeAim(target, originCF.Position, knife)
+        if not originCF then return nil end
+        local target: Player?, aimPoint: Vector3? = findTarget(true)
+        if not target then return nil end
+        return aimPoint or resolveKnifeAim(target, originCF.Position, knife)
     end
     local function hookNative(tbl: any, name: string): ()
         local original: any = tbl[name]
@@ -4657,21 +4729,17 @@ function Module.init(runtime: any): any
         local interval: number = throwDue and AIM_CACHE_SECONDS or TRACER_CACHE_SECONDS
         if now - cachedAt >= interval then
             cachedAt = now
-            cachedTarget = findTarget()
-            cachedAim = nil
+            cachedOrigin = getThrowOriginCFrame(knife)
+            cachedTarget, cachedAim = findTarget(true)
             cachedVisualRoot = nil
             cachedVisualPosition = nil
-            cachedOrigin = getThrowOriginCFrame(knife)
-            if cachedOrigin and cachedTarget then
-                cachedAim = resolveKnifeAim(cachedTarget, cachedOrigin.Position, knife)
-                if cachedAim and settings.knifeTracer then
-                    local character: Model? = cachedTarget.Character
-                    local root: BasePart? = character
-                        and character:FindFirstChild("HumanoidRootPart") :: BasePart?
-                    if root then
-                        cachedVisualRoot = root
-                        cachedVisualPosition = root.Position
-                    end
+            if cachedOrigin and cachedTarget and cachedAim and settings.knifeTracer then
+                local character: Model? = cachedTarget.Character
+                local root: BasePart? = character
+                    and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+                if root then
+                    cachedVisualRoot = root
+                    cachedVisualPosition = root.Position
                 end
             end
         elseif cachedOrigin then
@@ -7688,6 +7756,7 @@ local function installMM2Fling(screenGui)
     local roundEnded,bound,nextBind,roundConnections=false,nil,0,{}
     local FLING_VELOCITY=Vector3.new(9e7,9e7*10,9e7)
     local FLING_ROT_VELOCITY=Vector3.new(9e8,9e8,9e8)
+    local PIN_VELOCITY=Vector3.new(9e8,9e8,9e8)
     local TIME_TO_WAIT=2
     local AUTO_BACKOFF=0.5
     local function status(text)
@@ -7713,16 +7782,24 @@ local function installMM2Fling(screenGui)
         if container:IsA("BasePart") then return container end
         return container:FindFirstChildWhichIsA("SpawnLocation",true) or container:FindFirstChildWhichIsA("BasePart",true)
     end
+    local function lobbyRef()
+        local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
+        if not lobby then
+            for _,object in ipairs(workspace:GetChildren()) do
+                if string.find(string.lower(object.Name),"lobby",1,true) then lobby=object;break end
+            end
+        end
+        local lobbySpawn=lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true))
+        return spawnPart(lobbySpawn) or (lobby and (lobby:FindFirstChildWhichIsA("SpawnLocation",true) or lobby:FindFirstChildWhichIsA("BasePart",true)))
+    end
     local function onMap(root,map)
         if not root or not map then return false end
-        local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
-        local lobbySpawn=lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true))
-        local lobbyRef=spawnPart(lobbySpawn)
+        local ref=lobbyRef()
         local spawns=map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns",true)
         local container=map:FindFirstChild("CoinContainer") or map:FindFirstChild("CoinAreas") or map:FindFirstChild("Coins")
         local mapRef=spawnPart(spawns) or spawnPart(container) or map:FindFirstChildWhichIsA("BasePart",true)
-        if not lobbyRef or not mapRef then return false end
-        return (root.Position-lobbyRef.Position).Magnitude>350 and (root.Position-mapRef.Position).Magnitude<=1500
+        if not ref or not mapRef then return false end
+        return (root.Position-ref.Position).Magnitude>350 and (root.Position-mapRef.Position).Magnitude<=1500
     end
     local function map()return AngelHub.findMM2Map and AngelHub.findMM2Map()end
     local function conflict(owner)
@@ -7761,6 +7838,23 @@ local function installMM2Fling(screenGui)
         local ok2,v2=pcall(function()return part.AssemblyLinearVelocity end)
         return (ok2 and v2) or Vector3.zero
     end
+    local function transportSeconds()
+        local ping=0
+        pcall(function()
+            if localPlayer and type(localPlayer.GetNetworkPing)=="function" then
+                ping=localPlayer:GetNetworkPing()
+            end
+        end)
+        if type(ping)~="number" or ping~=ping or ping<0 then ping=0 end
+        if ping>2 then ping=ping/1000 end
+        return math.clamp(ping*0.5,0,0.5)
+    end
+    local function leadFor(part)
+        if not part then return Vector3.zero end
+        local vel=partVelocity(part)
+        local seconds=math.clamp(transportSeconds()+0.15,0,0.6)
+        return Vector3.new(vel.X,0,vel.Z)*seconds
+    end
     local function finishReturn()
         if not returning then return end
         local r=returning;returning=nil
@@ -7783,8 +7877,7 @@ local function installMM2Fling(screenGui)
                 safeReturn=AngelHub.winReturnSafe(state.character,state.home)==true
             end
             if not safeReturn and state.returnToLobby then
-                local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
-                local ref=spawnPart(lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true)))
+                local ref=lobbyRef()
                 safeReturn=ref~=nil and (state.home.Position-ref.Position).Magnitude<=350
             end
             if state.human.Health>0 and safeReturn and state.home and state.home.Position.Y>state.destroyY+40 then
@@ -7843,10 +7936,15 @@ local function installMM2Fling(screenGui)
         local thead=character:FindFirstChild("Head")
         local accessory=character:FindFirstChildOfClass("Accessory")
         local handle=accessory and accessory:FindFirstChild("Handle")
-        local tpart=(troot and troot:IsA("BasePart") and troot)
-            or (thead and thead:IsA("BasePart") and thead)
-            or (handle and handle:IsA("BasePart") and handle)
-            or nil
+        local tpart=nil
+        if troot and troot:IsA("BasePart") and thead and thead:IsA("BasePart") and (troot.Position-thead.Position).Magnitude>5 then
+            tpart=thead
+        else
+            tpart=(troot and troot:IsA("BasePart") and troot)
+                or (thead and thead:IsA("BasePart") and thead)
+                or (handle and handle:IsA("BasePart") and handle)
+                or nil
+        end
         if not tpart and character.FindFirstChildWhichIsA then
             local anyPart=character:FindFirstChildWhichIsA("BasePart")
             if anyPart and anyPart:IsA("BasePart") then tpart=anyPart end
@@ -7881,8 +7979,7 @@ local function installMM2Fling(screenGui)
         end
         local returnToLobby=false
         if allowLobby and not onMap(root,currentMap) then
-            local lobby=workspace:FindFirstChild("Lobby") or workspace:FindFirstChild("RegularLobby") or workspace:FindFirstChild("MainLobby")
-            local ref=spawnPart(lobby and (lobby:FindFirstChild("Spawns") or lobby:FindFirstChild("Spawns",true)))
+            local ref=lobbyRef()
             if not ref or (root.Position-ref.Position).Magnitude>350 then return false end
             returnToLobby=true
         end
@@ -7890,7 +7987,7 @@ local function installMM2Fling(screenGui)
         local destroyY=rawFPDH
         if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1e6 then destroyY=-500 end
         if root.Position.Y<=destroyY+40 or targetRoot.Position.Y<=destroyY+40 then return reject("Fling detenido por proteccion del vacio") end
-        if owner=="farm" then settle(character,root) end
+        if owner=="farm" or owner=="win" then settle(character,root) end
         if partVelocity(root).Magnitude>=50 then return reject("Espera a que tu personaje se estabilice") end
         local home=root.CFrame
         if not home then
@@ -7910,12 +8007,12 @@ local function installMM2Fling(screenGui)
             pcall(function()workspace.FallenPartsDestroyHeight=0/0 end)
             pin=Instance.new("BodyVelocity")
             pin.Name="EpixVel"
-            pin.Velocity=Vector3.new(0,0,0)
+            pin.Velocity=PIN_VELOCITY
             pin.MaxForce=Vector3.new(9e9,9e9,9e9)
             local seated;pcall(function()seated=human:GetStateEnabled(Enum.HumanoidStateType.Seated)end)
             current={character=character,human=human,root=root,home=home,map=currentMap,player=player,
                 target=target,targetRoot=targetRoot,victim=victim,pin=pin,seated=seated,destroyY=destroyY,rawFPDH=rawFPDH,
-                start=os.clock(),slowPhase=0,fastPhase=0,angle=0,automatic=automatic,owner=owner,stillValid=stillValid,returnToLobby=returnToLobby,selectedAction=selectedAction,
+                start=os.clock(),poses=0,slowPhase=0,fastPhase=0,angle=0,automatic=automatic,owner=owner,stillValid=stillValid,returnToLobby=returnToLobby,selectedAction=selectedAction,
                 retries=owner and 0 or math.clamp(math.floor(tonumber(V["Fling Retries"]) or 0),0,1)}
             AngelHub.mm2FlingBusy=true;AngelHub.mm2FlingOwner=owner
             if AngelHub.suspendAntiFling then AngelHub.suspendAntiFling()end
@@ -7934,9 +8031,13 @@ local function installMM2Fling(screenGui)
         if current and current.owner==owner then clean();nextAuto=os.clock()+AUTO_BACKOFF end
     end
     local function role(roleName)
-        if stopped or not isMM2 or current or pendingRole or #queue>0 or conflict() then return end
-        bindRound();if roundEnded then return end
+        if stopped or not isMM2 then return end
+        if current or pendingRole or #queue>0 then status("Fling ya esta en curso");return end
+        if conflict() then status("Apaga Farm, Win, Fly, Speed, Noclip o Vote");return end
+        bindRound()
+        if roundEnded then status("Espera a la siguiente ronda");return end
         pendingRole,pendingAt=roleName,os.clock();AngelHub.mm2FlingNeedsRoles=true
+        status("Fling: buscando "..roleName)
         if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
     end
     AngelHub.actions["Fling"]=function()
@@ -7963,11 +8064,13 @@ local function installMM2Fling(screenGui)
             return
         end
         if pendingRole then
+            local wanted=pendingRole
             for _,player in ipairs(playersService:GetPlayers())do
                 local found=player~=localPlayer and AngelHub.getMM2Role and AngelHub.getMM2Role(player)
-                if found==pendingRole or (pendingRole=="Sheriff" and found=="Hero")then table.insert(queue,player)end
+                if found==wanted or (wanted=="Sheriff" and found=="Hero")then table.insert(queue,player)end
             end
             if #queue>0 or os.clock()-pendingAt>=3 or conflict() then
+                if #queue==0 and not conflict() then status("No se encontro "..wanted) end
                 pendingRole=nil;AngelHub.mm2FlingNeedsRoles=false
                 if AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
             else return end
@@ -7995,8 +8098,9 @@ local function installMM2Fling(screenGui)
                 if state.retries<=0 then clean();nextAuto=now+AUTO_BACKOFF;return end
                 state.retries-=1;state.start=now
             end
+            local leadOffset=leadFor(targetRoot)
             local function fpos(pos,ang)
-                local frame=CFrame.new(targetRoot.Position)*pos*ang
+                local frame=CFrame.new(targetRoot.Position+leadOffset)*pos*ang
                 setCharCFrame(state.character,root,frame)
                 root.Velocity=FLING_VELOCITY
                 root.RotVelocity=FLING_ROT_VELOCITY
@@ -8006,25 +8110,43 @@ local function installMM2Fling(screenGui)
                 if state.slowPhase==1 then state.angle=state.angle+100 end
                 local moveDir=(victim and victim.MoveDirection) or Vector3.zero
                 local ang=CFrame.Angles(math.rad(state.angle),0,0)
-                local lead=(state.slowPhase<=4) and (moveDir*(speed/1.25)) or moveDir
-                local yOff=(state.slowPhase==1 or state.slowPhase==3 or state.slowPhase==5) and 1.5 or -1.5
-                fpos(CFrame.new(lead.X,yOff+lead.Y,lead.Z),ang)
+                local lead=moveDir*(speed/1.25)
+                if state.slowPhase==1 then
+                    fpos(CFrame.new(lead.X,1.5+lead.Y,lead.Z),ang)
+                elseif state.slowPhase==2 then
+                    fpos(CFrame.new(lead.X,-1.5+lead.Y,lead.Z),ang)
+                elseif state.slowPhase==3 then
+                    fpos(CFrame.new(2.25+lead.X,1.5+lead.Y,-2.25+lead.Z),ang)
+                elseif state.slowPhase==4 then
+                    fpos(CFrame.new(-2.25+lead.X,-1.5+lead.Y,2.25+lead.Z),ang)
+                elseif state.slowPhase==5 then
+                    fpos(CFrame.new(moveDir.X,1.5+moveDir.Y,moveDir.Z),ang)
+                else
+                    fpos(CFrame.new(moveDir.X,-1.5+moveDir.Y,moveDir.Z),ang)
+                end
             else
-                state.fastPhase=(state.fastPhase%7)+1
+                state.fastPhase=(state.fastPhase%10)+1
                 local walkSpeed=(victim and tonumber(victim.WalkSpeed)) or 16
+                local downLead=speed/1.25
                 if state.fastPhase==1 or state.fastPhase==3 then
                     fpos(CFrame.new(0,1.5,walkSpeed),CFrame.Angles(math.rad(90),0,0))
                 elseif state.fastPhase==2 then
                     fpos(CFrame.new(0,-1.5,-walkSpeed),CFrame.Angles(0,0,0))
                 elseif state.fastPhase==4 or state.fastPhase==6 then
+                    fpos(CFrame.new(0,1.5,downLead),CFrame.Angles(math.rad(90),0,0))
+                elseif state.fastPhase==5 then
+                    fpos(CFrame.new(0,-1.5,-downLead),CFrame.Angles(0,0,0))
+                elseif state.fastPhase==7 then
                     fpos(CFrame.new(0,-1.5,0),CFrame.Angles(math.rad(90),0,0))
+                elseif state.fastPhase==9 then
+                    fpos(CFrame.new(0,-1.5,0),CFrame.Angles(math.rad(-90),0,0))
                 else
                     fpos(CFrame.new(0,-1.5,0),CFrame.Angles(0,0,0))
                 end
             end
             return
         end
-        while #queue>0 do local target=table.remove(queue,1);if start(target,false) then return end end
+        while #queue>0 do local target=table.remove(queue,1);if start(target,false,nil,nil,false,true) then return end end
         if V["Auto Fling Selected Target"] and os.clock()>=nextAuto and not conflict() then nextAuto=os.clock()+AUTO_BACKOFF;start(selected(),true,nil,nil,false,true)end
     end
     local old=AngelHub.setters["Auto Fling Selected Target"]
@@ -8103,11 +8225,15 @@ local function installMM2Farm(screenGui)
         if not human or not root or root.Anchored or not destination or not destination:IsA("BasePart") or not destination:IsDescendantOf(workspace) then return false end
         return pcall(function()character:PivotTo(destination.CFrame+Vector3.new(0,3,0));root.AssemblyLinearVelocity=Vector3.zero;root.AssemblyAngularVelocity=Vector3.zero end)
     end
+    local COIN_PICKUP_DELAY = 0.03
     local farmConnections, farmMap, farmCharacter, farmRoundMap = {}, nil, nil, nil
     local farmWaitingMap, farmAmount, farmLimit, farmElapsed, farmTotal = nil, 0, 40, 0, 0
     local farmTickElapsed, farmScanElapsed, farmCoins = 0, 0, {}
     local farmDone, farmBagSampleKnown = false, false
     local farmGeneration,grabNext=0,0
+    local farmPickupPause, farmTouchCooldown = 0, 0
+    local savedRoundMap, savedRoundCharacter, savedAmount, savedLimit, savedKnown = nil, nil, 0, 40, false
+    local passiveConnections, passiveBound = {}, nil
     local farmParticipantMap, farmParticipantCharacter, farmParticipantHuman = nil, nil, nil
     local farmDeadPending, farmDeadAttempted = false, false
     extensionSteps.farmFull = {resetDone=false,done={}}
@@ -8119,6 +8245,7 @@ local function installMM2Farm(screenGui)
     local farmBlacklist = setmetatable({}, {__mode = "k"})
     local farmTarget, farmTargetAt, farmBestDistance
     local cancelFullActions=function()end
+    local syncBagFromGui=function()end
     local farmCounterSetters = {
         ["Coins Collected"] = AngelHub.setters["Coins Collected"],
         ["Farm Time"] = AngelHub.setters["Farm Time"],
@@ -8176,6 +8303,7 @@ local function installMM2Farm(screenGui)
         farmStopMovement()
         leaveFarmPark()
         farmMap, farmCharacter, farmRoundMap, farmWaitingMap, farmTarget = nil, nil, nil, nil, nil
+        farmPickupPause, farmTouchCooldown = 0, 0
         farmParticipantMap, farmParticipantCharacter, farmParticipantHuman = nil, nil, nil
         farmDeadPending, farmDeadAttempted = false, false
         farmStartedCoins=false
@@ -8268,7 +8396,7 @@ local function installMM2Farm(screenGui)
         end
         local moved = pcall(function() character:PivotTo(CFrame.new(platformPosition + Vector3.new(0, 5, 0))) end)
         if not moved then pcall(function() part:Destroy() end); message("Safe Zone: move failed"); return false end
-        farmPark = {character = character, map = map, part = part, returnFrame = returnFrame, position = platformPosition}
+        farmPark = {character = character, map = map, part = part, returnFrame = returnFrame, position = platformPosition, parkedAt = os.clock()}
         AngelHub.mm2FarmActive = true
         pcall(function()
             root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
@@ -8303,15 +8431,53 @@ local function installMM2Farm(screenGui)
         if not collected or not collected:IsA("RemoteEvent") or not ended or not ended:IsA("RemoteEvent") then return nil end
         return gameplay, collected, ended
     end
+    local function clearSavedBag()
+        savedRoundMap, savedRoundCharacter, savedAmount, savedLimit, savedKnown = nil, nil, 0, 40, false
+    end
+    local function bindPassiveRound()
+        local gameplay, collected, ended = farmEvents()
+        if not gameplay or gameplay == passiveBound then return end
+        for _, connection in ipairs(passiveConnections) do connection:Disconnect() end
+        table.clear(passiveConnections)
+        passiveBound = gameplay
+        table.insert(passiveConnections, collected.OnClientEvent:Connect(function(_, amount, limit)
+            local character, humanoid, root = characterParts()
+            local map = mm2Map()
+            if not humanoid or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then return end
+            if savedRoundMap ~= map or savedRoundCharacter ~= character then
+                savedRoundMap, savedRoundCharacter, savedAmount, savedLimit, savedKnown = map, character, 0, 40, false
+            end
+            if type(limit) == "number" and limit >= 1 then savedLimit = limit end
+            if type(amount) == "number" and amount >= 0 then
+                savedAmount, savedKnown = amount, true
+            end
+        end))
+        table.insert(passiveConnections, ended.OnClientEvent:Connect(clearSavedBag))
+        for _, name in ipairs({"RoundStart", "RoleSelect", "ShowRoleSelect", "ShowRoleSelectNew"}) do
+            local event = gameplay:FindFirstChild(name)
+            if event and event:IsA("RemoteEvent") then
+                table.insert(passiveConnections, event.OnClientEvent:Connect(clearSavedBag))
+            end
+        end
+    end
     local function farmStart(gameplay, collected, ended)
+        bindPassiveRound()
         farmStop()
-        farmAmount, farmLimit = 0, 40
+        local currentCharacter, _, currentRoot = characterParts()
+        local currentMap = mm2Map()
+        if savedKnown and savedRoundMap and currentMap == savedRoundMap and currentCharacter == savedRoundCharacter
+            and currentRoot and farmOnMap(currentRoot, currentMap)
+            and not (farmWaitingMap and farmWaitingMap == currentMap) then
+            farmRoundMap, farmAmount, farmLimit, farmBagSampleKnown = savedRoundMap, savedAmount, savedLimit, true
+        else
+            farmAmount, farmLimit, farmBagSampleKnown = 0, 40, false
+        end
         extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
-        farmBagSampleKnown = false
         farmTickElapsed, farmScanElapsed, farmDone = 0, 0.5, false
         farmCounter("Coins Collected", farmTotal)
         local whole = math.floor(farmElapsed)
         farmCounter("Farm Time", string.format("%02d:%02d", math.floor(whole / 60), whole % 60))
+        if farmAmount < math.max(1, farmLimit) then syncBagFromGui() end
         table.insert(farmConnections, collected.OnClientEvent:Connect(function(_, amount, limit)
             if not enabled["Auto Farm"] then return end
             local character, humanoid, root = characterParts()
@@ -8333,10 +8499,12 @@ local function installMM2Farm(screenGui)
                     farmTotal += farmBagSampleKnown and (amount - farmAmount) or 1
                     farmCounter("Coins Collected", farmTotal)
                     farmTarget, farmScanElapsed = nil, 0.5
+                    farmPickupPause = COIN_PICKUP_DELAY
                 end
                 local bagCap = math.max(1, farmLimit)
                 if farmAmount>=bagCap and amount<bagCap then farmGeneration+=1 end
                 farmAmount, farmBagSampleKnown = amount, true
+                savedRoundMap, savedRoundCharacter, savedAmount, savedLimit, savedKnown = map, character, farmAmount, farmLimit, true
                 if amount < bagCap then
                     farmDone = false
                     extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
@@ -8346,6 +8514,7 @@ local function installMM2Farm(screenGui)
         end))
         local function endFarmRound()
             if not enabled["Auto Farm"] then return end
+            clearSavedBag()
             farmWaitingMap = farmMap or mm2Map();farmGeneration+=1;farmStartedCoins=false;cancelFullActions()
             extensionSteps.farmFull.resetDone, extensionSteps.farmFull.resetAt = false,nil
             farmStopMovement(); leaveFarmPark(); farmMap, farmCharacter, farmRoundMap, farmTarget = nil, nil, nil, nil
@@ -8444,23 +8613,36 @@ local function installMM2Farm(screenGui)
         end
         return true
     end
-    local function syncBagFromGui()
+    syncBagFromGui = function()
         pcall(function()
             local pg=localPlayer:FindFirstChildOfClass("PlayerGui")
             local main=pg and pg:FindFirstChild("MainGUI")
             local gameGui=main and main:FindFirstChild("Game")
-            local bag=gameGui and (gameGui:FindFirstChild("CoinBag") or gameGui:FindFirstChild("Coins",true))
+            local bag=(gameGui and (gameGui:FindFirstChild("CoinBag") or gameGui:FindFirstChild("Coins",true)))
+                or (main and main:FindFirstChild("CoinBag",true))
             if not bag then return end
-            local label=bag:FindFirstChild("Coins") or bag:FindFirstChild("Amount") or bag:FindFirstChildWhichIsA("TextLabel",true)
-            local text=label and label:IsA("TextLabel") and label.Text
-            if type(text)~="string" then return end
-            local cur,cap=text:match("(%d+)%s*/%s*(%d+)")
-            cur,cap=tonumber(cur),tonumber(cap)
-            if cur and cap and cap>=10 then
-                if cap~=farmLimit and (not farmBagSampleKnown or cap<farmLimit) then farmLimit=cap end
-                if cur>=cap and farmAmount<cap then farmAmount,farmBagSampleKnown=cur,true end
-            elseif string.find(string.lower(text),"full",1,true) and farmAmount<math.max(1,farmLimit) then
-                farmAmount,farmBagSampleKnown=math.max(1,farmLimit),true
+            for _,name in ipairs({"Coins","Amount","CoinAmount"})do
+                local child=bag:FindFirstChild(name)
+                if child then
+                    if child:IsA("TextLabel") and checkText(child.Text) then break end
+                    if (child:IsA("IntValue") or child:IsA("NumberValue")) and type(child.Value)=="number" and child.Value>=math.max(1,farmLimit) and farmAmount<child.Value then
+                        farmAmount,farmBagSampleKnown=child.Value,true;break
+                    end
+                end
+            end
+            if farmAmount<math.max(1,farmLimit) and bag.GetDescendants then
+                for _,desc in ipairs(bag:GetDescendants())do
+                    if desc:IsA("TextLabel") and checkText(desc.Text) then break end
+                end
+            elseif farmAmount<math.max(1,farmLimit) then
+                local label=bag:FindFirstChildWhichIsA("TextLabel",true)
+                if label and label:IsA("TextLabel") then checkText(label.Text) end
+            end
+            if farmAmount>=math.max(1,farmLimit) then
+                local map=mm2Map()
+                if map and localPlayer.Character then
+                    savedRoundMap,savedRoundCharacter,savedAmount,savedLimit,savedKnown=map,localPlayer.Character,farmAmount,farmLimit,true
+                end
             end
         end)
     end
@@ -8514,10 +8696,13 @@ local function installMM2Farm(screenGui)
     end
     mm2FarmStep = function(dt, character, humanoid, root)
         if not enabled["Auto Farm"] then return end
-        farmElapsed += math.max(dt, 0)
+        local safeDt = math.max(dt or 0, 0)
+        farmElapsed += safeDt
+        farmPickupPause = math.max(0, farmPickupPause - safeDt)
+        farmTouchCooldown = math.max(0, farmTouchCooldown - safeDt)
         local seconds = math.floor(farmElapsed)
         farmCounter("Farm Time", string.format("%02d:%02d", math.floor(seconds / 60), seconds % 60))
-        farmTickElapsed += dt
+        farmTickElapsed += safeDt
         if farmTickElapsed < 0.1 then return end
         local elapsed = farmTickElapsed
         farmTickElapsed = 0
@@ -8545,12 +8730,14 @@ local function installMM2Farm(screenGui)
         end
         if farmPark then
             if V["Farm Safe Zone"] and not fullPending() and character == farmPark.character and humanoid and root
-                and farmPark.map == map and (root.Position - farmPark.position).Magnitude <= 120 then return end
+                and farmPark.map == map
+                and ((root.Position - farmPark.position).Magnitude <= 120 or (os.clock() - (farmPark.parkedAt or 0)) < 0.05) then return end
             if not leaveFarmPark() then return end
         end
         if farmCharacter and (character~=farmCharacter or not humanoid or not root) then
             farmGeneration+=1;cancelFullActions();farmStartedCoins=false
             farmAmount,farmDone,farmBagSampleKnown=0,false,false
+            clearSavedBag()
             extensionSteps.farmFull.resetDone,extensionSteps.farmFull.resetAt=false,nil
         end
         if not character or not humanoid or not root or root.Anchored or not farmOnMap(root, map) or (farmWaitingMap and farmWaitingMap == map) then
@@ -8564,7 +8751,11 @@ local function installMM2Farm(screenGui)
         end
         if farmRoundMap ~= map then
             farmGeneration+=1;cancelFullActions();farmStartedCoins=false
-            farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 40, false, false
+            if savedKnown and savedRoundMap == map and savedRoundCharacter == character then
+                farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, savedAmount, savedLimit, false, true
+            else
+                farmRoundMap, farmAmount, farmLimit, farmDone, farmBagSampleKnown = map, 0, 40, false, false
+            end
         end
         if map ~= farmMap or character ~= farmCharacter then
             farmStopMovement()
@@ -8597,7 +8788,7 @@ local function installMM2Farm(screenGui)
                 local spawns = map:FindFirstChild("Spawns") or map:FindFirstChild("Spawns", true)
                 local part = spawnPart(spawns)
                 if V["Farm Safe Zone"] then
-                    local returnFrame = extensionSteps.farmFull.returnFrame or belowHome or (part and (part.CFrame + Vector3.new(0, 3, 0)))
+                    local returnFrame = extensionSteps.farmFull.returnFrame or belowHome or root.CFrame or (part and (part.CFrame + Vector3.new(0, 3, 0)))
                     if not parkFarmCharacter(character, root, map, returnFrame) then message("Safe Zone unavailable") end
                 elseif not wasBelow then
                     local returnFrame = extensionSteps.farmFull.returnFrame
@@ -8610,8 +8801,6 @@ local function installMM2Farm(screenGui)
                             root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                         end)
-                    elseif not returnFrame and part and farmOnMap(root, map) then
-                        characterTeleport(part)
                     end
                 end
             end
@@ -8667,7 +8856,9 @@ local function installMM2Farm(screenGui)
             local low = math.max(destroyY + 40, farmHomeCFrame.Position.Y - 90)
             local high = math.max(low, farmHomeCFrame.Position.Y + 80)
             farmHoverTarget = Vector3.new(best.Position.X, math.clamp(best.Position.Y - 3, low, high), best.Position.Z)
-            if bestDistance <= 5 and type(firetouchinterest) == "function" then
+            if bestDistance <= 5 and farmTouchCooldown <= 0 and type(firetouchinterest) == "function" then
+                farmTouchCooldown = COIN_PICKUP_DELAY
+                farmPickupPause = COIN_PICKUP_DELAY
                 pcall(firetouchinterest, root, best, 0); pcall(firetouchinterest, root, best, 1)
             end
             return
@@ -8679,7 +8870,7 @@ local function installMM2Farm(screenGui)
         farmPhysicsSignal = ok and signal or nil
     end
     if farmPhysicsSignal then
-        listen(farmPhysicsSignal, function()
+        listen(farmPhysicsSignal, function(dt)
             if stopped or not enabled["Auto Farm"] or not farmBelowEngaged or not farmHoverTarget then return end
             local ok, err = pcall(function()
             local character, humanoid, root = characterParts()
@@ -8690,11 +8881,19 @@ local function installMM2Farm(screenGui)
             if root.Position.Y <= destroyY + 40 then
                 AngelHub.setters["Auto Farm"](false); message("Auto Farm stopped: void guard"); return
             end
+            if farmPickupPause > 0 then
+                farmPickupPause = math.max(0, farmPickupPause - (tonumber(dt) or (1 / 60)))
+                root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                return
+            end
             local delta = farmHoverTarget - root.Position
             local flat = Vector3.new(delta.X, 0, delta.Z)
-            local speed = math.clamp(V["Farm Speed"], 5, 60)
-            local direction = flat.Magnitude > 0.35 and flat.Unit or Vector3.new(0, 0, 0)
-            root.AssemblyLinearVelocity = Vector3.new(direction.X * speed, math.clamp(delta.Y * 10, -speed, speed), direction.Z * speed)
+            local speed = math.clamp(tonumber(V["Farm Speed"]) or 16, 1, 28)
+            local flatDist = flat.Magnitude
+            local moveSpeed = flatDist < 1.2 and math.min(speed, flatDist * 20) or speed
+            local direction = flatDist > 0.35 and flat.Unit or Vector3.new(0, 0, 0)
+            root.AssemblyLinearVelocity = Vector3.new(direction.X * moveSpeed, math.clamp(delta.Y * 8, -speed, speed), direction.Z * moveSpeed)
             root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
             end)
             if not ok then
@@ -8854,8 +9053,10 @@ local function installMM2Farm(screenGui)
         local on=isMM2 and not stopped and value==true and type(firetouchinterest)=="function"
         oldAura(on);resetCoinAura()
     end
+    if isMM2 then pcall(bindPassiveRound) end
     connectInput(run.Heartbeat,function(dt)
         if stopped then return end
+        if isMM2 and not passiveBound then pcall(bindPassiveRound) end
         if V["Coins Aura"] then
             local _,_,root=characterParts()
             if AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner~="win" then restoreCoinAura()
@@ -8872,6 +9073,8 @@ local function installMM2Farm(screenGui)
     end)
     screenGui.Destroying:Connect(function()
         stopped=true;AngelHub.mm2FarmActive=false;oldFarm(false);oldAura(false);resetCoinAura();farmStop()
+        for _, connection in ipairs(passiveConnections) do connection:Disconnect() end
+        table.clear(passiveConnections); passiveBound = nil
         AngelHub.farmFullTicket=nil;AngelHub.farmFullAllowed=nil;AngelHub.farmTargetAllowed=nil
     end)
 end
@@ -9387,7 +9590,7 @@ local function installMM2Win(screenGui)
         local function sheriffFling(character,human,root)
             if not V["Fling Sheriff And Get Gun"] or not safe or not autoWin.isSafe() then return end
             local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
-            if role~="Innocent" or tool("Knife",character) or tool("Gun",character) then return end
+            if (role and role~="Innocent") or tool("Knife",character) or tool("Gun",character) then return end
             local map=mm2Map()
             local drop=AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun()
             if drop then
@@ -9512,6 +9715,22 @@ local function installMM2Win(screenGui)
         end
     end
     AngelHub.winSafe=autoWin.isSafe;AngelHub.winReturnSafe=autoWin.returnSafe
+    local winElapsed=0
+    local winTimeSetter=AngelHub.setters["Win Time"]
+    local function setWinTime(value)
+        if winTimeSetter then winTimeSetter(value) end
+    end
+    if winTimeSetter then
+        AngelHub.setters["Win Time"]=function(value)
+            local minutes,seconds
+            if type(value)=="string" then minutes,seconds=value:match("^(%d+):(%d%d)$") end
+            local elapsed=minutes and seconds and (tonumber(minutes)*60+tonumber(seconds)) or tonumber(value)
+            if not elapsed or elapsed~=elapsed or elapsed<0 or elapsed>1000000000 or (seconds and tonumber(seconds)>=60) then return end
+            winElapsed=elapsed
+            local whole=math.floor(elapsed)
+            setWinTime(string.format("%02d:%02d",math.floor(whole/60),whole%60))
+        end
+    end
     local old=AngelHub.setters["Auto Win"]
     local function conflict()
         return false
@@ -9523,6 +9742,10 @@ local function installMM2Win(screenGui)
         if AngelHub.cancelWinShot then AngelHub.cancelWinShot()end
         old(on)
         if on and not V["Auto Win"] then autoWin.toggle(false);return false end
+        if on then
+            local whole=math.floor(winElapsed)
+            setWinTime(string.format("%02d:%02d",math.floor(whole/60),whole%60))
+        end
         autoWin.toggle(on)
         if on and AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()
         elseif AngelHub.releaseMM2Roles then AngelHub.releaseMM2Roles()end
@@ -9544,6 +9767,9 @@ local function installMM2Win(screenGui)
     connectInput(game:GetService("RunService").Heartbeat,function(dt)
         if stopped or not V["Auto Win"] then return end
         if conflict() then AngelHub.setters["Auto Win"](false);return end
+        winElapsed+=math.max(dt or 0,0)
+        local winSeconds=math.floor(winElapsed)
+        setWinTime(string.format("%02d:%02d",math.floor(winSeconds/60),winSeconds%60))
         if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
         local character,human,root=characterParts()
         local ok,err=pcall(autoWin.step,dt,character,human,root)
@@ -11100,7 +11326,7 @@ local function initializeScript()
 	addCounter(extraLeft, "Coins Collected", 0)
 	addCounter(extraLeft, "Farm Time", 0)
 	addModule(extraLeft, "Auto Farm", nil, false)
-	addSlider(extraLeft, "Farm Speed", 5, 60, 16, 0)
+	addSlider(extraLeft, "Farm Speed", 1, 28, 16, 0)
 	local farmSpeedHint = create("TextLabel", {
 		Name = "Farm Speed Note",
 		Size = UDim2.new(1, -8, 0, 14),
@@ -11127,6 +11353,7 @@ local function initializeScript()
 	addCounter(extraLeft, "Sheriff Wins", 0)
 	addCounter(extraLeft, "Murder Wins", 0)
 	addCounter(extraLeft, "Innocent Wins", 0)
+	addCounter(extraLeft, "Win Time", 0)
 	addModule(extraLeft, "Auto Win", nil, false)
 
 	beginGroup(extraLeft, "Auto Win Settings", false)

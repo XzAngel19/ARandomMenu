@@ -39,6 +39,10 @@ assert(h.values['Auto Get Gun']);uis.InputBegan:Fire({UserInputType=Enum.UserInp
 
 assert(h.values['WallCheck']==true and h.values['Macro']==false and h.values['Aim Method']=='Normal')
 assert(h.values['Speed Mode']=='Velocity' and h.values['Gravity Method']=='Workspace')
+h.setters['Farm Speed'](0);assert(h.values['Farm Speed']==1)
+h.setters['Farm Speed'](60);assert(h.values['Farm Speed']==28)
+h.setters['Farm Speed'](24);assert(h.values['Farm Speed']==24)
+assert(h.values['Win Time']~=nil and h.setters['Win Time']~=nil)
 h.setters['Auto Farm'](true);h.setters['Walk Fling'](true);assert(not h.values['Auto Farm'] and not h.values['Walk Fling'])
 local numeric
 for _,c in ipairs(h.searchables)do if c.Name=='Speed Value' then numeric=c:FindFirstChildOfClass('TextBox')end end
@@ -150,5 +154,48 @@ shared.AngelHubGui:Destroy()
  farmShoot.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_farm_tests','farm-shoot-checks.luau')));
  const hook=await Lua.create({sandbox:true});
  hook.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','hook-checks.luau')));
+ const knifeFallback=await Lua.create({sandbox:true});
+ knifeFallback.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','knife-setup.luau'))+'\n'+knifeDebug+`
+installGunFeatures(screenGui)
+AngelHub.setters['Knife Throw'](true);AngelHub.setters['Throw WallCheck'](true)
+local enemy2={Name='Bob',DisplayName='Bob',UserId=3,Character={Parent=workspace}}
+local er2={Position=Vector3.new(45,0,0),CFrame=CFrame.new(Vector3.new(45,0,0)),AssemblyLinearVelocity=Vector3.new(0,0,16),Parent=enemy2.Character}
+function er2:IsA(c)return c=='BasePart'end;function er2:IsDescendantOf(m)return m==enemy2.Character end
+local eh2={Health=100,FloorMaterial=Enum.Material.Ground,MoveDirection=Vector3.zero}
+function eh2:IsA(c)return c=='Humanoid'end;function eh2:GetState()return {Name='Running'}end;function eh2:GetAttribute()return nil end
+function enemy2.Character:FindFirstChildOfClass(n)if n=='Humanoid'then return eh2 end end
+function enemy2.Character:FindFirstChild(n)if n=='HumanoidRootPart' or n=='Head' then return er2 end end
+function enemy2.Character:GetDescendants()return {er2,eh2} end
+function enemy2.Character:GetAttribute()return nil end
+function enemy2:FindFirstChildOfClass()return nil end
+function playersService:GetPlayers()return {localPlayer,other,enemy2}end
+-- Closest target (X=20) blocked by wall; second-best visible target (X=45) is chosen.
+local oldRay=workspace.Raycast
+function workspace:Raycast(origin,dir,params)
+ local target=origin+dir
+ if math.abs(target.X-20)<10 then return {Instance=wall} end
+ local ignore=false
+ if params and params.FilterDescendantsInstances then
+  for _,x in ipairs(params.FilterDescendantsInstances) do if x==enemy2.Character then ignore=true end end
+ end
+ if not ignore and math.abs(target.X-45)<10 then return {Instance=er2} end
+ return nil
+end
+fakeNow+=0.2;heartbeat:Fire(0.1)
+local cf=ws:GetMouseTargetCFrame()
+assert(typeof(cf)=='CFrame' and cf.Position.X>35)
+workspace.Raycast=oldRay
+-- Verify knifeAim caps non-input-history quadratic acceleration overshoot over long flights.
+local pred=AngelHub._knifeTest.prediction
+er2.Position=Vector3.new(120,0,0);er2.CFrame=CFrame.new(er2.Position);er2.AssemblyLinearVelocity=Vector3.new(0,0,16)
+fakeNow+=0.05;heartbeat:Fire(0.05)
+er2.Position=Vector3.new(120,0,1.0);er2.CFrame=CFrame.new(er2.Position);er2.AssemblyLinearVelocity=Vector3.new(0,0,22)
+fakeNow+=0.05;heartbeat:Fire(0.05)
+er2.Position=Vector3.new(120,0,2.5);er2.CFrame=CFrame.new(er2.Position);er2.AssemblyLinearVelocity=Vector3.new(0,0,30)
+fakeNow+=0.05;heartbeat:Fire(0.05)
+local aimPt=pred.knifeAim(enemy2,Vector3.new(0,0,0),96)
+assert(aimPt~=nil and aimPt.Z<45)
+screenGui.Destroying:Fire()
+`);
  console.log('PASS: lists, Fling, Auto Win Sheriff, safe autoload, visual and prior GUI regressions (PC/mobile mocks only)');
 })().catch(err=>{console.error(err);process.exit(1)});

@@ -48,7 +48,7 @@ humanoid.FloorMaterial=Enum.Material.Ground
 
 AngelHub.actions['Fling']();local pin=created[#created]
 assert(pin.class=='BodyVelocity' and pin.Name=='EpixVel' and pin.Parent==root and not humanoid.seated and shieldCalls==2)
-assert(pin.Velocity.X==0 and pin.Velocity.Y==0 and pin.MaxForce.X==9e9 and workspace.FallenPartsDestroyHeight~=workspace.FallenPartsDestroyHeight)
+assert(pin.Velocity.X==9e8 and pin.Velocity.Y==9e8 and pin.MaxForce.X==9e9 and workspace.FallenPartsDestroyHeight~=workspace.FallenPartsDestroyHeight)
 heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and character.lastPivot.Position.Y==1.5 and root.Velocity.X==9e7 and root.RotVelocity.X==9e8 and not pin.destroyed)
 heartbeat:Fire(.1);assert(character.lastPivot.Position.Y==-1.5)
 head.AssemblyLinearVelocity=Vector3.new(900,0,0);head.AssemblyAngularVelocity=Vector3.new(0,900,0)
@@ -90,5 +90,11 @@ function target:FindFirstChild(n)if n=='Head'then return victimRoot end end
 AngelHub.actions['Fling']();pin=created[#created];assert(not pin.destroyed)
 AngelHub.setters['Noclip'](true);assert(pin.destroyed);AngelHub.setters['Noclip'](false)
 target.FindFirstChild=originalFind
+-- Fling Sheriff targets Hero and respects owned lobby returns without a Spawns folder.
+local oldGetRole=AngelHub.getMM2Role
+AngelHub.getMM2Role=function(p)return p==other and 'Hero' end
+AngelHub.actions['Fling Sheriff']();heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed and pin.Velocity.X==9e8)
+AngelHub.setters['Noclip'](true);assert(pin.destroyed);AngelHub.setters['Noclip'](false)
+AngelHub.getMM2Role=oldGetRole
 AngelHub.actions['Fling']();pin=created[#created];screenGui.Destroying:Fire();assert(pin.destroyed and humanoid.seated)
 assert(#errors==0)
