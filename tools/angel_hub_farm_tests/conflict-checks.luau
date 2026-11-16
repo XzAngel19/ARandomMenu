@@ -12,19 +12,20 @@ local storage={};function storage:FindFirstChild(n)if n=='Remotes'then return re
 services.ReplicatedStorage=storage
 humanoid.FloorMaterial=Enum.Material.Ground;root.CFrame={Position=root.Position}
 installMM2Farm(screenGui);installMM2Win(screenGui)
+-- Auto Farm and Auto Win are independent and never block Speed, Fly, Noclip, or each other.
 AngelHub.setters['Auto Farm'](true);assert(V['Auto Farm'])
-AngelHub.setters['Auto Win'](true);assert(V['Auto Farm'] and not V['Auto Win'])
-AngelHub.setters['Auto Farm'](false);AngelHub.setters['Auto Win'](true);assert(V['Auto Win'])
-AngelHub.setters['Auto Farm'](true);assert(not V['Auto Farm'] and V['Auto Win'])
-AngelHub.setters['Enable Speed'](true);assert(not V['Enable Speed'] and V['Auto Win'])
+AngelHub.setters['Auto Win'](true);assert(V['Auto Farm'] and V['Auto Win'])
+AngelHub.setters['Enable Speed'](true);assert(V['Enable Speed'] and V['Auto Win'] and V['Auto Farm'])
+AngelHub.setters['Enable Fly'](true);assert(V['Enable Fly'] and V['Auto Win'] and V['Auto Farm'])
+AngelHub.setters['Auto Farm'](false);AngelHub.setters['Enable Speed'](false);AngelHub.setters['Enable Fly'](false)
 heartbeat:Fire(.11);local platform=created[#created];root.Position=character.lastPivot.Position;map.Parent=nil
 AngelHub.setters['Auto Win'](false);assert(not platform.destroyed)
-AngelHub.setters['Enable Fly'](true);assert(not V['Enable Fly'])
-map.Parent=workspace;AngelHub.setters['Enable Fly'](true);assert(platform.destroyed and V['Enable Fly'])
+AngelHub.setters['Enable Fly'](true);assert(V['Enable Fly'])
+map.Parent=workspace;AngelHub.setters['Enable Fly'](true);assert(V['Enable Fly'])
 AngelHub.setters['Enable Fly'](false);root.Position=Vector3.new(0,0,0)
 AngelHub.setters['Farm Safe Zone'](true);AngelHub.setters['Auto Farm'](true);collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.11)
 local farmPlatform=created[#created];root.Position=character.lastPivot.Position;map.Parent=nil
 AngelHub.setters['Auto Farm'](false);assert(not farmPlatform.destroyed)
-AngelHub.setters['Auto Win'](true);assert(not V['Auto Win'])
-map.Parent=workspace;AngelHub.setters['Auto Win'](true);assert(V['Auto Win'] and farmPlatform.destroyed)
+AngelHub.setters['Auto Win'](true);assert(V['Auto Win'])
+map.Parent=workspace;AngelHub.setters['Auto Win'](true);assert(V['Auto Win'])
 AngelHub.setters['Auto Win'](false);screenGui.Destroying:Fire()

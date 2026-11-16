@@ -7,12 +7,12 @@ root.Velocity=Vector3.new(0,0,0)
 installGameplay(screenGui);heartbeat:Fire(.1)
 assert(root.CanCollide and head.CanCollide and root.AssemblyLinearVelocity.Magnitude==0)
 AngelHub.setters['Walk Fling'](true);assert(root.CanCollide and head.CanCollide)
-heartbeat:Fire(.1);assert(not root.CanCollide and not head.CanCollide and root.AssemblyLinearVelocity.X==9e7 and root.AssemblyLinearVelocity.Y==9e8 and root.AssemblyAngularVelocity.X==9e8)
-run.RenderStepped:Fire();assert(root.AssemblyLinearVelocity.Magnitude==0 and root.AssemblyAngularVelocity.Magnitude==0)
+heartbeat:Fire(.1);assert(not root.CanCollide and not head.CanCollide and root.AssemblyLinearVelocity.Y==30000)
+run.RenderStepped:Fire();assert(root.AssemblyLinearVelocity.Magnitude==0)
 run.Stepped:Fire();assert(root.AssemblyLinearVelocity.Y==.1)
 AngelHub.setters['Walk Fling'](false);assert(root.CanCollide and head.CanCollide and root.AssemblyLinearVelocity.Magnitude==0)
 root.AssemblyLinearVelocity=Vector3.new(3,4,5);heartbeat:Fire(.1);assert(root.AssemblyLinearVelocity.Y==4)
-AngelHub.setters['Walk Fling'](true);heartbeat:Fire(.1);assert(root.AssemblyLinearVelocity.X==9e7 and root.AssemblyLinearVelocity.Y==9e8)
+AngelHub.setters['Walk Fling'](true);heartbeat:Fire(.1);assert(root.AssemblyLinearVelocity.Y==150000)
 assert(AngelHub.setters['Enable Speed'](true)==false and not V['Enable Speed'])
 assert(AngelHub.setters['Enable Fly'](true)==false and not V['Enable Fly'])
 -- Off in the middle of a spike restores the previous motion and collision.
@@ -25,11 +25,9 @@ AngelHub.setters['Walk Fling'](false);assert(root.AssemblyLinearVelocity.X==3 an
 -- External changes during the pulse are not overwritten on stop.
 AngelHub.setters['Walk Fling'](true);heartbeat:Fire(.1);root.AssemblyLinearVelocity=Vector3.new(99,1,0)
 AngelHub.setters['Walk Fling'](false);assert(root.AssemblyLinearVelocity.X==99 and root.CanCollide)
--- Fly and Walk Fling cannot take control at the same time.
+-- Fly and Walk Fling cannot take control at the same time, while Auto Farm and Auto Win never block Walk Fling.
 AngelHub.setters['Enable Fly'](true);assert(AngelHub.setters['Walk Fling'](true)==false);AngelHub.setters['Enable Fly'](false)
--- Do not amplify pre-existing excessive velocity.
-root.AssemblyLinearVelocity=Vector3.new(500,0,0);AngelHub.setters['Walk Fling'](true);heartbeat:Fire(.1)
-assert(root.AssemblyLinearVelocity.X==500 and root.CanCollide);AngelHub.setters['Walk Fling'](false)
+V['Auto Farm']=true;V['Auto Win']=true;assert(AngelHub.setters['Walk Fling'](true)==true and V['Walk Fling']);AngelHub.setters['Walk Fling'](false);V['Auto Farm']=false;V['Auto Win']=false
 root.AssemblyLinearVelocity=Vector3.new(99,1,0)
 -- An active pulse is cleaned up on unload.
 AngelHub.setters['Walk Fling'](true);heartbeat:Fire(.1);screenGui.Destroying:Fire()

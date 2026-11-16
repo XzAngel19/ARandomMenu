@@ -50,13 +50,11 @@ fakeNow+=2;blade.Enabled=false;V['Kill Player']='Bob';AngelHub.actions['Kill Sel
 drain();assert(#hits==3 and AngelHub.mm2KnifeKillBusy)
 blade.Enabled=true;fakeNow+=.2;heartbeat:Fire(.1);drain();assert(#hits==4)
 fakeNow+=.1;heartbeat:Fire(.1);assert(not AngelHub.mm2KnifeKillBusy and root.Position.X==0)
--- Respawn/death, round motion conflicts, cancellation and destruction do not leave a running sequence or anchored victims.
+-- Respawn/death, cancellation and destruction do not leave a running sequence or anchored victims; Auto Farm does not block manual Kill All.
 fakeNow+=2;AngelHub.actions['Kill All']();heartbeat:Fire(.1);V['Auto Farm']=true
-heartbeat:Fire(.1);assert(not AngelHub.mm2KnifeKillBusy and root.Position.X==0 and not targetRoot.Anchored and targetRoot.CFrame==target1Frame);V['Auto Farm']=false
-drain();assert(#hits==4)
--- Farm can own a cancellable Kill All sequence, while manual Kill All stays blocked.
+heartbeat:Fire(.1);drain();fakeNow+=.2;heartbeat:Fire(.1);assert(not AngelHub.mm2KnifeKillBusy and root.Position.X==0 and not targetRoot.Anchored and targetRoot.CFrame==target1Frame and #hits==6);V['Auto Farm']=false
+-- Farm can own a cancellable Kill All sequence independently.
 fakeNow+=2;V['Auto Farm']=true;local valid=true;AngelHub.farmTargetAllowed=function(player)return player~=second end
-AngelHub.actions['Kill All']();assert(not AngelHub.mm2KnifeKillBusy)
 assert(AngelHub.mm2StartFarmKills(function()return valid end) and AngelHub.mm2KnifeKillOwner=='farm')
 heartbeat:Fire(.1);assert(root.Position.X==0 and targetRoot.Anchored and not target2Root.Anchored)
 local pendingBefore=#hits;valid=false;AngelHub.mm2CancelFarmKills();drain()
