@@ -8842,7 +8842,8 @@ local function installMM2Farm(screenGui)
         local character,human,root=characterParts();local map=mm2Map()
         return not stopped and enabled["Auto Farm"] and V["Auto Grab Gun And Shoot"]
             and character~=nil and human~=nil and root~=nil and not root.Anchored and not human.Sit
-            and farmOnMap(root,map) and not (farmWaitingMap and farmWaitingMap==map) and not AngelHub.mm2FlingBusy
+            and (farmOnMap(root,map) or (farmPark~=nil and farmPark.character==character and farmPark.map==map))
+            and not (farmWaitingMap and farmWaitingMap==map) and not AngelHub.mm2FlingBusy
     end
     local function engageBelow(character,humanoid,root)
         if not farmBelowEngaged then
@@ -8859,6 +8860,35 @@ local function installMM2Farm(screenGui)
         apply("farmBody",humanoid,{PlatformStand=true,AutoRotate=false})
         apply("farmSize",root,{Size=Vector3.new(4,8,4)})
         return true
+    end
+    local function tryFarmGrabGun(character, root, map)
+        if not V["Auto Grab Gun And Shoot"] or not AngelHub.farmFullAllowed() then return end
+        local now=os.clock()
+        if now<grabNext then return end
+        local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
+        local backpack=localPlayer:FindFirstChildOfClass("Backpack")
+        local gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+        local knife=character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+        if gun or knife or (role and role~="Innocent") then return end
+        if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
+        role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
+        if role and role~="Innocent" then return end
+        local hasDropFinder=type(AngelHub.findMM2DroppedGun)=="function"
+        local drop=hasDropFinder and AngelHub.findMM2DroppedGun() or nil
+        if hasDropFinder and not drop then return end
+        grabNext=now+1.0
+        local touched=false
+        if AngelHub.actions and AngelHub.actions["Get Gun"] then
+            touched=AngelHub.actions["Get Gun"]()==true
+        end
+        gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+        if not gun and not touched and drop and type(firetouchinterest)=="function" then
+            local touch=drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true)
+            if touch and touch:IsA("BasePart") and touch:IsDescendantOf(workspace) and farmOnMap(touch,map) then
+                pcall(firetouchinterest,root,touch,0)
+                pcall(firetouchinterest,root,touch,1)
+            end
+        end
     end
     mm2FarmStep = function(dt, character, humanoid, root)
         if not enabled["Auto Farm"] then return end
@@ -8883,43 +8913,6 @@ local function installMM2Farm(screenGui)
         if character and humanoid and humanoid.Health > 0 and root and not root.Anchored
             and farmOnMap(root, map) and not (farmWaitingMap and farmWaitingMap == map) then
             farmParticipantMap, farmParticipantCharacter, farmParticipantHuman = map, character, humanoid
-        end
-        local function tryFarmGrabGun(canShoot)
-            if not V["Auto Grab Gun And Shoot"] or not AngelHub.farmFullAllowed() then return end
-            local now=os.clock()
-            local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
-            local backpack=localPlayer:FindFirstChildOfClass("Backpack")
-            local gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-            local knife=character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
-            if not gun and (not role or role=="Innocent") and not knife and now>=grabNext then
-                grabNext=now+1.0
-                if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
-                role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
-                if not role or role=="Innocent" then
-                    local hasDropFinder=type(AngelHub.findMM2DroppedGun)=="function"
-                    local drop=hasDropFinder and AngelHub.findMM2DroppedGun() or nil
-                    local touched=false
-                    if (not hasDropFinder or drop) and AngelHub.actions and AngelHub.actions["Get Gun"] then
-                        touched=AngelHub.actions["Get Gun"]()==true
-                    end
-                    gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-                    if not gun and not touched and drop and type(firetouchinterest)=="function" then
-                        local touch=drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true)
-                        if touch and touch:IsA("BasePart") and touch:IsDescendantOf(workspace) and farmOnMap(touch,map) then
-                            pcall(firetouchinterest,root,touch,0)
-                            pcall(firetouchinterest,root,touch,1)
-                        end
-                    end
-                    gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-                end
-            end
-            local full=extensionSteps.farmFull
-            if canShoot and gun and not farmBelowEngaged and full.shootReadyAt and now>=full.shootReadyAt
-                and now>=(full.shootNext or 0) and AngelHub.farmGrabShoot then
-                if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
-                full.shootNext=now+1.0
-                AngelHub.farmGrabShoot()
-            end
         end
         if farmPark then
             if V["Farm Safe Zone"] and not fullPending() and character == farmPark.character and humanoid and root
@@ -8957,9 +8950,6 @@ local function installMM2Farm(screenGui)
             table.clear(farmCoins); table.clear(farmBlacklist)
         end
         if farmAmount < math.max(1, farmLimit) then syncBagFromGui() end
-        if farmAmount < math.max(1, farmLimit) then
-            tryFarmGrabGun(false)
-        end
         if farmAmount >= math.max(1, farmLimit) then
             local full = extensionSteps.farmFull
             if not full.readyAt then full.readyAt = os.clock() + 1.5 end
@@ -8971,7 +8961,6 @@ local function installMM2Farm(screenGui)
             farmStopMovement()
             if wasBelow or not full.shootReadyAt then full.shootReadyAt = os.clock() + 1.0 end
             if fullActionStep(character,humanoid,root,map) then return end
-            tryFarmGrabGun(true)
             if V["Reset When Full Coin Bag"] == true and not extensionSteps.farmFull.resetDone then
                 local full = extensionSteps.farmFull
                 if not full.resetAt then full.resetAt = os.clock() + (V["Auto Grab Gun And Shoot"] == true and 2.2 or 0) end
@@ -9270,9 +9259,28 @@ local function installMM2Farm(screenGui)
         end
         if not V["Auto Farm"] then return end
         if conflict() then AngelHub.setters["Auto Farm"](false);return end
+        if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles() end
         local character,human,root=characterParts()
         local ok,err=pcall(mm2FarmStep,dt,character,human,root)
-        if not ok then warn("Angel Hub Auto Farm: "..tostring(err));AngelHub.setters["Auto Farm"](false)end
+        if not ok then warn("Angel Hub Auto Farm: "..tostring(err));AngelHub.setters["Auto Farm"](false);return end
+        if V["Auto Farm"] and AngelHub.mm2FlingOwner~="farm" and V["Auto Grab Gun And Shoot"] then
+            local map=mm2Map()
+            local bagFull=farmAmount>=math.max(1,farmLimit)
+            if character and root and map and not (bagFull and fullPending()) then
+                pcall(tryFarmGrabGun,character,root,map)
+            end
+            if bagFull and not fullPending() and AngelHub.farmGrabShoot
+                and AngelHub.farmShootAllowed() and AngelHub.farmFullAllowed() then
+                local bp=localPlayer:FindFirstChildOfClass("Backpack")
+                local gun=character and (character:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))
+                local full=extensionSteps.farmFull
+                if gun and os.clock()>=(full.shootNext or 0) then
+                    full.shootNext=os.clock()+1.0
+                    local shotOK,shotErr=pcall(AngelHub.farmGrabShoot)
+                    if not shotOK then warn("Angel Hub Farm Shoot: "..tostring(shotErr)) end
+                end
+            end
+        end
     end)
     screenGui.Destroying:Connect(function()
         stopped=true;AngelHub.mm2FarmActive=false;oldFarm(false);oldAura(false);resetCoinAura();farmStop()
