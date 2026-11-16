@@ -9915,6 +9915,404 @@ local function installMM2Win(screenGui)
     screenGui.Destroying:Connect(function()stopped=true;old(false);autoWin.cleanup();AngelHub.winSafe=nil;AngelHub.winReturnSafe=nil end)
 end
 
+-- Simple Disguise: copies target avatar appearance and equipped emote slots (no movement animations).
+local function installDisguise(screenGui)
+    local V = AngelHub.values
+    local players = game:GetService("Players")
+    local stopped = false
+    local generation = 0
+    local restoring = false
+    local snapshot = nil
+    local emotesApplied = false
+    local filterConnection = nil
+    local filteredCharacter = nil
+    local cloned = setmetatable({}, { __mode = "k" })
+    local disguisedItems = setmetatable({}, { __mode = "k" })
+    local SCALE_FIELDS = { "HeightScale", "WidthScale", "DepthScale", "HeadScale", "BodyTypeScale", "ProportionScale" }
+
+    local function message(text)
+        if AngelHub.status then AngelHub.status(text) end
+    end
+
+    local function isAppearanceItem(obj)
+        if not obj then return false end
+        return obj:IsA("Accessory") or obj:IsA("ShirtGraphic") or obj:IsA("Shirt")
+            or obj:IsA("Pants") or obj:IsA("BodyColors")
+            or ((obj:IsA("Decal") or obj:IsA("Texture")) and string.lower(obj.Name or "") == "face")
+    end
+
+    local function isInsideCharacter(obj, character)
+        local ok, result = pcall(function() return obj:IsDescendantOf(character) end)
+        return ok and result == true
+    end
+
+    local function rebindAccessory(character, accessory)
+        local ok, desc = pcall(function() return accessory:GetDescendants() end)
+        if not ok or type(desc) ~= "table" then return end
+        for _, item in ipairs(desc) do
+            if item:IsA("Weld") and item.Part1 then
+                local part = character:FindFirstChild(item.Part1.Name)
+                if part and part:IsA("BasePart") then item.Part1 = part end
+            elseif item:IsA("RigidConstraint") and item.Attachment1 then
+                local att = character:FindFirstChild(item.Attachment1.Name, true)
+                if att and att:IsA("Attachment") then item.Attachment1 = att end
+            end
+        end
+    end
+
+    local function cloneTable(tbl)
+        if type(tbl) ~= "table" then return tbl end
+        local copy = {}
+        for k, v in pairs(tbl) do
+            copy[k] = type(v) == "table" and cloneTable(v) or v
+        end
+        return copy
+    end
+
+    local function getAppliedDescription(humanoid)
+        local child = humanoid:FindFirstChildOfClass("HumanoidDescription")
+        if child then return child, false end
+        local ok, desc = pcall(function() return humanoid:GetAppliedDescription() end)
+        if ok and desc then return desc, true end
+        return nil, false
+    end
+
+    local function readDescriptionEmotes(description)
+        local ok, emotes, equipped = pcall(function()
+            return description:GetEmotes(), description:GetEquippedEmotes()
+        end)
+        if not ok or type(emotes) ~= "table" or type(equipped) ~= "table" then
+            return nil, nil
+        end
+        return cloneTable(emotes), cloneTable(equipped)
+    end
+
+    local function applyDescriptionToHumanoid(humanoid, description)
+        local lastErr = "ApplyDescription unavailable"
+        for _, methodName in ipairs({ "ApplyDescriptionResetAsync", "ApplyDescriptionAsync", "ApplyDescriptionReset", "ApplyDescription" }) do
+            local method = humanoid[methodName]
+            if type(method) == "function" then
+                local ok, err = pcall(method, humanoid, description)
+                if ok then return true, nil end
+                lastErr = tostring(err)
+            end
+        end
+        return false, lastErr
+    end
+
+    local function setHumanoidEmotes(humanoid, emotes, equippedEmotes)
+        if type(emotes) ~= "table" or type(equippedEmotes) ~= "table" then
+            return false, "No emote data"
+        end
+        local description, isTemp = getAppliedDescription(humanoid)
+        if not description then return false, "No HumanoidDescription" end
+        local ok, err = pcall(function()
+            description:SetEmotes(cloneTable(emotes))
+            description:SetEquippedEmotes(cloneTable(equippedEmotes))
+        end)
+        if not ok then
+            if isTemp then pcall(function() description:Destroy() end) end
+            return false, tostring(err)
+        end
+        if not isTemp then return true, nil end
+        local applied, applyErr = applyDescriptionToHumanoid(humanoid, description)
+        pcall(function() description:Destroy() end)
+        return applied, applyErr
+    end
+
+    local function destroySnapshot()
+        local cur = snapshot
+        snapshot = nil
+        emotesApplied = false
+        if cur then
+            for _, entry in ipairs(cur.items) do
+                pcall(function() entry.object:Destroy() end)
+            end
+        end
+    end
+
+    local function captureSnapshot(character, humanoid)
+        local items, scales = {}, {}
+        local okDesc, desc = pcall(function() return character:GetDescendants() end)
+        if okDesc and type(desc) == "table" then
+            for _, obj in ipairs(desc) do
+                if isAppearanceItem(obj) then
+                    local ok, copy = pcall(function() return obj:Clone() end)
+                    if ok and copy then
+                        pcall(function() copy.Parent = nil end)
+                        table.insert(items, { object = copy, parent = obj.Parent })
+                    end
+                end
+            end
+        end
+        local appliedDesc, isTemp = getAppliedDescription(humanoid)
+        if appliedDesc then
+            for _, field in ipairs(SCALE_FIELDS) do
+                local ok, val = pcall(function() return appliedDesc[field] end)
+                if ok and type(val) == "number" then scales[field] = val end
+            end
+        end
+        local emotes, equipped = appliedDesc and readDescriptionEmotes(appliedDesc)
+        if isTemp and appliedDesc then pcall(function() appliedDesc:Destroy() end) end
+        return {
+            character = character,
+            items = items,
+            scales = scales,
+            emotes = emotes or {},
+            equippedEmotes = equipped or {},
+        }
+    end
+
+    local function ensureSnapshot(character, humanoid)
+        if snapshot and snapshot.character == character then return snapshot end
+        destroySnapshot()
+        snapshot = captureSnapshot(character, humanoid)
+        return snapshot
+    end
+
+    local function stopFilter()
+        if filterConnection then pcall(function() filterConnection:Disconnect() end); filterConnection = nil end
+        filteredCharacter = nil
+    end
+
+    local function installFilter(character)
+        if filteredCharacter == character and filterConnection then return end
+        stopFilter()
+        filteredCharacter = character
+        if character.DescendantAdded then
+            filterConnection = character.DescendantAdded:Connect(function(obj)
+                if restoring or stopped or not V["Disguise"] or not isAppearanceItem(obj)
+                    or cloned[obj] or disguisedItems[obj] then return end
+                task.defer(function()
+                    if restoring or stopped or not V["Disguise"] or cloned[obj] or disguisedItems[obj] then return end
+                    pcall(function() obj:Destroy() end)
+                end)
+            end)
+        end
+    end
+
+    local function restoreOriginalAppearance(character, humanoid)
+        stopFilter()
+        local cur = snapshot
+        if not cur or cur.character ~= character then return end
+        restoring = true
+        if emotesApplied and humanoid then
+            if setHumanoidEmotes(humanoid, cur.emotes, cur.equippedEmotes) then
+                emotesApplied = false
+            end
+        end
+        local removals = {}
+        table.clear(disguisedItems)
+        table.clear(cloned)
+        local okDesc, desc = pcall(function() return character:GetDescendants() end)
+        if okDesc and type(desc) == "table" then
+            for _, obj in ipairs(desc) do
+                if isAppearanceItem(obj) then table.insert(removals, obj) end
+            end
+        end
+        for _, obj in ipairs(removals) do pcall(function() obj:Destroy() end) end
+        for _, entry in ipairs(cur.items) do
+            local ok, copy = pcall(function() return entry.object:Clone() end)
+            if ok and copy then
+                local parent = entry.parent or character
+                if parent ~= character and not isInsideCharacter(parent, character) then
+                    if (copy:IsA("Decal") or copy:IsA("Texture")) and string.lower(copy.Name or "") == "face" then
+                        parent = character:FindFirstChild("Head") or character
+                    else
+                        parent = character
+                    end
+                end
+                if copy:IsA("Accessory") then rebindAccessory(character, copy) end
+                pcall(function() copy.Parent = parent end)
+            end
+        end
+        restoring = false
+    end
+
+    local function resolveUserId(raw)
+        local trimmed = tostring(raw or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if trimmed == "" then return nil, "Enter a UserID or username" end
+        local numeric = tonumber(trimmed)
+        if numeric and numeric > 0 and numeric % 1 == 0 then return numeric, nil end
+        for _, p in ipairs(players:GetPlayers()) do
+            if string.lower(p.Name) == string.lower(trimmed)
+                or (p.DisplayName and string.lower(p.DisplayName) == string.lower(trimmed)) then
+                return p.UserId, nil
+            end
+        end
+        if type(players.GetUserIdFromNameAsync) == "function" then
+            local ok, resolved = pcall(players.GetUserIdFromNameAsync, players, trimmed)
+            if ok and type(resolved) == "number" and resolved > 0 then return resolved, nil end
+        end
+        return nil, "Invalid UserID"
+    end
+
+    local function fetchDescription(userId)
+        if type(players.GetHumanoidDescriptionFromUserIdAsync) == "function" then
+            local ok, desc = pcall(players.GetHumanoidDescriptionFromUserIdAsync, players, userId)
+            if ok and desc then return desc end
+        end
+        if type(players.GetHumanoidDescriptionFromUserId) == "function" then
+            local ok, desc = pcall(players.GetHumanoidDescriptionFromUserId, players, userId)
+            if ok and desc then return desc end
+        end
+        return nil
+    end
+
+    local function copyAppearanceFromClone(character, clone)
+        local realHead = character:FindFirstChild("Head")
+        for _, source in ipairs(clone:GetChildren()) do
+            if isAppearanceItem(source) then
+                cloned[source] = true
+                disguisedItems[source] = true
+                if source:IsA("Accessory") then rebindAccessory(character, source) end
+                source.Parent = character
+            end
+        end
+        local targetFace = clone:FindFirstChild("face", true)
+        if targetFace and isAppearanceItem(targetFace) and realHead then
+            cloned[targetFace] = true
+            disguisedItems[targetFace] = true
+            targetFace.Parent = realHead
+        end
+    end
+
+    local function applyDisguise()
+        generation += 1
+        local token = generation
+        if stopped or not V["Disguise"] then return end
+        local character = localPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not (character and humanoid) then return end
+
+        local userId, errMsg = resolveUserId(V["UserID"])
+        if not userId then message("Disguise: " .. tostring(errMsg)); return end
+
+        task.spawn(function()
+            local description = fetchDescription(userId)
+            if not description then
+                if not stopped and token == generation and V["Disguise"] then
+                    message("Disguise: could not load UserID " .. tostring(userId))
+                end
+                return
+            end
+            if stopped or token ~= generation or not V["Disguise"] or localPlayer.Character ~= character then
+                pcall(function() description:Destroy() end)
+                return
+            end
+
+            local current = ensureSnapshot(character, humanoid)
+            restoreOriginalAppearance(character, humanoid)
+            for _, field in ipairs(SCALE_FIELDS) do
+                if current.scales[field] ~= nil then
+                    pcall(function() description[field] = current.scales[field] end)
+                end
+            end
+
+            local oldArchivable = character.Archivable
+            character.Archivable = true
+            local cloneOk, clone = pcall(function() return character:Clone() end)
+            character.Archivable = oldArchivable
+            if not cloneOk or not clone then
+                pcall(function() description:Destroy() end)
+                message("Disguise: could not stage avatar")
+                return
+            end
+            pcall(function() clone.Parent = game end)
+            local cloneHuman = clone:FindFirstChildOfClass("Humanoid")
+            if not cloneHuman then
+                pcall(function() description:Destroy() end)
+                pcall(function() clone:Destroy() end)
+                return
+            end
+
+            local applied = applyDescriptionToHumanoid(cloneHuman, description)
+            if not applied or stopped or token ~= generation or not V["Disguise"] or localPlayer.Character ~= character then
+                pcall(function() description:Destroy() end)
+                pcall(function() clone:Destroy() end)
+                return
+            end
+
+            local targetEmotes, targetEquipped = readDescriptionEmotes(description)
+            if targetEmotes and targetEquipped then
+                if setHumanoidEmotes(humanoid, targetEmotes, targetEquipped) then
+                    emotesApplied = true
+                end
+            end
+
+            installFilter(character)
+            restoring = true
+            local oldItems = {}
+            local okDesc, desc = pcall(function() return character:GetDescendants() end)
+            if okDesc and type(desc) == "table" then
+                for _, obj in ipairs(desc) do
+                    if isAppearanceItem(obj) then table.insert(oldItems, obj) end
+                end
+            end
+            for _, obj in ipairs(oldItems) do pcall(function() obj:Destroy() end) end
+            restoring = false
+
+            pcall(copyAppearanceFromClone, character, clone)
+            pcall(function() clone:Destroy() end)
+            pcall(function() description:Destroy() end)
+            message("Disguise: applied " .. tostring(userId))
+        end)
+    end
+
+    local oldDisguise = AngelHub.setters["Disguise"]
+    if oldDisguise then
+        AngelHub.setters["Disguise"] = function(value)
+            local on = not stopped and value == true
+            oldDisguise(on)
+            if on then
+                applyDisguise()
+            else
+                generation += 1
+                local character = localPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if character then restoreOriginalAppearance(character, humanoid) end
+                destroySnapshot()
+                message("Disguise: off")
+            end
+        end
+    end
+
+    local oldUserId = AngelHub.setters["UserID"]
+    if oldUserId then
+        AngelHub.setters["UserID"] = function(value)
+            oldUserId(value)
+            if not stopped and V["Disguise"] then applyDisguise() end
+        end
+    end
+
+    if AngelHub.disguiseUserIdBox and AngelHub.disguiseUserIdBox.FocusLost then
+        connectInput(AngelHub.disguiseUserIdBox.FocusLost, function()
+            if not stopped and V["Disguise"] then applyDisguise() end
+        end)
+    end
+
+    if localPlayer.CharacterAdded then
+        connectInput(localPlayer.CharacterAdded, function(character)
+            if stopped or not V["Disguise"] then return end
+            task.spawn(function()
+                if character.WaitForChild then pcall(function() character:WaitForChild("Humanoid", 5) end) end
+                if not stopped and V["Disguise"] and localPlayer.Character == character then
+                    applyDisguise()
+                end
+            end)
+        end)
+    end
+
+    screenGui.Destroying:Connect(function()
+        stopped = true
+        generation += 1
+        local character = localPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if character then restoreOriginalAppearance(character, humanoid) end
+        destroySnapshot()
+    end)
+end
+
 -- Independent free camera with PC and touch controls; no player movement on injection.
 local function installFreeCam(screenGui)
     local V=AngelHub.values
@@ -11520,6 +11918,11 @@ local function initializeScript()
 	addButton(extraLeft, "Play Emote")
 	addButton(extraLeft, "Get All Emotes")
 
+	addSection(extraLeft, "Disguise")
+	addModule(extraLeft, "Disguise", nil, false)
+	local disguiseUserIdHolder = addText(extraLeft, "UserID", "UserID or username", "78492")
+	AngelHub.disguiseUserIdBox = disguiseUserIdHolder and disguiseUserIdHolder:FindFirstChildOfClass("TextBox")
+
 	addSection(extraRight, "Fly")
 	addModule(extraRight, "Enable Fly", nil, false)
 	addCycle(extraRight, "Fly Method", { "Velocity", "CFrame" })
@@ -11888,6 +12291,7 @@ local function initializeScript()
     installXRay(screenGui)
     installFPSOptions(screenGui)
     installEmotes(screenGui)
+    installDisguise(screenGui)
     installZoomThroughWalls(screenGui)
     installBlurt(screenGui)
 

@@ -310,5 +310,165 @@ fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
 assert(character.lastPivot and character.lastPivot.Position.X==45,'FAIL_PIVOT')
 screenGui.Destroying:Fire()
 `);
+ assert(file.includes('addSection(extraLeft, "Disguise")')&&file.includes('addModule(extraLeft, "Disguise", nil, false)')&&file.includes('addText(extraLeft, "UserID"')&&file.includes('installDisguise(screenGui)'));
+ const disguiseTest=await Lua.create({sandbox:true});
+ disguiseTest.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+`
+local function makeDesc(props)
+ local d={
+  HeightScale=props.HeightScale or 1, WidthScale=props.WidthScale or 1, DepthScale=props.DepthScale or 1,
+  HeadScale=props.HeadScale or 1, BodyTypeScale=props.BodyTypeScale or 0, ProportionScale=props.ProportionScale or 0,
+  WalkAnimation=props.WalkAnimation or 0, IdleAnimation=props.IdleAnimation or 0,
+  emotes=props.emotes or {}, equipped=props.equipped or {}, destroyed=false,
+ }
+ function d:GetEmotes()
+  local out={}; for k,v in pairs(self.emotes) do out[k]={table.unpack(v)} end; return out
+ end
+ function d:GetEquippedEmotes()
+  local out={}; for i,v in ipairs(self.equipped) do out[i]=v end; return out
+ end
+ function d:SetEmotes(e) self.emotes={}; for k,v in pairs(e) do self.emotes[k]={table.unpack(v)} end end
+ function d:SetEquippedEmotes(eq) self.equipped={}; for i,v in ipairs(eq) do self.equipped[i]=v end end
+ function d:Destroy() self.destroyed=true end
+ return d
+end
+local function makeObj(className, name, parent, extra)
+ local raw=extra or {}
+ raw.ClassName=className; raw.Name=name; raw.children=raw.children or {}; raw.destroyed=false
+ local o={}
+ function o:IsA(c) return self.ClassName==c or (c=='Instance') end
+ function o:GetChildren() local out={}; for _,v in ipairs(self.children) do if not v.destroyed then table.insert(out,v) end end; return out end
+ function o:GetDescendants()
+  local out={}
+  local function walk(n) for _,c in ipairs(n:GetChildren()) do table.insert(out,c); walk(c) end end
+  walk(self); return out
+ end
+ function o:FindFirstChild(n, rec)
+  for _,c in ipairs(self:GetChildren()) do if c.Name==n then return c end if rec then local f=c:FindFirstChild(n,true) if f then return f end end end
+ end
+ function o:FindFirstChildOfClass(c)
+  for _,v in ipairs(self:GetChildren()) do if not v.destroyed and v:IsA(c) then return v end end
+ end
+ function o:IsDescendantOf(anc)
+  local cur=self.Parent; while cur do if cur==anc then return true end; cur=cur.Parent end; return false
+ end
+ function o:Clone()
+  local copy=makeObj(self.ClassName, self.Name, nil, {})
+  for k,v in pairs(raw) do
+   if k~='Parent' and k~='children' and type(v)~='function' and type(v)~='table' then copy[k]=v end
+  end
+  for _,c in ipairs(self:GetChildren()) do
+   local cc=c:Clone(); cc.Parent=copy
+  end
+  if copy.ClassName=='Accessory' then
+   for _,d in ipairs(copy:GetDescendants()) do
+    if d.ClassName=='Weld' and raw._targetPartName then d.Part1={Name=raw._targetPartName, ClassName='BasePart', IsA=function(_,c) return c=='BasePart' end} end
+   end
+  end
+  return copy
+ end
+ function o:Destroy()
+  raw.destroyed=true; o.Parent=nil
+ end
+ local proxy=setmetatable(o, {
+  __index=raw,
+  __newindex=function(t,k,v)
+   if k=='Parent' then
+    local old=raw.Parent
+    if old and old.children then
+     for i,x in ipairs(old.children) do if x==t then table.remove(old.children, i); break end end
+    end
+    raw.Parent=v
+    if v and v.children then
+     local found=false; for _,x in ipairs(v.children) do if x==t then found=true; break end end
+     if not found then table.insert(v.children, t) end
+     if v==character and character.DescendantAdded then character.DescendantAdded:Fire(t) end
+    end
+    return
+   end
+   raw[k]=v
+  end
+ })
+ proxy.Parent=parent
+ return proxy
+end
+character.children={}; character.DescendantAdded=event(); character.Archivable=true
+local origFindChild=character.FindFirstChild
+function character:IsA(c) return c=='Model' end
+function character:FindFirstChild(n, rec)
+ for _,c in ipairs(self.children) do
+  if not c.destroyed and c.Name==n then return c end
+  if rec and c.FindFirstChild then local f=c:FindFirstChild(n,true) if f then return f end end
+ end
+end
+function character:FindFirstChildOfClass(c)
+ if c=='Humanoid' then return humanoid end
+ for _,v in ipairs(self.children) do if not v.destroyed and v:IsA(c) then return v end end
+end
+function character:GetChildren() local out={}; for _,v in ipairs(self.children) do if not v.destroyed then table.insert(out,v) end end; return out end
+function character:GetDescendants()
+ local out={}
+ local function walk(n) for _,c in ipairs(n:GetChildren()) do table.insert(out,c); walk(c) end end
+ walk(self); return out
+end
+function character:Clone()
+ local copy=makeObj('Model', self.Name, nil, {children={}})
+ local chHum=makeObj('Humanoid', 'Humanoid', copy, {})
+ function chHum:ApplyDescriptionResetAsync(desc)
+  for _,c in ipairs(copy:GetChildren()) do if c.ClassName=='Shirt' or c.ClassName=='Accessory' then c:Destroy() end end
+  makeObj('Shirt', 'TargetShirt', copy, {ShirtTemplate='rbxassetid://999'})
+  local acc=makeObj('Accessory', 'TargetHat', copy, {_targetPartName='Head'})
+  local h=makeObj('BasePart', 'Handle', acc, {})
+  makeObj('Weld', 'AccessoryWeld', h, {Part1={Name='Head'}})
+  local targetHead=copy:FindFirstChild('Head')
+  if targetHead then makeObj('Decal', 'face', targetHead, {Texture='rbxassetid://888'}) end
+ end
+ makeObj('BasePart', 'Head', copy, {})
+ return copy
+end
+local liveHead=makeObj('BasePart', 'Head', character, {})
+makeObj('Decal', 'face', liveHead, {Texture='rbxassetid://111'})
+makeObj('Shirt', 'OrigShirt', character, {ShirtTemplate='rbxassetid://222'})
+makeObj('Accessory', 'OrigHat', character, {})
+local animate=makeObj('LocalScript', 'Animate', character, {})
+local walkFolder=makeObj('StringValue', 'walk', animate, {})
+local walkAnim=makeObj('Animation', 'WalkAnim', walkFolder, {AnimationId='rbxassetid://12345'})
+local localDesc=makeDesc({HeightScale=1.15, WalkAnimation=12345, emotes={Wave={101}}, equipped={{Name='Wave',Slot=1}}})
+function humanoid:FindFirstChildOfClass(c) if c=='HumanoidDescription' then return localDesc end end
+local targetDesc=makeDesc({HeightScale=1.8, WalkAnimation=77777, IdleAnimation=88888, emotes={Dance={202},Cheer={303}}, equipped={{Name='Dance',Slot=1},{Name='Cheer',Slot=2}}})
+function services.Players:GetPlayers() return {{Name='TargetUser',DisplayName='TargetDisplay',UserId=999111}} end
+function services.Players:GetHumanoidDescriptionFromUserIdAsync(uid)
+ assert(uid==999111 or uid==78492, 'bad uid '..tostring(uid))
+ return makeDesc({HeightScale=targetDesc.HeightScale, WalkAnimation=targetDesc.WalkAnimation, IdleAnimation=targetDesc.IdleAnimation, emotes=targetDesc.emotes, equipped=targetDesc.equipped})
+end
+AngelHub.values['Disguise']=false; AngelHub.setters['Disguise']=function(v) AngelHub.values['Disguise']=v end
+AngelHub.values['UserID']='TargetUser'; AngelHub.setters['UserID']=function(v) AngelHub.values['UserID']=tostring(v) end
+installDisguise(screenGui)
+AngelHub.setters['Disguise'](true)
+drain()
+assert(character:FindFirstChild('TargetShirt')~=nil, 'TargetShirt missing')
+assert(character:FindFirstChild('OrigShirt')==nil, 'OrigShirt still present')
+local hat=character:FindFirstChild('TargetHat'); assert(hat~=nil, 'TargetHat missing')
+local weld=hat:FindFirstChild('AccessoryWeld', true); assert(weld and weld.Part1==liveHead, 'Accessory weld not rebound')
+local face=liveHead:FindFirstChild('face'); assert(face and face.Texture=='rbxassetid://888', 'Target face missing')
+assert(localDesc:GetEmotes().Dance~=nil and localDesc:GetEmotes().Wave==nil, 'Target emotes not applied')
+assert(localDesc:GetEquippedEmotes()[1].Name=='Dance', 'Target equipped emotes not applied')
+assert(walkAnim.AnimationId=='rbxassetid://12345' and localDesc.WalkAnimation==12345, 'Movement animation must NOT be modified')
+-- Stray server accessory added while disguised is filtered out cleanly
+local stray=makeObj('Accessory', 'StrayHat', character, {})
+assert(stray.destroyed==true, 'Stray appearance item should be destroyed')
+-- Disabling Disguise restores original avatar items and original emotes
+AngelHub.setters['Disguise'](false)
+assert(character:FindFirstChild('OrigShirt')~=nil and character:FindFirstChild('TargetShirt')==nil, 'Original shirt not restored')
+assert(character:FindFirstChild('OrigHat')~=nil and character:FindFirstChild('TargetHat')==nil, 'Original hat not restored')
+local restoredFace=liveHead:FindFirstChild('face'); assert(restoredFace and restoredFace.Texture=='rbxassetid://111', 'Original face not restored')
+assert(localDesc:GetEmotes().Wave~=nil and localDesc:GetEmotes().Dance==nil, 'Original emotes not restored')
+assert(walkAnim.AnimationId=='rbxassetid://12345', 'Movement animation changed on restore')
+-- Re-enable with numeric UserID and verify screenGui.Destroying restores cleanly
+AngelHub.setters['UserID']('78492'); AngelHub.setters['Disguise'](true)
+drain()
+assert(character:FindFirstChild('TargetShirt')~=nil, 'Numeric UserID disguise failed')
+screenGui.Destroying:Fire()
+assert(character:FindFirstChild('OrigShirt')~=nil and localDesc:GetEmotes().Wave~=nil, 'Destroying did not restore')
+`);
  console.log('PASS: lists, Fling, Auto Win Sheriff, safe autoload, visual and prior GUI regressions (PC/mobile mocks only)');
 })().catch(err=>{console.error(err);process.exit(1)});
