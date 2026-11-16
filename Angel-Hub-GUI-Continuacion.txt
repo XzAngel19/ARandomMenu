@@ -8594,7 +8594,7 @@ local function installMM2Farm(screenGui)
     local fullOrder={"Auto Kill All When Full Bag","Fling Murder After Full Bag","Fling Sheriff After Full Bag"}
     cancelFullActions=function()
         local full=extensionSteps.farmFull
-        full.active=nil;full.waitName=nil;full.waitAt=nil;full.returnFrame=nil;full.done={}
+        full.active=nil;full.waitName=nil;full.waitAt=nil;full.returnFrame=nil;full.done={};full.engaged={};full.airWait={}
         if AngelHub.mm2CancelOwnedFling then AngelHub.mm2CancelOwnedFling("farm")end
         if AngelHub.mm2CancelFarmKills then AngelHub.mm2CancelFarmKills()end
     end
@@ -8606,6 +8606,8 @@ local function installMM2Farm(screenGui)
     end
     local function fullActionStep(character,human,root,map)
         local full=extensionSteps.farmFull
+        full.engaged=full.engaged or {}
+        full.airWait=full.airWait or {}
         if full.active then
             if (AngelHub.mm2FlingBusy and AngelHub.mm2FlingOwner=="farm")
                 or (AngelHub.mm2KnifeKillBusy and AngelHub.mm2KnifeKillOwner=="farm") then return true end
@@ -8640,12 +8642,35 @@ local function installMM2Farm(screenGui)
         local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
         local target
         if name~="Auto Kill All When Full Bag" then
+            if name=="Fling Sheriff After Full Bag" and V["Auto Grab Gun And Shoot"]==true
+                and AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun() then
+                full.done[name]=true;full.waitName=nil;full.waitAt=nil;full.airWait[name]=nil
+                return false
+            end
             local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
             if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles(false) end
             target=findFullTarget(wanted)
             if not target and AngelHub.refreshMM2Roles then
                 AngelHub.refreshMM2Roles(true)
                 target=findFullTarget(wanted)
+            end
+            if full.engaged[name] then
+                local targetChar=target and target.Character
+                local targetHum=targetChar and targetChar:FindFirstChildOfClass("Humanoid")
+                local targetAlive=targetHum and targetHum.Health>0
+                if not target or not targetAlive then
+                    full.done[name]=true;full.waitName=nil;full.waitAt=nil;full.airWait[name]=nil
+                    return false
+                end
+                if not (AngelHub.farmTargetAllowed and AngelHub.farmTargetAllowed(target,map)==true) then
+                    full.airWait[name]=full.airWait[name] or os.clock()
+                    if os.clock()-full.airWait[name]>=2.5 then
+                        full.done[name]=true;full.waitName=nil;full.waitAt=nil;full.airWait[name]=nil
+                        return false
+                    end
+                    return true
+                end
+                full.airWait[name]=nil
             end
         elseif AngelHub.refreshMM2Roles then
             AngelHub.refreshMM2Roles(false)
@@ -8664,6 +8689,10 @@ local function installMM2Farm(screenGui)
                 local currentRole=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
                 return currentRole=="Murderer" or (currentRole==nil and hasKnife())
             end
+            if name=="Fling Sheriff After Full Bag" and V["Auto Grab Gun And Shoot"]==true
+                and AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun() then
+                return false
+            end
             if target then
                 local current=AngelHub.getMM2Role and AngelHub.getMM2Role(target)
                 local wanted=name=="Fling Murder After Full Bag" and "Murderer" or "Sheriff"
@@ -8680,17 +8709,22 @@ local function installMM2Farm(screenGui)
             if (role=="Murderer" or (role==nil and hasKnife())) and AngelHub.mm2StartFarmKills then
                 started=AngelHub.mm2StartFarmKills(valid)==true
             end
+            if started then
+                full.done[name]=true;full.waitName=nil;full.waitAt=nil
+                message(name..": intento iniciado; resultado no confirmado")
+                return true
+            end
         elseif target and AngelHub.mm2StartOwnedFling then
             started=AngelHub.mm2StartOwnedFling("farm",target,valid,false)==true
-        end
-        if started then
-            full.done[name]=true;full.waitName=nil;full.waitAt=nil
-            message(name..": intento iniciado; resultado no confirmado")
-            return true
+            if started then
+                full.engaged[name]=true;full.waitAt=os.clock();full.airWait[name]=nil
+                message(name..": flinging hasta eliminar objetivo")
+                return true
+            end
         end
         full.active=nil
         if os.clock()-full.waitAt>=10 then
-            full.done[name]=true;full.waitName=nil;full.waitAt=nil
+            full.done[name]=true;full.waitName=nil;full.waitAt=nil;full.airWait[name]=nil
             message(name..": objetivo o accion no disponible")
         end
         return true
@@ -8759,12 +8793,15 @@ local function installMM2Farm(screenGui)
         if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles() end
         local target
         for _,player in ipairs(playersService:GetPlayers()) do
-            if player~=localPlayer and AngelHub.getMM2Role and AngelHub.getMM2Role(player)=="Murderer"
-                and AngelHub.farmTargetAllowed and AngelHub.farmTargetAllowed(player,roundMap) then
+            if player~=localPlayer and AngelHub.getMM2Role and AngelHub.getMM2Role(player)=="Murderer" then
                 target=player;break
             end
         end
-        if not target then return end
+        local targetHum=target and target.Character and target.Character:FindFirstChildOfClass("Humanoid")
+        if (targetHum and targetHum.Health<=0) or (extensionSteps.farmFull.deadEngaged and not target) then
+            farmDeadAttempted=true;extensionSteps.farmFull.deadEngaged=nil;return
+        end
+        if not target or not (AngelHub.farmTargetAllowed and AngelHub.farmTargetAllowed(target,roundMap)) then return end
         local function validDead()
             return not stopped and enabled["Auto Farm"] and V["Fling Murder After Full Bag"]==true
                 and not (farmWaitingMap and farmWaitingMap==roundMap)
@@ -8774,14 +8811,14 @@ local function installMM2Farm(screenGui)
                 and AngelHub.farmTargetAllowed and AngelHub.farmTargetAllowed(target,roundMap)==true
         end
         if AngelHub.mm2StartOwnedFling("farm",target,validDead,true) then
-            farmDeadAttempted=true
+            extensionSteps.farmFull.deadEngaged=true
             message("Fling Murder After Full Bag: Murderer atacado desde el lobby")
         end
     end
     AngelHub.farmFullTicket=function()return farmGeneration end
     AngelHub.farmFullAllowed=function()
         local character,human,root=characterParts();local map=mm2Map()
-        return not stopped and enabled["Auto Farm"] and V["Auto Grab Gun And Shoot"] and farmAmount>=math.max(1,farmLimit)
+        return not stopped and enabled["Auto Farm"] and V["Auto Grab Gun And Shoot"]
             and character~=nil and human~=nil and root~=nil and not root.Anchored and not human.Sit
             and farmOnMap(root,map) and not (farmWaitingMap and farmWaitingMap==map) and not AngelHub.mm2FlingBusy
     end
@@ -8825,7 +8862,7 @@ local function installMM2Farm(screenGui)
             and farmOnMap(root, map) and not (farmWaitingMap and farmWaitingMap == map) then
             farmParticipantMap, farmParticipantCharacter, farmParticipantHuman = map, character, humanoid
         end
-        if V["Auto Grab Gun And Shoot"] and not fullPending() and os.clock()>=grabNext and AngelHub.farmFullAllowed() then
+        if V["Auto Grab Gun And Shoot"] and not (farmAmount>=math.max(1,farmLimit) and fullPending()) and os.clock()>=grabNext and AngelHub.farmFullAllowed() then
             grabNext=os.clock()+.25
             if AngelHub.refreshMM2Roles then AngelHub.refreshMM2Roles()end
             local role=AngelHub.getMM2Role and AngelHub.getMM2Role(localPlayer)
@@ -8834,17 +8871,23 @@ local function installMM2Farm(screenGui)
             local knife=character:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
             if gun and AngelHub.farmGrabShoot then AngelHub.farmGrabShoot()
             elseif (not role or role=="Innocent") and not knife then
-                if AngelHub.actions and AngelHub.actions["Get Gun"] then AngelHub.actions["Get Gun"]() end
+                local hasDropFinder=type(AngelHub.findMM2DroppedGun)=="function"
+                local drop=hasDropFinder and AngelHub.findMM2DroppedGun() or nil
+                if (not hasDropFinder or drop) and AngelHub.actions and AngelHub.actions["Get Gun"] then
+                    AngelHub.actions["Get Gun"]()
+                end
                 gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-                if not gun then
-                    local drop=AngelHub.findMM2DroppedGun and AngelHub.findMM2DroppedGun()
-                    local touch=drop and (drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true))
+                if not gun and drop then
+                    local touch=drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true)
                     if touch and touch:IsA("BasePart") and touch:IsDescendantOf(workspace) and farmOnMap(touch,map) then
                         local destroyY=workspace.FallenPartsDestroyHeight
                         if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1000000 then destroyY=-500 end
                         if touch.Position.Y>destroyY+40 then
-                            local returnCf=extensionSteps.farmFull.returnFrame or root.CFrame
-                            extensionSteps.farmFull.returnFrame=returnCf
+                            if farmAmount>=math.max(1,farmLimit) then
+                                local returnCf=extensionSteps.farmFull.returnFrame or root.CFrame
+                                extensionSteps.farmFull.returnFrame=returnCf
+                            end
+                            farmPickupPause=math.max(farmPickupPause,0.25)
                             pcall(function()
                                 character:PivotTo(touch.CFrame)
                                 root.AssemblyLinearVelocity=Vector3.zero

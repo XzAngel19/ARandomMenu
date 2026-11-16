@@ -41,8 +41,13 @@ local pin=created[#created];assert(pin.class=='BodyVelocity' and AngelHub.mm2Fli
 fakeNow+=.1;heartbeat:Fire(.2);assert(not pin.destroyed and V['Auto Farm'])
 AngelHub.setters['Fling Murder After Full Bag'](false)
 assert(pin.destroyed and not AngelHub.mm2FlingBusy and root.Position.X==0 and humanoid.seated)
+-- Re-enabling while Murderer is still alive resumes flinging until Murderer dies!
 AngelHub.setters['Fling Murder After Full Bag'](true);heartbeat:Fire(.2)
-assert(created[#created]==pin) -- once per bag
+local pin2=created[#created];assert(pin2~=pin and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm')
+human.Health=0;fakeNow+=0.2;heartbeat:Fire(.2)
+assert(pin2.destroyed and not AngelHub.mm2FlingBusy)
+heartbeat:Fire(.2);assert(created[#created]==pin2) -- stops once target died
+human.Health=100
 collected.OnClientEvent:Fire('Coins',0,50);heartbeat:Fire(.2)
 collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);pin=created[#created]
 assert(not pin.destroyed and AngelHub.mm2FlingOwner=='farm')
