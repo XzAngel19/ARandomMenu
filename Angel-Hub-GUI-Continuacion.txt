@@ -8889,35 +8889,20 @@ local function installMM2Farm(screenGui)
             elseif (not role or role=="Innocent") and not knife then
                 local hasDropFinder=type(AngelHub.findMM2DroppedGun)=="function"
                 local drop=hasDropFinder and AngelHub.findMM2DroppedGun() or nil
+                local touched=false
                 if (not hasDropFinder or drop) and AngelHub.actions and AngelHub.actions["Get Gun"] then
-                    AngelHub.actions["Get Gun"]()
+                    touched=AngelHub.actions["Get Gun"]()==true
                 end
                 gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-                if not gun and drop then
+                if not gun and not touched and drop and type(firetouchinterest)=="function" then
                     local touch=drop:IsA("BasePart") and drop or drop:FindFirstChild("Handle",true) or drop:FindFirstChildWhichIsA("BasePart",true)
                     if touch and touch:IsA("BasePart") and touch:IsDescendantOf(workspace) and farmOnMap(touch,map) then
-                        local destroyY=workspace.FallenPartsDestroyHeight
-                        if type(destroyY)~="number" or destroyY~=destroyY or math.abs(destroyY)>1000000 then destroyY=-500 end
-                        if touch.Position.Y>destroyY+40 then
-                            if bagFull then
-                                local returnCf=extensionSteps.farmFull.returnFrame or root.CFrame
-                                extensionSteps.farmFull.returnFrame=returnCf
-                            end
-                            farmPickupPause=math.max(farmPickupPause,0.25)
-                            pcall(function()
-                                character:PivotTo(touch.CFrame)
-                                root.AssemblyLinearVelocity=Vector3.zero
-                                root.AssemblyAngularVelocity=Vector3.zero
-                            end)
-                            if type(firetouchinterest)=="function" then
-                                pcall(firetouchinterest,root,touch,0)
-                                pcall(firetouchinterest,root,touch,1)
-                            end
-                            gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-                            if bagFull and gun and AngelHub.farmGrabShoot then AngelHub.farmGrabShoot() end
-                        end
+                        pcall(firetouchinterest,root,touch,0)
+                        pcall(firetouchinterest,root,touch,1)
                     end
                 end
+                gun=character:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+                if bagFull and gun and AngelHub.farmGrabShoot then AngelHub.farmGrabShoot() end
             end
         end
         if farmPark then

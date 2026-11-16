@@ -290,20 +290,20 @@ AngelHub.getMM2Role=function(p)if p==murd then return 'Murderer' elseif p==sher 
 AngelHub.findMM2Map=function()return map.Parent and map end
 AngelHub.refreshMM2Roles=function()end;AngelHub.releaseMM2Roles=function()end
 local drop={Position=Vector3.new(45,0,0),CFrame=CFrame.new(Vector3.new(45,0,0))};function drop:IsA(c)return c=='BasePart'end;function drop:IsDescendantOf(w)return w==workspace end
-local curDrop=drop;local shots=0;local hasGun=false
+local curDrop=drop;local shots=0;local hasGun=false;local gunTouches=0
 local oldCharFind=character.FindFirstChild
 function character:FindFirstChild(n) if n=='Gun' and hasGun then return drop end return oldCharFind(self,n) end
 AngelHub.findMM2DroppedGun=function()return curDrop end
-AngelHub.actions={['Get Gun']=function()return true end}
+AngelHub.actions={['Get Gun']=function() gunTouches+=1; return true end}
 AngelHub.farmGrabShoot=function()shots+=1 end
 installMM2Fling(screenGui);installMM2Farm(screenGui)
 -- Simulate prior round end followed by RoundStart(nil) / CoinsStarted: must NOT leave roundEnded=true
 ended.OnClientEvent:Fire();started.OnClientEvent:Fire();coinsStarted.OnClientEvent:Fire()
--- Step 1: Before full coin bag (0/40), Auto Grab Gun grabs GunDrop, and does NOT shoot even if Gun is equipped!
+-- Step 1: Before full coin bag (0/40), Auto Grab Gun uses firetouchinterest (NO PivotTo teleport!), and does NOT shoot!
 coinLbl.Text='0/40'
 AngelHub.setters['Auto Grab Gun And Shoot'](true);AngelHub.setters['Auto Farm'](true)
 heartbeat:Fire(.2)
-assert(character.lastPivot and character.lastPivot.Position.X==45 and shots==0,'FAIL_PRE_FULL_GUN_PIVOT')
+assert(gunTouches==1 and character.lastPivot==nil and shots==0,'FAIL_PRE_FULL_GUN_TOUCH')
 hasGun=true;fakeNow+=0.3;heartbeat:Fire(.2);assert(shots==0,'FAIL_NO_SHOOT_BEFORE_FULL')
 -- Step 2: Reach full bag via GUI '40/40': rests on map 1.5s and touches ground before flinging!
 hasGun=false;curDrop=nil;character.lastPivot=nil;root.Position=Vector3.zero;root.CFrame=CFrame.new(root.Position)
@@ -323,9 +323,10 @@ local pin2=created[#created];assert(pin2~=pin1b and pin2.class=='BodyVelocity' a
 -- After 2.2s burst + 1.0s rest, Sher is STILL alive (sh.Health==100) -> must fling Sher AGAIN!
 fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=1.2;heartbeat:Fire(.2)
 local pin2b=created[#created];assert(pin2b~=pin2 and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_SHER_RETRY')
--- Now Sher dies (sh.Health=0) and GunDrop appears -> Auto Grab Gun pivots onto GunDrop and shoots!
-sh.Health=0;curDrop=drop;fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
-assert(character.lastPivot and character.lastPivot.Position.X==45,'FAIL_PIVOT')
+-- Now Sher dies (sh.Health=0) and GunDrop appears -> Auto Grab Gun uses firetouchinterest (no teleport to GunDrop!) and shoots!
+sh.Health=0;curDrop=drop;local beforeTouches=gunTouches
+fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
+assert(gunTouches>beforeTouches and (not character.lastPivot or character.lastPivot.Position.X~=45),'FAIL_TOUCH_NO_TELEPORT')
 hasGun=true;fakeNow+=0.3;heartbeat:Fire(.2);assert(shots>=1,'FAIL_SHOOT_AT_FULL')
 screenGui.Destroying:Fire()
 `);
