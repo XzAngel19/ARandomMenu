@@ -323,11 +323,11 @@ local pin2=created[#created];assert(pin2~=pin1b and pin2.class=='BodyVelocity' a
 -- After 2.2s burst + 1.0s rest, Sher is STILL alive (sh.Health==100) -> must fling Sher AGAIN!
 fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=1.2;heartbeat:Fire(.2)
 local pin2b=created[#created];assert(pin2b~=pin2 and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_SHER_RETRY')
--- Now Sher dies (sh.Health=0) and GunDrop appears -> Auto Grab Gun uses firetouchinterest (no teleport to GunDrop!) and shoots!
+-- Now Sher dies (sh.Health=0) and GunDrop appears -> waits >=1s cooldown, grabs with firetouchinterest (no teleport to GunDrop!) and shoots!
 sh.Health=0;curDrop=drop;local beforeTouches=gunTouches
-fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
+fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=1.1;heartbeat:Fire(.2);fakeNow+=1.1;heartbeat:Fire(.2)
 assert(gunTouches>beforeTouches and (not character.lastPivot or character.lastPivot.Position.X~=45),'FAIL_TOUCH_NO_TELEPORT')
-hasGun=true;fakeNow+=0.3;heartbeat:Fire(.2);assert(shots>=1,'FAIL_SHOOT_AT_FULL')
+hasGun=true;fakeNow+=1.1;heartbeat:Fire(.2);assert(shots>=1,'FAIL_SHOOT_AT_FULL')
 screenGui.Destroying:Fire()
 `);
  assert(file.includes('addSection(extraLeft, "Disguise")')&&file.includes('addModule(extraLeft, "Disguise", nil, false)')&&file.includes('addText(extraLeft, "UserID"')&&file.includes('installDisguise(screenGui)'));
