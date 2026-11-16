@@ -14,10 +14,13 @@ AngelHub.farmGrabShoot=function()shots+=1 end
 local gun={};local equipped=false;local oldFind=character.FindFirstChild
 function character:FindFirstChild(n)if n=='Gun' and equipped then return gun end;return oldFind(self,n)end
 installMM2Farm(screenGui);AngelHub.setters['Auto Farm'](true)
--- Grab gun & shoot works immediately even while coin bag is not full (0/50 or 49/50)
+-- Grab gun works immediately even while coin bag is not full (0/50 or 49/50),
+-- but Auto Shoot NEVER shoots before the coin bag is full!
 heartbeat:Fire(.2);assert(touches==1 and shots==0)
-fakeNow+=.3;collected.OnClientEvent:Fire('Coins',49,50);heartbeat:Fire(.2);assert(touches==2)
-fakeNow+=.3;collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);assert(touches==3 and shots==0)
+fakeNow+=.3;equipped=true;heartbeat:Fire(.2);assert(shots==0)
+equipped=false;fakeNow+=.3;collected.OnClientEvent:Fire('Coins',49,50);heartbeat:Fire(.2);assert(touches==2 and shots==0)
+fakeNow+=.3;equipped=true;heartbeat:Fire(.2);assert(shots==0)
+equipped=false;fakeNow+=.3;collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);assert(touches==3 and shots==0)
 fakeNow+=.3;role='Murderer';heartbeat:Fire(.2);assert(touches==3)
 fakeNow+=.3;role='Innocent';equipped=true;heartbeat:Fire(.2);assert(shots==1)
 fakeNow+=.3;root.Position=Vector3.new(1000,0,0);heartbeat:Fire(.2);assert(shots==1)

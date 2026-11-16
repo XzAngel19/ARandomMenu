@@ -37,6 +37,8 @@ function coin:FindFirstChild()return nil end;function coin:IsDescendantOf(p)retu
 map.descendants={coin};installMM2Fling(screenGui);installMM2Farm(screenGui)
 AngelHub.setters['Fling Murder After Full Bag'](true);AngelHub.setters['Auto Farm'](true)
 heartbeat:Fire(.2);collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2)
+assert(not AngelHub.mm2FlingBusy) -- rests on map 1.5s before flinging
+fakeNow+=1.6;heartbeat:Fire(.2)
 local pin=created[#created];assert(pin.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm' and V['Auto Farm'])
 fakeNow+=.1;heartbeat:Fire(.2);assert(not pin.destroyed and V['Auto Farm'])
 AngelHub.setters['Fling Murder After Full Bag'](false)
@@ -49,11 +51,11 @@ assert(pin2.destroyed and not AngelHub.mm2FlingBusy)
 heartbeat:Fire(.2);assert(created[#created]==pin2) -- stops once target died
 human.Health=100
 collected.OnClientEvent:Fire('Coins',0,50);heartbeat:Fire(.2)
-collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);pin=created[#created]
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);fakeNow+=1.6;heartbeat:Fire(.2);pin=created[#created]
 assert(not pin.destroyed and AngelHub.mm2FlingOwner=='farm')
 started.OnClientEvent:Fire(0);assert(pin.destroyed and not AngelHub.mm2FlingBusy and root.Position.X==0)
 started.OnClientEvent:Fire(10);collected.OnClientEvent:Fire('Coins',0,50);heartbeat:Fire(.2)
-collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);pin=created[#created]
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);fakeNow+=1.6;heartbeat:Fire(.2);pin=created[#created]
 assert(not pin.destroyed and AngelHub.mm2FlingOwner=='farm')
 humanoid.Health=0;heartbeat:Fire(.2);assert(pin.destroyed and not AngelHub.mm2FlingBusy)
 humanoid.Health=100;fakeNow+=2;heartbeat:Fire(.2);assert(created[#created]==pin and not AngelHub.mm2FlingBusy)

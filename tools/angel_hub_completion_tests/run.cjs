@@ -290,36 +290,43 @@ AngelHub.getMM2Role=function(p)if p==murd then return 'Murderer' elseif p==sher 
 AngelHub.findMM2Map=function()return map.Parent and map end
 AngelHub.refreshMM2Roles=function()end;AngelHub.releaseMM2Roles=function()end
 local drop={Position=Vector3.new(45,0,0),CFrame=CFrame.new(Vector3.new(45,0,0))};function drop:IsA(c)return c=='BasePart'end;function drop:IsDescendantOf(w)return w==workspace end
-local curDrop=drop;local shots=0
+local curDrop=drop;local shots=0;local hasGun=false
+local oldCharFind=character.FindFirstChild
+function character:FindFirstChild(n) if n=='Gun' and hasGun then return drop end return oldCharFind(self,n) end
 AngelHub.findMM2DroppedGun=function()return curDrop end
 AngelHub.actions={['Get Gun']=function()return true end}
 AngelHub.farmGrabShoot=function()shots+=1 end
 installMM2Fling(screenGui);installMM2Farm(screenGui)
 -- Simulate prior round end followed by RoundStart(nil) / CoinsStarted: must NOT leave roundEnded=true
 ended.OnClientEvent:Fire();started.OnClientEvent:Fire();coinsStarted.OnClientEvent:Fire()
--- Step 1: Even BEFORE full coin bag (0/40), Auto Grab Gun And Shoot grabs GunDrop while Auto Farming!
+-- Step 1: Before full coin bag (0/40), Auto Grab Gun grabs GunDrop, and does NOT shoot even if Gun is equipped!
 coinLbl.Text='0/40'
 AngelHub.setters['Auto Grab Gun And Shoot'](true);AngelHub.setters['Auto Farm'](true)
 heartbeat:Fire(.2)
-assert(character.lastPivot and character.lastPivot.Position.X==45,'FAIL_PRE_FULL_GUN_PIVOT')
--- Step 2: Now reach full bag via GUI '40/40' (no GunDrop yet while flinging Sheriff) -> Fling Murderer until dead!
-curDrop=nil;character.lastPivot=nil;root.Position=Vector3.zero;root.CFrame=CFrame.new(root.Position)
-coinLbl.Text='40/40'
+assert(character.lastPivot and character.lastPivot.Position.X==45 and shots==0,'FAIL_PRE_FULL_GUN_PIVOT')
+hasGun=true;fakeNow+=0.3;heartbeat:Fire(.2);assert(shots==0,'FAIL_NO_SHOOT_BEFORE_FULL')
+-- Step 2: Reach full bag via GUI '40/40': rests on map 1.5s and touches ground before flinging!
+hasGun=false;curDrop=nil;character.lastPivot=nil;root.Position=Vector3.zero;root.CFrame=CFrame.new(root.Position)
+humanoid.FloorMaterial=Enum.Material.Air;coinLbl.Text='40/40'
 AngelHub.setters['Fling Murder After Full Bag'](true);AngelHub.setters['Fling Sheriff After Full Bag'](true)
-heartbeat:Fire(.2)
+heartbeat:Fire(.2);assert(not AngelHub.mm2FlingBusy,'FAIL_MUST_REST_FIRST')
+fakeNow+=1.6;heartbeat:Fire(.2);assert(not AngelHub.mm2FlingBusy,'FAIL_WAIT_GROUND')
+humanoid.FloorMaterial=Enum.Material.Ground;heartbeat:Fire(.2)
 local pin1=created[#created];assert(pin1 and pin1.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_PIN1')
--- After 2.2s burst, Murd is STILL alive (mh.Health==100) -> must fling Murd AGAIN (not skip to Sheriff)!
-fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.2;heartbeat:Fire(.2)
+-- After 2.2s burst + 1.0s rest, Murd is STILL alive (mh.Health==100) -> must fling Murd AGAIN!
+fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.2;heartbeat:Fire(.2);assert(not AngelHub.mm2FlingBusy,'FAIL_RETRY_REST')
+fakeNow+=1.0;heartbeat:Fire(.2)
 local pin1b=created[#created];assert(pin1b~=pin1 and pin1b.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_MURD_RETRY')
 -- Now Murd dies (mh.Health=0) -> transitions to Sheriff fling!
-mh.Health=0;fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=0.2;heartbeat:Fire(.2)
+mh.Health=0;fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=1.1;heartbeat:Fire(.2)
 local pin2=created[#created];assert(pin2~=pin1b and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_PIN2')
--- After 2.2s burst, Sher is STILL alive (sh.Health==100) -> must fling Sher AGAIN!
-fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=0.2;heartbeat:Fire(.2)
+-- After 2.2s burst + 1.0s rest, Sher is STILL alive (sh.Health==100) -> must fling Sher AGAIN!
+fakeNow+=2.2;heartbeat:Fire(.2);fakeNow+=1.2;heartbeat:Fire(.2)
 local pin2b=created[#created];assert(pin2b~=pin2 and pin2.class=='BodyVelocity' and AngelHub.mm2FlingOwner=='farm','FAIL_SHER_RETRY')
--- Now Sher dies (sh.Health=0) and GunDrop appears -> Auto Grab Gun pivots directly onto GunDrop!
+-- Now Sher dies (sh.Health=0) and GunDrop appears -> Auto Grab Gun pivots onto GunDrop and shoots!
 sh.Health=0;curDrop=drop;fakeNow+=0.2;heartbeat:Fire(.2);fakeNow+=0.3;heartbeat:Fire(.2)
 assert(character.lastPivot and character.lastPivot.Position.X==45,'FAIL_PIVOT')
+hasGun=true;fakeNow+=0.3;heartbeat:Fire(.2);assert(shots>=1,'FAIL_SHOOT_AT_FULL')
 screenGui.Destroying:Fire()
 `);
  assert(file.includes('addSection(extraLeft, "Disguise")')&&file.includes('addModule(extraLeft, "Disguise", nil, false)')&&file.includes('addText(extraLeft, "UserID"')&&file.includes('installDisguise(screenGui)'));
