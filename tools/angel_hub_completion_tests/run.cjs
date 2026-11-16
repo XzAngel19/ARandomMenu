@@ -138,6 +138,51 @@ shared.AngelHubGui:Destroy()
  visualRoles.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(__dirname,'mock-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','role-visual-checks.luau')));
  const coin=await Lua.create({sandbox:true});
  coin.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','coin-checks.luau')));
+ const coinModelAndParent=await Lua.create({sandbox:true});
+ coinModelAndParent.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+`
+AngelHub.moduleNames['Coin ESP']=true;V['Coin ESP']=false;AngelHub.setters['Coin ESP']=function(v)V['Coin ESP']=v end
+V['Coin Colour']={r=1};V['Coin Transparency']=0;V['Coin In Use']='All'
+services.Players={LocalPlayer=localPlayer}
+local coinMesh={Name='Mesh',Size=Vector3.new(2,2,2),attributes={}}
+function coinMesh:IsA(c)return c=='BasePart'end
+function coinMesh:GetAttribute(n)return self.attributes[n]end
+function coinMesh:GetDescendants()return {}end
+function coinMesh:FindFirstChildOfClass()return nil end
+local modelVisual={Name='CoinVisual',Parent=map,PrimaryPart=coinMesh,attributes={}}
+coinMesh.Parent=modelVisual
+function modelVisual:IsA(c)return c=='Model'end
+function modelVisual:GetAttribute(n)return self.attributes[n]end
+function modelVisual:FindFirstChildOfClass()return nil end
+function modelVisual:FindFirstChildWhichIsA(c)if c=='BasePart'then return coinMesh end end
+function modelVisual:GetDescendants()return {coinMesh}end
+function modelVisual:IsDescendantOf(o)return o==map or o==workspace end
+function coinMesh:IsDescendantOf(o)return o==map or o==workspace end
+local bareServer={Name='Coin_Server',Parent=map,Size=Vector3.new(1,1,1),attributes={}}
+function bareServer:IsA(c)return c=='BasePart'end
+function bareServer:GetAttribute(n)return self.attributes[n]end
+function bareServer:FindFirstChild()return nil end
+function bareServer:FindFirstChildOfClass()return nil end
+function bareServer:GetDescendants()return {}end
+function bareServer:IsDescendantOf(o)return o==map or o==workspace end
+map.descendants={modelVisual,coinMesh,bareServer}
+services.CollectionService={GetTagged=function(_,tag)if tag=='CoinVisual'then return {modelVisual}end return {}end}
+installCoinESP(screenGui)
+AngelHub.setters['Coin ESP'](true);heartbeat:Fire(1)
+local foundModel,foundBare=false,false
+for _,b in ipairs(created)do
+ if b.class=='BoxHandleAdornment' and not b.destroyed then
+  assert(b.Parent==playerGui)
+  if b.Adornee==coinMesh then foundModel=true end
+  if b.Adornee==bareServer then foundBare=true end
+ end
+end
+assert(foundModel and foundBare)
+modelVisual.attributes.Collected=true;heartbeat:Fire(1)
+for _,b in ipairs(created)do
+ if b.class=='BoxHandleAdornment' and b.Adornee==coinMesh then assert(b.destroyed) end
+end
+screenGui.Destroying:Fire()
+`);
  const util=await Lua.create({sandbox:true});
  util.execute(read(path.join(fixtures,'gameplay-mock.luau'))+'\nlocal mobile=false;local fakeNow=100;local os={clock=function()return fakeNow end}\n'+read(path.join(root,'tools/angel_hub_visual_tests','movement-setup.luau'))+'\n'+src+'\n'+read(path.join(root,'tools/angel_hub_visual_tests','utility-checks.luau')));
  const vote=await Lua.create({sandbox:true});

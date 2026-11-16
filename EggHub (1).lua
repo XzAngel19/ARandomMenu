@@ -50,6 +50,56 @@ local COLOR_PRESETS = {
 
 local localPlayer = playersService.LocalPlayer
 
+local getThreadIdentityFn = (type(getthreadidentity) == "function" and getthreadidentity)
+	or (type(getidentity) == "function" and getidentity)
+	or (type(syn) == "table" and type(syn.get_thread_identity) == "function" and syn.get_thread_identity)
+local setThreadIdentityFn = (type(setthreadidentity) == "function" and setthreadidentity)
+	or (type(setidentity) == "function" and setidentity)
+	or (type(set_thread_identity) == "function" and set_thread_identity)
+	or (type(syn) == "table" and type(syn.set_thread_identity) == "function" and syn.set_thread_identity)
+local executorThreadIdentity = 8
+if type(getThreadIdentityFn) == "function" then
+	local okId, curId = pcall(getThreadIdentityFn)
+	if okId and type(curId) == "number" then
+		executorThreadIdentity = curId
+	end
+end
+
+local function elevateThread()
+	if type(setThreadIdentityFn) == "function" then
+		pcall(setThreadIdentityFn, executorThreadIdentity)
+	end
+end
+
+local pendingLabelTexts = {}
+local function safeSetLabelText(label, text)
+	elevateThread()
+	local ok = pcall(function()
+		label.Text = text
+	end)
+	if ok then
+		pendingLabelTexts[label] = nil
+		return true
+	end
+	pendingLabelTexts[label] = text
+	return false
+end
+
+local function flushPendingLabelTexts()
+	if next(pendingLabelTexts) == nil then
+		return
+	end
+	elevateThread()
+	for label, text in pendingLabelTexts do
+		local ok = pcall(function()
+			label.Text = text
+		end)
+		if ok then
+			pendingLabelTexts[label] = nil
+		end
+	end
+end
+
 local EggHub = {
 	values = {},
 	pages = {},
@@ -1133,8 +1183,8 @@ local function addCounter(parent, text, default)
 	EggHub.defaults[text] = default or 0
 
 	EggHub.setters[text] = function(value)
-		valueLabel.Text = tostring(value)
 		EggHub.values[text] = value
+		safeSetLabelText(valueLabel, tostring(value))
 	end
 
 	table.insert(EggHub.searchables, holder)
@@ -1557,7 +1607,7 @@ local function initializeScript()
 	addSection(mainLeft, "Auto Steal Egg")
 	addToggle(mainLeft, "Enable Auto Steal Egg", nil, false)
 	addCycle(mainLeft, "Egg Priority", { "Closest", "Highest Rarity", "Closest + Rarity" })
-	addSlider(mainLeft, "Pickup Range", 5, 150, 30, 0)
+	addSlider(mainLeft, "Pickup Range", 5, 150, 14, 0)
 	addToggle(mainLeft, "Auto Return To Pen", nil, true)
 	addCycle(mainLeft, "Return Pathing", { "Walk", "Teleport" })
 	addSlider(mainLeft, "Return Delay", 0, 5, 0, 1)
@@ -1591,7 +1641,7 @@ local function initializeScript()
 	addSection(extraLeft, "Speed")
 	addToggle(extraLeft, "Enable Speed", nil, false)
 	addCycle(extraLeft, "Speed Mode", { "WalkSpeed", "Velocity", "CFrame" })
-	addSlider(extraLeft, "Speed Value", 16, 300, 32, 0)
+	addSlider(extraLeft, "Speed Value", 16, 300, 24, 0)
 	addToggle(extraLeft, "Speed Auto Match Biome", nil, false)
 
 	addSection(extraLeft, "Fly")
@@ -1607,11 +1657,11 @@ local function initializeScript()
 	addSlider(extraLeft, "Target Speed", 100, 700000000, 10000, 0)
 
 	addSection(extraLeft, "Auto Hatch")
-	addToggle(extraLeft, "Enable Auto Hatch", nil, true)
-	addCycle(extraLeft, "Hatch Mode", { "Instant", "Normal" })
+	addToggle(extraLeft, "Enable Auto Hatch", nil, false)
+	addCycle(extraLeft, "Hatch Mode", { "Normal", "Instant" })
 
 	addSection(extraRight, "Auto Collect Pet Income")
-	addToggle(extraRight, "Enable Auto Collect", nil, true)
+	addToggle(extraRight, "Enable Auto Collect", nil, false)
 	addCounter(extraRight, "Income Collected", 0)
 
 	addSection(extraRight, "Auto Sell Pets")
@@ -2002,7 +2052,8 @@ local function initializeScript()
 				or (EggHub.values["Enable Auto Steal Egg"] and EggHub.values["Return Pathing"] == "Teleport")
 				or EggHub.values["Enable Auto Claim Rare"]
 
-			if needsBypass then
+			local hasEventMap = workspace:FindFirstChild("MonsterEventMap") ~= nil
+			if needsBypass and hasEventMap then
 				if not antiTpDisabledByHub then
 					savedAntiTpAttr = workspace:GetAttribute("ClientObbyAntiTp")
 					antiTpDisabledByHub = true
@@ -2015,7 +2066,9 @@ local function initializeScript()
 				workspace:SetAttribute("ClientObbyAntiTp", savedAntiTpAttr)
 			end
 
-			setPushbackDisabled(EggHub.values["Enable Speed"] or EggHub.values["Enable Fly"])
+			if EggHub.values["Enable Speed"] or EggHub.values["Enable Fly"] or next(disabledPushbackScripts) ~= nil then
+				setPushbackDisabled(EggHub.values["Enable Speed"] or EggHub.values["Enable Fly"])
+			end
 		end
 
 		addCleanup(function()
@@ -2103,7 +2156,7 @@ local function initializeScript()
 				pcall(function() airFloorPart:Destroy() end)
 			end
 			local p = Instance.new("Part")
-			p.Name = "EggHubAirFloor"
+			p.Name = "TerrainStepCollider"
 			p.Size = Vector3.new(14, 1, 14)
 			p.Anchored = true
 			p.CanCollide = true
@@ -2214,8 +2267,32 @@ local function initializeScript()
 			return char ~= nil and char:GetAttribute("CarryingEgg") == true
 		end
 
-		-- Anticheat-safe step-glide teleport: stays grounded via EggHubAirFloor,
-		-- keeps PlatformStand = false, and adapts speed automatically if rubberbanded.
+		local function getServerAuthorizedWalkSpeed()
+			local ws = 16
+			local speedPower = 0
+			if SpeedPowerProjection and type(SpeedPowerProjection.ReadProjected) == "function" then
+				local ok, val = pcall(SpeedPowerProjection.ReadProjected)
+				if ok and type(val) == "number" and val > 0 then
+					speedPower = val
+				end
+			end
+			if speedPower <= 0 and SaveMod and type(SaveMod.Await) == "function" then
+				local ok, save = pcall(SaveMod.Await)
+				if ok and type(save) == "table" and type(save.SpeedPower) == "number" then
+					speedPower = save.SpeedPower
+				end
+			end
+			if speedPower > 0 and TreadmillUtil and type(TreadmillUtil.SpeedPowerToWalkSpeed) == "function" then
+				local ok, projWs = pcall(TreadmillUtil.SpeedPowerToWalkSpeed, speedPower)
+				if ok and type(projWs) == "number" and projWs > ws then
+					ws = projWs
+				end
+			end
+			return ws
+		end
+
+		-- Anticheat-safe grounded step-glide teleport: stays under the 2x SustainedOverspeed
+		-- server threshold and follows terrain height so BAC never flags mid-air/speed runs.
 		local function safeTeleportTo(targetCFrame, opts)
 			local _, hum, root = getCharacterParts()
 			if not (hum and root and targetCFrame) then
@@ -2232,37 +2309,52 @@ local function initializeScript()
 			travelToken += 1
 			local myToken = travelToken
 			local prevAttr = workspace:GetAttribute("ClientObbyAntiTp")
-			workspace:SetAttribute("ClientObbyAntiTp", false)
+			local hadEventMap = workspace:FindFirstChild("MonsterEventMap") ~= nil
+			if hadEventMap then
+				workspace:SetAttribute("ClientObbyAntiTp", false)
+			end
 			setBarriersNoclip(true)
 
 			local carrying = isCarryingEgg()
-			local baseWs = math.max(hum.WalkSpeed, 16)
+			local authWs = math.max(getServerAuthorizedWalkSpeed(), 16)
 			local maxSpeed = carrying
-				and math.clamp(math.max(baseWs * 1.85, 36), 36, 175)
-				or math.clamp(math.max(baseWs * 1.9, 115), 115, 250)
+				and math.clamp(authWs * 1.35, 18, 210)
+				or math.clamp(authWs * 1.65, 22, 240)
 			if opts and type(opts.maxSpeed) == "number" then
 				maxSpeed = math.min(maxSpeed, opts.maxSpeed)
 			end
 			local cruiseSpeed = maxSpeed
 
+			local rayParams = RaycastParams.new()
+			rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+			local function sampleGroundY(x, z, refY)
+				local char = localPlayer.Character
+				rayParams.FilterDescendantsInstances = char and { char } or {}
+				local res = workspace:Raycast(Vector3.new(x, refY + 24, z), Vector3.new(0, -120, 0), rayParams)
+				if res then
+					return res.Position.Y + 3.1
+				end
+				return refY
+			end
+
 			local function runGlide()
 				local lastExpected = root.Position
-				local cruiseY = math.max(root.Position.Y, targetPos.Y, 74)
 				local startedAt = os.clock()
 				while not unloaded and travelToken == myToken do
 					local _, curHum, curRoot = getCharacterParts()
 					if not (curHum and curRoot) or curHum.Health <= 0 then
 						break
 					end
-					if os.clock() - startedAt > 45 then
+					if os.clock() - startedAt > 60 then
 						break
 					end
 					local dt = runService.Heartbeat:Wait()
 					dt = math.clamp(dt or 0.016, 0.005, 0.05)
 
 					-- Detect server rubberband and adapt speed down smoothly.
-					if (curRoot.Position - lastExpected).Magnitude > 35 then
-						cruiseSpeed = math.max(32, cruiseSpeed * 0.68)
+					if (curRoot.Position - lastExpected).Magnitude > 25 then
+						cruiseSpeed = math.max(16, cruiseSpeed * 0.65)
 						lastExpected = curRoot.Position
 					end
 
@@ -2271,18 +2363,14 @@ local function initializeScript()
 					local flatDelta = flatGoal - curPos
 					local flatDist = flatDelta.Magnitude
 
-					local stepY = targetPos.Y
-					if flatDist > 22 then
-						stepY = cruiseY
-					end
-
 					local nextPos
 					if flatDist <= math.max(cruiseSpeed * dt, 3) then
 						nextPos = targetPos
 					else
 						local dir = flatDelta.Unit
 						local nextXZ = curPos + dir * (cruiseSpeed * dt)
-						local nextY = curPos.Y + math.clamp(stepY - curPos.Y, -60 * dt, 60 * dt)
+						local desiredY = flatDist > 12 and sampleGroundY(nextXZ.X, nextXZ.Z, math.max(curPos.Y, targetPos.Y)) or targetPos.Y
+						local nextY = curPos.Y + math.clamp(desiredY - curPos.Y, -55 * dt, 55 * dt)
 						nextPos = Vector3.new(nextXZ.X, nextY, nextXZ.Z)
 					end
 
@@ -2291,7 +2379,6 @@ local function initializeScript()
 					curRoot.AssemblyLinearVelocity = Vector3.zero
 					curRoot.AssemblyAngularVelocity = Vector3.zero
 					curRoot.CFrame = CFrame.new(nextPos) * targetCFrame.Rotation
-					positionAirFloorUnder(curRoot, curHum, nextPos.Y)
 					lastExpected = nextPos
 
 					if (nextPos - targetPos).Magnitude <= 4 then
@@ -2305,7 +2392,7 @@ local function initializeScript()
 					if not EggHub.values["Enable Fly"] then
 						destroyAirFloor()
 					end
-					if not unloaded and not antiTpDisabledByHub then
+					if hadEventMap and not unloaded and not antiTpDisabledByHub then
 						pcall(function()
 							workspace:SetAttribute("ClientObbyAntiTp", prevAttr)
 						end)
@@ -2634,17 +2721,21 @@ local function initializeScript()
 		end
 
 		local function swingBatOnce()
-			local _, hum, root = getCharacterParts()
-			if not (hum and root) then
+			local char, hum, root = getCharacterParts()
+			if not (char and hum and root) then
 				return
 			end
 			local tool, isEquipped = findBatTool()
-			if tool and not isEquipped then
+			if not tool then
+				return
+			end
+			if not isEquipped then
 				pcall(function() hum:EquipTool(tool) end)
+				return
 			end
 			local targetPlayer = nil
 			if EggHub.values["Target Nearest Player"] ~= false then
-				local swingRange = tonumber(EggHub.values["Swing Range"]) or 8
+				local swingRange = math.min(tonumber(EggHub.values["Swing Range"]) or 8, 12)
 				local bestDist = swingRange
 				for _, plr in playersService:GetPlayers() do
 					if plr ~= localPlayer and plr.Character then
@@ -2672,9 +2763,7 @@ local function initializeScript()
 					end)
 				end
 			end
-			if tool then
-				pcall(function() tool:Activate() end)
-			end
+			pcall(function() tool:Activate() end)
 		end
 
 		EggHub.actions["Swing Bat"] = swingBatOnce
@@ -2709,15 +2798,20 @@ local function initializeScript()
 
 		local function getNextEggResetSeconds()
 			local now = workspace:GetServerTimeNow()
-			if AreaEggCycle and type(AreaEggCycle.TimeUntilNextPeriod) == "function" then
-				local ok, secs = pcall(AreaEggCycle.TimeUntilNextPeriod, now)
-				if ok and type(secs) == "number" then
-					return math.max(0, secs)
+			if AreaEggCycle then
+				local fn = AreaEggCycle.SecondsUntilReset or AreaEggCycle.TimeUntilNextPeriod
+				if type(fn) == "function" then
+					local ok, secs = pcall(fn, now)
+					if ok and type(secs) == "number" then
+						return math.max(0, secs)
+					end
 				end
 			end
+			local disabledAt = tonumber(workspace:GetAttribute("AreaEggCycleDisabledAt"))
+			local effectiveNow = disabledAt and math.min(now, disabledAt) or now
 			local period = tonumber(workspace:GetAttribute("AreaEggCyclePeriodSeconds")) or 120
 			local anchorAt = tonumber(workspace:GetAttribute("AreaEggCycleAnchorAt")) or 0
-			local elapsed = (now - anchorAt) % period
+			local elapsed = (effectiveNow - anchorAt) % period
 			return math.max(0, period - elapsed)
 		end
 
@@ -2896,10 +2990,10 @@ local function initializeScript()
 				return
 			end
 
-			local pickupRange = tonumber(EggHub.values["Pickup Range"]) or 30
+			local pickupRange = tonumber(EggHub.values["Pickup Range"]) or 14
 			local minRank = getTargetRarityRank()
 			local priority = EggHub.values["Egg Priority"] or "Closest"
-			local bestRec, bestScore = nil, -math.huge
+			local bestRec, bestScore, bestDist = nil, -math.huge, math.huge
 
 			for _, rec in records do
 				if rec.BoundsCFrame then
@@ -2917,6 +3011,7 @@ local function initializeScript()
 						if score > bestScore then
 							bestScore = score
 							bestRec = rec
+							bestDist = dist
 						end
 					end
 				end
@@ -2924,7 +3019,17 @@ local function initializeScript()
 
 			if bestRec then
 				lastStealAttempt = now
-				if carryFieldEgg(bestRec) and EggHub.values["Auto Return To Pen"] then
+				if bestDist > 14 then
+					activeReturnGlide = true
+					task.spawn(function()
+						pcall(safeTeleportTo, CFrame.new(bestRec.BoundsCFrame.Position + Vector3.new(0, 3, 0)), { blocking = true })
+						if carryFieldEgg(bestRec) and EggHub.values["Auto Return To Pen"] then
+							local delaySecs = tonumber(EggHub.values["Return Delay"]) or 0
+							returningAt = os.clock() + delaySecs
+						end
+						activeReturnGlide = false
+					end)
+				elseif carryFieldEgg(bestRec) and EggHub.values["Auto Return To Pen"] then
 					local delaySecs = tonumber(EggHub.values["Return Delay"]) or 0
 					returningAt = os.clock() + delaySecs
 				end
@@ -2995,22 +3100,20 @@ local function initializeScript()
 			if wearRemote then
 				task.spawn(function()
 					local _, _, root = getCharacterParts()
-					if trainMode == "Treadmill" and treadmillBottom and treadmillBottom:IsA("BasePart") and root then
+					if treadmillBottom and treadmillBottom:IsA("BasePart") and root then
 						if (root.Position - treadmillBottom.Position).Magnitude > 6 then
 							pcall(safeTeleportTo, treadmillBottom.CFrame + Vector3.new(0, 3.5, 0), { blocking = true })
 						end
+					end
+					local _, _, curRoot = getCharacterParts()
+					if treadmillBottom and treadmillBottom:IsA("BasePart") and curRoot and (curRoot.Position - treadmillBottom.Position).Magnitude > 10 then
+						return
 					end
 					local ok, entered = pcall(function()
 						return wearRemote:InvokeServer()
 					end)
 					if ok and entered == true then
 						trainingActive = true
-					elseif trainMode == "Instant" and treadmillBottom and treadmillBottom:IsA("BasePart") then
-						pcall(safeTeleportTo, treadmillBottom.CFrame + Vector3.new(0, 3.5, 0), { blocking = true })
-						local ok2, entered2 = pcall(function() return wearRemote:InvokeServer() end)
-						if ok2 and entered2 == true then
-							trainingActive = true
-						end
 					end
 				end)
 			end
@@ -3021,7 +3124,7 @@ local function initializeScript()
 				return
 			end
 			local now = os.clock()
-			if now - lastHatchAt < 0.75 then
+			if now - lastHatchAt < 1.1 then
 				return
 			end
 			lastHatchAt = now
@@ -3034,23 +3137,27 @@ local function initializeScript()
 				return
 			end
 
-			local hatchMode = EggHub.values["Hatch Mode"] or "Instant"
+			local hatchMode = EggHub.values["Hatch Mode"] or "Normal"
 			for uid, record in owned do
 				if record and record.Placement ~= nil and (hatchedCooldown[uid] or 0) <= now then
 					local readyOk, isReady = pcall(EggState.IsReadyToHatch, uid)
 					if readyOk and isReady then
-						hatchedCooldown[uid] = now + 2.5
+						hatchedCooldown[uid] = now + 3.0
 						task.spawn(function()
+							local begun = true
 							if EggState.BeginHatch then
-								pcall(EggState.BeginHatch, uid)
+								local bOk, bRes = pcall(EggState.BeginHatch, uid)
+								begun = bOk and bRes ~= false
 							end
-							if hatchMode == "Normal" then
-								task.wait(0.6)
+							if not begun then
+								return
 							end
+							task.wait(hatchMode == "Instant" and 0.35 or 1.4)
 							if EggState.FinishHatch then
 								pcall(EggState.FinishHatch, uid)
 							end
 						end)
+						break
 					end
 				end
 			end
@@ -3084,7 +3191,7 @@ local function initializeScript()
 				return
 			end
 			local now = os.clock()
-			if now - lastCollectAt < 3 then
+			if now - lastCollectAt < 6 then
 				return
 			end
 			lastCollectAt = now
@@ -3206,22 +3313,25 @@ local function initializeScript()
 		-- =================================================================
 		-- 8) VISUALS: EGG ESP / PET ESP / PLAYER ESP / GUARDIAN ESP / BIOME BOUNDARY
 		-- Highlights & SelectionBoxes live in workspace.CurrentCamera (renders immediately without respawn).
-		-- BillboardGuis live in PlayerGui ScreenGui (ResetOnSpawn = false).
+		-- BillboardGuis live in a neutral ScreenGui (ResetOnSpawn = false, ScaledDecoration = false).
 		-- =================================================================
 		local espGuiParent = localPlayer:FindFirstChildOfClass("PlayerGui")
 			or localPlayer:WaitForChild("PlayerGui", 3)
 			or (typeof(gethui) == "function" and select(2, pcall(gethui)))
-			or coreGui
+			or select(2, pcall(function() return game:GetService("CoreGui") end))
 		local espFolder = Instance.new("ScreenGui")
-		espFolder.Name = "EggHubESP"
+		espFolder.Name = "ClientOverlay"
 		espFolder.ResetOnSpawn = false
 		espFolder.IgnoreGuiInset = true
+		pcall(function()
+			espFolder:SetAttribute("ScaledDecoration", false)
+		end)
 		pcall(function()
 			espFolder.Parent = espGuiParent
 		end)
 
 		local espWorldFolder = Instance.new("Folder")
-		espWorldFolder.Name = "EggHubWorldESP"
+		espWorldFolder.Name = "CameraEffects"
 		espWorldFolder.Archivable = false
 		espWorldFolder.Parent = workspace.CurrentCamera or workspace
 
@@ -3754,6 +3864,17 @@ local function initializeScript()
 			task.spawn(bindCharacter, localPlayer.Character)
 		end
 
+		local function isScreenGuiAlive()
+			elevateThread()
+			local okAlive, hasParent = pcall(function()
+				return screenGui.Parent ~= nil
+			end)
+			if not okAlive then
+				return true
+			end
+			return hasParent
+		end
+
 		local warned = {}
 		local function safe(name, fn, ...)
 			local ok, err = pcall(fn, ...)
@@ -3763,20 +3884,12 @@ local function initializeScript()
 			end
 		end
 
-		task.delay(3, function()
-			if unloaded or not screenGui.Parent then
-				return
-			end
-			print("[Egg Hub] eggs:", workspace:FindFirstChild("AreaEggSlotsClient"))
-			print("[Egg Hub] pets:", workspace:FindFirstChild("ClientRenderedAssets"))
-			print("[Egg Hub] guards:", getGuardAreasFolder())
-			print("[Egg Hub] Remotes:", Remotes, "EggState:", EggState, "PlotState:", PlotState)
-		end)
-
 		local function stepFeaturesOnce()
-			if unloaded or not screenGui.Parent then
+			elevateThread()
+			if unloaded or not isScreenGuiAlive() then
 				return false
 			end
+			flushPendingLabelTexts()
 			local now = os.clock()
 
 			safe("IncomeSync", function()
@@ -3802,7 +3915,7 @@ local function initializeScript()
 			safe("AntiGuardian", applyAntiGuardianPass)
 			safe("AntiBearTrap", applyAntiBearTrapPass)
 			safe("Bat", function()
-				if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.45 then
+				if EggHub.values["Auto Swing Bat"] and now - lastBatSwing >= 0.6 then
 					lastBatSwing = now
 					swingBatOnce()
 				end
@@ -3838,7 +3951,7 @@ local function initializeScript()
 		EggHub._stepFeaturesOnce = stepFeaturesOnce
 
 		task.spawn(function()
-			while not unloaded and screenGui.Parent do
+			while not unloaded and isScreenGuiAlive() do
 				pcall(stepFeaturesOnce)
 				task.wait(0.15)
 			end
@@ -3846,7 +3959,12 @@ local function initializeScript()
 	end
 
 	task.spawn(function()
-		while screenGui.Parent do
+		while true do
+			elevateThread()
+			local okAlive, hasParent = pcall(function() return screenGui.Parent ~= nil end)
+			if okAlive and not hasParent then
+				break
+			end
 			local keyName = EggHub.values["Menu Keybind"]
 			EggHub.menuKey = Enum.KeyCode.RightShift
 
@@ -3916,6 +4034,7 @@ local function initializeScript()
 	end)
 
 	connectInput(userInputService.InputBegan, function(input, gameProcessed)
+		flushPendingLabelTexts()
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
 			return
 		end

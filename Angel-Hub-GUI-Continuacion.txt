@@ -6907,9 +6907,48 @@ local function installCoinESP(screenGui)
             end
             return nil
         end
-        local function familyOf(part, active)
+        local function safeAdornmentParent()
+            local okP, players = pcall(function() return game:GetService("Players") end)
+            local lp = okP and players and players.LocalPlayer
+            if lp then
+                local okPg, pg = pcall(function() return lp:FindFirstChildOfClass("PlayerGui") end)
+                if okPg and pg then return pg end
+            end
+            local okCg, cg = pcall(function() return game:GetService("CoreGui") end)
+            if okCg and cg then return cg end
+            return workspace.CurrentCamera or screenGui
+        end
+        local function resolveCoinPart(node)
+            if not node then return nil end
+            if node:IsA("BasePart") then return node end
+            if node:IsA("Model") then
+                local primary = node.PrimaryPart
+                if primary and primary:IsA("BasePart") then return primary end
+                local okChild, childPart = pcall(function() return node:FindFirstChildWhichIsA("BasePart", true) end)
+                if okChild and childPart then return childPart end
+                local okDesc, desc = pcall(function() return node:GetDescendants() end)
+                if okDesc and type(desc) == "table" then
+                    for _, d in ipairs(desc) do
+                        if d:IsA("BasePart") then return d end
+                    end
+                end
+            end
+            return nil
+        end
+        local function familyOf(part, active, source)
             local names = {}
-            for _, child in ipairs(part:GetDescendants()) do table.insert(names, child.Name) end
+            if part and part.Name then table.insert(names, part.Name) end
+            if source and source ~= part and source.Name then table.insert(names, source.Name) end
+            local okD, desc = pcall(function() return (source or part):GetDescendants() end)
+            if okD and type(desc) == "table" then
+                for _, child in ipairs(desc) do table.insert(names, child.Name) end
+            end
+            if source and source ~= part then
+                local okP, pDesc = pcall(function() return part:GetDescendants() end)
+                if okP and type(pDesc) == "table" then
+                    for _, child in ipairs(pDesc) do table.insert(names, child.Name) end
+                end
+            end
             local text = string.lower(table.concat(names, " "))
             for _, data in ipairs(familyOrder) do
                 for _, phrase in ipairs(data[2]) do
@@ -6924,7 +6963,7 @@ local function installCoinESP(screenGui)
             local ancestor = part.Parent
             while ancestor and ancestor ~= map do
                 if ancestor:FindFirstChildOfClass("Humanoid") then return false end
-                if ancestor:IsA("BasePart") and (ancestor:GetAttribute("Collected") == true or ancestor:GetAttribute("Delete") == true) then return false end
+                if ancestor:GetAttribute("Collected") == true or ancestor:GetAttribute("Delete") == true then return false end
                 ancestor = ancestor.Parent
             end
             return ancestor == map
@@ -6965,13 +7004,26 @@ local function installCoinESP(screenGui)
             local wanted = V["Coin In Use"] or "Auto (Server)"
             local found = {}
             local function consider(object)
-                if not object:IsA("BasePart") then return end
+                if not object then return end
+                local source = object
                 local visual = object
                 if object.Name == "Coin_Server" or object.Name == "ServerCoinPart" then
-                    visual = object:FindFirstChild("CoinVisual")
+                    local cv = object:FindFirstChild("CoinVisual")
+                    if cv then
+                        visual = resolveCoinPart(cv)
+                        source = cv
+                    elseif object:IsA("BasePart") then
+                        visual = object
+                    else
+                        visual = resolveCoinPart(object)
+                    end
+                elseif object:IsA("Model") then
+                    visual = resolveCoinPart(object)
+                elseif not object:IsA("BasePart") then
+                    return
                 end
-                if not usable(visual, map) or found[visual] then return end
-                local family = familyOf(visual, active)
+                if not visual or not usable(visual, map) or found[visual] then return end
+                local family = familyOf(visual, active, source)
                 if wanted ~= "All" and wanted ~= "Auto (Server)" and wanted ~= family then return end
                 if wanted == "Auto (Server)" and active and active ~= family then return end
                 found[visual] = true
@@ -6979,18 +7031,22 @@ local function installCoinESP(screenGui)
                 if not box then
                     box = Instance.new("BoxHandleAdornment")
                     box.Name = "AngelHub_CoinMarker"; box.Adornee = visual; box.AlwaysOnTop = true; box.ZIndex = 5
-                    box.Parent = screenGui; markers[visual] = box
+                    box.Parent = safeAdornmentParent(); markers[visual] = box
+                elseif not box.Parent then
+                    box.Parent = safeAdornmentParent()
                 end
                 box.Color3 = V["Coin Colour"]
                 box.Transparency = math.clamp(tonumber(V["Coin Transparency"]) or 0, 0, 1)
-                box.Size = visual.Size * 1.3
+                local size = visual.Size
+                if size and size.Magnitude < 0.05 then size = Vector3.new(1.5, 1.5, 1.5) end
+                box.Size = size * 1.3
             end
             local ok, collection = pcall(function() return game:GetService("CollectionService") end)
             if ok and collection then
                 for _, object in ipairs(collection:GetTagged("CoinVisual")) do consider(object) end
             end
             for _, object in ipairs(map:GetDescendants()) do
-                if object:IsA("BasePart") and (object.Name == "CoinVisual" or object.Name == "Coin_Server"
+                if (object:IsA("BasePart") or object:IsA("Model")) and (object.Name == "CoinVisual" or object.Name == "Coin_Server"
                     or object.Name == "ServerCoinPart" or object:GetAttribute("CoinID") ~= nil) then consider(object) end
             end
             for visual, box in pairs(markers) do
