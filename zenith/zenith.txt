@@ -909,7 +909,7 @@ local function addList(parent, text, items, height)
 		table.clear(rows)
 
 		for index, itemName in newItems do
-			if index > 400 then
+			if index > 600 then
 				break
 			end
 
@@ -927,10 +927,13 @@ local function addList(parent, text, items, height)
 				TextColor3 = TEXT_COLOR,
 				TextSize = 12,
 				Font = TEXT_FONT,
+				TextXAlignment = Enum.TextXAlignment.Left,
 				TextTruncate = Enum.TextTruncate.AtEnd,
 				AutoButtonColor = false,
 				LayoutOrder = index,
 			}, scroller)
+
+			create("UIPadding", { PaddingLeft = UDim.new(0, 5), PaddingRight = UDim.new(0, 4) }, row)
 
 			create("UICorner", { CornerRadius = UDim.new(0, 3) }, row)
 			rows[itemName] = row
@@ -2042,6 +2045,7 @@ do
 		search = "Script Search",
 		path = "Script Path",
 		nilScripts = "Include Nil Scripts",
+		coreScripts = "Include Core Scripts",
 		list = "Script List",
 		mode = "Decompile Mode",
 		target = "Function Target",
@@ -2057,7 +2061,7 @@ do
 		includeUpvalues = "Include Upvalues",
 		strip = "Strip Comments",
 	}
-	local MAX_SHOWN = 1500
+	local MAX_SHOWN = 600
 
 	local OPN = {
 		[0] = "NOP", "BREAK", "LOADNIL", "LOADB", "LOADN", "LOADK", "MOVE", "GETGLOBAL", "SETGLOBAL",
@@ -2964,13 +2968,21 @@ do
 		return cur, label
 	end
 
+	local function isCorePath(path)
+		return string.sub(path, 1, 8) == "CoreGui."
+			or string.sub(path, 1, 13) == "CorePackages."
+			or string.sub(path, 1, 14) == "[nil] CoreGui."
+			or string.sub(path, 1, 19) == "[nil] CorePackages."
+	end
+
 	function Index.apply()
 		local filter = tostring(Zenith.values[N.class] or "All")
 		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
+		local includeCore = flag(N.coreScripts, false)
 		table.clear(Index.shown)
 		local total = 0
 		for _, e in ipairs(Index.entries) do
-			if (filter == "All" or e.class == filter) and (needle == "" or string.find(e.lower, needle, 1, true)) then
+			if (includeCore or not e.isCore) and (filter == "All" or e.class == filter) and (needle == "" or string.find(e.lower, needle, 1, true)) then
 				total += 1
 				if total <= MAX_SHOWN then
 					Index.shown[total] = e.label
@@ -3090,7 +3102,13 @@ do
 				end
 				Index.byLabel[label] = e.inst
 				Index.labelOf[e.inst] = label
-				entries[#entries + 1] = { label = label, inst = e.inst, class = e.class, lower = string.lower(label) }
+				entries[#entries + 1] = {
+					label = label,
+					inst = e.inst,
+					class = e.class,
+					lower = string.lower(label),
+					isCore = isCorePath(label),
+				}
 			end
 			Index.entries = entries
 		end)
@@ -3319,6 +3337,9 @@ do
 			end)
 			hook(N.nilScripts, function()
 				task.defer(Index.scan)
+			end)
+			hook(N.coreScripts, function()
+				task.defer(Index.apply)
 			end)
 			for _, name in ipairs({ N.mode, N.target, N.lineNumbers, N.includeConstants, N.includeUpvalues, N.strip, N.maxLines }) do
 				hook(name, function()
@@ -4111,6 +4132,7 @@ local function initializeScript()
 	end
 
 	addSection(configLeft, "Decompiler Config")
+	addToggle(configLeft, "Include Core Scripts", nil, false)
 	addToggle(configLeft, "Include Nil Scripts", nil, false)
 	addToggle(configLeft, "Rename Locals", nil, true)
 	addToggle(configLeft, "Show Line Numbers", nil, true)
