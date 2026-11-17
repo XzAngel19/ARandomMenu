@@ -68,6 +68,7 @@ local Zenith = {
 	boxes = {},
 	sectionBoxes = {},
 	connections = {},
+	uiConnections = {},
 	keybinds = {},
 	keyLabels = {},
 	listening = nil,
@@ -131,8 +132,18 @@ end
 
 local function connectInput(signal, callback)
 	local connection = signal:Connect(callback)
-	table.insert(Zenith.connections, connection)
+	table.insert(Zenith.uiConnections, connection)
 	return connection
+end
+
+function Zenith.disconnectUI()
+	for i = #Zenith.uiConnections, 1, -1 do
+		local conn = Zenith.uiConnections[i]
+		pcall(function()
+			conn:Disconnect()
+		end)
+	end
+	table.clear(Zenith.uiConnections)
 end
 
 local function isPress(input)
@@ -1346,6 +1357,1899 @@ local function runMath()
 	end
 end
 
+-- Step 0 Kernel: Capabilities, Signal, Core lifecycle & Boot.
+local flag, num, set
+local KernelMATRIX
+do
+	local V = Zenith.values
+
+	function flag(name, default)
+		local v = V[name]
+		if v == nil then
+			return default
+		end
+		return v == true
+	end
+
+	function num(name, default)
+		return tonumber(V[name]) or default
+	end
+
+	function set(name, value)
+		local s = Zenith.setters and Zenith.setters[name]
+		if s then
+			pcall(s, value)
+		end
+	end
+
+	Zenith.bootErrors = {}
+
+	local function bootLog(level, msg)
+		if level == "Error" then
+			table.insert(Zenith.bootErrors, msg)
+			if not flag("Show Boot Errors", true) then
+				return
+			end
+		end
+		local out = Zenith.outputs and Zenith.outputs["Boot Log"]
+		if out then
+			out.push(string.format("[%s] %s", level, msg))
+		end
+		if Zenith.log then
+			Zenith.log(level, msg)
+		end
+	end
+
+	Zenith.connections = Zenith.connections or {}
+
+	local function isConnected(c)
+		if typeof(c) == "RBXScriptConnection" then
+			return c.Connected
+		end
+		if type(c) == "table" then
+			return c.Connected ~= false
+		end
+		return false
+	end
+
+	local function disconnect(c)
+		pcall(function()
+			if typeof(c) == "RBXScriptConnection" then
+				c:Disconnect()
+			elseif type(c) == "table" and c.Disconnect then
+				c:Disconnect()
+			end
+		end)
+	end
+
+	function Zenith.refreshConnections()
+		local ui = Zenith.uiConnections and #Zenith.uiConnections or 0
+		set("Active Connections", #Zenith.connections + ui)
+	end
+
+	local function prune()
+		for i = #Zenith.connections, 1, -1 do
+			if not isConnected(Zenith.connections[i]) then
+				table.remove(Zenith.connections, i)
+			end
+		end
+	end
+
+	function Zenith.track(conn, owner)
+		if owner then
+			table.insert(owner, conn)
+		end
+		if flag("Track Connections", true) then
+			table.insert(Zenith.connections, conn)
+		end
+		Zenith.refreshConnections()
+		return conn
+	end
+
+	function Zenith.cleanup()
+		local n = 0
+		for i = #Zenith.connections, 1, -1 do
+			local c = Zenith.connections[i]
+			if isConnected(c) then
+				n += 1
+			end
+			disconnect(c)
+		end
+		table.clear(Zenith.connections)
+		Zenith.refreshConnections()
+		return n
+	end
+
+	local roots = {}
+	if typeof(getgenv) == "function" then
+		table.insert(roots, getgenv())
+	end
+	do
+		local ok, fe = pcall(getfenv, 0)
+		if ok and type(fe) == "table" then
+			table.insert(roots, fe)
+		end
+	end
+
+	local function resolve(path)
+		for _, root in ipairs(roots) do
+			local cur = root
+			for key in string.gmatch(path, "[^%.]+") do
+				if type(cur) ~= "table" then
+					cur = nil
+					break
+				end
+				local ok, v = pcall(function()
+					return cur[key]
+				end)
+				cur = ok and v or nil
+				if cur == nil then
+					break
+				end
+			end
+			if type(cur) == "function" then
+				return cur
+			end
+		end
+		return nil
+	end
+
+	local function sampleScript(class)
+		local ps = localPlayer and localPlayer:FindFirstChild("PlayerScripts")
+		local rsOk, rs = pcall(game.GetService, game, "ReplicatedStorage")
+		local containers = {}
+		if ps then
+			table.insert(containers, ps)
+		end
+		if rsOk and rs then
+			table.insert(containers, rs)
+		end
+		for _, root in ipairs(containers) do
+			local ok, list = pcall(root.GetDescendants, root)
+			if ok and type(list) == "table" then
+				for _, d in ipairs(list) do
+					if d:IsA(class) then
+						return d
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local upv = 1
+	local function probeFn(a)
+		upv = upv + 1
+		if upv < 0 then
+			local function inner()
+				return upv
+			end
+			return inner
+		end
+		return "zenith" .. tostring(a)
+	end
+
+	local function tableProbe(f)
+		return type(f()) == "table"
+	end
+
+	KernelMATRIX = {
+		{ "getscriptbytecode", { "getscriptbytecode", "get_script_bytecode" }, function(f)
+			local s = sampleScript("LuaSourceContainer")
+			if not s then
+				return nil
+			end
+			return type(f(s)) == "string"
+		end },
+		{ "decompile", { "decompile" } },
+		{ "getscripts", { "getscripts" }, tableProbe },
+		{ "getloadedmodules", { "getloadedmodules" }, tableProbe },
+		{ "getnilinstances", { "getnilinstances" }, tableProbe },
+		{ "getscriptclosure", { "getscriptclosure", "getscriptfunction" }, function(f)
+			local s = sampleScript("ModuleScript")
+			if not s then
+				return nil
+			end
+			return type(f(s)) == "function"
+		end },
+		{ "getconstants", { "debug.getconstants", "getconstants" }, function(f)
+			local r = f(probeFn)
+			return type(r) == "table" and #r > 0
+		end },
+		{ "getupvalues", { "debug.getupvalues", "getupvalues" }, function(f)
+			local r = f(probeFn)
+			return type(r) == "table" and #r > 0
+		end },
+		{ "getprotos", { "debug.getprotos", "getprotos" }, function(f)
+			local r = f(probeFn)
+			return type(r) == "table" and #r > 0
+		end },
+		{ "getinfo", { "debug.getinfo", "getinfo" }, function(f)
+			return type(f(probeFn)) == "table"
+		end },
+		{ "debuginfo", { "debug.info" }, function(f)
+			return type(f(probeFn, "s")) == "string"
+		end },
+		{ "writefile", { "writefile" } },
+		{ "readfile", { "readfile" } },
+		{ "isfile", { "isfile" } },
+		{ "isfolder", { "isfolder" } },
+		{ "makefolder", { "makefolder" } },
+		{ "listfiles", { "listfiles" } },
+		{ "delfile", { "delfile" } },
+		{ "setclipboard", { "setclipboard", "toclipboard" } },
+		{ "buffer", { "buffer.create" }, function(f)
+			return typeof(f(4)) == "buffer"
+		end },
+		{ "hookfunction", { "hookfunction", "replaceclosure" } },
+		{ "hookmetamethod", { "hookmetamethod" } },
+		{ "getrawmetatable", { "getrawmetatable", "debug.getmetatable" } },
+		{ "getnamecallmethod", { "getnamecallmethod" } },
+		{ "checkcaller", { "checkcaller" } },
+		{ "newcclosure", { "newcclosure" } },
+		{ "getgc", { "getgc" } },
+		{ "getconnections", { "getconnections" } },
+		{ "gethui", { "gethui" } },
+	}
+
+	function Zenith.probe()
+		local caps = { status = {}, via = {}, fn = {}, executor = "unknown" }
+
+		pcall(function()
+			if typeof(identifyexecutor) == "function" then
+				local n, v = identifyexecutor()
+				caps.executor = tostring(n) .. (v and (" " .. tostring(v)) or "")
+			end
+		end)
+
+		local okCount = 0
+		for _, entry in ipairs(KernelMATRIX) do
+			local name, aliases, probe = entry[1], entry[2], entry[3]
+			local status, via, fn = "missing", nil, nil
+			for _, alias in ipairs(aliases) do
+				local f = resolve(alias)
+				if f then
+					fn, via = f, alias
+					break
+				end
+			end
+			if fn then
+				if probe then
+					local ok, res = pcall(probe, fn)
+					if not ok or res == false then
+						status = "limited"
+					elseif res == nil then
+						status = "present"
+					else
+						status = "ok"
+					end
+				else
+					status = "present"
+				end
+				okCount += 1
+			end
+			caps.status[name] = status
+			caps.via[name] = via
+			caps.fn[name] = fn
+		end
+
+		Zenith.capabilities = caps
+
+		bootLog("Info", "Executor: " .. caps.executor)
+		for _, entry in ipairs(KernelMATRIX) do
+			local name = entry[1]
+			local st = caps.status[name]
+			local line = string.format("%-18s %-8s %s", name, st, caps.via[name] or "-")
+			bootLog(st == "missing" and "Warn" or "Info", line)
+		end
+		bootLog("Info", string.format("Capabilities: %d/%d disponibles", okCount, #KernelMATRIX))
+
+		return caps
+	end
+
+	function Zenith.cap(name)
+		local c = Zenith.capabilities
+		local st = c and c.status[name]
+		return st ~= nil and st ~= "missing"
+	end
+
+	function Zenith.capFn(name)
+		local c = Zenith.capabilities
+		return c and c.fn[name]
+	end
+
+	function Zenith.need(list)
+		local missing = {}
+		for _, name in ipairs(list or {}) do
+			if not Zenith.cap(name) then
+				table.insert(missing, name)
+			end
+		end
+		return #missing == 0, missing
+	end
+
+	local Signal = {}
+	Signal.__index = Signal
+	local registry = setmetatable({}, { __mode = "k" })
+	local fired = 0
+
+	local function refreshListeners()
+		local n = 0
+		for s in pairs(registry) do
+			n += #s.listeners
+		end
+		set("Active Listeners", n)
+	end
+
+	local function signalLog(msg)
+		if not flag("Signal Debug", false) then
+			return
+		end
+		local out = Zenith.outputs and Zenith.outputs["Signal Log"]
+		if out then
+			out.push(msg)
+		end
+	end
+
+	function Signal.new(name)
+		local self = setmetatable({ name = name or "Signal", listeners = {}, warned = false }, Signal)
+		registry[self] = true
+		return self
+	end
+
+	function Signal:Connect(fn)
+		local item = { fn = fn }
+		local listeners = self.listeners
+		table.insert(listeners, item)
+
+		if #listeners > num("Max Listeners", 64) and flag("Warn On Leak", true) and not self.warned then
+			self.warned = true
+			bootLog("Warn", string.format("Posible fuga: %s tiene %d listeners", self.name, #listeners))
+		end
+		refreshListeners()
+
+		local conn = { Connected = true }
+		function conn:Disconnect()
+			if not self.Connected then
+				return
+			end
+			self.Connected = false
+			local i = table.find(listeners, item)
+			if i then
+				table.remove(listeners, i)
+			end
+			refreshListeners()
+		end
+		return Zenith.track(conn)
+	end
+
+	function Signal:Once(fn)
+		local conn
+		conn = self:Connect(function(...)
+			if conn then
+				conn:Disconnect()
+			end
+			fn(...)
+		end)
+		return conn
+	end
+
+	function Signal:Fire(...)
+		fired += 1
+		set("Signals Fired", fired)
+		signalLog(string.format("%s -> %d listeners", self.name, #self.listeners))
+
+		local args = table.pack(...)
+		local deferred = string.find(string.lower(tostring(V["Dispatch Mode"] or "")), "defer") ~= nil
+		for _, item in ipairs(table.clone(self.listeners)) do
+			local function run()
+				local ok, err = pcall(item.fn, table.unpack(args, 1, args.n))
+				if not ok then
+					bootLog("Error", string.format("%s: %s", self.name, tostring(err)))
+				end
+			end
+			if deferred then
+				task.defer(run)
+			else
+				task.spawn(run)
+			end
+		end
+	end
+
+	function Signal:DisconnectAll()
+		table.clear(self.listeners)
+		refreshListeners()
+	end
+
+	Zenith.Signal = Signal
+
+	Zenith.actions["Dump Signals"] = function()
+		local out = Zenith.outputs and Zenith.outputs["Signal Log"]
+		if not out then
+			return
+		end
+		for s in pairs(registry) do
+			out.push(string.format("%s: %d listeners", s.name, #s.listeners))
+		end
+	end
+
+	local modules, order = {}, {}
+	local started = false
+
+	function Zenith.register(name, spec)
+		if modules[name] then
+			if flag("Strict Lifecycle", true) then
+				bootLog("Warn", name .. " ya estaba registrado")
+			end
+			return
+		end
+		modules[name] = {
+			requires = spec.requires or {},
+			optional = spec.optional or {},
+			init = spec.init,
+			stop = spec.stop,
+			state = "pending",
+			owned = {},
+		}
+		table.insert(order, name)
+	end
+
+	local function releaseOwned(name)
+		local m = modules[name]
+		local leaked = 0
+		for i = #m.owned, 1, -1 do
+			local c = m.owned[i]
+			if isConnected(c) then
+				leaked += 1
+			end
+			disconnect(c)
+		end
+		table.clear(m.owned)
+		prune()
+		Zenith.refreshConnections()
+		return leaked
+	end
+
+	local function stopModule(name)
+		local m = modules[name]
+		local strict = flag("Strict Lifecycle", true)
+		local ok, err = true, nil
+		if m.stop then
+			ok, err = pcall(m.stop)
+		elseif strict and #m.owned > 0 then
+			bootLog("Warn", name .. " no define stop pero tiene conexiones")
+		end
+		if not ok then
+			bootLog(strict and "Error" or "Warn", string.format("%s stop fallo: %s", name, tostring(err)))
+		end
+		local leaked = releaseOwned(name)
+		if leaked > 0 and strict then
+			bootLog("Warn", string.format("%s dejo %d conexiones abiertas (forzadas)", name, leaked))
+		end
+		if strict and not ok then
+			m.state = "failed"
+			return false
+		end
+		m.state = "pending"
+		return true
+	end
+
+	local function runInit(name, caps)
+		local m = modules[name]
+		local retries = math.max(0, math.floor(num("Boot Retries", 1)))
+		local timeout = num("Boot Timeout", 10)
+		local autoClean = flag("Auto Cleanup On Error", false)
+		local ctx = {
+			name = name,
+			track = function(conn)
+				return Zenith.track(conn, m.owned)
+			end,
+		}
+		local lastErr
+		for attempt = 0, retries do
+			local done, success, err = false, false, nil
+			task.spawn(function()
+				local ok, e = pcall(m.init, caps, ctx)
+				success, done = ok, true
+				if not ok then
+					err = e
+				end
+			end)
+			local t0 = os.clock()
+			while not done and os.clock() - t0 < timeout do
+				task.wait()
+			end
+			if done and success then
+				return true
+			end
+			lastErr = done and err or "timeout"
+			bootLog("Warn", string.format("%s intento %d/%d fallo: %s", name, attempt + 1, retries + 1, tostring(lastErr)))
+			if autoClean then
+				releaseOwned(name)
+				if m.stop then
+					pcall(m.stop)
+				end
+			end
+		end
+		return false, lastErr
+	end
+
+	function Zenith.refreshServices()
+		local caps = Zenith.capabilities
+		local okCount, total = 0, 0
+		if caps then
+			for _, e in ipairs(KernelMATRIX) do
+				total += 1
+				if caps.status[e[1]] ~= "missing" then
+					okCount += 1
+				end
+			end
+		end
+		local listeners = 0
+		for s in pairs(registry) do
+			listeners += #s.listeners
+		end
+		local items = {
+			string.format("Capabilities: %d/%d", okCount, total),
+			string.format("Signal: %d listeners", listeners),
+			string.format("Connections: %d modulos / %d GUI", #Zenith.connections, Zenith.uiConnections and #Zenith.uiConnections or 0),
+			"Console: " .. (Zenith.log and "activa" or "inactiva"),
+		}
+		for _, name in ipairs(order) do
+			table.insert(items, string.format("%s: %s", name, modules[name].state))
+		end
+		if Zenith.setItems then
+			pcall(Zenith.setItems, "Core Services", items)
+		end
+	end
+
+	function Zenith.boot()
+		local caps = Zenith.capabilities or Zenith.probe()
+		local safe = flag("Safe Boot", true)
+		local parallel = string.find(string.lower(tostring(V["Load Order"] or "")), "parallel") ~= nil
+
+		local function bootOne(name)
+			local m = modules[name]
+			if m.state == "loaded" then
+				return true
+			end
+			local ok, missing = Zenith.need(m.requires)
+			if not ok then
+				m.state = "skipped"
+				bootLog("Warn", string.format("%s omitido, falta: %s", name, table.concat(missing, ", ")))
+				return true
+			end
+			local _, optMissing = Zenith.need(m.optional)
+			if #optMissing > 0 then
+				bootLog("Info", string.format("%s sin opcionales: %s", name, table.concat(optMissing, ", ")))
+			end
+			local success, err = runInit(name, caps)
+			if success then
+				m.state = "loaded"
+				bootLog("Info", name .. " cargado")
+				return true
+			end
+			m.state = "failed"
+			bootLog("Error", string.format("%s fallo: %s", name, tostring(err)))
+			return false
+		end
+
+		if parallel then
+			if not safe then
+				bootLog("Warn", "Parallel no puede abortar el boot, solo registra fallos")
+			end
+			local pending = 0
+			for _, name in ipairs(order) do
+				pending += 1
+				task.spawn(function()
+					local ok, e = pcall(bootOne, name)
+					if not ok then
+						modules[name].state = "failed"
+						bootLog("Error", string.format("%s fallo: %s", name, tostring(e)))
+					end
+					pending -= 1
+				end)
+			end
+			while pending > 0 do
+				task.wait()
+			end
+		else
+			for _, name in ipairs(order) do
+				if not bootOne(name) and not safe then
+					bootLog("Error", "Safe Boot desactivado, boot abortado")
+					break
+				end
+			end
+		end
+
+		local loaded = 0
+		for _, name in ipairs(order) do
+			if modules[name].state == "loaded" then
+				loaded += 1
+			end
+		end
+		set("Modules Loaded", loaded)
+		bootLog("Info", string.format("Boot: %d/%d modulos (%s)", loaded, #order, parallel and "Parallel" or "Sequential"))
+		return loaded
+	end
+
+	function Zenith.start()
+		if started then
+			return
+		end
+		started = true
+		task.spawn(function()
+			Zenith.probe()
+			Zenith.boot()
+			Zenith.refreshServices()
+		end)
+	end
+
+	Zenith.actions["Refresh Services"] = function()
+		Zenith.refreshServices()
+	end
+
+	Zenith.actions["Cleanup Connections"] = function()
+		local n = Zenith.cleanup()
+		for _, name in ipairs(order) do
+			table.clear(modules[name].owned)
+		end
+		Zenith.log("Info", string.format("Cleanup Connections: %d desconectadas (GUI intacta)", n))
+		Zenith.refreshServices()
+	end
+
+	Zenith.actions["Reload Zenith"] = function()
+		local strict = flag("Strict Lifecycle", true)
+		for i = #order, 1, -1 do
+			local name = order[i]
+			local m = modules[name]
+			if m.state == "loaded" then
+				if not stopModule(name) and strict then
+					bootLog("Error", "Reload abortado (Strict Lifecycle): " .. name)
+					return
+				end
+			else
+				m.state = "pending"
+			end
+		end
+		Zenith.probe()
+		Zenith.boot()
+		Zenith.refreshServices()
+	end
+
+	local prevUnload = Zenith.hooks["Zenith Unload"]
+	Zenith.hooks["Zenith Unload"] = function(...)
+		for i = #order, 1, -1 do
+			local m = modules[order[i]]
+			if m.state == "loaded" then
+				stopModule(order[i])
+			end
+		end
+		Zenith.cleanup()
+		if prevUnload then
+			pcall(prevUnload, ...)
+		end
+	end
+end
+
+-- Zenith Decompiler (Fase 1: Indexer + Bytecode Reader + Disassembler).
+do
+	local band, rshift = bit32.band, bit32.rshift
+
+	local N = {
+		scan = "Scan Scripts",
+		class = "Script Class Filter",
+		search = "Script Search",
+		path = "Script Path",
+		nilScripts = "Include Nil Scripts",
+		list = "Script List",
+		mode = "Decompile Mode",
+		target = "Function Target",
+		out = "Decompiler Output",
+		save = "Save Decompiled",
+		run = "Decompile Selected",
+		runPath = "Decompile Path",
+		scriptsFound = "Scripts Found",
+		decompiled = "Decompiled",
+		maxLines = "Decompile Max Lines",
+		lineNumbers = "Show Line Numbers",
+		includeConstants = "Include Constants",
+		includeUpvalues = "Include Upvalues",
+		strip = "Strip Comments",
+	}
+	local MAX_SHOWN = 1500
+
+	local OPN = {
+		[0] = "NOP", "BREAK", "LOADNIL", "LOADB", "LOADN", "LOADK", "MOVE", "GETGLOBAL", "SETGLOBAL",
+		"GETUPVAL", "SETUPVAL", "CLOSEUPVALS", "GETIMPORT", "GETTABLE", "SETTABLE", "GETTABLEKS", "SETTABLEKS",
+		"GETTABLEN", "SETTABLEN", "NEWCLOSURE", "NAMECALL", "CALL", "RETURN", "JUMP", "JUMPBACK", "JUMPIF",
+		"JUMPIFNOT", "JUMPIFEQ", "JUMPIFLE", "JUMPIFLT", "JUMPIFNOTEQ", "JUMPIFNOTLE", "JUMPIFNOTLT",
+		"ADD", "SUB", "MUL", "DIV", "MOD", "POW", "ADDK", "SUBK", "MULK", "DIVK", "MODK", "POWK",
+		"AND", "OR", "ANDK", "ORK", "CONCAT", "NOT", "MINUS", "LENGTH", "NEWTABLE", "DUPTABLE", "SETLIST",
+		"FORNPREP", "FORNLOOP", "FORGLOOP", "FORGPREP_INEXT", "FASTCALL3", "FORGPREP_NEXT", "NATIVECALL",
+		"GETVARARGS", "DUPCLOSURE", "PREPVARARGS", "LOADKX", "JUMPX", "FASTCALL", "COVERAGE", "CAPTURE",
+		"SUBRK", "DIVRK", "FASTCALL1", "FASTCALL2", "FASTCALL2K", "FORGPREP", "JUMPXEQKNIL", "JUMPXEQKB",
+		"JUMPXEQKN", "JUMPXEQKS", "IDIV", "IDIVK",
+	}
+	local OP_MAX, OP_RETURN, OP_JUMPBACK = 82, 22, 24
+
+	local AUX = {}
+	for _, o in ipairs({ 7, 8, 12, 15, 16, 20, 27, 28, 29, 30, 31, 32, 53, 55, 58, 60, 66, 74, 75, 77, 78, 79, 80 }) do
+		AUX[o] = true
+	end
+
+	local SPEC = {
+		NOP = "", BREAK = "", LOADNIL = "rA", LOADB = "rA iB jC", LOADN = "rA iD", LOADK = "rA kD",
+		MOVE = "rA rB", GETGLOBAL = "rA kX", SETGLOBAL = "rA kX", GETUPVAL = "rA uB", SETUPVAL = "rA uB",
+		CLOSEUPVALS = "rA", GETIMPORT = "rA kD", GETTABLE = "rA rB rC", SETTABLE = "rA rB rC",
+		GETTABLEKS = "rA rB kX", SETTABLEKS = "rA rB kX", GETTABLEN = "rA rB nC", SETTABLEN = "rA rB nC",
+		NEWCLOSURE = "rA pD", NAMECALL = "rA rB kX", CALL = "rA iB iC", RETURN = "rA iB",
+		JUMP = "jD", JUMPBACK = "jD", JUMPIF = "rA jD", JUMPIFNOT = "rA jD",
+		JUMPIFEQ = "rA rX jD", JUMPIFLE = "rA rX jD", JUMPIFLT = "rA rX jD",
+		JUMPIFNOTEQ = "rA rX jD", JUMPIFNOTLE = "rA rX jD", JUMPIFNOTLT = "rA rX jD",
+		SUBRK = "rA kB rC", DIVRK = "rA kB rC",
+		NEWTABLE = "rA iB iX", DUPTABLE = "rA kD", SETLIST = "rA rB iC iX",
+		FORNPREP = "rA jD", FORNLOOP = "rA jD", FORGLOOP = "rA jD iX",
+		FORGPREP_INEXT = "rA jD", FORGPREP_NEXT = "rA jD", FORGPREP = "rA jD",
+		FASTCALL3 = "fA rB iC rX rY", FASTCALL = "fA iC", FASTCALL1 = "fA rB iC",
+		FASTCALL2 = "fA rB iC rX", FASTCALL2K = "fA rB iC kX",
+		NATIVECALL = "", GETVARARGS = "rA iB", DUPCLOSURE = "rA kD", PREPVARARGS = "iA",
+		LOADKX = "rA kX", JUMPX = "jE", COVERAGE = "iE", CAPTURE = "cA",
+		JUMPXEQKNIL = "rA jD xX", JUMPXEQKB = "rA jD xX bX", JUMPXEQKN = "rA jD xX kN", JUMPXEQKS = "rA jD xX kN",
+	}
+	for _, n in ipairs({ "ADD", "SUB", "MUL", "DIV", "MOD", "POW", "AND", "OR", "CONCAT", "IDIV" }) do
+		SPEC[n] = "rA rB rC"
+	end
+	for _, n in ipairs({ "ADDK", "SUBK", "MULK", "DIVK", "MODK", "POWK", "ANDK", "ORK", "IDIVK" }) do
+		SPEC[n] = "rA rB kC"
+	end
+	for _, n in ipairs({ "NOT", "MINUS", "LENGTH" }) do
+		SPEC[n] = "rA rB"
+	end
+
+	local JD = {}
+	for _, n in ipairs({
+		"JUMP", "JUMPBACK", "JUMPIF", "JUMPIFNOT", "JUMPIFEQ", "JUMPIFLE", "JUMPIFLT", "JUMPIFNOTEQ",
+		"JUMPIFNOTLE", "JUMPIFNOTLT", "FORNPREP", "FORNLOOP", "FORGLOOP", "FORGPREP_INEXT", "FORGPREP_NEXT",
+		"FORGPREP", "JUMPXEQKNIL", "JUMPXEQKB", "JUMPXEQKN", "JUMPXEQKS",
+	}) do
+		JD[n] = true
+	end
+
+	local CAPK = { [0] = "VAL", "REF", "UPVAL" }
+
+	local function jumpOf(ins)
+		if JD[ins.name] then
+			return ins.pc + 1 + ins.D
+		end
+		if ins.name == "JUMPX" then
+			return ins.pc + 1 + ins.E
+		end
+		if ins.name == "LOADB" and ins.C ~= 0 then
+			return ins.pc + 1 + ins.C
+		end
+		return nil
+	end
+
+	local function fmtNum(v)
+		if v ~= v then
+			return "nan"
+		end
+		if v == math.huge then
+			return "math.huge"
+		end
+		if v == -math.huge then
+			return "-math.huge"
+		end
+		if v == math.floor(v) and math.abs(v) < 1e15 then
+			return string.format("%d", v)
+		end
+		local s = string.format("%.14g", v)
+		if tonumber(s) ~= v then
+			s = string.format("%.17g", v)
+		end
+		return s
+	end
+
+	local ESC = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t", ['"'] = '\\"', ["\\"] = "\\\\" }
+	local function quote(s)
+		return '"' .. (string.gsub(s, '[%c"\\]', function(c)
+			return ESC[c] or string.format("\\%03d", string.byte(c))
+		end)) .. '"'
+	end
+
+	local function importPath(p, id)
+		local count = rshift(id, 30)
+		local parts = {}
+		for i = 1, count do
+			local k = p.k[band(rshift(id, 30 - 10 * i), 1023) + 1]
+			parts[i] = (k and k.t == "string" and k.v) or "?"
+		end
+		return table.concat(parts, ".")
+	end
+
+	local function kstr(p, k, full)
+		local t = k.t
+		if t == "nil" then
+			return "nil"
+		elseif t == "boolean" then
+			return tostring(k.v)
+		elseif t == "number" then
+			return fmtNum(k.v)
+		elseif t == "string" then
+			local s = k.v or ""
+			if not full and #s > 160 then
+				return quote(string.sub(s, 1, 160)) .. "..."
+			end
+			return quote(s)
+		elseif t == "import" then
+			return importPath(p, k.id)
+		elseif t == "table" then
+			local keys = {}
+			for i, idx in ipairs(k.keys) do
+				local kk = p.k[idx + 1]
+				keys[i] = kk and kstr(p, kk) or "?"
+			end
+			return "{" .. table.concat(keys, ", ") .. "}"
+		elseif t == "closure" then
+			return "closure<P" .. k.proto .. ">"
+		elseif t == "vector" then
+			return string.format("vector(%s, %s, %s, %s)", fmtNum(k.x), fmtNum(k.y), fmtNum(k.z), fmtNum(k.w))
+		end
+		return "?"
+	end
+
+	local function opOf(word, key)
+		return band(band(word, 255) * key, 255)
+	end
+
+	local function validate(p, key)
+		local code, n, pc, last = p.code, #p.code, 1, nil
+		while pc <= n do
+			local op = opOf(code[pc], key)
+			if op > OP_MAX then
+				return false, false
+			end
+			last = op
+			pc += AUX[op] and 2 or 1
+		end
+		if pc ~= n + 1 then
+			return false, false
+		end
+		return true, (n == 0 or last == OP_RETURN or last == OP_JUMPBACK)
+	end
+
+	local function detectKey(protos)
+		local best, bestScore = 1, -1
+		local function scoreKey(key)
+			local score = 0
+			for _, p in ipairs(protos) do
+				local ok, cleanEnd = validate(p, key)
+				if ok then
+					score += cleanEnd and 2 or 1
+				end
+			end
+			return score
+		end
+
+		for _, key in ipairs({ 1, 203, 227 }) do
+			local score = scoreKey(key)
+			if score > bestScore then
+				best, bestScore = key, score
+			end
+		end
+		if bestScore >= #protos * 2 then
+			return best
+		end
+
+		for key = 1, 255, 2 do
+			if key ~= 1 and key ~= 203 and key ~= 227 then
+				local score = scoreKey(key)
+				if score > bestScore then
+					best, bestScore = key, score
+				end
+			end
+		end
+		return best
+	end
+
+	local function parse(bytes)
+		local b = buffer.fromstring(bytes)
+		local size = buffer.len(b)
+		local pos = 0
+		local function u8()
+			local v = buffer.readu8(b, pos)
+			pos += 1
+			return v
+		end
+		local function u32()
+			local v = buffer.readu32(b, pos)
+			pos += 4
+			return v
+		end
+		local function i32()
+			local v = buffer.readi32(b, pos)
+			pos += 4
+			return v
+		end
+		local function f32()
+			local v = buffer.readf32(b, pos)
+			pos += 4
+			return v
+		end
+		local function f64()
+			local v = buffer.readf64(b, pos)
+			pos += 8
+			return v
+		end
+		local function raw(n)
+			local s = buffer.readstring(b, pos, n)
+			pos += n
+			return s
+		end
+		local function varint()
+			local result, shift = 0, 0
+			while true do
+				local byte = u8()
+				result += band(byte, 0x7F) * 2 ^ shift
+				if byte < 0x80 then
+					break
+				end
+				shift += 7
+				if shift > 35 then
+					error("varint invalido", 0)
+				end
+			end
+			return result
+		end
+
+		local version = u8()
+		if version == 0 then
+			error("el script no compilo: " .. raw(size - pos), 0)
+		end
+		if version < 3 or version > 6 then
+			error("version de bytecode no soportada: " .. version, 0)
+		end
+		local typesVersion = 0
+		if version >= 4 then
+			typesVersion = u8()
+		end
+
+		local strings = {}
+		for i = 1, varint() do
+			strings[i] = raw(varint())
+		end
+		local function sref()
+			local id = varint()
+			if id == 0 then
+				return nil
+			end
+			return strings[id]
+		end
+
+		local userdataTypes
+		if typesVersion == 3 then
+			userdataTypes = {}
+			local idx = u8()
+			while idx ~= 0 do
+				userdataTypes[idx] = sref()
+				idx = u8()
+			end
+		end
+
+		local protos = {}
+		for i = 1, varint() do
+			local p = { index = i - 1 }
+			p.maxstack = u8()
+			p.numparams = u8()
+			p.nups = u8()
+			p.vararg = u8() ~= 0
+			if version >= 4 then
+				p.flags = u8()
+				local ts = varint()
+				if ts > 0 then
+					p.typeinfo = raw(ts)
+				end
+			end
+
+			local sizecode = varint()
+			local code = table.create(sizecode)
+			for j = 1, sizecode do
+				code[j] = u32()
+			end
+			p.code = code
+
+			local ks = {}
+			for j = 1, varint() do
+				local t = u8()
+				local k
+				if t == 0 then
+					k = { t = "nil" }
+				elseif t == 1 then
+					k = { t = "boolean", v = u8() ~= 0 }
+				elseif t == 2 then
+					k = { t = "number", v = f64() }
+				elseif t == 3 then
+					k = { t = "string", v = sref() or "" }
+				elseif t == 4 then
+					k = { t = "import", id = u32() }
+				elseif t == 5 then
+					local keys = {}
+					for q = 1, varint() do
+						keys[q] = varint()
+					end
+					k = { t = "table", keys = keys }
+				elseif t == 6 then
+					k = { t = "closure", proto = varint() }
+				elseif t == 7 then
+					k = { t = "vector", x = f32(), y = f32(), z = f32(), w = f32() }
+				else
+					error(string.format("constante desconocida %d (funcion %d)", t, i - 1), 0)
+				end
+				ks[j] = k
+			end
+			p.k = ks
+
+			p.children = {}
+			for j = 1, varint() do
+				p.children[j] = varint()
+			end
+			p.linedefined = varint()
+			p.name = sref()
+
+			if u8() ~= 0 then
+				local gap = u8()
+				local offs, last = {}, 0
+				for j = 1, sizecode do
+					last = (last + u8()) % 256
+					offs[j] = last
+				end
+				local intervals = sizecode > 0 and (rshift(sizecode - 1, gap) + 1) or 0
+				local abs, line = {}, 0
+				for j = 0, intervals - 1 do
+					line += i32()
+					abs[j] = line
+				end
+				local lines = table.create(sizecode)
+				for j = 1, sizecode do
+					lines[j] = abs[rshift(j - 1, gap)] + offs[j]
+				end
+				p.lines = lines
+			end
+
+			p.locvars, p.upnames = {}, {}
+			if u8() ~= 0 then
+				p.hasDebug = true
+				for j = 1, varint() do
+					local name = sref()
+					local s = varint()
+					local e = varint()
+					p.locvars[j] = { name = name, startpc = s, endpc = e, reg = u8() }
+				end
+				for j = 1, varint() do
+					p.upnames[j] = sref()
+				end
+			end
+			protos[i] = p
+		end
+
+		local main = varint()
+		local bc = {
+			version = version,
+			typesVersion = typesVersion,
+			strings = strings,
+			protos = protos,
+			main = main,
+			size = size,
+			userdataTypes = userdataTypes,
+			trailing = size - pos,
+		}
+		bc.key = detectKey(protos)
+		return bc
+	end
+
+	local function decode(bc, p)
+		if p.insn then
+			return p.insn
+		end
+		local code, out, pc, n, key = p.code, {}, 1, #p.code, bc.key
+		while pc <= n do
+			local w = code[pc]
+			local op = opOf(w, key)
+			local d = rshift(w, 16)
+			if d >= 32768 then
+				d -= 65536
+			end
+			local e = rshift(w, 8)
+			if e >= 8388608 then
+				e -= 16777216
+			end
+			local ins = {
+				pc = pc - 1,
+				op = op,
+				name = OPN[op] or "?",
+				A = band(rshift(w, 8), 255),
+				B = band(rshift(w, 16), 255),
+				C = band(rshift(w, 24), 255),
+				D = d,
+				E = e,
+				len = 1,
+				line = p.lines and p.lines[pc],
+			}
+			if AUX[op] then
+				ins.aux = code[pc + 1] or 0
+				ins.len = 2
+			end
+			out[#out + 1] = ins
+			pc += ins.len
+		end
+		p.insn = out
+		return out
+	end
+
+	local function link(bc)
+		if bc.linked then
+			return
+		end
+		bc.linked = true
+		for _, p in ipairs(bc.protos) do
+			local insn = decode(bc, p)
+			for i, ins in ipairs(insn) do
+				local child
+				if ins.name == "NEWCLOSURE" then
+					child = p.children[ins.D + 1]
+				elseif ins.name == "DUPCLOSURE" then
+					local k = p.k[ins.D + 1]
+					child = k and k.proto
+				end
+				local cp = child and bc.protos[child + 1]
+				if cp then
+					if cp.parent == nil then
+						cp.parent = p.index
+					end
+					if not cp.captures then
+						local caps, j = {}, i + 1
+						while insn[j] and insn[j].name == "CAPTURE" do
+							caps[#caps + 1] = { kind = insn[j].A, index = insn[j].B, pc = insn[j].pc }
+							j += 1
+						end
+						cp.captures = caps
+					end
+				end
+			end
+		end
+	end
+
+	local function localAt(p, reg, pc)
+		for _, lv in ipairs(p.locvars) do
+			if lv.reg == reg and lv.startpc <= pc and pc <= lv.endpc then
+				return lv.name
+			end
+		end
+		return nil
+	end
+
+	local function field(ins, f)
+		if f == "A" then
+			return ins.A
+		elseif f == "B" then
+			return ins.B
+		elseif f == "C" then
+			return ins.C
+		elseif f == "D" then
+			return ins.D
+		elseif f == "E" then
+			return ins.E
+		end
+		return ins.aux or 0
+	end
+
+	local function fmtIns(bc, p, ins)
+		local spec = SPEC[ins.name]
+		if not spec then
+			return "?", nil
+		end
+		local parts, notes = {}, {}
+		local aux = ins.aux or 0
+		for tok in string.gmatch(spec, "%S+") do
+			local kind, f = string.sub(tok, 1, 1), string.sub(tok, 2, 2)
+			if kind == "r" then
+				local v
+				if f == "X" then
+					v = band(aux, 255)
+				elseif f == "Y" then
+					v = band(rshift(aux, 8), 255)
+				else
+					v = field(ins, f)
+				end
+				parts[#parts + 1] = "R" .. v
+			elseif kind == "k" then
+				local idx = f == "N" and band(aux, 0xFFFFFF) or field(ins, f)
+				parts[#parts + 1] = "K" .. idx
+				local k = p.k[idx + 1]
+				if k then
+					notes[#notes + 1] = kstr(p, k)
+				end
+			elseif kind == "i" then
+				parts[#parts + 1] = tostring(field(ins, f))
+			elseif kind == "n" then
+				parts[#parts + 1] = tostring(field(ins, f) + 1)
+			elseif kind == "j" then
+				local t = jumpOf(ins)
+				parts[#parts + 1] = t and string.format("->%04d", t) or "-"
+			elseif kind == "u" then
+				parts[#parts + 1] = "U" .. ins.B
+				local nm = p.upnames[ins.B + 1]
+				if nm then
+					notes[#notes + 1] = nm
+				end
+			elseif kind == "p" then
+				local gi = p.children[ins.D + 1]
+				parts[#parts + 1] = "P" .. tostring(gi)
+				local cp = gi and bc.protos[gi + 1]
+				if cp then
+					notes[#notes + 1] = cp.name or "<anon>"
+				end
+			elseif kind == "c" then
+				parts[#parts + 1] = (CAPK[ins.A] or "?") .. " " .. (ins.A == 2 and "U" or "R") .. ins.B
+			elseif kind == "f" then
+				parts[#parts + 1] = "fast#" .. ins.A
+			elseif kind == "x" then
+				if aux >= 0x80000000 then
+					parts[#parts + 1] = "NOT"
+				end
+			elseif kind == "b" then
+				parts[#parts + 1] = band(aux, 1) == 1 and "true" or "false"
+			end
+		end
+		local n = ins.name
+		if n == "CALL" then
+			notes[#notes + 1] = string.format("args=%s results=%s", ins.B == 0 and "multret" or ins.B - 1, ins.C == 0 and "multret" or ins.C - 1)
+		elseif n == "RETURN" then
+			notes[#notes + 1] = "values=" .. (ins.B == 0 and "multret" or tostring(ins.B - 1))
+		elseif n == "GETVARARGS" then
+			notes[#notes + 1] = "count=" .. (ins.B == 0 and "multret" or tostring(ins.B - 1))
+		elseif n == "NEWTABLE" then
+			notes[#notes + 1] = string.format("hash=%d array=%d", ins.B == 0 and 0 or 2 ^ (ins.B - 1), aux)
+		elseif n == "SETLIST" then
+			notes[#notes + 1] = string.format("count=%s start=%d", ins.C == 0 and "multret" or tostring(ins.C - 1), aux)
+		elseif n == "FORGLOOP" then
+			notes[#notes + 1] = string.format("vars=%d%s", band(aux, 255), aux >= 0x80000000 and " inext" or "")
+		end
+		return table.concat(parts, " "), #notes > 0 and table.concat(notes, " | ") or nil
+	end
+
+	local function sig(p)
+		return string.format(
+			"function #%d %s (line %d | params %d | upvalues %d | %s | stack %d | %d words)",
+			p.index,
+			p.name and ("'" .. p.name .. "'") or "<anon>",
+			p.linedefined,
+			p.numparams,
+			p.nups,
+			p.vararg and "vararg" or "fixed",
+			p.maxstack,
+			#p.code
+		)
+	end
+
+	local function disasm(bc, p, opts, out)
+		local insn = decode(bc, p)
+		local targets = {}
+		for _, ins in ipairs(insn) do
+			local t = jumpOf(ins)
+			if t then
+				targets[t] = true
+			end
+		end
+		for _, ins in ipairs(insn) do
+			local ops, notes = fmtIns(bc, p, ins)
+			local ln = opts.lineNumbers and string.format("L%-5s ", tostring(ins.line or "?")) or ""
+			local line = string.format("%s%04d  %s%-14s %s", targets[ins.pc] and ">" or " ", ins.pc, ln, ins.name, ops)
+			line = string.gsub(line, "%s+$", "")
+			if notes and not opts.strip then
+				line = string.format("%-56s ; %s", line, notes)
+			end
+			out[#out + 1] = line
+		end
+	end
+
+	local function header(cur)
+		local bc = cur.bc
+		return {
+			"-- Script   : " .. cur.label,
+			"-- Class    : " .. cur.class,
+			string.format(
+				"-- Bytecode : %d bytes | v%d | types v%d | opcode key %d | %d funciones | main #%d",
+				cur.size,
+				bc.version,
+				bc.typesVersion,
+				bc.key,
+				#bc.protos,
+				bc.main
+			),
+			"",
+		}
+	end
+
+	local function constantsOf(p, out)
+		for i, k in ipairs(p.k) do
+			out[#out + 1] = string.format("  K%-4d %-8s %s", i - 1, k.t, kstr(p, k, true))
+		end
+		if #p.k == 0 then
+			out[#out + 1] = "  (sin constantes)"
+		end
+	end
+
+	local function upvaluesOf(bc, p, out)
+		if p.nups == 0 then
+			out[#out + 1] = "  (sin upvalues)"
+			return
+		end
+		local parent = p.parent ~= nil and bc.protos[p.parent + 1]
+		for i = 0, p.nups - 1 do
+			local name = p.upnames[i + 1] or "?"
+			local c = p.captures and p.captures[i + 1]
+			local src = "origen desconocido"
+			if c and parent then
+				if c.kind == 2 then
+					src = string.format("upvalue U%d de #%d", c.index, parent.index)
+				else
+					local ln = localAt(parent, c.index, c.pc)
+					src = string.format("%s R%d de #%d%s", CAPK[c.kind] or "?", c.index, parent.index, ln and (" (" .. ln .. ")") or "")
+				end
+			end
+			out[#out + 1] = string.format("  U%-3d %-20s <- %s", i, name, src)
+		end
+	end
+
+	local BUILD = {}
+
+	BUILD.bytecode = function(cur, opts)
+		local out, bc = header(cur), cur.bc
+		link(bc)
+		for _, p in ipairs(bc.protos) do
+			out[#out + 1] = "== " .. sig(p)
+			if opts.includeUpvalues then
+				out[#out + 1] = "-- upvalues"
+				upvaluesOf(bc, p, out)
+			end
+			if opts.includeConstants then
+				out[#out + 1] = "-- constantes"
+				constantsOf(p, out)
+			end
+			disasm(bc, p, opts, out)
+			out[#out + 1] = ""
+		end
+		return out
+	end
+
+	BUILD.constants = function(cur)
+		local out = header(cur)
+		for _, p in ipairs(cur.bc.protos) do
+			out[#out + 1] = "== " .. sig(p)
+			constantsOf(p, out)
+			out[#out + 1] = ""
+		end
+		return out
+	end
+
+	BUILD.upvalues = function(cur)
+		local out, bc = header(cur), cur.bc
+		link(bc)
+		for _, p in ipairs(bc.protos) do
+			out[#out + 1] = "== " .. sig(p)
+			upvaluesOf(bc, p, out)
+			out[#out + 1] = ""
+		end
+		return out
+	end
+
+	BUILD.protos = function(cur)
+		local out, bc, seen = header(cur), cur.bc, {}
+		link(bc)
+		local function visit(idx, depth)
+			local p = bc.protos[idx + 1]
+			if not p or seen[idx] then
+				return
+			end
+			seen[idx] = true
+			out[#out + 1] = string.rep("  ", depth) .. sig(p)
+			for _, c in ipairs(p.children) do
+				visit(c, depth + 1)
+			end
+		end
+		visit(bc.main, 0)
+		for _, p in ipairs(bc.protos) do
+			if not seen[p.index] then
+				visit(p.index, 0)
+			end
+		end
+		return out
+	end
+
+	local function resolveTarget(bc)
+		local t = string.match(tostring(Zenith.values[N.target] or ""), "^%s*(.-)%s*$")
+		if t == "" then
+			return bc.protos[bc.main + 1]
+		end
+		local n = tonumber(t)
+		if n then
+			return bc.protos[n + 1]
+		end
+		local low = string.lower(t)
+		for _, p in ipairs(bc.protos) do
+			if p.name and string.lower(p.name) == low then
+				return p
+			end
+		end
+		for _, p in ipairs(bc.protos) do
+			if p.name and string.find(string.lower(p.name), low, 1, true) then
+				return p
+			end
+		end
+		return nil
+	end
+
+	BUILD["function"] = function(cur, opts)
+		local out, bc = header(cur), cur.bc
+		link(bc)
+		local p = resolveTarget(bc)
+		if not p then
+			out[#out + 1] = "-- Function Target no encontrado (indice o nombre). Vacio = main."
+			return out
+		end
+		out[#out + 1] = "== " .. sig(p)
+		if p.parent ~= nil then
+			out[#out + 1] = "-- padre: #" .. p.parent
+		end
+		if #p.children > 0 then
+			local ch = {}
+			for i, c in ipairs(p.children) do
+				ch[i] = "#" .. c
+			end
+			out[#out + 1] = "-- hijas: " .. table.concat(ch, ", ")
+		end
+		out[#out + 1] = ""
+		out[#out + 1] = "-- upvalues"
+		upvaluesOf(bc, p, out)
+		out[#out + 1] = ""
+		out[#out + 1] = "-- constantes"
+		constantsOf(p, out)
+		out[#out + 1] = ""
+		out[#out + 1] = "-- codigo"
+		disasm(bc, p, opts, out)
+		return out
+	end
+
+	local Index = { entries = {}, byLabel = {}, shown = {}, labelOf = setmetatable({}, { __mode = "k" }) }
+
+	local function pathOf(inst)
+		local parts, cur, guard = {}, inst, 0
+		while cur and cur ~= game and guard < 200 do
+			table.insert(parts, 1, cur.Name)
+			cur = cur.Parent
+			guard += 1
+		end
+		return table.concat(parts, "."), cur ~= game
+	end
+
+	local function resolvePathInstance(rawPath)
+		local trimmed = string.match(tostring(rawPath or ""), "^%s*(.-)%s*$")
+		if trimmed == "" then
+			return nil, "Script Path vacio"
+		end
+		if Index.byLabel[trimmed] then
+			return Index.byLabel[trimmed], trimmed
+		end
+
+		local path = string.gsub(trimmed, "^game%.", "")
+		local cur = game
+		local first = true
+		for seg in string.gmatch(path, "[^%.]+") do
+			if first and seg == "LocalPlayer" then
+				cur = localPlayer
+			else
+				local ok, child = pcall(cur.FindFirstChild, cur, seg)
+				if ok and child then
+					cur = child
+				elseif first then
+					local oks, svc = pcall(game.GetService, game, seg)
+					cur = (oks and svc) or nil
+				else
+					cur = nil
+				end
+			end
+			if not cur then
+				return nil, "No encontrado: " .. trimmed
+			end
+			first = false
+		end
+
+		local ok, isScript = pcall(cur.IsA, cur, "LuaSourceContainer")
+		if not ok or not isScript then
+			return nil, "No es un script: " .. trimmed
+		end
+		local label = Index.labelOf[cur] or pathOf(cur)
+		return cur, label
+	end
+
+	function Index.apply()
+		local filter = tostring(Zenith.values[N.class] or "All")
+		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
+		table.clear(Index.shown)
+		local total = 0
+		for _, e in ipairs(Index.entries) do
+			if (filter == "All" or e.class == filter) and (needle == "" or string.find(e.lower, needle, 1, true)) then
+				total += 1
+				if total <= MAX_SHOWN then
+					Index.shown[total] = e.label
+				end
+			end
+		end
+		set(N.scriptsFound, total)
+		if Zenith.setItems then
+			pcall(Zenith.setItems, N.list, Index.shown)
+		end
+		Zenith.log(
+			"Info",
+			string.format(
+				"Scripts: %d indexados | %d tras filtro%s",
+				#Index.entries,
+				total,
+				total > MAX_SHOWN and (" (mostrando " .. MAX_SHOWN .. ", refina con Script Search)") or ""
+			)
+		)
+	end
+
+	function Index.scan()
+		if Index.scanning then
+			return
+		end
+		Index.scanning = true
+		local ok, err = pcall(function()
+			local includeNil = flag(N.nilScripts, false)
+			local seen, found, order = {}, {}, 0
+
+			local function add(inst)
+				if typeof(inst) ~= "Instance" or seen[inst] then
+					return
+				end
+				local okc, isScript = pcall(inst.IsA, inst, "LuaSourceContainer")
+				if not okc or not isScript then
+					return
+				end
+				seen[inst] = true
+				local okp, base, detached = pcall(pathOf, inst)
+				if not okp or (detached and not includeNil) then
+					return
+				end
+				order += 1
+				found[#found + 1] = {
+					inst = inst,
+					base = detached and ("[nil] " .. base) or base,
+					class = inst.ClassName,
+					n = order,
+				}
+			end
+
+			local function each(list)
+				if type(list) ~= "table" then
+					return
+				end
+				for i, v in ipairs(list) do
+					add(v)
+					if i % 3000 == 0 then
+						task.wait()
+					end
+				end
+			end
+
+			for _, capName in ipairs({ "getscripts", "getloadedmodules" }) do
+				local f = Zenith.cap(capName) and Zenith.capFn(capName)
+				if f then
+					local okf, list = pcall(f)
+					if okf then
+						each(list)
+					end
+				end
+			end
+			local okd, desc = pcall(game.GetDescendants, game)
+			if okd then
+				each(desc)
+			end
+
+			if includeNil then
+				local f = Zenith.cap("getnilinstances") and Zenith.capFn("getnilinstances")
+				if f then
+					local okn, list = pcall(f)
+					if okn and type(list) == "table" then
+						for i, inst in ipairs(list) do
+							if typeof(inst) == "Instance" then
+								add(inst)
+								local okg, d = pcall(inst.GetDescendants, inst)
+								if okg then
+									each(d)
+								end
+							end
+							if i % 500 == 0 then
+								task.wait()
+							end
+						end
+					end
+				end
+			end
+
+			table.sort(found, function(a, b)
+				if a.base ~= b.base then
+					return a.base < b.base
+				end
+				return a.n < b.n
+			end)
+
+			table.clear(Index.byLabel)
+			local entries = {}
+			for _, e in ipairs(found) do
+				local label = e.base
+				if Index.byLabel[label] then
+					local n = 2
+					repeat
+						label = string.format("%s #%d", e.base, n)
+						n += 1
+					until not Index.byLabel[label]
+				end
+				Index.byLabel[label] = e.inst
+				Index.labelOf[e.inst] = label
+				entries[#entries + 1] = { label = label, inst = e.inst, class = e.class, lower = string.lower(label) }
+			end
+			Index.entries = entries
+		end)
+		Index.scanning = false
+		if not ok then
+			Zenith.log("Error", "Scan Scripts: " .. tostring(err))
+			return
+		end
+		Index.apply()
+	end
+
+	local Dec = {
+		Index = Index,
+		parse = parse,
+		decode = decode,
+		link = link,
+		kstr = kstr,
+		jumpOf = jumpOf,
+		OPN = OPN,
+		SPEC = SPEC,
+	}
+	Zenith.Decompiler = Dec
+
+	local cache, cacheOrder = {}, {}
+	local decompiledCount = 0
+
+	local function parseCached(bytes)
+		local hit = cache[bytes]
+		if hit then
+			return hit
+		end
+		local bc = parse(bytes)
+		cache[bytes] = bc
+		table.insert(cacheOrder, bytes)
+		if #cacheOrder > 24 then
+			cache[table.remove(cacheOrder, 1)] = nil
+		end
+		return bc
+	end
+	Dec.parseCached = parseCached
+
+	local function publish(lines, ext)
+		Dec.lines, Dec.ext = lines, ext or "txt"
+		local out = Zenith.outputs and Zenith.outputs[N.out]
+		if not out then
+			return
+		end
+		local max = math.max(1, math.floor(num(N.maxLines, 600)))
+		local text
+		if #lines > max then
+			text = table.concat(lines, "\n", 1, max)
+				.. string.format("\n-- ... %d lineas mas (Save Decompiled guarda el texto completo)", #lines - max)
+		else
+			text = table.concat(lines, "\n")
+		end
+		out.setText(text)
+	end
+	Dec.publish = publish
+
+	local function viewOpts()
+		return {
+			lineNumbers = flag(N.lineNumbers, true),
+			includeConstants = flag(N.includeConstants, false),
+			includeUpvalues = flag(N.includeUpvalues, false),
+			strip = flag(N.strip, false),
+		}
+	end
+
+	function Dec.render()
+		local cur = Dec.current
+		if not cur then
+			return
+		end
+		local mode = string.lower(tostring(Zenith.values[N.mode] or "bytecode"))
+		local builder = BUILD[mode]
+		if not builder then
+			publish({ "-- Mode '" .. mode .. "' no esta disponible todavia (Fase 2). Cambia Decompile Mode a Bytecode, Function, Constants, Upvalues o Protos." })
+			return
+		end
+		local ok, res = pcall(builder, cur, viewOpts())
+		if ok then
+			publish(res)
+		else
+			publish({ "-- Error al generar la vista: " .. tostring(res) })
+		end
+	end
+
+	local function fetch(inst)
+		local f = Zenith.capFn("getscriptbytecode")
+		local ok, bc = pcall(f, inst)
+		if not ok then
+			return nil, tostring(bc)
+		end
+		if type(bc) ~= "string" or #bc == 0 then
+			return nil, "bytecode vacio"
+		end
+		return bc
+	end
+
+	function Dec.loadInstance(inst, label)
+		if not inst then
+			Zenith.log("Warn", "Decompiler: script no valido")
+			return
+		end
+		local bytes, err = fetch(inst)
+		if not bytes then
+			Dec.current = nil
+			publish({ "-- " .. label, "-- No se pudo obtener el bytecode: " .. tostring(err) })
+			return
+		end
+		local ok, bc = pcall(parseCached, bytes)
+		if not ok then
+			Dec.current = nil
+			publish({ "-- " .. label, "-- Error al parsear el bytecode: " .. tostring(bc) })
+			return
+		end
+		decompiledCount += 1
+		set(N.decompiled, decompiledCount)
+		Dec.current = { label = label, inst = inst, bc = bc, size = #bytes, class = inst.ClassName }
+		Dec.render()
+	end
+
+	function Dec.load(label)
+		local inst = label and Index.byLabel[label]
+		if not inst then
+			Zenith.log("Warn", "Decompiler: selecciona un script de la lista")
+			return
+		end
+		set(N.path, label)
+		Dec.loadInstance(inst, label)
+	end
+
+	function Dec.loadPath(rawPath)
+		local inst, labelOrErr = resolvePathInstance(rawPath)
+		if not inst then
+			Zenith.log("Warn", "Decompile Path: " .. tostring(labelOrErr))
+			publish({ "-- " .. tostring(labelOrErr) })
+			return
+		end
+		Dec.loadInstance(inst, labelOrErr)
+	end
+
+	local function sanitize(s)
+		return string.sub(string.gsub(s, "[^%w%._%-]", "_"), 1, 100)
+	end
+
+	local function saveFull()
+		if not Dec.current or not Dec.lines then
+			Zenith.log("Warn", "Save Decompiled: no hay nada decompilado")
+			return
+		end
+		local text = table.concat(Dec.lines, "\n")
+		local name = sanitize(Dec.current.label) .. "." .. (Dec.ext or "txt")
+		if Zenith.cap("writefile") then
+			local mk, isf = Zenith.capFn("makefolder"), Zenith.capFn("isfolder")
+			for _, dir in ipairs({ "Zenith", "Zenith/Decompiled" }) do
+				if mk and not (isf and isf(dir)) then
+					pcall(mk, dir)
+				end
+			end
+			local path = "Zenith/Decompiled/" .. name
+			local ok, err = pcall(Zenith.capFn("writefile"), path, text)
+			if ok then
+				Zenith.log("Info", string.format("Guardado: %s (%d lineas)", path, #Dec.lines))
+				return
+			end
+			Zenith.log("Warn", "writefile fallo: " .. tostring(err))
+		end
+		if Zenith.copy then
+			Zenith.copy(text)
+			Zenith.log("Info", "Texto completo copiado al portapapeles")
+		end
+	end
+
+	local saved = {}
+	local function hook(name, fn)
+		local prev = Zenith.hooks[name]
+		saved[name] = { prev = prev }
+		Zenith.hooks[name] = function(...)
+			if prev then
+				pcall(prev, ...)
+			end
+			fn(...)
+		end
+	end
+
+	local function selectedLabel(arg)
+		if type(arg) == "string" and Index.byLabel[arg] then
+			return arg
+		end
+		local v = Zenith.values[N.list]
+		return type(v) == "string" and v or nil
+	end
+
+	local searchToken = 0
+
+	Zenith.register("Decompiler", {
+		requires = { "getscriptbytecode", "buffer" },
+		optional = { "getscripts", "getloadedmodules", "getnilinstances", "writefile", "makefolder", "isfolder", "setclipboard", "decompile" },
+		init = function()
+			Zenith.actions[N.scan] = function()
+				Index.scan()
+			end
+			Zenith.actions[N.run] = function()
+				Dec.load(selectedLabel())
+			end
+			Zenith.actions[N.runPath] = function()
+				Dec.loadPath(Zenith.values[N.path])
+			end
+			Zenith.actions[N.save] = saveFull
+
+			hook(N.list, function(arg)
+				task.defer(Dec.load, selectedLabel(arg))
+			end)
+			hook(N.class, function()
+				task.defer(Index.apply)
+			end)
+			hook(N.search, function()
+				searchToken += 1
+				local mine = searchToken
+				task.delay(0.2, function()
+					if mine == searchToken then
+						Index.apply()
+					end
+				end)
+			end)
+			hook(N.nilScripts, function()
+				task.defer(Index.scan)
+			end)
+			for _, name in ipairs({ N.mode, N.target, N.lineNumbers, N.includeConstants, N.includeUpvalues, N.strip, N.maxLines }) do
+				hook(name, function()
+					task.defer(Dec.render)
+				end)
+			end
+			Zenith.log("Info", "Decompiler listo: pulsa Scan Scripts")
+		end,
+		stop = function()
+			for name, s in pairs(saved) do
+				Zenith.hooks[name] = s.prev
+			end
+			table.clear(saved)
+			Zenith.actions[N.scan], Zenith.actions[N.run], Zenith.actions[N.runPath], Zenith.actions[N.save] = nil, nil, nil, nil
+			Dec.current, Dec.lines = nil, nil
+			table.clear(cache)
+			table.clear(cacheOrder)
+		end,
+	})
+end
+
 local function initializeScript()
 	if typeof(shared) == "table" and shared.ZenithGui then
 		pcall(function()
@@ -1380,12 +3284,8 @@ local function initializeScript()
 
 	screenGui.Destroying:Connect(function()
 		emit("Zenith Unload")
-
-		for _, connection in Zenith.connections do
-			connection:Disconnect()
-		end
-
-		table.clear(Zenith.connections)
+		Zenith.cleanup()
+		Zenith.disconnectUI()
 	end)
 
 	local toastHolder = create("Frame", {
@@ -2396,7 +4296,7 @@ local function initializeScript()
 		while screenGui.Parent do
 			local up = math.floor(os.clock() - Zenith.startTime)
 			Zenith.setters["Uptime"](string.format("%02d:%02d:%02d", up // 3600, up % 3600 // 60, up % 60))
-			Zenith.setters["Active Connections"](#Zenith.connections)
+			Zenith.refreshConnections()
 			task.wait(1)
 		end
 	end)
@@ -2468,6 +4368,7 @@ local function initializeScript()
 	Zenith.outputs["Boot Log"].push("Zenith " .. Zenith.version .. " ready.")
 	Zenith.log("Info", "Zenith " .. Zenith.version .. " loaded.")
 	switchTab(TAB_NAMES[1])
+	Zenith.start()
 end
 
 local function onInitializeError(error)
