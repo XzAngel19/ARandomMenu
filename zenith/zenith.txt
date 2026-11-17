@@ -1,0 +1,2479 @@
+-- Zenith | Decompiler GUI.
+local playersService = game:GetService("Players")
+local userInputService = game:GetService("UserInputService")
+local tweenService = game:GetService("TweenService")
+local httpService = game:GetService("HttpService")
+
+local WINDOW_WIDTH = 400
+local WINDOW_HEIGHT = 600
+local TITLE_HEIGHT = 34
+local TAB_HEIGHT = 30
+local MIN_WIDTH = 320
+local MIN_HEIGHT = 480
+local MAX_WIDTH = 700
+local MAX_HEIGHT = 1050
+local CONFIG_FOLDER = "Zenith"
+local CONFIG_FILE = "Zenith/Zenith.json"
+local TAB_NAMES = { "Core", "Interface", "Tools", "Analysis", "Utility" }
+local TITLE_TEXT = "Zenith | Decompiler"
+
+local ACCENT_A = Color3.fromRGB(225, 225, 225)
+local ACCENT_B = Color3.fromRGB(110, 110, 116)
+local BACKGROUND_TOP = Color3.fromRGB(25, 25, 27)
+local BACKGROUND_BOTTOM = Color3.fromRGB(9, 9, 10)
+local ROW_COLOR = Color3.fromRGB(34, 34, 36)
+local ELEMENT_COLOR = Color3.fromRGB(17, 17, 19)
+local TEXT_COLOR = Color3.fromRGB(238, 238, 238)
+local OFF_TEXT_COLOR = Color3.fromRGB(192, 192, 196)
+local DIM_TEXT_COLOR = Color3.fromRGB(120, 120, 124)
+
+local TEXT_FONT = Enum.Font.SourceSans
+local BOLD_FONT = Enum.Font.SourceSansBold
+local CODE_FONT = Enum.Font.Code
+
+local FAST_TWEEN = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SLIDE_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local MEDIUM_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local POP_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+local COLOR_PRESETS = {
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(255, 70, 70),
+	Color3.fromRGB(70, 255, 120),
+	Color3.fromRGB(70, 160, 255),
+	Color3.fromRGB(255, 210, 70),
+	Color3.fromRGB(210, 90, 255),
+	Color3.fromRGB(0, 0, 0),
+}
+
+local localPlayer = playersService.LocalPlayer
+
+local Zenith = {
+	version = "1.0.0",
+	startTime = os.clock(),
+	values = {},
+	defaults = {},
+	setters = {},
+	actions = {},
+	hooks = {},
+	internal = {},
+	outputs = {},
+	lists = {},
+	transient = {},
+	pages = {},
+	tabButtons = {},
+	tabIndex = {},
+	searchables = {},
+	sections = {},
+	boxes = {},
+	sectionBoxes = {},
+	connections = {},
+	keybinds = {},
+	keyLabels = {},
+	listening = nil,
+}
+
+local animationSpeed = 1
+
+Zenith.log = function() end
+
+function Zenith.setItems(name, items)
+	local list = Zenith.lists[name]
+	if list then
+		list.set(items)
+	end
+end
+
+function Zenith.copy(text)
+	if typeof(setclipboard) == "function" then
+		setclipboard(text)
+		return true
+	end
+	return false
+end
+
+function Zenith.announce(name, state)
+	if Zenith.notify and Zenith.values["Toggle Notifications"] ~= false then
+		Zenith.notify(name, state)
+	end
+end
+
+local function emit(name, value)
+	local internalHook = Zenith.internal[name]
+	if internalHook then
+		pcall(internalHook, value)
+	end
+
+	local hook = Zenith.hooks[name]
+	if hook then
+		local ok, err = pcall(hook, value)
+		if not ok then
+			Zenith.log("Error", name .. ": " .. tostring(err))
+		end
+	end
+end
+
+local function create(className, properties, parent)
+	local instance = Instance.new(className)
+	for key, value in properties do
+		instance[key] = value
+	end
+	instance.Parent = parent
+	return instance
+end
+
+local function tween(instance, info, goal)
+	local scaled = TweenInfo.new(info.Time / animationSpeed, info.EasingStyle, info.EasingDirection, info.RepeatCount, info.Reverses, info.DelayTime)
+	local newTween = tweenService:Create(instance, scaled, goal)
+	newTween:Play()
+	return newTween
+end
+
+local function connectInput(signal, callback)
+	local connection = signal:Connect(callback)
+	table.insert(Zenith.connections, connection)
+	return connection
+end
+
+local function isPress(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+end
+
+local function isMove(input)
+	return input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch
+end
+
+local function addGradient(parent, rotation)
+	return create("UIGradient", { Color = ColorSequence.new(ACCENT_A, ACCENT_B), Rotation = rotation }, parent)
+end
+
+local function addStroke(parent, color, transparency, thickness)
+	return create("UIStroke", {
+		Color = color,
+		Transparency = transparency,
+		Thickness = thickness or 1,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	}, parent)
+end
+
+local function createCard(className, parent, text, height)
+	local card = create(className, {
+		Name = text,
+		Size = UDim2.new(1, 0, 0, height),
+		BackgroundColor3 = ROW_COLOR,
+		BackgroundTransparency = 0.65,
+		BorderSizePixel = 0,
+	}, Zenith.sectionBoxes[parent] or parent)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, card)
+	local stroke = addStroke(card, ACCENT_A, 1)
+	card.ClipsDescendants = true
+
+	local group = Zenith.currentGroup
+	if group then
+		table.insert(group.cards, card)
+		card:SetAttribute("GroupHidden", group.collapsed)
+		card.Visible = not group.collapsed
+	end
+
+	card.InputBegan:Connect(function(input)
+		if not isPress(input) or Zenith.values["Ripple Effect"] == false then
+			return
+		end
+
+		local offset = Vector2.new(input.Position.X, input.Position.Y) - card.AbsolutePosition
+		local ripple = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromOffset(offset.X, offset.Y),
+			Size = UDim2.fromOffset(0, 0),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BackgroundTransparency = 0.8,
+			BorderSizePixel = 0,
+			ZIndex = 0,
+		}, card)
+
+		create("UICorner", { CornerRadius = UDim.new(1, 0) }, ripple)
+		local diameter = math.max(card.AbsoluteSize.X, card.AbsoluteSize.Y) * 2
+
+		tween(ripple, MEDIUM_TWEEN, { Size = UDim2.fromOffset(diameter, diameter), BackgroundTransparency = 1 }).Completed:Connect(function()
+			ripple:Destroy()
+		end)
+	end)
+
+	card.MouseEnter:Connect(function()
+		tween(card, FAST_TWEEN, { BackgroundTransparency = 0.35 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0.55 })
+	end)
+
+	card.MouseLeave:Connect(function()
+		tween(card, FAST_TWEEN, { BackgroundTransparency = 0.65 })
+		tween(stroke, FAST_TWEEN, { Transparency = 1 })
+	end)
+
+	return card, stroke
+end
+
+local function styleButton(button)
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(28, 28, 30) })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+		tween(button, FAST_TWEEN, { BackgroundColor3 = ELEMENT_COLOR })
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(46, 46, 48) })
+	end)
+
+	button.MouseButton1Up:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = Color3.fromRGB(28, 28, 30) })
+	end)
+end
+
+local function addSection(parent, text)
+	local box = create("Frame", {
+		Name = text .. " Box",
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Color3.fromRGB(22, 22, 24),
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		LayoutOrder = #Zenith.boxes + 1,
+	}, parent)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
+	addStroke(box, Color3.fromRGB(105, 105, 110), 0.55)
+	create("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(165, 165, 170)), Rotation = 90 }, box)
+	create("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, box)
+	create("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, box)
+
+	local holder = create("Frame", { Name = text, Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1 }, box)
+	local marker = create("Frame", {
+		Size = UDim2.fromOffset(3, 12),
+		Position = UDim2.new(0, 3, 0.5, -7),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, marker)
+	addGradient(marker, 90)
+	tweenService:Create(marker, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { BackgroundTransparency = 0.5 }):Play()
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -14, 1, -4),
+		Position = UDim2.fromOffset(12, 0),
+		BackgroundTransparency = 1,
+		Text = string.upper(text),
+		TextColor3 = ACCENT_A,
+		TextSize = 11,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local line = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -2),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, holder)
+
+	local gradient = addGradient(line, 0)
+	gradient.Transparency = NumberSequence.new(0.3, 1)
+
+	Zenith.sectionBoxes[parent] = box
+	table.insert(Zenith.boxes, box)
+	table.insert(Zenith.sections, holder)
+end
+
+local function addToggle(parent, text, keybind, default)
+	local startState = default == true
+	local holder, stroke = createCard("TextButton", parent, text, 28)
+	holder.Text = ""
+	holder.AutoButtonColor = false
+
+	local box = create("Frame", {
+		Size = UDim2.fromOffset(16, 16),
+		Position = UDim2.new(0, 8, 0.5, -8),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, box)
+	local boxStroke = addStroke(box, startState and ACCENT_A or DIM_TEXT_COLOR, startState and 0 or 0.5)
+
+	local check = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = startState and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, box)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 3) }, check)
+	addGradient(check, 45)
+
+	local label = create("TextLabel", {
+		Size = UDim2.new(1, keybind and -100 or -44, 1, 0),
+		Position = UDim2.fromOffset(32, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = startState and TEXT_COLOR or OFF_TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local accentBar = create("Frame", {
+		Size = UDim2.new(0, 3, 1, -10),
+		Position = UDim2.fromOffset(0, 5),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = startState and 0 or 1,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, accentBar)
+	addGradient(accentBar, 90)
+
+	local state = startState
+	Zenith.values[text] = state
+	Zenith.defaults[text] = state
+
+	Zenith.setters[text] = function(value)
+		state = value == true
+		Zenith.values[text] = state
+
+		tween(check, POP_TWEEN, { Size = state and UDim2.fromOffset(10, 10) or UDim2.fromOffset(0, 0) })
+		tween(boxStroke, FAST_TWEEN, { Color = state and ACCENT_A or DIM_TEXT_COLOR, Transparency = state and 0 or 0.5 })
+		tween(label, FAST_TWEEN, { TextColor3 = state and TEXT_COLOR or OFF_TEXT_COLOR })
+		tween(accentBar, FAST_TWEEN, { BackgroundTransparency = state and 0 or 1 })
+		emit(text, state)
+	end
+
+	if keybind then
+		local keybindName = text .. " Keybind"
+		local keybindButton = create("TextButton", {
+			Size = UDim2.fromOffset(52, 22),
+			Position = UDim2.new(1, -58, 0.5, -11),
+			BackgroundTransparency = 1,
+			Text = "[" .. keybind .. "]",
+			TextColor3 = DIM_TEXT_COLOR,
+			TextSize = 12,
+			Font = TEXT_FONT,
+			TextXAlignment = Enum.TextXAlignment.Right,
+			AutoButtonColor = false,
+		}, holder)
+
+		local function applyKey(keyName)
+			local keyCode = nil
+			for _, item in Enum.KeyCode:GetEnumItems() do
+				if item.Name == keyName then
+					keyCode = item
+					break
+				end
+			end
+
+			Zenith.keybinds[text] = keyCode
+			Zenith.values[keybindName] = keyCode and keyName or ""
+			keybindButton.Text = keyCode and ("[" .. keyName .. "]") or "[None]"
+			keybindButton.Visible = Zenith.values["Keybind Hints"] ~= false
+		end
+
+		Zenith.defaults[keybindName] = keybind
+		Zenith.setters[keybindName] = applyKey
+		Zenith.keyLabels[text] = keybindButton
+		applyKey(keybind)
+
+		keybindButton.MouseEnter:Connect(function()
+			tween(keybindButton, FAST_TWEEN, { TextColor3 = ACCENT_A })
+		end)
+
+		keybindButton.MouseLeave:Connect(function()
+			if not Zenith.listening then
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+			end
+		end)
+
+		keybindButton.Activated:Connect(function()
+			if Zenith.cancelListening then
+				Zenith.cancelListening()
+			end
+
+			local previousKey = Zenith.values[keybindName]
+			keybindButton.Text = "[...]"
+			tween(keybindButton, FAST_TWEEN, { TextColor3 = ACCENT_A })
+
+			Zenith.cancelListening = function()
+				Zenith.listening = nil
+				Zenith.cancelListening = nil
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+				applyKey(previousKey)
+			end
+
+			Zenith.listening = function(keyCode)
+				Zenith.listening = nil
+				Zenith.cancelListening = nil
+				tween(keybindButton, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+				applyKey(keyCode == Enum.KeyCode.Escape and "" or keyCode.Name)
+			end
+		end)
+	end
+
+	holder.MouseButton1Down:Connect(function()
+		tween(holder, FAST_TWEEN, { BackgroundTransparency = 0 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0 })
+	end)
+
+	holder.MouseButton1Up:Connect(function()
+		tween(holder, FAST_TWEEN, { BackgroundTransparency = 0.35 })
+		tween(stroke, FAST_TWEEN, { Transparency = 0.55 })
+	end)
+
+	holder.Activated:Connect(function()
+		Zenith.setters[text](not state)
+		Zenith.announce(text, state)
+	end)
+
+	holder.MouseEnter:Connect(function()
+		if Zenith.values["Hover Slide"] ~= false then
+			tween(label, FAST_TWEEN, { Position = UDim2.fromOffset(36, 0) })
+		end
+	end)
+
+	holder.MouseLeave:Connect(function()
+		tween(label, FAST_TWEEN, { Position = UDim2.fromOffset(32, 0) })
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addSlider(parent, text, minValue, maxValue, default, decimals)
+	local holder = createCard("Frame", parent, text, 44)
+	local startAlpha = (default - minValue) / (maxValue - minValue)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -70, 0, 20),
+		Position = UDim2.fromOffset(10, 3),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local valueLabel = create("TextLabel", {
+		Size = UDim2.fromOffset(56, 20),
+		Position = UDim2.new(1, -66, 0, 3),
+		BackgroundTransparency = 1,
+		Text = tostring(default),
+		TextColor3 = OFF_TEXT_COLOR,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, holder)
+
+	local bar = create("Frame", {
+		Size = UDim2.new(1, -20, 0, 6),
+		Position = UDim2.fromOffset(10, 29),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+	addStroke(bar, Color3.new(1, 1, 1), 0.88)
+
+	local fill = create("Frame", { Size = UDim2.fromScale(startAlpha, 1), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, bar)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, fill)
+	addGradient(fill, 0)
+
+	local knob = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(12, 12),
+		Position = UDim2.new(startAlpha, 0, 0.5, 0),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, bar)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
+	addStroke(knob, ACCENT_A, 0, 2)
+	local knobScale = create("UIScale", {}, knob)
+
+	local hitbox = create("Frame", { Size = UDim2.new(1, -20, 0, 22), Position = UDim2.fromOffset(10, 21), BackgroundTransparency = 1 }, holder)
+
+	Zenith.values[text] = default
+	Zenith.defaults[text] = default
+
+	local dragging = false
+
+	local function setValue(value)
+		local factor = 10 ^ decimals
+		value = math.floor(math.clamp(value, minValue, maxValue) * factor + 0.5) / factor
+		local snapped = (value - minValue) / (maxValue - minValue)
+
+		tween(fill, SLIDE_TWEEN, { Size = UDim2.fromScale(snapped, 1) })
+		tween(knob, SLIDE_TWEEN, { Position = UDim2.new(snapped, 0, 0.5, 0) })
+		valueLabel.Text = tostring(value)
+		Zenith.values[text] = value
+		emit(text, value)
+	end
+
+	Zenith.setters[text] = setValue
+
+	local function updateFromX(positionX)
+		local alpha = math.clamp((positionX - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+		setValue(minValue + (maxValue - minValue) * alpha)
+	end
+
+	hitbox.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		dragging = true
+		tween(knobScale, POP_TWEEN, { Scale = 1.35 })
+		tween(valueLabel, FAST_TWEEN, { TextColor3 = ACCENT_A })
+		updateFromX(input.Position.X)
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if dragging and isMove(input) then
+			updateFromX(input.Position.X)
+		end
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if not dragging or not isPress(input) then
+			return
+		end
+
+		dragging = false
+		tween(knobScale, POP_TWEEN, { Scale = 1 })
+		tween(valueLabel, FAST_TWEEN, { TextColor3 = OFF_TEXT_COLOR })
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addCycle(parent, text, options)
+	local holder = createCard("Frame", parent, text, 56)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -20, 0, 20),
+		Position = UDim2.fromOffset(10, 3),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -20, 0, 24),
+		Position = UDim2.fromOffset(10, 26),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = options[1],
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	local index = 1
+	Zenith.values[text] = options[1]
+	Zenith.defaults[text] = options[1]
+
+	Zenith.setters[text] = function(value)
+		local found = table.find(options, value)
+		if not found then
+			return
+		end
+
+		index = found
+		Zenith.values[text] = options[index]
+		button.Text = options[index]
+		emit(text, options[index])
+	end
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+	end)
+
+	button.Activated:Connect(function()
+		index = index % #options + 1
+		Zenith.values[text] = options[index]
+		button.Text = options[index]
+		button.TextTransparency = 1
+		tween(button, FAST_TWEEN, { TextTransparency = 0 })
+		emit(text, options[index])
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addButton(parent, text, callback)
+	local holder = createCard("Frame", parent, text, 34)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -16, 0, 24),
+		Position = UDim2.fromOffset(8, 5),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	styleButton(button)
+
+	if callback then
+		Zenith.actions[text] = callback
+	end
+
+	button.Activated:Connect(function()
+		local fn = Zenith.actions[text]
+		if not fn then
+			return Zenith.log("Warn", "No handler for: " .. text)
+		end
+
+		task.spawn(function()
+			local ok, err = pcall(fn)
+			if not ok then
+				Zenith.log("Error", text .. ": " .. tostring(err))
+			end
+		end)
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addText(parent, text, placeholder, default)
+	local holder = createCard("Frame", parent, text, 34)
+
+	create("TextLabel", {
+		Size = UDim2.new(0.42, -8, 1, 0),
+		Position = UDim2.fromOffset(8, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local box = create("TextBox", {
+		Size = UDim2.new(0.58, -12, 0, 22),
+		Position = UDim2.new(0.42, 0, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		PlaceholderText = placeholder or "",
+		PlaceholderColor3 = DIM_TEXT_COLOR,
+		Text = default or "",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		ClearTextOnFocus = false,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, box)
+	local boxStroke = addStroke(box, DIM_TEXT_COLOR, 0.6)
+
+	box.Focused:Connect(function()
+		tween(boxStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+	end)
+
+	box.FocusLost:Connect(function()
+		tween(boxStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+		emit(text, box.Text)
+	end)
+
+	Zenith.values[text] = default or ""
+	Zenith.defaults[text] = default or ""
+
+	Zenith.setters[text] = function(value)
+		box.Text = tostring(value)
+		Zenith.values[text] = box.Text
+		emit(text, box.Text)
+	end
+
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		Zenith.values[text] = box.Text
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addKeybind(parent, text, default)
+	local holder = createCard("Frame", parent, text, 28)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -70, 1, 0),
+		Position = UDim2.fromOffset(8, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local keybindButton = create("TextButton", {
+		Size = UDim2.fromOffset(58, 22),
+		Position = UDim2.new(1, -64, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = default and ("[" .. default .. "]") or "[None]",
+		TextColor3 = DIM_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, keybindButton)
+	addStroke(keybindButton, DIM_TEXT_COLOR, 0.6)
+
+	local keybindName = text .. " Value"
+	Zenith.defaults[keybindName] = default or ""
+	Zenith.values[keybindName] = default or ""
+
+	local function applyKey(keyName)
+		Zenith.values[keybindName] = keyName or ""
+		keybindButton.Text = (keyName and keyName ~= "") and ("[" .. keyName .. "]") or "[None]"
+		emit(keybindName, keyName or "")
+	end
+
+	Zenith.setters[keybindName] = applyKey
+
+	keybindButton.Activated:Connect(function()
+		if Zenith.cancelListening then
+			Zenith.cancelListening()
+		end
+
+		local previousKey = Zenith.values[keybindName]
+		keybindButton.Text = "[...]"
+
+		Zenith.cancelListening = function()
+			Zenith.listening = nil
+			Zenith.cancelListening = nil
+			applyKey(previousKey)
+		end
+
+		Zenith.listening = function(keyCode)
+			Zenith.listening = nil
+			Zenith.cancelListening = nil
+			applyKey(keyCode == Enum.KeyCode.Escape and "" or keyCode.Name)
+		end
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addColor(parent, text, default)
+	local holder = createCard("Frame", parent, text, 28)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -46, 1, 0),
+		Position = UDim2.fromOffset(8, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local swatch = create("TextButton", {
+		Size = UDim2.fromOffset(28, 18),
+		Position = UDim2.new(1, -36, 0.5, -9),
+		BackgroundColor3 = default or COLOR_PRESETS[1],
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, swatch)
+	addStroke(swatch, Color3.new(1, 1, 1), 0.5)
+
+	local index = 1
+	Zenith.values[text] = default or COLOR_PRESETS[1]
+	Zenith.defaults[text] = default or COLOR_PRESETS[1]
+
+	Zenith.setters[text] = function(value)
+		swatch.BackgroundColor3 = value
+		Zenith.values[text] = value
+		emit(text, value)
+	end
+
+	swatch.Activated:Connect(function()
+		index = index % #COLOR_PRESETS + 1
+		Zenith.setters[text](COLOR_PRESETS[index])
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addList(parent, text, items, height)
+	height = height or 90
+	local holder = createCard("Frame", parent, text, height + 24)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 18),
+		Position = UDim2.fromOffset(8, 2),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local scroller = create("ScrollingFrame", {
+		Size = UDim2.new(1, -16, 0, height),
+		Position = UDim2.fromOffset(8, 22),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, scroller)
+	create("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, scroller)
+	create("UIPadding", { PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2), PaddingRight = UDim.new(0, 2) }, scroller)
+
+	local rowList, rows = {}, {}
+	Zenith.values[text] = items[1] or ""
+	Zenith.defaults[text] = items[1] or ""
+	Zenith.transient[text] = true
+
+	local function highlight()
+		for name, row in rows do
+			row.BackgroundTransparency = name == Zenith.values[text] and 0.5 or 1
+		end
+	end
+
+	local function selectItem(name)
+		Zenith.values[text] = name
+		highlight()
+		emit(text, name)
+	end
+
+	local function setItems(newItems)
+		for _, row in rowList do
+			row:Destroy()
+		end
+
+		table.clear(rowList)
+		table.clear(rows)
+
+		for index, itemName in newItems do
+			if index > 400 then
+				break
+			end
+
+			itemName = tostring(itemName)
+			if rows[itemName] then
+				continue
+			end
+
+			local row = create("TextButton", {
+				Size = UDim2.new(1, -4, 0, 20),
+				BackgroundColor3 = ACCENT_A,
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Text = itemName,
+				TextColor3 = TEXT_COLOR,
+				TextSize = 12,
+				Font = TEXT_FONT,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				AutoButtonColor = false,
+				LayoutOrder = index,
+			}, scroller)
+
+			create("UICorner", { CornerRadius = UDim.new(0, 3) }, row)
+			rows[itemName] = row
+			table.insert(rowList, row)
+
+			row.Activated:Connect(function()
+				selectItem(itemName)
+			end)
+		end
+
+		if not rows[Zenith.values[text]] then
+			Zenith.values[text] = rowList[1] and rowList[1].Text or ""
+		end
+
+		highlight()
+	end
+
+	Zenith.setters[text] = selectItem
+	Zenith.lists[text] = { set = setItems }
+	setItems(items)
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addCounter(parent, text, default)
+	local holder = createCard("Frame", parent, text, 26)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -90, 1, 0),
+		Position = UDim2.fromOffset(8, 0),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, holder)
+
+	local valueLabel = create("TextLabel", {
+		Size = UDim2.fromOffset(74, 20),
+		Position = UDim2.new(1, -82, 0.5, -10),
+		BackgroundTransparency = 1,
+		Text = tostring(default or 0),
+		TextColor3 = ACCENT_A,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, holder)
+
+	Zenith.values[text] = default or 0
+	Zenith.defaults[text] = default or 0
+	Zenith.transient[text] = true
+
+	Zenith.setters[text] = function(value)
+		valueLabel.Text = tostring(value)
+		Zenith.values[text] = value
+	end
+
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function addOutput(parent, text, height, maxLines)
+	height = height or 100
+	local holder = createCard("Frame", parent, text, height + 54)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -16, 0, 18),
+		Position = UDim2.fromOffset(8, 2),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, holder)
+
+	local scroller = create("ScrollingFrame", {
+		Size = UDim2.new(1, -16, 0, height),
+		Position = UDim2.fromOffset(8, 22),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, scroller)
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, scroller)
+	create("UIPadding", { PaddingTop = UDim.new(0, 3), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 3) }, scroller)
+
+	local api = { maxLines = maxLines or 400, autoScroll = true, lines = {} }
+	local order = 0
+
+	function api.push(line)
+		order += 1
+		line = tostring(line)
+
+		local label = create("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Text = line == "" and " " or line,
+			TextColor3 = OFF_TEXT_COLOR,
+			TextSize = 11,
+			Font = CODE_FONT,
+			TextWrapped = true,
+			RichText = false,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			LayoutOrder = order,
+		}, scroller)
+
+		table.insert(api.lines, label)
+		while #api.lines > api.maxLines do
+			table.remove(api.lines, 1):Destroy()
+		end
+
+		if api.autoScroll then
+			task.delay(0.03, function()
+				if scroller.Parent then
+					scroller.CanvasPosition = Vector2.new(0, scroller.AbsoluteCanvasSize.Y)
+				end
+			end)
+		end
+	end
+
+	function api.clear()
+		for _, label in api.lines do
+			label:Destroy()
+		end
+		table.clear(api.lines)
+	end
+
+	function api.setText(source)
+		api.clear()
+		local previous = api.autoScroll
+		api.autoScroll = false
+
+		local all = string.split(tostring(source), "\n")
+		for index = 1, math.min(#all, api.maxLines) do
+			api.push(all[index])
+		end
+
+		api.autoScroll = previous
+		scroller.CanvasPosition = Vector2.zero
+	end
+
+	function api.getText()
+		local parts = {}
+		for _, label in api.lines do
+			table.insert(parts, label.Text)
+		end
+		return table.concat(parts, "\n")
+	end
+
+	local copyButton = create("TextButton", {
+		Size = UDim2.new(0.5, -12, 0, 22),
+		Position = UDim2.fromOffset(8, height + 28),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = "Copy",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	local clearButton = create("TextButton", {
+		Size = UDim2.new(0.5, -12, 0, 22),
+		Position = UDim2.new(0.5, 4, 0, height + 28),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = "Clear",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	styleButton(copyButton)
+	styleButton(clearButton)
+
+	copyButton.Activated:Connect(function()
+		local copied = Zenith.copy(api.getText())
+		Zenith.log(copied and "Info" or "Warn", copied and (text .. " copied.") or "Clipboard is not supported here.")
+	end)
+
+	clearButton.Activated:Connect(api.clear)
+
+	Zenith.outputs[text] = api
+	Zenith.transient[text] = true
+	table.insert(Zenith.searchables, holder)
+	return holder
+end
+
+local function beginGroup(parent, text, open)
+	local group = { cards = {}, collapsed = not open }
+	local holder = createCard("Frame", parent, text .. " Options", 30)
+
+	local button = create("TextButton", {
+		Size = UDim2.new(1, -16, 0, 22),
+		Position = UDim2.fromOffset(8, 4),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		Text = (open and "-  Hide " or "+  Show ") .. text,
+		TextColor3 = OFF_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		AutoButtonColor = false,
+	}, holder)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, button)
+	local buttonStroke = addStroke(button, DIM_TEXT_COLOR, 0.6)
+
+	button.MouseEnter:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = ACCENT_A, Transparency = 0 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(buttonStroke, FAST_TWEEN, { Color = DIM_TEXT_COLOR, Transparency = 0.6 })
+	end)
+
+	button.Activated:Connect(function()
+		group.collapsed = not group.collapsed
+		button.Text = (group.collapsed and "+  Show " or "-  Hide ") .. text
+
+		for _, card in group.cards do
+			card:SetAttribute("GroupHidden", group.collapsed)
+			card.Visible = not group.collapsed
+		end
+	end)
+
+	table.insert(Zenith.searchables, holder)
+	Zenith.currentGroup = group
+end
+
+local function endGroup()
+	Zenith.currentGroup = nil
+end
+
+local function createColumn(parent, position)
+	local column = create("ScrollingFrame", {
+		Size = UDim2.new(0.5, -6, 1, 0),
+		Position = position,
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = ACCENT_A,
+		ScrollBarImageTransparency = 0.4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, parent)
+
+	create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, column)
+	create("UIPadding", { PaddingRight = UDim.new(0, 6) }, column)
+
+	return column
+end
+
+local function makeDraggable(handle, target)
+	local dragStart, startPosition
+
+	handle.InputBegan:Connect(function(input)
+		if not isPress(input) or Zenith.values["Lock Window"] then
+			return
+		end
+
+		dragStart = input.Position
+		startPosition = target.Position
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if not dragStart or not isMove(input) then
+			return
+		end
+
+		local delta = input.Position - dragStart
+		target.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if isPress(input) then
+			dragStart = nil
+		end
+	end)
+end
+
+local function createTitleButton(parent, text, offset, hoverColor)
+	local button = create("TextButton", {
+		Size = UDim2.fromOffset(24, 22),
+		Position = UDim2.new(1, offset, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.4,
+		BorderSizePixel = 0,
+		Text = text,
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		AutoButtonColor = false,
+	}, parent)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, button)
+
+	button.MouseEnter:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = hoverColor, BackgroundTransparency = 0.1 })
+	end)
+
+	button.MouseLeave:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundColor3 = ELEMENT_COLOR, BackgroundTransparency = 0.4 })
+	end)
+
+	button.MouseButton1Down:Connect(function()
+		tween(button, FAST_TWEEN, { BackgroundTransparency = 0.4 })
+	end)
+
+	return button
+end
+
+local function switchTab(name)
+	for pageName, page in Zenith.pages do
+		local selected = pageName == name
+		page.Visible = selected
+		tween(Zenith.tabButtons[pageName], FAST_TWEEN, { TextColor3 = selected and TEXT_COLOR or DIM_TEXT_COLOR })
+
+		if selected then
+			page.GroupTransparency = 1
+			tween(page, MEDIUM_TWEEN, { GroupTransparency = 0 })
+		end
+	end
+
+	Zenith.selected = name
+	tween(Zenith.indicator, MEDIUM_TWEEN, { Position = UDim2.new((Zenith.tabIndex[name] - 1) / #TAB_NAMES, 6, 0, 3) })
+end
+
+local function parseVector(text)
+	local numbers = {}
+	for number in string.gmatch(tostring(text), "-?%d+%.?%d*") do
+		table.insert(numbers, tonumber(number))
+	end
+
+	if #numbers < 3 then
+		return nil
+	end
+
+	return Vector3.new(numbers[1], numbers[2], numbers[3])
+end
+
+local function formatVector(v)
+	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
+end
+
+local function runMath()
+	local out = Zenith.outputs["Math Output"]
+	local tool = Zenith.values["Math Tool"]
+	local a = parseVector(Zenith.values["Vector A"])
+	local b = parseVector(Zenith.values["Vector B"])
+	local speed = Zenith.values["Projectile Speed"]
+
+	if not a then
+		return out.push("Vector A is invalid.")
+	end
+
+	if tool == "World To Screen" then
+		local camera = workspace.CurrentCamera
+		local point, onScreen = camera:WorldToViewportPoint(a)
+		out.push(string.format("Screen (%.1f, %.1f) depth %.1f on screen: %s", point.X, point.Y, point.Z, tostring(onScreen)))
+	elseif tool == "Vector Calc" then
+		if not b then
+			return out.push("Vector B is invalid.")
+		end
+
+		local angle = 0
+		if a.Magnitude > 0 and b.Magnitude > 0 then
+			angle = math.deg(math.acos(math.clamp(a.Unit:Dot(b.Unit), -1, 1)))
+		end
+
+		out.push("A + B = " .. formatVector(a + b))
+		out.push("A - B = " .. formatVector(a - b))
+		out.push("A x B = " .. formatVector(a:Cross(b)))
+		out.push(string.format("Dot %.3f  Distance %.3f  Angle %.2f deg", a:Dot(b), (a - b).Magnitude, angle))
+	elseif tool == "Prediction" then
+		local velocity = parseVector(Zenith.values["Target Velocity"]) or Vector3.zero
+		local origin = workspace.CurrentCamera.CFrame.Position
+		local predicted = a
+
+		for _ = 1, 4 do
+			local flight = (predicted - origin).Magnitude / speed
+			predicted = a + velocity * flight * Zenith.values["Prediction Multiplier"]
+		end
+
+		out.push("Predicted " .. formatVector(predicted))
+		out.push(string.format("Flight time %.3fs", (predicted - origin).Magnitude / speed))
+	else
+		if not b then
+			return out.push("Vector B is invalid.")
+		end
+
+		local gravity = Zenith.values["Math Gravity"]
+		local delta = b - a
+		local flat = Vector3.new(delta.X, 0, delta.Z).Magnitude
+
+		if gravity <= 0 then
+			return out.push("Gravity must be above 0.")
+		end
+		if flat < 0.001 then
+			return out.push("Target is straight above or below.")
+		end
+
+		local discriminant = speed ^ 4 - gravity * (gravity * flat * flat + 2 * delta.Y * speed * speed)
+		if discriminant < 0 then
+			return out.push("Target is out of range.")
+		end
+
+		local root = math.sqrt(discriminant)
+		local low = math.atan((speed * speed - root) / (gravity * flat))
+		local high = math.atan((speed * speed + root) / (gravity * flat))
+
+		out.push(string.format("Low %.2f deg  (%.2fs)", math.deg(low), flat / (speed * math.cos(low))))
+		out.push(string.format("High %.2f deg  (%.2fs)", math.deg(high), flat / (speed * math.cos(high))))
+	end
+end
+
+local function initializeScript()
+	if typeof(shared) == "table" and shared.ZenithGui then
+		pcall(function()
+			shared.ZenithGui:Destroy()
+		end)
+	end
+
+	local guiParent = localPlayer:WaitForChild("PlayerGui")
+
+	if typeof(gethui) == "function" then
+		local success, hiddenParent = pcall(gethui)
+		if success and hiddenParent then
+			guiParent = hiddenParent
+		end
+	end
+
+	local screenGui = create("ScreenGui", {
+		Name = "ZenithGui",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, guiParent)
+
+	if typeof(shared) == "table" then
+		shared.ZenithGui = screenGui
+		shared.Zenith = Zenith
+	end
+
+	if typeof(getgenv) == "function" then
+		getgenv().Zenith = Zenith
+	end
+
+	screenGui.Destroying:Connect(function()
+		emit("Zenith Unload")
+
+		for _, connection in Zenith.connections do
+			connection:Disconnect()
+		end
+
+		table.clear(Zenith.connections)
+	end)
+
+	local toastHolder = create("Frame", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -18, 1, -18),
+		Size = UDim2.fromOffset(300, 400),
+		BackgroundTransparency = 1,
+		ZIndex = 20,
+	}, screenGui)
+
+	create("UIListLayout", {
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		HorizontalAlignment = Enum.HorizontalAlignment.Right,
+		VerticalAlignment = Enum.VerticalAlignment.Bottom,
+	}, toastHolder)
+
+	Zenith.notify = function(name, enabled)
+		if not toastHolder.Parent then
+			return
+		end
+
+		local toast = create("CanvasGroup", {
+			Size = UDim2.fromOffset(290, 48),
+			BackgroundColor3 = Color3.fromRGB(10, 10, 11),
+			BorderSizePixel = 0,
+			GroupTransparency = 1,
+		}, toastHolder)
+
+		create("UICorner", { CornerRadius = UDim.new(0, 8) }, toast)
+		addStroke(toast, Color3.new(1, 1, 1), enabled and 0.35 or 0.7, 1.5)
+
+		local bar = create("Frame", {
+			Size = UDim2.new(0, 4, 1, -14),
+			Position = UDim2.fromOffset(8, 7),
+			BackgroundColor3 = enabled and Color3.new(1, 1, 1) or DIM_TEXT_COLOR,
+			BorderSizePixel = 0,
+		}, toast)
+
+		create("UICorner", { CornerRadius = UDim.new(1, 0) }, bar)
+
+		create("TextLabel", {
+			Size = UDim2.new(1, -96, 1, 0),
+			Position = UDim2.fromOffset(22, 0),
+			BackgroundTransparency = 1,
+			Text = name,
+			TextColor3 = enabled and Color3.new(1, 1, 1) or OFF_TEXT_COLOR,
+			TextSize = 17,
+			Font = BOLD_FONT,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, toast)
+
+		create("TextLabel", {
+			Size = UDim2.fromOffset(60, 48),
+			Position = UDim2.new(1, -70, 0, 0),
+			BackgroundTransparency = 1,
+			Text = enabled and "ON" or "OFF",
+			TextColor3 = enabled and Color3.new(1, 1, 1) or DIM_TEXT_COLOR,
+			TextSize = 15,
+			Font = BOLD_FONT,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, toast)
+
+		tween(toast, FAST_TWEEN, { GroupTransparency = 0 })
+
+		task.delay(2, function()
+			tween(toast, MEDIUM_TWEEN, { GroupTransparency = 1 }).Completed:Wait()
+			toast:Destroy()
+		end)
+	end
+
+	local window = create("Frame", {
+		Size = UDim2.fromOffset(WINDOW_WIDTH, WINDOW_HEIGHT),
+		Position = UDim2.new(0.5, -WINDOW_WIDTH / 2, 0.5, -WINDOW_HEIGHT / 2),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+	}, screenGui)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, window)
+	create("UIGradient", { Color = ColorSequence.new(BACKGROUND_TOP, BACKGROUND_BOTTOM), Rotation = 90 }, window)
+
+	local windowStroke = addStroke(window, Color3.new(1, 1, 1), 0.2, 1.5)
+	addGradient(windowStroke, 45)
+
+	local windowScale = create("UIScale", { Scale = 0.85 }, window)
+	tween(windowScale, POP_TWEEN, { Scale = 1 })
+
+	local sheen = create("Frame", { Size = UDim2.new(1, 0, 0, 140), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, window)
+	create("UIGradient", { Transparency = NumberSequence.new(0.965, 1), Rotation = 90 }, sheen)
+
+	local titleBar = create("Frame", { Size = UDim2.new(1, 0, 0, TITLE_HEIGHT), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, window)
+	local titleGradient = addGradient(titleBar, 0)
+	titleGradient.Transparency = NumberSequence.new(0.8, 0.92)
+
+	local titleLine = create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		Position = UDim2.new(0, 0, 1, -1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, titleBar)
+
+	addGradient(titleLine, 0)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -260, 1, 0),
+		Position = UDim2.fromOffset(12, 0),
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = "<b>" .. TITLE_TEXT .. "</b>",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 14,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, titleBar)
+
+	local searchBox = create("TextBox", {
+		Size = UDim2.fromOffset(130, 22),
+		Position = UDim2.new(1, -200, 0.5, -11),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BackgroundTransparency = 0.2,
+		BorderSizePixel = 0,
+		PlaceholderText = "Search",
+		PlaceholderColor3 = DIM_TEXT_COLOR,
+		Text = "",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		ClearTextOnFocus = false,
+	}, titleBar)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, searchBox)
+	local searchStroke = addStroke(searchBox, ACCENT_A, 1)
+
+	searchBox.Focused:Connect(function()
+		tween(searchStroke, FAST_TWEEN, { Transparency = 0 })
+	end)
+
+	searchBox.FocusLost:Connect(function()
+		tween(searchStroke, FAST_TWEEN, { Transparency = 1 })
+	end)
+
+	local minimizeButton = createTitleButton(titleBar, "-", -60, ACCENT_B)
+	local closeButton = createTitleButton(titleBar, "X", -32, ACCENT_B)
+
+	makeDraggable(titleBar, window)
+
+	Zenith.unload = function()
+		tween(windowScale, FAST_TWEEN, { Scale = 0 }).Completed:Connect(function()
+			screenGui:Destroy()
+		end)
+	end
+
+	local minimized = false
+	local windowWidth = WINDOW_WIDTH
+	local windowHeight = WINDOW_HEIGHT
+
+	minimizeButton.Activated:Connect(function()
+		minimized = not minimized
+		Zenith.resizeHandle.Visible = not minimized
+		tween(window, MEDIUM_TWEEN, { Size = UDim2.fromOffset(windowWidth, minimized and TITLE_HEIGHT or windowHeight) })
+	end)
+
+	closeButton.Activated:Connect(Zenith.unload)
+
+	local tabBar = create("Frame", { Size = UDim2.new(1, 0, 0, TAB_HEIGHT), Position = UDim2.fromOffset(0, TITLE_HEIGHT), BackgroundTransparency = 1 }, window)
+
+	local indicator = create("Frame", {
+		Size = UDim2.new(1 / #TAB_NAMES, -12, 1, -6),
+		Position = UDim2.new(0, 6, 0, 3),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.9,
+		BorderSizePixel = 0,
+	}, tabBar)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 6) }, indicator)
+	addStroke(indicator, Color3.new(1, 1, 1), 0.8)
+
+	local underline = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Size = UDim2.new(0.5, 0, 0, 2),
+		Position = UDim2.fromScale(0.5, 1),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, indicator)
+
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, underline)
+	addGradient(underline, 0)
+	Zenith.indicator = indicator
+
+	local contentTop = TITLE_HEIGHT + TAB_HEIGHT + 8
+	local content = create("Frame", { Size = UDim2.new(1, -20, 1, -(contentTop + 10)), Position = UDim2.fromOffset(10, contentTop), BackgroundTransparency = 1 }, window)
+
+	local resizeHandle = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 1),
+		Size = UDim2.fromOffset(18, 18),
+		Position = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Text = "",
+		ZIndex = 10,
+	}, window)
+
+	Zenith.resizeHandle = resizeHandle
+
+	for gripIndex = 1, 3 do
+		create("Frame", {
+			AnchorPoint = Vector2.new(1, 1),
+			Size = UDim2.fromOffset(gripIndex * 4, 1),
+			Position = UDim2.new(1, -3, 1, -3 - (3 - gripIndex) * 4 - 2),
+			BackgroundColor3 = DIM_TEXT_COLOR,
+			BorderSizePixel = 0,
+		}, resizeHandle)
+	end
+
+	local resizing = false
+	local resizeStart, startWidth, startHeight
+
+	resizeHandle.MouseEnter:Connect(function()
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = ACCENT_A })
+		end
+	end)
+
+	resizeHandle.MouseLeave:Connect(function()
+		if resizing then
+			return
+		end
+
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = DIM_TEXT_COLOR })
+		end
+	end)
+
+	resizeHandle.InputBegan:Connect(function(input)
+		if not isPress(input) then
+			return
+		end
+
+		resizing = true
+		resizeStart = input.Position
+		startWidth, startHeight = windowWidth, windowHeight
+	end)
+
+	connectInput(userInputService.InputChanged, function(input)
+		if not resizing or not isMove(input) then
+			return
+		end
+
+		local delta = input.Position - resizeStart
+		windowWidth = math.clamp(startWidth + delta.X, MIN_WIDTH, MAX_WIDTH)
+		windowHeight = math.clamp(startHeight + delta.Y, MIN_HEIGHT, MAX_HEIGHT)
+		window.Size = UDim2.fromOffset(windowWidth, windowHeight)
+	end)
+
+	connectInput(userInputService.InputEnded, function(input)
+		if not resizing or not isPress(input) then
+			return
+		end
+
+		resizing = false
+		for _, grip in resizeHandle:GetChildren() do
+			tween(grip, FAST_TWEEN, { BackgroundColor3 = DIM_TEXT_COLOR })
+		end
+	end)
+
+	for index, name in TAB_NAMES do
+		local button = create("TextButton", {
+			Size = UDim2.fromScale(1 / #TAB_NAMES, 1),
+			Position = UDim2.fromScale((index - 1) / #TAB_NAMES, 0),
+			BackgroundTransparency = 1,
+			Text = name,
+			TextColor3 = DIM_TEXT_COLOR,
+			TextSize = 13,
+			Font = BOLD_FONT,
+			AutoButtonColor = false,
+		}, tabBar)
+
+		local page = create("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, content)
+
+		button.MouseEnter:Connect(function()
+			if Zenith.selected ~= name then
+				tween(button, FAST_TWEEN, { TextColor3 = OFF_TEXT_COLOR })
+			end
+		end)
+
+		button.MouseLeave:Connect(function()
+			if Zenith.selected ~= name then
+				tween(button, FAST_TWEEN, { TextColor3 = DIM_TEXT_COLOR })
+			end
+		end)
+
+		button.Activated:Connect(function()
+			switchTab(name)
+		end)
+
+		Zenith.pages[name] = page
+		Zenith.tabButtons[name] = button
+		Zenith.tabIndex[name] = index
+	end
+
+	-- Zenith Console (floating terminal).
+	local LEVELS = { Debug = 0, Info = 1, Warn = 2, Error = 3 }
+	local LEVEL_COLORS = {
+		Debug = DIM_TEXT_COLOR,
+		Info = OFF_TEXT_COLOR,
+		Warn = TEXT_COLOR,
+		Error = Color3.new(1, 1, 1),
+	}
+
+	local consoleFrame = create("Frame", {
+		Name = "Zenith Console",
+		Size = UDim2.fromOffset(380, 240),
+		Position = UDim2.new(0, 16, 1, -256),
+		BackgroundColor3 = Color3.fromRGB(12, 12, 13),
+		BackgroundTransparency = 0.05,
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Visible = false,
+	}, screenGui)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, consoleFrame)
+	addStroke(consoleFrame, Color3.new(1, 1, 1), 0.7, 1.5)
+
+	local consoleHeader = create("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = ELEMENT_COLOR, BorderSizePixel = 0 }, consoleFrame)
+
+	create("TextLabel", {
+		Size = UDim2.new(1, -70, 1, 0),
+		Position = UDim2.fromOffset(10, 0),
+		BackgroundTransparency = 1,
+		Text = "Zenith Console",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 13,
+		Font = BOLD_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, consoleHeader)
+
+	local consoleClose = createTitleButton(consoleHeader, "X", -28, ACCENT_B)
+	local consoleClear = createTitleButton(consoleHeader, "C", -56, ACCENT_B)
+	makeDraggable(consoleHeader, consoleFrame)
+
+	local consoleBody = create("ScrollingFrame", {
+		Position = UDim2.fromOffset(6, 30),
+		Size = UDim2.new(1, -12, 1, -62),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, consoleFrame)
+
+	create("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, consoleBody)
+
+	local consoleInput = create("TextBox", {
+		Position = UDim2.new(0, 6, 1, -28),
+		Size = UDim2.new(1, -12, 0, 22),
+		BackgroundColor3 = ELEMENT_COLOR,
+		BorderSizePixel = 0,
+		PlaceholderText = "Type a command (help)",
+		PlaceholderColor3 = DIM_TEXT_COLOR,
+		Text = "",
+		TextColor3 = TEXT_COLOR,
+		TextSize = 12,
+		Font = CODE_FONT,
+		ClearTextOnFocus = false,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, consoleFrame)
+
+	create("UICorner", { CornerRadius = UDim.new(0, 4) }, consoleInput)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 6) }, consoleInput)
+	addStroke(consoleInput, DIM_TEXT_COLOR, 0.6)
+
+	local consoleLines = {}
+	local consoleOrder = 0
+
+	local function clearConsole()
+		for _, label in consoleLines do
+			label:Destroy()
+		end
+		table.clear(consoleLines)
+	end
+
+	Zenith.log = function(level, message)
+		level = LEVELS[level] and level or "Info"
+		if LEVELS[level] < (LEVELS[Zenith.values["Console Log Level"]] or 0) then
+			return
+		end
+
+		consoleOrder += 1
+		local stamp = Zenith.values["Console Timestamps"] ~= false and os.date("%H:%M:%S ") or ""
+
+		local label = create("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Text = string.format("%s[%s] %s", stamp, string.upper(level), tostring(message)),
+			TextColor3 = LEVEL_COLORS[level],
+			TextSize = 11,
+			Font = CODE_FONT,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			LayoutOrder = consoleOrder,
+		}, consoleBody)
+
+		table.insert(consoleLines, label)
+		while #consoleLines > (Zenith.values["Console Max Lines"] or 200) do
+			table.remove(consoleLines, 1):Destroy()
+		end
+
+		task.delay(0.03, function()
+			if consoleBody.Parent then
+				consoleBody.CanvasPosition = Vector2.new(0, consoleBody.AbsoluteCanvasSize.Y)
+			end
+		end)
+	end
+
+	Zenith.actions["Clear Console"] = clearConsole
+	consoleClear.Activated:Connect(clearConsole)
+
+	consoleClose.Activated:Connect(function()
+		Zenith.setters["Console Visible"](false)
+	end)
+
+	consoleInput.FocusLost:Connect(function(enterPressed)
+		local text = consoleInput.Text
+		consoleInput.Text = ""
+
+		if not enterPressed or text == "" then
+			return
+		end
+
+		Zenith.log("Info", "> " .. text)
+		local command, rest = string.match(text, "^(%S+)%s*(.-)$")
+		command = string.lower(command)
+
+		if command == "help" then
+			Zenith.log("Info", "help, clear, echo <text>, uptime, version, unload")
+		elseif command == "clear" then
+			clearConsole()
+		elseif command == "echo" then
+			Zenith.log("Info", rest)
+		elseif command == "uptime" then
+			Zenith.log("Info", string.format("%.0f seconds", os.clock() - Zenith.startTime))
+		elseif command == "version" then
+			Zenith.log("Info", "Zenith " .. Zenith.version)
+		elseif command == "unload" then
+			Zenith.unload()
+		elseif Zenith.hooks["Console Command"] then
+			emit("Console Command", text)
+		else
+			Zenith.log("Warn", "Unknown command: " .. command)
+		end
+	end)
+
+	-- Internal hooks that make part of the menu live.
+	local function refreshSpeed()
+		local enabled = Zenith.values["Animations"] ~= false
+		animationSpeed = enabled and math.max(Zenith.values["Tween Speed"] or 1, 0.1) or 1000
+	end
+
+	Zenith.internal["Animations"] = refreshSpeed
+	Zenith.internal["Tween Speed"] = refreshSpeed
+
+	Zenith.internal["Menu Opacity"] = function(value)
+		window.BackgroundTransparency = 1 - value
+	end
+
+	Zenith.internal["Menu Scale"] = function(value)
+		windowScale.Scale = value
+	end
+
+	Zenith.internal["Console Visible"] = function(value)
+		consoleFrame.Visible = value
+	end
+
+	-- Core tab.
+	local coreLeft = createColumn(Zenith.pages.Core, UDim2.fromOffset(0, 0))
+	local coreRight = createColumn(Zenith.pages.Core, UDim2.new(0.5, 6, 0, 0))
+
+	local statusLabel = create("TextLabel", {
+		Size = UDim2.new(1, -8, 0, 18),
+		Position = UDim2.new(0, 4, 1, -20),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = DIM_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 5,
+	}, Zenith.pages.Core)
+
+	local function setStatus(message)
+		statusLabel.Text = message
+		statusLabel.TextTransparency = 0
+		Zenith.log("Info", message)
+
+		task.delay(3, function()
+			if statusLabel.Text == message then
+				tween(statusLabel, MEDIUM_TWEEN, { TextTransparency = 1 })
+			end
+		end)
+	end
+
+	addSection(coreLeft, "Zenith Init")
+	addToggle(coreLeft, "Safe Boot", nil, true)
+	addToggle(coreLeft, "Show Boot Errors", nil, true)
+	addToggle(coreLeft, "Reinject On Teleport", nil, false)
+	addCycle(coreLeft, "Load Order", { "Sequential", "Parallel" })
+	addSlider(coreLeft, "Boot Timeout", 1, 30, 10, 0)
+	addSlider(coreLeft, "Boot Retries", 0, 5, 1, 0)
+	addButton(coreLeft, "Reload Zenith")
+	addOutput(coreLeft, "Boot Log", 80)
+
+	addSection(coreLeft, "Zenith Signal")
+	addCounter(coreLeft, "Signals Fired", 0)
+	addCounter(coreLeft, "Active Listeners", 0)
+	addToggle(coreLeft, "Signal Debug", nil, false)
+	addCycle(coreLeft, "Dispatch Mode", { "Immediate", "Deferred" })
+	addSlider(coreLeft, "Max Listeners", 8, 512, 64, 0)
+	addToggle(coreLeft, "Warn On Leak", nil, true)
+	addButton(coreLeft, "Dump Signals")
+	addOutput(coreLeft, "Signal Log", 80)
+
+	addSection(coreRight, "Zenith Core")
+	addCounter(coreRight, "Modules Loaded", 0)
+	addCounter(coreRight, "Active Connections", 0)
+	addCounter(coreRight, "Uptime", "00:00:00")
+	addToggle(coreRight, "Strict Lifecycle", nil, true)
+	addToggle(coreRight, "Track Connections", nil, true)
+	addToggle(coreRight, "Auto Cleanup On Error", nil, false)
+	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 90)
+	addButton(coreRight, "Refresh Services")
+	addButton(coreRight, "Cleanup Connections")
+	addButton(coreRight, "Unload Zenith", function()
+		Zenith.unload()
+	end)
+
+	addSection(coreRight, "Zenith Config")
+	addText(coreRight, "Config Name", "my config")
+	Zenith.transient["Config Name"] = true
+	addList(coreRight, "Config Presets", {}, 70)
+	addButton(coreRight, "Refresh Presets")
+	addButton(coreRight, "Create")
+	addButton(coreRight, "Load")
+	addButton(coreRight, "Save")
+	addButton(coreRight, "Delete Config")
+	addButton(coreRight, "Reset Settings")
+	addToggle(coreRight, "Autoload", nil, false)
+	addSlider(coreRight, "Autosave Interval", 5, 120, 15, 0)
+	addButton(coreRight, "Export JSON")
+	addText(coreRight, "Import JSON Text", "Paste JSON")
+	Zenith.transient["Import JSON Text"] = true
+	addButton(coreRight, "Import JSON")
+
+	-- Interface tab.
+	local uiLeft = createColumn(Zenith.pages.Interface, UDim2.fromOffset(0, 0))
+	local uiRight = createColumn(Zenith.pages.Interface, UDim2.new(0.5, 6, 0, 0))
+
+	addSection(uiLeft, "Zenith Menu")
+	addCycle(uiLeft, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
+	addSlider(uiLeft, "Menu Opacity", 0.3, 1, 1, 2)
+	addSlider(uiLeft, "Menu Scale", 0.7, 1.3, 1, 2)
+	addToggle(uiLeft, "Keybind Hints", nil, true)
+	addToggle(uiLeft, "Toggle Notifications", nil, true)
+	addToggle(uiLeft, "Lock Window", nil, false)
+	addButton(uiLeft, "Reset Window Position", function()
+		window.Position = UDim2.new(0.5, -windowWidth / 2, 0.5, -windowHeight / 2)
+	end)
+
+	addSection(uiLeft, "Zenith Design")
+	addToggle(uiLeft, "Animations", nil, true)
+	addSlider(uiLeft, "Tween Speed", 0.25, 3, 1, 2)
+	addToggle(uiLeft, "Ripple Effect", nil, true)
+	addToggle(uiLeft, "Hover Slide", nil, true)
+
+	addSection(uiRight, "Zenith Materials")
+	beginGroup(uiRight, "Component Preview", false)
+	addToggle(uiRight, "Preview Toggle", nil, false)
+	addSlider(uiRight, "Preview Slider", 0, 100, 50, 0)
+	addCycle(uiRight, "Preview Cycle", { "Option A", "Option B", "Option C" })
+	addButton(uiRight, "Preview Button", function()
+		Zenith.outputs["Preview Output"].push("Preview button pressed.")
+	end)
+	addText(uiRight, "Preview Text", "Text input")
+	addKeybind(uiRight, "Preview Keybind", "F")
+	addColor(uiRight, "Preview Colour", Color3.fromRGB(255, 255, 255))
+	addList(uiRight, "Preview List", { "Item 1", "Item 2", "Item 3" }, 60)
+	addCounter(uiRight, "Preview Counter", 0)
+	addOutput(uiRight, "Preview Output", 60)
+	endGroup()
+	Zenith.outputs["Preview Output"].push("Zenith Materials ready.")
+
+	-- Tools tab.
+	local toolsLeft = createColumn(Zenith.pages.Tools, UDim2.fromOffset(0, 0))
+	local toolsRight = createColumn(Zenith.pages.Tools, UDim2.new(0.5, 6, 0, 0))
+
+	addSection(toolsLeft, "Zenith Create")
+	addToggle(toolsLeft, "Live Layout Mode", nil, false)
+	addCycle(toolsLeft, "Create Class", { "Frame", "TextLabel", "TextButton", "TextBox", "ImageLabel", "ScrollingFrame", "UICorner", "UIStroke", "UIListLayout", "UIPadding" })
+	addCycle(toolsLeft, "Create Target", { "Hidden UI", "PlayerGui", "CoreGui" })
+	addText(toolsLeft, "Create Name", "Instance name")
+	addText(toolsLeft, "Create Parent Path", "Parent path")
+	addButton(toolsLeft, "Create Instance")
+	addButton(toolsLeft, "Duplicate Selected")
+	addButton(toolsLeft, "Delete Selected")
+	addList(toolsLeft, "Created Instances", {}, 80)
+	addText(toolsLeft, "Property Name", "Property")
+	addText(toolsLeft, "Property Value", "Value")
+	addButton(toolsLeft, "Apply Property")
+	addToggle(toolsLeft, "Snap To Grid", nil, false)
+	addSlider(toolsLeft, "Grid Size", 1, 50, 8, 0)
+	addToggle(toolsLeft, "Show Bounds", nil, false)
+	addButton(toolsLeft, "Export GUI Code")
+	addOutput(toolsLeft, "Create Output", 100)
+
+	addSection(toolsRight, "Zenith Inspect")
+	addText(toolsRight, "Inspect Path", "game.Workspace")
+	addButton(toolsRight, "Run Inspect")
+	addButton(toolsRight, "Go To Parent")
+	addButton(toolsRight, "Select Mouse Target")
+	addButton(toolsRight, "Copy Inspect Path")
+	addCycle(toolsRight, "Inspect View", { "Hierarchy", "Properties", "Attributes", "Tags", "Tables" })
+	addSlider(toolsRight, "Inspect Max Depth", 1, 10, 3, 0)
+	addToggle(toolsRight, "Hover Highlight", nil, false)
+	addToggle(toolsRight, "Show Hidden Properties", nil, false)
+	addToggle(toolsRight, "Include Nil Instances", nil, false)
+	addKeybind(toolsRight, "Select Target Key", "I")
+	addList(toolsRight, "Inspect Children", {}, 100)
+	addOutput(toolsRight, "Inspect Output", 130)
+
+	-- Analysis tab.
+	local analysisLeft = createColumn(Zenith.pages.Analysis, UDim2.fromOffset(0, 0))
+	local analysisRight = createColumn(Zenith.pages.Analysis, UDim2.new(0.5, 6, 0, 0))
+
+	addSection(analysisLeft, "Zenith Decompiler")
+	addCounter(analysisLeft, "Scripts Found", 0)
+	addCounter(analysisLeft, "Decompiled", 0)
+	addCycle(analysisLeft, "Decompile Mode", { "Source", "Function", "Bytecode", "Constants", "Upvalues", "Protos" })
+	addCycle(analysisLeft, "Script Class Filter", { "All", "LocalScript", "ModuleScript", "Script" })
+	addText(analysisLeft, "Script Search", "Filter scripts")
+	addText(analysisLeft, "Script Path", "Script path")
+	addButton(analysisLeft, "Scan Scripts")
+	addList(analysisLeft, "Script List", {}, 100)
+	addButton(analysisLeft, "Decompile Selected")
+	addButton(analysisLeft, "Decompile Path")
+	addToggle(analysisLeft, "Rename Locals", nil, true)
+	addToggle(analysisLeft, "Show Line Numbers", nil, true)
+	addToggle(analysisLeft, "Include Constants", nil, false)
+	addToggle(analysisLeft, "Include Upvalues", nil, false)
+	addToggle(analysisLeft, "Strip Comments", nil, false)
+	addToggle(analysisLeft, "Include Nil Scripts", nil, false)
+	addSlider(analysisLeft, "Decompile Timeout", 1, 60, 10, 0)
+	addSlider(analysisLeft, "Decompile Max Lines", 100, 2000, 600, 0)
+	addOutput(analysisLeft, "Decompiler Output", 150)
+	addButton(analysisLeft, "Save Decompiled")
+
+	addSection(analysisLeft, "Zenith Extractor")
+	addToggle(analysisLeft, "Sandbox Isolation", nil, true)
+	addCycle(analysisLeft, "Extract Mode", { "Extract Parts", "Hook Function", "Inject Snippet" })
+	addText(analysisLeft, "Extract Target", "Script or function")
+	addToggle(analysisLeft, "Log Hooked Calls", nil, true)
+	addToggle(analysisLeft, "Capture Arguments", nil, true)
+	addToggle(analysisLeft, "Capture Return Values", nil, false)
+	addSlider(analysisLeft, "Max Captures", 10, 1000, 200, 0)
+	addText(analysisLeft, "Snippet Code", "Code to run")
+	addButton(analysisLeft, "Start Extraction")
+	addButton(analysisLeft, "Stop Extraction")
+	addButton(analysisLeft, "Run In Sandbox")
+	addList(analysisLeft, "Extracted Parts", {}, 80)
+	addOutput(analysisLeft, "Extractor Output", 90)
+
+	addSection(analysisLeft, "Zenith Memory Scanner")
+	addCounter(analysisLeft, "Results Found", 0)
+	addCycle(analysisLeft, "Scan Type", { "Constant", "String", "Number", "Pattern", "Function Name", "Table Key" })
+	addText(analysisLeft, "Scan Value", "Value or pattern")
+	addToggle(analysisLeft, "Scan Closures", nil, true)
+	addToggle(analysisLeft, "Scan Tables", nil, true)
+	addToggle(analysisLeft, "Scan Upvalues", nil, false)
+	addToggle(analysisLeft, "Case Sensitive", nil, false)
+	addSlider(analysisLeft, "Scan Max Results", 10, 2000, 200, 0)
+	addButton(analysisLeft, "First Scan")
+	addButton(analysisLeft, "Next Scan")
+	addButton(analysisLeft, "Reset Scan")
+	addList(analysisLeft, "Scan Result List", {}, 90)
+	addOutput(analysisLeft, "Scan Output", 80)
+
+	addSection(analysisLeft, "Zenith Stealer")
+	addCounter(analysisLeft, "Dumped Items", 0)
+	addCounter(analysisLeft, "Dump Errors", 0)
+	addCycle(analysisLeft, "Dump Type", { "Assets", "Meshes", "Map", "Files" })
+	addText(analysisLeft, "Dump Folder", "Zenith/Dumps", "Zenith/Dumps")
+	addToggle(analysisLeft, "Include Textures", nil, true)
+	addToggle(analysisLeft, "Include Sounds", nil, false)
+	addToggle(analysisLeft, "Include Animations", nil, false)
+	addToggle(analysisLeft, "Overwrite Existing", nil, false)
+	addSlider(analysisLeft, "Dump Batch Size", 1, 100, 10, 0)
+	addSlider(analysisLeft, "Dump Delay", 0, 2, 0.1, 2)
+	addButton(analysisLeft, "Start Dump")
+	addButton(analysisLeft, "Stop Dump")
+	addOutput(analysisLeft, "Stealer Log", 90)
+
+	addSection(analysisRight, "Zenith Spy")
+	addToggle(analysisRight, "Remote Spy", nil, false)
+	addCounter(analysisRight, "Calls Logged", 0)
+	addCycle(analysisRight, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
+	addToggle(analysisRight, "Log Client To Server", nil, true)
+	addToggle(analysisRight, "Log Server To Client", nil, true)
+	addToggle(analysisRight, "Log Return Values", nil, false)
+	addToggle(analysisRight, "Show Call Stack", nil, false)
+	addToggle(analysisRight, "Spy Auto Scroll", nil, true)
+	addText(analysisRight, "Spy Search", "Search remotes")
+	addText(analysisRight, "Spy Ignore List", "Names, comma separated")
+	addSlider(analysisRight, "Spy Max Logs", 50, 1000, 300, 0)
+	addList(analysisRight, "Remote List", {}, 90)
+	addButton(analysisRight, "Copy Call Code")
+	addButton(analysisRight, "Block Remote")
+	addButton(analysisRight, "Repeat Call")
+	addButton(analysisRight, "Generate Script")
+	addOutput(analysisRight, "Spy Log", 130)
+
+	addSection(analysisRight, "Zenith Projectiles")
+	addToggle(analysisRight, "Projectile Spy", nil, false)
+	addCounter(analysisRight, "Projectiles Logged", 0)
+	addCycle(analysisRight, "Projectile Capture", { "All", "Raycasts", "CFrames", "Remote Args" })
+	addToggle(analysisRight, "Log Raycasts", nil, true)
+	addToggle(analysisRight, "Log CFrames", nil, true)
+	addToggle(analysisRight, "Log Velocity", nil, false)
+	addToggle(analysisRight, "Draw Trajectory", nil, false)
+	addText(analysisRight, "Weapon Filter", "Tool name")
+	addSlider(analysisRight, "Trajectory Steps", 5, 100, 30, 0)
+	addSlider(analysisRight, "Projectile Max Logs", 20, 500, 150, 0)
+	addButton(analysisRight, "Copy Last Projectile")
+	addButton(analysisRight, "Export Ballistics")
+	addOutput(analysisRight, "Projectile Log", 100)
+
+	addSection(analysisRight, "Zenith VM Hook")
+	addToggle(analysisRight, "VM Hook", nil, false)
+	addCounter(analysisRight, "Hooked Calls", 0)
+	addCycle(analysisRight, "Hook Level", { "Namecall", "Index", "NewIndex", "Function", "Metamethod" })
+	addToggle(analysisRight, "Log Namecalls", nil, true)
+	addToggle(analysisRight, "Log Index", nil, false)
+	addToggle(analysisRight, "Log NewIndex", nil, false)
+	addToggle(analysisRight, "Log Function Calls", nil, false)
+	addText(analysisRight, "Hook Target", "Function or method")
+	addText(analysisRight, "Hook Filter", "Name filter")
+	addSlider(analysisRight, "VM Log Limit", 20, 500, 150, 0)
+	addButton(analysisRight, "Apply Hook")
+	addButton(analysisRight, "Unhook All")
+	addOutput(analysisRight, "VM Hook Log", 100)
+
+	addSection(analysisRight, "Zenith Env Spoofer")
+	addToggle(analysisRight, "Env Spoofer", nil, false)
+	addCycle(analysisRight, "Spoof Profile", { "Standard", "Strict", "Minimal" })
+	addToggle(analysisRight, "Proxy Globals", nil, true)
+	addToggle(analysisRight, "Hide Executor Globals", nil, true)
+	addToggle(analysisRight, "Spoof Environment Queries", nil, false)
+	addToggle(analysisRight, "Log Detection Probes", nil, true)
+	addButton(analysisRight, "Apply Spoof Profile")
+	addButton(analysisRight, "Restore Environment")
+	addOutput(analysisRight, "Env Probe Log", 80)
+
+	-- Utility tab.
+	local utilityLeft = createColumn(Zenith.pages.Utility, UDim2.fromOffset(0, 0))
+	local utilityRight = createColumn(Zenith.pages.Utility, UDim2.new(0.5, 6, 0, 0))
+
+	addSection(utilityLeft, "Zenith Math")
+	addCycle(utilityLeft, "Math Tool", { "World To Screen", "Prediction", "Trajectory", "Vector Calc" })
+	addText(utilityLeft, "Vector A", "x, y, z", "0, 0, 0")
+	addText(utilityLeft, "Vector B", "x, y, z", "0, 0, 0")
+	addText(utilityLeft, "Target Velocity", "x, y, z", "0, 0, 0")
+	addSlider(utilityLeft, "Projectile Speed", 10, 2000, 300, 0)
+	addSlider(utilityLeft, "Math Gravity", 0, 500, 196.2, 1)
+	addSlider(utilityLeft, "Prediction Multiplier", 0, 3, 1, 2)
+	addToggle(utilityLeft, "Gravity Compensation", nil, true)
+	addButton(utilityLeft, "Calculate", runMath)
+	addOutput(utilityLeft, "Math Output", 80)
+
+	addSection(utilityLeft, "Zenith Console")
+	addToggle(utilityLeft, "Console Visible", "Backquote", false)
+	addToggle(utilityLeft, "Console Timestamps", nil, true)
+	addCycle(utilityLeft, "Console Log Level", { "Debug", "Info", "Warn", "Error" })
+	addSlider(utilityLeft, "Console Max Lines", 50, 1000, 200, 0)
+	addButton(utilityLeft, "Clear Console")
+	addButton(utilityLeft, "Copy Console", function()
+		local parts = {}
+		for _, label in consoleLines do
+			table.insert(parts, label.Text)
+		end
+
+		local copied = Zenith.copy(table.concat(parts, "\n"))
+		Zenith.log(copied and "Info" or "Warn", copied and "Console copied." or "Clipboard is not supported here.")
+	end)
+
+	addSection(utilityRight, "Zenith Universal")
+	addToggle(utilityRight, "Universal ESP", nil, false)
+	addColor(utilityRight, "Universal ESP Colour", Color3.fromRGB(255, 255, 255))
+	addSlider(utilityRight, "Universal ESP Distance", 50, 5000, 1000, 0)
+	addToggle(utilityRight, "Universal Fly", nil, false)
+	addSlider(utilityRight, "Universal Fly Speed", 1, 250, 60, 0)
+	addToggle(utilityRight, "Universal Noclip", nil, false)
+	addToggle(utilityRight, "Universal Walk Speed", nil, false)
+	addSlider(utilityRight, "Universal Walk Value", 16, 250, 16, 0)
+	addToggle(utilityRight, "Universal Infinite Jump", nil, false)
+	addToggle(utilityRight, "Universal Fullbright", nil, false)
+	addToggle(utilityRight, "Universal Anti AFK", nil, true)
+
+	-- Output limits driven by their sliders.
+	local limitLinks = {
+		["Decompile Max Lines"] = "Decompiler Output",
+		["Spy Max Logs"] = "Spy Log",
+		["Projectile Max Logs"] = "Projectile Log",
+		["VM Log Limit"] = "VM Hook Log",
+	}
+
+	for sliderName, outputName in limitLinks do
+		local api = Zenith.outputs[outputName]
+		api.maxLines = Zenith.values[sliderName]
+		Zenith.internal[sliderName] = function(value)
+			api.maxLines = value
+		end
+	end
+
+	Zenith.internal["Spy Auto Scroll"] = function(value)
+		Zenith.outputs["Spy Log"].autoScroll = value
+	end
+
+	-- Config.
+	local function getConfigPath()
+		local name = string.gsub(tostring(Zenith.values["Config Name"] or ""), "[^%w_%- ]", "")
+		if name == "" then
+			return CONFIG_FILE
+		end
+
+		return CONFIG_FOLDER .. "/" .. name .. ".json"
+	end
+
+	local function encodeValues()
+		local data = {}
+
+		for name, value in Zenith.values do
+			if Zenith.transient[name] then
+				continue
+			end
+
+			if typeof(value) == "Color3" then
+				data[name] = {
+					R = math.floor(value.R * 255 + 0.5),
+					G = math.floor(value.G * 255 + 0.5),
+					B = math.floor(value.B * 255 + 0.5),
+					__color = true,
+				}
+			else
+				data[name] = value
+			end
+		end
+
+		return httpService:JSONEncode(data)
+	end
+
+	local function writeConfig(path)
+		if not writefile then
+			return false, "Saving is not supported here."
+		end
+
+		return pcall(function()
+			if makefolder and isfolder and not isfolder(CONFIG_FOLDER) then
+				makefolder(CONFIG_FOLDER)
+			end
+
+			writefile(path, encodeValues())
+		end)
+	end
+
+	local function readConfig(path)
+		if not (readfile and isfile and isfile(path)) then
+			return nil, "No saved settings found."
+		end
+
+		local ok, data = pcall(function()
+			return httpService:JSONDecode(readfile(path))
+		end)
+
+		if not ok or typeof(data) ~= "table" then
+			return nil, "Settings file is corrupted."
+		end
+
+		return data
+	end
+
+	local function applyConfig(data)
+		for name, value in data do
+			local setter = Zenith.setters[name]
+			if not setter or Zenith.transient[name] then
+				continue
+			end
+
+			if typeof(value) == "table" and value.__color then
+				value = Color3.fromRGB(value.R, value.G, value.B)
+			end
+
+			pcall(setter, value)
+		end
+	end
+
+	local function refreshPresets()
+		local names = {}
+
+		if typeof(listfiles) == "function" and typeof(isfolder) == "function" and isfolder(CONFIG_FOLDER) then
+			local ok, files = pcall(listfiles, CONFIG_FOLDER)
+			if ok then
+				for _, file in files do
+					local name = string.match(file, "([^/\\]+)%.json$")
+					if name then
+						table.insert(names, name)
+					end
+				end
+			end
+		end
+
+		table.sort(names)
+		Zenith.setItems("Config Presets", names)
+	end
+
+	local function saveSettings()
+		local ok, result = writeConfig(getConfigPath())
+		setStatus(ok and "Settings saved." or ("Save failed: " .. tostring(result)))
+		refreshPresets()
+	end
+
+	Zenith.internal["Config Presets"] = function(name)
+		if name ~= "" then
+			Zenith.setters["Config Name"](name)
+		end
+	end
+
+	Zenith.actions["Refresh Presets"] = refreshPresets
+	Zenith.actions["Create"] = saveSettings
+	Zenith.actions["Save"] = saveSettings
+
+	Zenith.actions["Load"] = function()
+		local data, message = readConfig(getConfigPath())
+		if not data then
+			return setStatus(message)
+		end
+
+		applyConfig(data)
+		setStatus("Settings loaded.")
+	end
+
+	Zenith.actions["Delete Config"] = function()
+		local path = getConfigPath()
+		if typeof(delfile) == "function" and isfile and isfile(path) then
+			delfile(path)
+			setStatus("Config deleted.")
+			refreshPresets()
+		else
+			setStatus("Nothing to delete.")
+		end
+	end
+
+	Zenith.actions["Reset Settings"] = function()
+		for name, value in Zenith.defaults do
+			if not Zenith.transient[name] and Zenith.setters[name] then
+				Zenith.setters[name](value)
+			end
+		end
+
+		setStatus("Settings reset.")
+	end
+
+	Zenith.actions["Export JSON"] = function()
+		setStatus(Zenith.copy(encodeValues()) and "JSON copied." or "Clipboard is not supported here.")
+	end
+
+	Zenith.actions["Import JSON"] = function()
+		local ok, data = pcall(function()
+			return httpService:JSONDecode(Zenith.values["Import JSON Text"])
+		end)
+
+		if not ok or typeof(data) ~= "table" then
+			return setStatus("Invalid JSON.")
+		end
+
+		applyConfig(data)
+		setStatus("JSON imported.")
+	end
+
+	refreshPresets()
+
+	local savedData = readConfig(CONFIG_FILE)
+	if savedData and savedData.Autoload == true then
+		applyConfig(savedData)
+	end
+
+	task.spawn(function()
+		while screenGui.Parent do
+			if Zenith.values["Autoload"] then
+				writeConfig(CONFIG_FILE)
+			end
+
+			task.wait(math.max(Zenith.values["Autosave Interval"] or 15, 5))
+		end
+	end)
+
+	task.spawn(function()
+		while screenGui.Parent do
+			local up = math.floor(os.clock() - Zenith.startTime)
+			Zenith.setters["Uptime"](string.format("%02d:%02d:%02d", up // 3600, up % 3600 // 60, up % 60))
+			Zenith.setters["Active Connections"](#Zenith.connections)
+			task.wait(1)
+		end
+	end)
+
+	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local query = string.lower(searchBox.Text)
+
+		for _, element in Zenith.searchables do
+			element.Visible = (query == "" or string.find(string.lower(element.Name), query, 1, true) ~= nil) and not element:GetAttribute("GroupHidden")
+		end
+
+		for _, section in Zenith.sections do
+			section.Visible = query == ""
+		end
+
+		for _, box in Zenith.boxes do
+			local anyVisible = query == ""
+
+			for _, child in box:GetChildren() do
+				if child:IsA("GuiObject") and child.Visible and not table.find(Zenith.sections, child) then
+					anyVisible = true
+					break
+				end
+			end
+
+			box.Visible = anyVisible
+		end
+	end)
+
+	connectInput(userInputService.InputBegan, function(input, gameProcessed)
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return
+		end
+
+		if Zenith.listening then
+			return Zenith.listening(input.KeyCode)
+		end
+
+		if gameProcessed then
+			return
+		end
+
+		if input.KeyCode.Name == Zenith.values["Menu Keybind"] then
+			window.Visible = not window.Visible
+			return
+		end
+
+		for featureName, keyCode in Zenith.keybinds do
+			if keyCode == input.KeyCode then
+				Zenith.setters[featureName](not Zenith.values[featureName])
+				Zenith.announce(featureName, Zenith.values[featureName])
+			end
+		end
+	end)
+
+	task.spawn(function()
+		while screenGui.Parent do
+			local visible = Zenith.values["Keybind Hints"] ~= false
+
+			for _, keybindButton in Zenith.keyLabels do
+				keybindButton.Visible = visible
+			end
+
+			task.wait(0.5)
+		end
+	end)
+
+	refreshSpeed()
+	Zenith.outputs["Boot Log"].push("Zenith " .. Zenith.version .. " ready.")
+	Zenith.log("Info", "Zenith " .. Zenith.version .. " loaded.")
+	switchTab(TAB_NAMES[1])
+end
+
+local function onInitializeError(error)
+	warn("Failed to initialize.")
+	warn(error)
+	warn(debug.traceback())
+end
+
+xpcall(initializeScript, onInitializeError)
