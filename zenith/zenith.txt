@@ -2070,11 +2070,17 @@ do
 		"GETVARARGS", "DUPCLOSURE", "PREPVARARGS", "LOADKX", "JUMPX", "FASTCALL", "COVERAGE", "CAPTURE",
 		"SUBRK", "DIVRK", "FASTCALL1", "FASTCALL2", "FASTCALL2K", "FORGPREP", "JUMPXEQKNIL", "JUMPXEQKB",
 		"JUMPXEQKN", "JUMPXEQKS", "IDIV", "IDIVK",
+		"GETUDATAKS", "SETUDATAKS", "NAMECALLUDATA",
+		"NEWCLASSMEMBER", "CALLFB", "CMPPROTO", "FASTPCALL",
+		"NEWCLASS", "CONSTRUCT", "FINCONSTRUCT", "GETPRIVATEFIELD", "SETPRIVATEFIELD",
 	}
-	local OP_MAX, OP_RETURN, OP_JUMPBACK = 82, 22, 24
+	local OP_MAX, OP_RETURN, OP_JUMPBACK = 94, 22, 24
 
 	local AUX = {}
-	for _, o in ipairs({ 7, 8, 12, 15, 16, 20, 27, 28, 29, 30, 31, 32, 53, 55, 58, 60, 66, 74, 75, 77, 78, 79, 80 }) do
+	for _, o in ipairs({
+		7, 8, 12, 15, 16, 20, 27, 28, 29, 30, 31, 32, 53, 55, 58, 60, 66, 74, 75, 77, 78, 79, 80,
+		83, 84, 85, 86, 87, 88, 90, 91, 93, 94,
+	}) do
 		AUX[o] = true
 	end
 
@@ -2096,6 +2102,10 @@ do
 		NATIVECALL = "", GETVARARGS = "rA iB", DUPCLOSURE = "rA kD", PREPVARARGS = "iA",
 		LOADKX = "rA kX", JUMPX = "jE", COVERAGE = "iE", CAPTURE = "cA",
 		JUMPXEQKNIL = "rA jD xX", JUMPXEQKB = "rA jD xX bX", JUMPXEQKN = "rA jD xX kN", JUMPXEQKS = "rA jD xX kN",
+		GETUDATAKS = "rA rB kU", SETUDATAKS = "rA rB kU", NAMECALLUDATA = "rA rB kU",
+		NEWCLASSMEMBER = "rA iB rC iX", CALLFB = "rA iB iC", CMPPROTO = "rA jD iX", FASTPCALL = "fA iB iC",
+		NEWCLASS = "rA rB iC kX", CONSTRUCT = "rA rB iX", FINCONSTRUCT = "rA jC",
+		GETPRIVATEFIELD = "rA rB uC iX", SETPRIVATEFIELD = "rA rB uC iX",
 	}
 	for _, n in ipairs({ "ADD", "SUB", "MUL", "DIV", "MOD", "POW", "AND", "OR", "CONCAT", "IDIV" }) do
 		SPEC[n] = "rA rB rC"
@@ -2111,7 +2121,7 @@ do
 	for _, n in ipairs({
 		"JUMP", "JUMPBACK", "JUMPIF", "JUMPIFNOT", "JUMPIFEQ", "JUMPIFLE", "JUMPIFLT", "JUMPIFNOTEQ",
 		"JUMPIFNOTLE", "JUMPIFNOTLT", "FORNPREP", "FORNLOOP", "FORGLOOP", "FORGPREP_INEXT", "FORGPREP_NEXT",
-		"FORGPREP", "JUMPXEQKNIL", "JUMPXEQKB", "JUMPXEQKN", "JUMPXEQKS",
+		"FORGPREP", "JUMPXEQKNIL", "JUMPXEQKB", "JUMPXEQKN", "JUMPXEQKS", "CMPPROTO",
 	}) do
 		JD[n] = true
 	end
@@ -2125,7 +2135,7 @@ do
 		if ins.name == "JUMPX" then
 			return ins.pc + 1 + ins.E
 		end
-		if ins.name == "LOADB" and ins.C ~= 0 then
+		if (ins.name == "LOADB" or ins.name == "FINCONSTRUCT") and ins.C ~= 0 then
 			return ins.pc + 1 + ins.C
 		end
 		return nil
@@ -2188,13 +2198,24 @@ do
 			local keys = {}
 			for i, idx in ipairs(k.keys) do
 				local kk = p.k[idx + 1]
-				keys[i] = kk and kstr(p, kk) or "?"
+				local ks = kk and kstr(p, kk) or "?"
+				if k.vals and k.vals[i] ~= nil and k.vals[i] >= 0 then
+					local kv = p.k[k.vals[i] + 1]
+					keys[i] = ks .. " = " .. (kv and kstr(p, kv) or "?")
+				else
+					keys[i] = ks
+				end
 			end
 			return "{" .. table.concat(keys, ", ") .. "}"
 		elseif t == "closure" then
 			return "closure<P" .. k.proto .. ">"
 		elseif t == "vector" then
 			return string.format("vector(%s, %s, %s, %s)", fmtNum(k.x), fmtNum(k.y), fmtNum(k.z), fmtNum(k.w))
+		elseif t == "integer" then
+			return string.format("int64(0x%08x%08x)", k.hi or 0, k.lo or 0)
+		elseif t == "class" then
+			local cn = k.cname and p.k[k.cname + 1]
+			return "class<" .. (cn and kstr(p, cn) or "?") .. ">"
 		end
 		return "?"
 	end
@@ -2302,12 +2323,27 @@ do
 			end
 			return result
 		end
+		local function varint64()
+			local result, shift = 0, 0
+			while true do
+				local byte = u8()
+				result += band(byte, 0x7F) * 2 ^ shift
+				if byte < 0x80 then
+					break
+				end
+				shift += 7
+				if shift > 63 then
+					error("varint64 invalido", 0)
+				end
+			end
+			return result
+		end
 
 		local version = u8()
 		if version == 0 then
 			error("el script no compilo: " .. raw(size - pos), 0)
 		end
-		if version < 3 or version > 6 then
+		if (version < 3 or version > 14) and version ~= 100 then
 			error("version de bytecode no soportada: " .. version, 0)
 		end
 		local typesVersion = 0
@@ -2339,6 +2375,12 @@ do
 
 		local protos = {}
 		for i = 1, varint() do
+			local protoSize, protoStart = nil, nil
+			if version >= 12 then
+				protoSize = varint()
+				protoStart = pos
+			end
+
 			local p = { index = i - 1 }
 			p.maxstack = u8()
 			p.numparams = u8()
@@ -2383,6 +2425,29 @@ do
 					k = { t = "closure", proto = varint() }
 				elseif t == 7 then
 					k = { t = "vector", x = f32(), y = f32(), z = f32(), w = f32() }
+				elseif t == 8 then
+					local keys, vals = {}, {}
+					for q = 1, varint() do
+						keys[q] = varint()
+						vals[q] = i32()
+					end
+					k = { t = "table", keys = keys, vals = vals }
+				elseif t == 9 then
+					k = { t = "integer", lo = u32(), hi = u32() }
+				elseif t == 10 then
+					local cnid = varint()
+					local privF = u8()
+					local privM = u8()
+					local numProps = varint()
+					local numMethods = varint()
+					local members = {}
+					local totalPublic = math.max(0, (numProps - privF) + (numMethods - privM))
+					for q = 1, totalPublic do
+						members[q] = varint()
+					end
+					k = { t = "class", cname = cnid, members = members }
+				elseif t == 11 then
+					k = { t = "vector", x = f64(), y = f64(), z = f64(), w = f64() }
 				else
 					error(string.format("constante desconocida %d (funcion %d)", t, i - 1), 0)
 				end
@@ -2430,6 +2495,24 @@ do
 					p.upnames[j] = sref()
 				end
 			end
+
+			if version >= 11 then
+				local fbCount = varint()
+				for _ = 1, fbCount do
+					u8()
+					varint()
+				end
+			end
+
+			if version >= 12 then
+				if band(p.flags or 0, 8) ~= 0 then
+					p.cost = varint64()
+				end
+				if protoSize and protoStart then
+					pos = protoStart + protoSize
+				end
+			end
+
 			protos[i] = p
 		end
 
@@ -2564,7 +2647,14 @@ do
 				end
 				parts[#parts + 1] = "R" .. v
 			elseif kind == "k" then
-				local idx = f == "N" and band(aux, 0xFFFFFF) or field(ins, f)
+				local idx
+				if f == "N" then
+					idx = band(aux, 0xFFFFFF)
+				elseif f == "U" then
+					idx = band(aux, 0xFFFF)
+				else
+					idx = field(ins, f)
+				end
 				parts[#parts + 1] = "K" .. idx
 				local k = p.k[idx + 1]
 				if k then
