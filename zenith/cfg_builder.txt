@@ -1,17 +1,32 @@
 -- ============================================================================
 -- Zenith Decompiler (Fase 2 - Paso 1): Basic Block + CFG Builder + Pretty Printer
 -- Archivo independiente para revision y pruebas antes de integrarlo en zenith.txt.
+--
+-- Contrato de entrada esperado (cumplido por zenith/zenith.txt -> decode()):
+--   insn = { { pc, op, name, A, B, C, D, E, len, aux, line }, ... }
+--   - ins.pc es el indice de PALABRA base 0 (las palabras AUX no son entradas).
+--   - ins.D (16-bit) e ins.E (24-bit) vienen decodificados CON SIGNO.
+--   - ins.len = 2 si la instruccion consume palabra AUX, si no 1.
 -- ============================================================================
 
 local CFG = {}
+local band = bit32.band
 
 -- ----------------------------------------------------------------------------
 -- 1. Clasificacion de instrucciones de control de flujo en Luau
 -- ----------------------------------------------------------------------------
--- Nota sobre FASTCALL / FASTCALL1 / FASTCALL2 / FASTCALL2K / FASTCALL3:
--- Aunque tienen un campo C (offset hasta el CALL si la builtin tuvo exito),
--- semanticamente representan UNA llamada lineal (fastcall + args + CALL), no un
--- if/else del codigo fuente. Por eso NO parten bloques basicos aqui.
+-- Nota sobre FASTCALL*: aunque C indica el offset al CALL si la builtin tiene
+-- exito, semanticamente representan una llamada lineal (fastcall + args + CALL).
+-- Por eso no parten bloques; registramos su rango para que el lifter lo use.
+
+local FASTCALL_OPS = {
+	FASTCALL = true,
+	FASTCALL1 = true,
+	FASTCALL2 = true,
+	FASTCALL2K = true,
+	FASTCALL3 = true,
+	FASTPCALL = true,
+}
 
 local UNCOND_JUMP = {
 	JUMP = true,
@@ -28,6 +43,8 @@ local COND_JUMP = {
 	JUMPIFNOTEQ = true,
 	JUMPIFNOTLE = true,
 	JUMPIFNOTLT = true,
+	JUMPIFEQK = true,      -- Luau v3 compat
+	JUMPIFNOTEQK = true,   -- Luau v3 compat
 	JUMPXEQKNIL = true,
 	JUMPXEQKB = true,
 	JUMPXEQKN = true,
@@ -50,14 +67,17 @@ local FOR_GEN_PREP = {
 local FOR_LOOP = {
 	FORNLOOP = true,
 	FORGLOOP = true,
+	FORGLOOP_INEXT = true, -- compat versiones antiguas
+	FORGLOOP_NEXT = true,  -- compat versiones antiguas
 }
 
--- Calculo por defecto de salto si el llamador no pasa jumpOfFn
 local JD_DEFAULT = {
 	JUMP = true, JUMPBACK = true, JUMPIF = true, JUMPIFNOT = true,
 	JUMPIFEQ = true, JUMPIFLE = true, JUMPIFLT = true,
 	JUMPIFNOTEQ = true, JUMPIFNOTLE = true, JUMPIFNOTLT = true,
+	JUMPIFEQK = true, JUMPIFNOTEQK = true,
 	FORNPREP = true, FORNLOOP = true, FORGLOOP = true,
+	FORGLOOP_INEXT = true, FORGLOOP_NEXT = true,
 	FORGPREP_INEXT = true, FORGPREP_NEXT = true, FORGPREP = true,
 	JUMPXEQKNIL = true, JUMPXEQKB = true, JUMPXEQKN = true, JUMPXEQKS = true,
 	CMPPROTO = true,
@@ -76,8 +96,60 @@ local function defaultJumpOf(ins)
 	return nil
 end
 
--- Determina las aristas salientes de la ultima instruccion de un bloque:
--- Devuelve lista de { targetPc = number, kind = string }
+-- Describe la polaridad y operandos de un salto condicional para el structurer.
+-- Nota Luau/NaN: JUMPIFNOTLT y JUMPIFNOTLE preservan `not (a < b)` y `not (a <= b)`
+-- (no deben reescribirse a >= o > sin saber si los operandos pueden ser NaN).
+local function describeCond(ins)
+	local n = ins.name
+	if not COND_JUMP[n] then
+		return nil
+	end
+	local aux = ins.aux or 0
+	local notBit = aux >= 0x80000000
+
+	if n == "JUMPIF" then
+		return { op = "truthy", regA = ins.A, negated = false }
+	elseif n == "JUMPIFNOT" then
+		return { op = "truthy", regA = ins.A, negated = true }
+	elseif n == "JUMPIFEQ" then
+		return { op = "eq", regA = ins.A, regB = band(aux, 255), negated = false }
+	elseif n == "JUMPIFNOTEQ" then
+		return { op = "eq", regA = ins.A, regB = band(aux, 255), negated = true }
+	elseif n == "JUMPIFLT" then
+		return { op = "lt", regA = ins.A, regB = band(aux, 255), negated = false }
+	elseif n == "JUMPIFNOTLT" then
+		return { op = "lt", regA = ins.A, regB = band(aux, 255), negated = true, nanSafe = true }
+	elseif n == "JUMPIFLE" then
+		return { op = "le", regA = ins.A, regB = band(aux, 255), negated = false }
+	elseif n == "JUMPIFNOTLE" then
+		return { op = "le", regA = ins.A, regB = band(aux, 255), negated = true, nanSafe = true }
+	elseif n == "JUMPIFEQK" then
+		return { op = "eqk", regA = ins.A, kIdx = band(aux, 0xFFFFFF), negated = false }
+	elseif n == "JUMPIFNOTEQK" then
+		return { op = "eqk", regA = ins.A, kIdx = band(aux, 0xFFFFFF), negated = true }
+	elseif n == "JUMPXEQKNIL" then
+		return { op = "eq_nil", regA = ins.A, negated = notBit }
+	elseif n == "JUMPXEQKB" then
+		return { op = "eq_bool", regA = ins.A, val = band(aux, 1) == 1, negated = notBit }
+	elseif n == "JUMPXEQKN" or n == "JUMPXEQKS" then
+		return { op = "eq_k", regA = ins.A, kIdx = band(aux, 0xFFFFFF), negated = notBit }
+	elseif n == "CMPPROTO" then
+		return { op = "cmpproto", regA = ins.A, aux = aux, negated = false }
+	end
+	return nil
+end
+
+local function isControlFlow(ins, jumpOfFn)
+	local name = ins.name
+	if name == "RETURN" or UNCOND_JUMP[name] or COND_JUMP[name] or FOR_GEN_PREP[name] or name == "FORNPREP" or FOR_LOOP[name] then
+		return true
+	end
+	if COND_SKIP_UNCOND[name] and jumpOfFn(ins) ~= nil then
+		return true
+	end
+	return false
+end
+
 local function outgoingOf(ins, nextPc, jumpOfFn)
 	local name = ins.name
 	local target = jumpOfFn(ins)
@@ -88,7 +160,7 @@ local function outgoingOf(ins, nextPc, jumpOfFn)
 
 	if UNCOND_JUMP[name] then
 		if target then
-			local kind = (name == "JUMPBACK" or target <= ins.pc) and "loop_back" or "jump"
+			local kind = (name == "JUMPBACK" or target <= ins.pc) and "jump_back" or "jump"
 			return { { targetPc = target, kind = kind } }
 		end
 		return {}
@@ -102,7 +174,7 @@ local function outgoingOf(ins, nextPc, jumpOfFn)
 	end
 
 	if FOR_GEN_PREP[name] then
-		-- FORGPREP* siempre salta hacia adelante al FORGLOOP correspondiente
+		-- FORGPREP* salta incondicionalmente hacia adelante al FORGLOOP correspondiente
 		if target then
 			return { { targetPc = target, kind = "for_prep" } }
 		end
@@ -110,7 +182,7 @@ local function outgoingOf(ins, nextPc, jumpOfFn)
 	end
 
 	if name == "FORNPREP" then
-		-- FORNPREP entra al cuerpo (fallthrough) o salta fuera del bucle si no ejecuta (target)
+		-- FORNPREP entra al cuerpo (fallthrough) o salta fuera del bucle si 0 iteraciones
 		local out = {}
 		if nextPc then
 			out[#out + 1] = { targetPc = nextPc, kind = "for_enter" }
@@ -122,10 +194,10 @@ local function outgoingOf(ins, nextPc, jumpOfFn)
 	end
 
 	if FOR_LOOP[name] then
-		-- FORNLOOP / FORGLOOP repiten el cuerpo (target <= ins.pc) o salen por fallthrough
+		-- FORNLOOP / FORGLOOP repiten el cuerpo o salen por fallthrough
 		local out = {}
 		if target then
-			out[#out + 1] = { targetPc = target, kind = "for_back" }
+			out[#out + 1] = { targetPc = target, kind = "for_loop" }
 		end
 		if nextPc then
 			out[#out + 1] = { targetPc = nextPc, kind = "for_exit" }
@@ -144,22 +216,10 @@ local function outgoingOf(ins, nextPc, jumpOfFn)
 		return out
 	end
 
-	-- Instruccion normal al final de un bloque porque la siguiente es un leader
 	if nextPc then
 		return { { targetPc = nextPc, kind = "fallthrough" } }
 	end
 	return {}
-end
-
-local function isControlFlow(ins, jumpOfFn)
-	local name = ins.name
-	if name == "RETURN" or UNCOND_JUMP[name] or COND_JUMP[name] or FOR_GEN_PREP[name] or name == "FORNPREP" or FOR_LOOP[name] then
-		return true
-	end
-	if COND_SKIP_UNCOND[name] and jumpOfFn(ins) ~= nil then
-		return true
-	end
-	return false
 end
 
 -- ----------------------------------------------------------------------------
@@ -170,12 +230,16 @@ function CFG.build(insn, opts)
 	local jumpOfFn = opts.jumpOf or defaultJumpOf
 
 	local cfg = {
-		blocks = {},       -- { BasicBlock } ordenados por pc ascendente
-		byStartPc = {},    -- [pc] -> BasicBlock
-		entry = nil,       -- BasicBlock de entrada (pc inicial)
-		exits = {},        -- { BasicBlock } bloques sin sucesores (RETURN / fin)
-		rpo = {},          -- { BasicBlock } bloques alcanzables en Reverse Postorder
-		loops = {},        -- { { header = Block, backEdges = {Block}, body = {[id]=true} } }
+		blocks = {},          -- { BasicBlock } ordenados por pc ascendente
+		byStartPc = {},       -- [pc] -> BasicBlock
+		entry = nil,          -- BasicBlock inicial
+		exits = {},           -- { BasicBlock } alcanzables sin sucesores
+		rpo = {},             -- { BasicBlock } alcanzables en Reverse Postorder
+		loops = {},           -- { LoopInfo } ordenados de mas interno a mas externo
+		fastcalls = {},       -- { { pc, callPc, op, fastId } }
+		errors = {},          -- { string } objetivos invalidos o inconsistencias
+		irreducible = false,  -- true si hay retreating edges no dominadas
+		irreducibleEdges = {},
 	}
 
 	local n = #insn
@@ -183,10 +247,17 @@ function CFG.build(insn, opts)
 		return cfg
 	end
 
-	-- Mapa rapido pc -> indice en insn (1..n)
 	local pcToIdx = {}
 	for i, ins in ipairs(insn) do
 		pcToIdx[ins.pc] = i
+		if FASTCALL_OPS[ins.name] and ins.C and ins.C > 0 then
+			cfg.fastcalls[#cfg.fastcalls + 1] = {
+				pc = ins.pc,
+				callPc = ins.pc + 1 + ins.C,
+				op = ins.name,
+				fastId = ins.A,
+			}
+		end
 	end
 
 	-- Paso A: Detectar leaders (inicios de bloque)
@@ -214,7 +285,9 @@ function CFG.build(insn, opts)
 
 	local function flushBlock()
 		if curBlock and #curBlock.insns > 0 then
-			curBlock.endPc = curBlock.insns[#curBlock.insns].pc
+			local lastIns = curBlock.insns[#curBlock.insns]
+			curBlock.endPc = lastIns.pc
+			curBlock.cond = describeCond(lastIns)
 			blocks[#blocks + 1] = curBlock
 		end
 		curBlock = nil
@@ -228,14 +301,16 @@ function CFG.build(insn, opts)
 				startPc = ins.pc,
 				endPc = ins.pc,
 				insns = {},
-				succ = {},      -- { BasicBlock }
-				pred = {},      -- { BasicBlock }
-				edgesOut = {},  -- { { to = BasicBlock, kind = string } }
-				edgesIn = {},   -- { { from = BasicBlock, kind = string } }
+				succ = {},        -- { BasicBlock } deduplicado
+				pred = {},        -- { BasicBlock } deduplicado
+				edgesOut = {},    -- { Edge } (puede haber >1 arista si target == nextPc)
+				edgesIn = {},     -- { Edge } (misma tabla Edge que edgesOut)
+				cond = nil,       -- metadata de condicion si termina en COND_JUMP
 				reachable = false,
 				rpoIndex = nil,
-				idom = nil,
-				loopHeader = nil,
+				idom = nil,       -- dominador inmediato
+				ipdom = nil,      -- post-dominador inmediato (nil = salida/bucle infinito)
+				loopHeader = nil, -- cabecera del bucle mas interno
 			}
 			cfg.byStartPc[ins.pc] = curBlock
 		end
@@ -249,7 +324,13 @@ function CFG.build(insn, opts)
 	end
 	flushBlock()
 
-	-- Paso C: Conectar aristas (succ / pred)
+	-- Paso C: Conectar aristas compartidas y deduplicar succ/pred
+	local succSeen, predSeen = {}, {}
+	for _, b in ipairs(blocks) do
+		succSeen[b.id] = {}
+		predSeen[b.id] = {}
+	end
+
 	for idx, blk in ipairs(blocks) do
 		local lastIns = blk.insns[#blk.insns]
 		local nextBlk = blocks[idx + 1]
@@ -259,10 +340,30 @@ function CFG.build(insn, opts)
 		for _, e in ipairs(outs) do
 			local targetBlk = cfg.byStartPc[e.targetPc]
 			if targetBlk then
-				blk.edgesOut[#blk.edgesOut + 1] = { to = targetBlk, kind = e.kind }
-				targetBlk.edgesIn[#targetBlk.edgesIn + 1] = { from = blk, kind = e.kind }
-				blk.succ[#blk.succ + 1] = targetBlk
-				targetBlk.pred[#targetBlk.pred + 1] = blk
+				local edge = {
+					from = blk,
+					to = targetBlk,
+					kind = e.kind,
+					isBack = false, -- se marca en _findLoops usando dominancia real
+				}
+				blk.edgesOut[#blk.edgesOut + 1] = edge
+				targetBlk.edgesIn[#targetBlk.edgesIn + 1] = edge
+
+				if not succSeen[blk.id][targetBlk.id] then
+					succSeen[blk.id][targetBlk.id] = true
+					blk.succ[#blk.succ + 1] = targetBlk
+				end
+				if not predSeen[targetBlk.id][blk.id] then
+					predSeen[targetBlk.id][blk.id] = true
+					targetBlk.pred[#targetBlk.pred + 1] = blk
+				end
+			else
+				cfg.errors[#cfg.errors + 1] = string.format(
+					"arista sin bloque destino (%s en pc %d -> target pc %d)",
+					lastIns.name,
+					lastIns.pc,
+					e.targetPc
+				)
 			end
 		end
 	end
@@ -270,26 +371,34 @@ function CFG.build(insn, opts)
 	cfg.blocks = blocks
 	cfg.entry = blocks[1]
 
-	-- Paso D: RPO (Reverse Postorder) sobre bloques alcanzables desde entry
-	local visited, postorder = {}, {}
-	local function dfs(blk)
-		visited[blk.id] = true
-		blk.reachable = true
-		for _, nxt in ipairs(blk.succ) do
-			if not visited[nxt.id] then
-				dfs(nxt)
+	-- Paso D: RPO iterativo (seguro contra funciones enormes sin desbordar stack)
+	if cfg.entry then
+		local visited, postorder = {}, {}
+		local stack = { { blk = cfg.entry, i = 1 } }
+		visited[cfg.entry.id] = true
+		cfg.entry.reachable = true
+
+		while #stack > 0 do
+			local top = stack[#stack]
+			local nxt = top.blk.succ[top.i]
+			if nxt then
+				top.i += 1
+				if not visited[nxt.id] then
+					visited[nxt.id] = true
+					nxt.reachable = true
+					stack[#stack + 1] = { blk = nxt, i = 1 }
+				end
+			else
+				postorder[#postorder + 1] = top.blk
+				stack[#stack] = nil
 			end
 		end
-		postorder[#postorder + 1] = blk
-	end
-	if cfg.entry then
-		dfs(cfg.entry)
-	end
 
-	for i = #postorder, 1, -1 do
-		local blk = postorder[i]
-		blk.rpoIndex = #cfg.rpo + 1
-		cfg.rpo[blk.rpoIndex] = blk
+		for i = #postorder, 1, -1 do
+			local blk = postorder[i]
+			blk.rpoIndex = #cfg.rpo + 1
+			cfg.rpo[blk.rpoIndex] = blk
+		end
 	end
 
 	for _, blk in ipairs(blocks) do
@@ -298,20 +407,18 @@ function CFG.build(insn, opts)
 		end
 	end
 
-	-- Paso E: Arbol de dominadores (algoritmo iterativo de Cooper-Harvey-Kennedy)
+	-- Paso E: Dominadores, Post-dominadores y Bucles Naturales
 	CFG._computeDominators(cfg)
-
-	-- Paso F: Deteccion de bucles naturales via back-edges (u -> h donde h domina u)
+	CFG._computePostDominators(cfg)
 	CFG._findLoops(cfg)
 
 	return cfg
 end
 
 -- ----------------------------------------------------------------------------
--- 3. Dominadores y Bucles Naturales (base para estructurar if / while / for)
+-- 3. Dominadores, Post-dominadores y Bucles Naturales
 -- ----------------------------------------------------------------------------
 function CFG._dominates(a, b)
-	-- True si 'a' domina a 'b'
 	local cur = b
 	while cur do
 		if cur == a then
@@ -325,14 +432,14 @@ function CFG._dominates(a, b)
 	return false
 end
 
-function CFG._intersect(b1, b2)
+local function intersectBy(b1, b2, domField, rpoField)
 	local f1, f2 = b1, b2
 	while f1 ~= f2 do
-		while f1.rpoIndex > f2.rpoIndex do
-			f1 = f1.idom
+		while f1[rpoField] > f2[rpoField] do
+			f1 = f1[domField]
 		end
-		while f2.rpoIndex > f1.rpoIndex do
-			f2 = f2.idom
+		while f2[rpoField] > f1[rpoField] do
+			f2 = f2[domField]
 		end
 	end
 	return f1
@@ -356,7 +463,7 @@ function CFG._computeDominators(cfg)
 					if newIdom == nil then
 						newIdom = p
 					else
-						newIdom = CFG._intersect(p, newIdom)
+						newIdom = intersectBy(p, newIdom, "idom", "rpoIndex")
 					end
 				end
 			end
@@ -368,53 +475,187 @@ function CFG._computeDominators(cfg)
 	end
 end
 
+function CFG._computePostDominators(cfg)
+	if #cfg.exits == 0 then
+		return
+	end
+
+	-- Nodo virtual de salida para soportar multiples RETURN
+	local virtualExit = {
+		id = 0,
+		pred = cfg.exits,
+		succ = {},
+		revRpoIndex = 1,
+		ipdom = nil,
+	}
+	virtualExit.ipdom = virtualExit
+
+	-- RPO sobre el grafo inverso desde virtualExit
+	local visited, revPost = { [0] = true }, {}
+	local stack = { { blk = virtualExit, i = 1 } }
+	while #stack > 0 do
+		local top = stack[#stack]
+		local prev = top.blk.pred[top.i]
+		if prev then
+			top.i += 1
+			if prev.reachable and not visited[prev.id] then
+				visited[prev.id] = true
+				stack[#stack + 1] = { blk = prev, i = 1 }
+			end
+		else
+			revPost[#revPost + 1] = top.blk
+			stack[#stack] = nil
+		end
+	end
+
+	local revRpo = {}
+	for i = #revPost, 1, -1 do
+		local b = revPost[i]
+		b.revRpoIndex = #revRpo + 1
+		revRpo[b.revRpoIndex] = b
+	end
+
+	local isExit = {}
+	for _, ex in ipairs(cfg.exits) do
+		isExit[ex.id] = true
+	end
+
+	local changed = true
+	while changed do
+		changed = false
+		for i = 2, #revRpo do
+			local b = revRpo[i]
+			local newIpdom = isExit[b.id] and virtualExit or nil
+			for _, s in ipairs(b.succ) do
+				if s.revRpoIndex and s.ipdom ~= nil then
+					if newIpdom == nil then
+						newIpdom = s
+					else
+						newIpdom = intersectBy(s, newIpdom, "ipdom", "revRpoIndex")
+					end
+				end
+			end
+			if newIpdom and b.ipdom ~= newIpdom then
+				b.ipdom = newIpdom
+				changed = true
+			end
+		end
+	end
+
+	for _, b in ipairs(revRpo) do
+		if b ~= virtualExit then
+			if b.ipdom == virtualExit then
+				b.ipdom = nil
+			end
+			b.revRpoIndex = nil
+		end
+	end
+end
+
+local function classifyLoopKind(loop)
+	local headerLast = loop.header.insns[#loop.header.insns]
+	if headerLast then
+		local n = headerLast.name
+		if n == "FORNLOOP" then
+			return "numeric_for"
+		elseif n == "FORGLOOP" or n == "FORGLOOP_INEXT" or n == "FORGLOOP_NEXT" then
+			return "generic_for"
+		end
+	end
+	if #loop.latches == 1 then
+		local latch = loop.latches[1]
+		local latchLast = latch.insns[#latch.insns]
+		if latchLast and COND_JUMP[latchLast.name] then
+			return "repeat_until"
+		end
+	end
+	return "while_or_loop"
+end
+
 function CFG._findLoops(cfg)
 	local byHeader = {}
+
 	for _, u in ipairs(cfg.rpo) do
 		for _, e in ipairs(u.edgesOut) do
 			local h = e.to
-			if h.reachable and CFG._dominates(h, u) then
-				local loop = byHeader[h.id]
-				if not loop then
-					loop = {
-						header = h,
-						backEdges = {},
-						body = { [h.id] = true },
-					}
-					byHeader[h.id] = loop
-					cfg.loops[#cfg.loops + 1] = loop
-				end
-				loop.backEdges[#loop.backEdges + 1] = { from = u, kind = e.kind }
+			if h.reachable then
+				if CFG._dominates(h, u) then
+					e.isBack = true
+					local loop = byHeader[h.id]
+					if not loop then
+						loop = {
+							header = h,
+							latches = {},
+							backEdges = {},
+							exits = {},
+							body = { [h.id] = true },
+							kind = "loop",
+							parent = nil,
+							depth = 1,
+						}
+						byHeader[h.id] = loop
+						cfg.loops[#cfg.loops + 1] = loop
+					end
+					loop.backEdges[#loop.backEdges + 1] = e
+					loop.latches[#loop.latches + 1] = u
 
-				-- Recorrido inverso desde 'u' hasta 'h' para reunir todo el cuerpo del bucle
-				if not loop.body[u.id] then
-					loop.body[u.id] = true
-					local stack = { u }
-					while #stack > 0 do
-						local cur = table.remove(stack)
-						for _, p in ipairs(cur.pred) do
-							if p.reachable and not loop.body[p.id] then
-								loop.body[p.id] = true
-								stack[#stack + 1] = p
+					if not loop.body[u.id] then
+						loop.body[u.id] = true
+						local stack = { u }
+						while #stack > 0 do
+							local cur = table.remove(stack)
+							for _, p in ipairs(cur.pred) do
+								if p.reachable and not loop.body[p.id] then
+									loop.body[p.id] = true
+									stack[#stack + 1] = p
+								end
 							end
 						end
 					end
+				elseif h.rpoIndex and u.rpoIndex and h.rpoIndex <= u.rpoIndex then
+					-- Arista que retrocede en RPO pero sin dominancia: grafo irreducible
+					cfg.irreducible = true
+					cfg.irreducibleEdges[#cfg.irreducibleEdges + 1] = e
 				end
 			end
 		end
 	end
 
-	-- Etiquetar cada bloque con su cabecera de bucle mas interna
+	-- Ordenar de mas interno a mas externo (mayor rpoIndex primero)
 	table.sort(cfg.loops, function(a, b)
 		return a.header.rpoIndex > b.header.rpoIndex
 	end)
-	for _, loop in ipairs(cfg.loops) do
+
+	-- Calcular loopHeader mas interno, exits, kind y jerarquia parent/depth
+	for i, loop in ipairs(cfg.loops) do
+		loop.kind = classifyLoopKind(loop)
+
 		for blkId in pairs(loop.body) do
 			local blk = cfg.blocks[blkId]
-			if blk and blk.loopHeader == nil then
-				blk.loopHeader = loop.header
+			if blk then
+				if blk.loopHeader == nil then
+					blk.loopHeader = loop.header
+				end
+				for _, e in ipairs(blk.edgesOut) do
+					if not loop.body[e.to.id] then
+						loop.exits[#loop.exits + 1] = e
+					end
+				end
 			end
 		end
+
+		for j = i + 1, #cfg.loops do
+			local outer = cfg.loops[j]
+			if outer.body[loop.header.id] then
+				loop.parent = outer
+				break
+			end
+		end
+	end
+
+	for i = #cfg.loops, 1, -1 do
+		local loop = cfg.loops[i]
+		loop.depth = loop.parent and (loop.parent.depth + 1) or 1
 	end
 end
 
@@ -435,8 +676,7 @@ function CFG.format(cfg, opts)
 	local fmtInsFn = opts.fmtIns or defaultFmtIns
 	local out = {}
 
-	local edgeCount = 0
-	local unreachableCount = 0
+	local edgeCount, unreachableCount = 0, 0
 	for _, b in ipairs(cfg.blocks) do
 		edgeCount += #b.edgesOut
 		if not b.reachable then
@@ -445,12 +685,19 @@ function CFG.format(cfg, opts)
 	end
 
 	out[#out + 1] = string.format(
-		"-- CFG: %d bloques | %d aristas | %d bucles | %d inalcanzables",
+		"-- CFG: %d bloques | %d aristas | %d bucles | %d inalcanzables%s",
 		#cfg.blocks,
 		edgeCount,
 		#cfg.loops,
-		unreachableCount
+		unreachableCount,
+		cfg.irreducible and " | IRREDUCIBLE" or ""
 	)
+
+	if #cfg.errors > 0 then
+		for _, err in ipairs(cfg.errors) do
+			out[#out + 1] = "-- ERROR: " .. err
+		end
+	end
 
 	if #cfg.loops > 0 then
 		local loopDesc = {}
@@ -463,7 +710,20 @@ function CFG.format(cfg, opts)
 			for _, be in ipairs(loop.backEdges) do
 				backs[#backs + 1] = "B" .. be.from.id .. "(" .. be.kind .. ")"
 			end
-			loopDesc[i] = string.format("L%d: header=B%d bloques=%d back=[%s]", i, loop.header.id, count, table.concat(backs, ", "))
+			local exits = {}
+			for _, ex in ipairs(loop.exits) do
+				exits[#exits + 1] = string.format("B%d->B%d", ex.from.id, ex.to.id)
+			end
+			loopDesc[i] = string.format(
+				"L%d[%s d=%d]: header=B%d bloques=%d back=[%s] exits=[%s]",
+				i,
+				loop.kind,
+				loop.depth,
+				loop.header.id,
+				count,
+				table.concat(backs, ", "),
+				table.concat(exits, ", ")
+			)
 		end
 		out[#out + 1] = "-- Bucles: " .. table.concat(loopDesc, " ; ")
 	end
@@ -480,18 +740,24 @@ function CFG.format(cfg, opts)
 		if b.idom and b ~= cfg.entry then
 			meta[#meta + 1] = "idom=B" .. b.idom.id
 		end
+		if b.ipdom then
+			meta[#meta + 1] = "ipdom=B" .. b.ipdom.id
+		end
 		if b.loopHeader and b.loopHeader ~= b then
 			meta[#meta + 1] = "in_loop=B" .. b.loopHeader.id
+		end
+		if b.cond then
+			meta[#meta + 1] = "cond=" .. b.cond.op .. (b.cond.negated and "(not)" or "")
 		end
 
 		local preds = {}
 		for _, e in ipairs(b.edgesIn) do
-			preds[#preds + 1] = string.format("B%d(%s)", e.from.id, e.kind)
+			preds[#preds + 1] = string.format("B%d(%s%s)", e.from.id, e.kind, e.isBack and ",BACK" or "")
 		end
 
 		local succs = {}
 		for _, e in ipairs(b.edgesOut) do
-			succs[#succs + 1] = string.format("B%d(%s)", e.to.id, e.kind)
+			succs[#succs + 1] = string.format("B%d(%s%s)", e.to.id, e.kind, e.isBack and ",BACK" or "")
 		end
 
 		local tagStr = #tags > 0 and (" [" .. table.concat(tags, ", ") .. "]") or ""
@@ -510,6 +776,10 @@ function CFG.format(cfg, opts)
 	end
 
 	return out
+end
+
+function CFG.formatString(cfg, opts)
+	return table.concat(CFG.format(cfg, opts), "\n")
 end
 
 return CFG
