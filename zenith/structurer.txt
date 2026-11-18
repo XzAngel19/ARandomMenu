@@ -34,14 +34,106 @@ local function edgeByKind(blk, kind)
 	return nil
 end
 
+local function insReadsReg(ins, reg)
+	local n = ins.name
+	if n == "NOP" or n == "COVERAGE" or n == "PREPVARARGS" or n == "NATIVECALL"
+		or n == "LOADNIL" or n == "LOADB" or n == "LOADN" or n == "LOADK" or n == "LOADKX"
+		or n == "GETGLOBAL" or n == "GETUPVAL" or n == "GETIMPORT"
+		or n == "NEWTABLE" or n == "DUPTABLE" or n == "NEWCLOSURE" or n == "DUPCLOSURE"
+		or n == "GETVARARGS" or n == "JUMP" or n == "JUMPBACK" or n == "JUMPX" then
+		return false
+	end
+	if n == "MOVE" or n == "NOT" or n == "MINUS" or n == "LENGTH"
+		or n == "GETTABLEKS" or n == "GETTABLEN" or n == "GETUDATAKS"
+		or n == "ADDK" or n == "SUBK" or n == "MULK" or n == "DIVK" or n == "IDIVK"
+		or n == "MODK" or n == "POWK" or n == "ANDK" or n == "ORK" or n == "NAMECALL" or n == "NAMECALLUDATA" then
+		return ins.B == reg
+	end
+	if n == "SUBRK" or n == "DIVRK" then
+		return ins.C == reg
+	end
+	if n == "GETTABLE" or n == "ADD" or n == "SUB" or n == "MUL" or n == "DIV"
+		or n == "IDIV" or n == "MOD" or n == "POW" or n == "AND" or n == "OR" then
+		return ins.B == reg or ins.C == reg
+	end
+	if n == "CONCAT" then
+		return reg >= ins.B and reg <= ins.C
+	end
+	if n == "SETTABLE" then
+		return ins.A == reg or ins.B == reg or ins.C == reg
+	end
+	if n == "SETTABLEKS" or n == "SETTABLEN" or n == "SETUDATAKS" then
+		return ins.A == reg or ins.B == reg
+	end
+	if n == "SETGLOBAL" or n == "SETUPVAL" or n == "JUMPIF" or n == "JUMPIFNOT"
+		or n == "JUMPXEQKNIL" or n == "JUMPXEQKB" or n == "JUMPXEQKN" or n == "JUMPXEQKS" then
+		return ins.A == reg
+	end
+	if n == "JUMPIFEQ" or n == "JUMPIFLE" or n == "JUMPIFLT"
+		or n == "JUMPIFNOTEQ" or n == "JUMPIFNOTLE" or n == "JUMPIFNOTLT" then
+		return ins.A == reg or bit32.band(ins.aux or 0, 255) == reg
+	end
+	if n == "RETURN" then
+		if ins.B == 0 then
+			return reg >= ins.A
+		end
+		return reg >= ins.A and reg <= ins.A + ins.B - 2
+	end
+	if n == "CALL" or n == "CALLFB" then
+		if ins.B == 0 then
+			return reg >= ins.A
+		end
+		return reg >= ins.A and reg <= ins.A + ins.B - 1
+	end
+	return true
+end
+
+local function isRegLiveFrom(reg, startBlk)
+	if not startBlk then
+		return false
+	end
+	local seen, queue, head = { [startBlk.id] = true }, { startBlk }, 1
+	while head <= #queue do
+		local b = queue[head]
+		head += 1
+		local killed = false
+		for _, ins in ipairs(b.insns) do
+			if insReadsReg(ins, reg) then
+				return true
+			end
+			if PURE_COND_OPS[ins.name] and ins.name ~= "NOP" and ins.A == reg then
+				killed = true
+				break
+			end
+		end
+		if not killed then
+			for _, e in ipairs(b.edgesOut) do
+				if not e.virtual and e.to and not seen[e.to.id] then
+					seen[e.to.id] = true
+					queue[#queue + 1] = e.to
+				end
+			end
+		end
+	end
+	return false
+end
+
 local function isPureCondBlock(blk)
 	if not blk or not blk.cond then
 		return false
 	end
 	local insns = blk.insns
+	local nTaken = edgeByKind(blk, "taken")
+	local nFall = edgeByKind(blk, "fallthrough")
 	for i = 1, #insns - 1 do
-		if not PURE_COND_OPS[insns[i].name] then
+		local ins = insns[i]
+		if not PURE_COND_OPS[ins.name] then
 			return false
+		end
+		if ins.name ~= "NOP" then
+			if (nTaken and isRegLiveFrom(ins.A, nTaken.to)) or (nFall and isRegLiveFrom(ins.A, nFall.to)) then
+				return false
+			end
 		end
 	end
 	return true
