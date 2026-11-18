@@ -1,0 +1,195 @@
+return function(CFG)
+	local failures, total = {}, 0
+
+	local function check(cond, msg)
+		total += 1
+		if not cond then
+			failures[#failures + 1] = msg
+		end
+	end
+
+	local function I(name, f)
+		f = f or {}
+		f.name = name
+		return f
+	end
+
+	-- asigna pc por palabras (len=2 consume AUX)
+	local function mk(list)
+		local pc = 0
+		for _, e in ipairs(list) do
+			e.len = e.len or 1
+			e.pc = pc
+			pc += e.len
+		end
+		return list
+	end
+
+	local function build(name, list)
+		local cfg = CFG.build(mk(list))
+		local okFmt, errFmt = pcall(CFG.formatString, cfg)
+		check(okFmt, name .. ": format fallo: " .. tostring(errFmt))
+		check(#cfg.errors == 0 or name == "bad_target", name .. ": cfg.errors no vacio")
+		return cfg
+	end
+
+	-- 1. for numerico con if dentro
+	do
+		local cfg = build("numeric_for_if", {
+			I("FORNPREP", { A = 0, D = 3 }),
+			I("JUMPIFNOT", { A = 3, D = 1 }),
+			I("LOADNIL", { A = 4 }),
+			I("FORNLOOP", { A = 0, D = -3 }),
+			I("RETURN", { A = 0, B = 1 }),
+		})
+		check(#cfg.blocks == 5, "numeric_for_if: 5 bloques")
+		check(#cfg.loops == 1, "numeric_for_if: 1 bucle")
+		local L = cfg.loops[1]
+		check(L and L.kind == "numeric_for", "numeric_for_if: kind numeric_for")
+		check(L and L.header == cfg.blocks[2], "numeric_for_if: header = cuerpo")
+		check(L and #L.exits == 1, "numeric_for_if: 1 salida")
+		check(cfg.blocks[4].idom == cfg.blocks[2], "numeric_for_if: idom B4=B2")
+		check(cfg.blocks[2].ipdom == cfg.blocks[4], "numeric_for_if: ipdom B2=B4")
+		check(cfg.blocks[5].ipdomIsExit, "numeric_for_if: B5 postdomina en salida")
+	end
+
+	-- 2. if/else (diamante)
+	do
+		local cfg = build("diamond", {
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMP", { D = 1 }),
+			I("LOADN"),
+			I("RETURN"),
+		})
+		check(#cfg.blocks == 4, "diamond: 4 bloques")
+		check(#cfg.loops == 0, "diamond: sin bucles")
+		check(cfg.blocks[4].idom == cfg.blocks[1], "diamond: idom B4=B1")
+		check(cfg.blocks[1].ipdom == cfg.blocks[4], "diamond: ipdom B1=B4")
+		check(cfg.blocks[1].cond and cfg.blocks[1].cond.negated == true, "diamond: cond negada")
+	end
+
+	-- 3. while
+	do
+		local cfg = build("while", {
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMPBACK", { D = -3 }),
+			I("RETURN"),
+		})
+		local L = cfg.loops[1]
+		check(#cfg.loops == 1, "while: 1 bucle")
+		check(L and L.kind == "while_or_loop", "while: kind")
+		check(L and L.header == cfg.entry, "while: header = entry")
+		check(L and #L.exits == 1, "while: 1 salida")
+	end
+
+	-- 4. repeat ... until
+	do
+		local cfg = build("repeat", {
+			I("LOADN"),
+			I("JUMPIFNOT", { A = 0, D = -2 }),
+			I("RETURN"),
+		})
+		local L = cfg.loops[1]
+		check(L and L.kind == "repeat_until", "repeat: kind")
+		check(L and #L.latches == 1, "repeat: 1 latch")
+	end
+
+	-- 5. for generico (con AUX en FORGLOOP)
+	do
+		local cfg = build("generic_for", {
+			I("FORGPREP", { A = 0, D = 1 }),
+			I("LOADN"),
+			I("FORGLOOP", { A = 0, D = -2, len = 2, aux = 2 }),
+			I("RETURN"),
+		})
+		local L = cfg.loops[1]
+		check(#cfg.blocks == 4, "generic_for: 4 bloques")
+		check(L and L.kind == "generic_for", "generic_for: kind")
+		check(L and L.header == cfg.blocks[3], "generic_for: header = FORGLOOP")
+		check(L and L.backEdges[1].kind == "fallthrough", "generic_for: back edge = fallthrough")
+	end
+
+	-- 6. codigo muerto tras RETURN
+	do
+		local cfg = build("dead", {
+			I("RETURN"),
+			I("LOADN"),
+			I("RETURN"),
+		})
+		check(#cfg.blocks == 2, "dead: 2 bloques")
+		check(cfg.blocks[2].reachable == false, "dead: B2 inalcanzable")
+		check(#cfg.exits == 1, "dead: 1 salida")
+	end
+
+	-- 7. destino invalido
+	do
+		local cfg = build("bad_target", {
+			I("JUMP", { D = 100 }),
+			I("RETURN"),
+		})
+		check(#cfg.errors == 1, "bad_target: 1 error")
+	end
+
+	-- 8. arista duplicada (target == fallthrough)
+	do
+		local cfg = build("dup_edge", {
+			I("JUMPIF", { A = 0, D = 0 }),
+			I("RETURN"),
+		})
+		check(#cfg.blocks[1].succ == 1, "dup_edge: succ deduplicado")
+		check(#cfg.blocks[1].edgesOut == 2, "dup_edge: 2 aristas")
+		check(#cfg.blocks[2].pred == 1, "dup_edge: pred deduplicado")
+	end
+
+	-- 9. bit NOT del AUX, con y sin signo
+	do
+		local c1 = CFG._describeCond({ name = "JUMPXEQKNIL", A = 1, aux = 0x80000000 })
+		local c2 = CFG._describeCond({ name = "JUMPXEQKNIL", A = 1, aux = -2147483648 })
+		local c3 = CFG._describeCond({ name = "JUMPXEQKNIL", A = 1, aux = 0 })
+		check(c1 and c1.negated == true, "aux: sin signo")
+		check(c2 and c2.negated == true, "aux: con signo")
+		check(c3 and c3.negated == false, "aux: sin bit NOT")
+	end
+
+	-- 10. for anidados: parent / depth / loopHeader
+	do
+		local cfg = build("nested_for", {
+			I("FORNPREP", { A = 0, D = 4 }),
+			I("FORNPREP", { A = 3, D = 2 }),
+			I("LOADN"),
+			I("FORNLOOP", { A = 3, D = -2 }),
+			I("FORNLOOP", { A = 0, D = -4 }),
+			I("RETURN"),
+		})
+		check(#cfg.loops == 2, "nested_for: 2 bucles")
+		local inner, outer = cfg.loops[1], cfg.loops[2]
+		check(inner and inner.header == cfg.blocks[3], "nested_for: header interno")
+		check(outer and outer.header == cfg.blocks[2], "nested_for: header externo")
+		check(inner and inner.parent == outer, "nested_for: parent")
+		check(inner and inner.depth == 2 and outer and outer.depth == 1, "nested_for: depth")
+		check(inner and inner.kind == "numeric_for" and outer and outer.kind == "numeric_for", "nested_for: kinds")
+		check(cfg.blocks[4].loopHeader == cfg.blocks[2], "nested_for: loopHeader B4")
+	end
+
+	-- 11. FASTCALL no parte bloques y registra rango
+	do
+		local cfg = build("fastcall", {
+			I("FASTCALL", { A = 1, C = 2 }),
+			I("GETIMPORT", { A = 0, len = 2, aux = 0 }),
+			I("CALL", { A = 0, B = 2, C = 1 }),
+			I("RETURN"),
+		})
+		check(#cfg.blocks == 1, "fastcall: 1 bloque")
+		local fc = cfg.fastcalls[1]
+		check(fc and fc.callPc == 3 and fc.resumePc == 4 and fc.skipFrom == 1, "fastcall: rango")
+		check(#cfg.warnings == 0, "fastcall: sin warnings")
+	end
+
+	local report = string.format("%d/%d checks OK", total - #failures, total)
+	if #failures > 0 then
+		report ..= "\nFALLOS:\n  - " .. table.concat(failures, "\n  - ")
+	end
+	return #failures == 0, report
+end
