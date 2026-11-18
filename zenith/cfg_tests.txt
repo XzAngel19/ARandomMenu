@@ -187,6 +187,45 @@ return function(CFG)
 		check(#cfg.warnings == 0, "fastcall: sin warnings")
 	end
 
+	-- 12. bucle infinito sin salida: post-dominadores dentro del bucle
+	do
+		local cfg = build("infinite_if", {
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMP", { D = 1 }),
+			I("LOADN"),
+			I("JUMPBACK", { D = -5 }),
+		})
+		check(#cfg.exits == 0, "infinite_if: 0 exits reales")
+		check(#cfg.loops == 1, "infinite_if: 1 bucle")
+		check(cfg.blocks[1].ipdom == cfg.blocks[4], "infinite_if: ipdom B1=B4")
+		check(cfg.blocks[4].ipdomIsExit, "infinite_if: B4 pseudo-exit")
+	end
+
+	-- 13. repeat ... until forma real Luau (JUMPIF* -> exit + JUMPBACK)
+	do
+		local cfg = build("repeat_real", {
+			I("LOADN", { line = 2 }),
+			I("JUMPIF", { A = 0, D = 1, line = 3 }),
+			I("JUMPBACK", { D = -3, line = 3 }),
+			I("RETURN", { line = 4 }),
+		})
+		check(#cfg.loops == 1, "repeat_real: 1 bucle")
+		check(cfg.loops[1] and cfg.loops[1].kind == "repeat_until", "repeat_real: kind repeat_until")
+	end
+
+	-- 14. while c do if y then break end end no debe clasificarse como repeat_until
+	do
+		local cfg = build("while_break", {
+			I("JUMPIFNOT", { A = 0, D = 2, line = 2 }),
+			I("JUMPIF", { A = 1, D = 1, line = 3 }),
+			I("JUMPBACK", { D = -3, line = 2 }),
+			I("RETURN", { line = 5 }),
+		})
+		check(#cfg.loops == 1, "while_break: 1 bucle")
+		check(cfg.loops[1] and cfg.loops[1].kind == "while_or_loop", "while_break: kind while_or_loop")
+	end
+
 	local report = string.format("%d/%d checks OK", total - #failures, total)
 	if #failures > 0 then
 		report ..= "\nFALLOS:\n  - " .. table.concat(failures, "\n  - ")
