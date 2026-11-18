@@ -14,7 +14,7 @@ local MAX_WIDTH = 700
 local MAX_HEIGHT = 1050
 local CONFIG_FOLDER = "Zenith"
 local CONFIG_FILE = "Zenith/Zenith.json"
-local TAB_NAMES = { "Decompiler", "Analysis", "Tools", "Core", "Config" }
+local TAB_NAMES = { "Decompiler", "RSpy", "Core" }
 local TITLE_TEXT = "Zenith | Decompiler"
 
 local ACCENT_A = Color3.fromRGB(225, 225, 225)
@@ -1270,94 +1270,6 @@ local function switchTab(name)
 
 	Zenith.selected = name
 	tween(Zenith.indicator, MEDIUM_TWEEN, { Position = UDim2.new((Zenith.tabIndex[name] - 1) / #TAB_NAMES, 6, 0, 3) })
-end
-
-local function parseVector(text)
-	local numbers = {}
-	for number in string.gmatch(tostring(text), "-?%d+%.?%d*") do
-		table.insert(numbers, tonumber(number))
-	end
-
-	if #numbers < 3 then
-		return nil
-	end
-
-	return Vector3.new(numbers[1], numbers[2], numbers[3])
-end
-
-local function formatVector(v)
-	return string.format("(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z)
-end
-
-local function runMath()
-	local out = Zenith.outputs["Math Output"]
-	local tool = Zenith.values["Math Tool"]
-	local a = parseVector(Zenith.values["Vector A"])
-	local b = parseVector(Zenith.values["Vector B"])
-	local speed = Zenith.values["Projectile Speed"]
-
-	if not a then
-		return out.push("Vector A is invalid.")
-	end
-
-	if tool == "World To Screen" then
-		local camera = workspace.CurrentCamera
-		local point, onScreen = camera:WorldToViewportPoint(a)
-		out.push(string.format("Screen (%.1f, %.1f) depth %.1f on screen: %s", point.X, point.Y, point.Z, tostring(onScreen)))
-	elseif tool == "Vector Calc" then
-		if not b then
-			return out.push("Vector B is invalid.")
-		end
-
-		local angle = 0
-		if a.Magnitude > 0 and b.Magnitude > 0 then
-			angle = math.deg(math.acos(math.clamp(a.Unit:Dot(b.Unit), -1, 1)))
-		end
-
-		out.push("A + B = " .. formatVector(a + b))
-		out.push("A - B = " .. formatVector(a - b))
-		out.push("A x B = " .. formatVector(a:Cross(b)))
-		out.push(string.format("Dot %.3f  Distance %.3f  Angle %.2f deg", a:Dot(b), (a - b).Magnitude, angle))
-	elseif tool == "Prediction" then
-		local velocity = parseVector(Zenith.values["Target Velocity"]) or Vector3.zero
-		local origin = workspace.CurrentCamera.CFrame.Position
-		local predicted = a
-
-		for _ = 1, 4 do
-			local flight = (predicted - origin).Magnitude / speed
-			predicted = a + velocity * flight * Zenith.values["Prediction Multiplier"]
-		end
-
-		out.push("Predicted " .. formatVector(predicted))
-		out.push(string.format("Flight time %.3fs", (predicted - origin).Magnitude / speed))
-	else
-		if not b then
-			return out.push("Vector B is invalid.")
-		end
-
-		local gravity = Zenith.values["Math Gravity"]
-		local delta = b - a
-		local flat = Vector3.new(delta.X, 0, delta.Z).Magnitude
-
-		if gravity <= 0 then
-			return out.push("Gravity must be above 0.")
-		end
-		if flat < 0.001 then
-			return out.push("Target is straight above or below.")
-		end
-
-		local discriminant = speed ^ 4 - gravity * (gravity * flat * flat + 2 * delta.Y * speed * speed)
-		if discriminant < 0 then
-			return out.push("Target is out of range.")
-		end
-
-		local root = math.sqrt(discriminant)
-		local low = math.atan((speed * speed - root) / (gravity * flat))
-		local high = math.atan((speed * speed + root) / (gravity * flat))
-
-		out.push(string.format("Low %.2f deg  (%.2fs)", math.deg(low), flat / (speed * math.cos(low))))
-		out.push(string.format("High %.2f deg  (%.2fs)", math.deg(high), flat / (speed * math.cos(high))))
-	end
 end
 
 -- Step 0 Kernel: Capabilities, Signal, Core lifecycle & Boot.
@@ -3891,221 +3803,42 @@ local function initializeScript()
 
 	addSection(decRight, "Decompiler Output")
 	addCycle(decRight, "Decompile Mode", { "Source", "Function", "Bytecode", "Constants", "Upvalues", "Protos" })
-	addOutput(decRight, "Decompiler Output", 280)
+	addText(decRight, "Function Target", "Fn index or name (empty = main)")
+	addOutput(decRight, "Decompiler Output", 250)
 	addButton(decRight, "Save Decompiled")
 
-	-- Analysis tab.
-	local analysisLeft = createColumn(Zenith.pages.Analysis, UDim2.fromOffset(0, 0))
-	local analysisRight = createColumn(Zenith.pages.Analysis, UDim2.new(0.5, 6, 0, 0))
+	-- RSpy tab (Cobalt-style clean 2-panel layout: capture list left, code & actions right).
+	local rspyLeft = createColumn(Zenith.pages.RSpy, UDim2.fromOffset(0, 0))
+	local rspyRight = createColumn(Zenith.pages.RSpy, UDim2.new(0.5, 6, 0, 0))
 
-	addSection(analysisLeft, "Zenith Spy")
-	addToggle(analysisLeft, "Remote Spy", nil, false)
-	addCounter(analysisLeft, "Calls Logged", 0)
-	addCycle(analysisLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
-	addToggle(analysisLeft, "Log Client To Server", nil, true)
-	addToggle(analysisLeft, "Log Server To Client", nil, true)
-	addToggle(analysisLeft, "Log Return Values", nil, false)
-	addToggle(analysisLeft, "Show Call Stack", nil, false)
-	addToggle(analysisLeft, "Spy Auto Scroll", nil, true)
-	addText(analysisLeft, "Spy Search", "Search remotes")
-	addText(analysisLeft, "Spy Ignore List", "Names, comma separated")
-	addSlider(analysisLeft, "Spy Max Logs", 50, 1000, 300, 0)
-	addList(analysisLeft, "Remote List", {}, 90)
-	addButton(analysisLeft, "Copy Call Code")
-	addButton(analysisLeft, "Block Remote")
-	addButton(analysisLeft, "Repeat Call")
-	addButton(analysisLeft, "Generate Script")
-	addOutput(analysisLeft, "Spy Log", 130)
+	addSection(rspyLeft, "Captured Remotes")
+	addToggle(rspyLeft, "Remote Spy", nil, false)
+	addCounter(rspyLeft, "Calls Logged", 0)
+	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
+	addText(rspyLeft, "Spy Search", "Search remotes")
+	addText(rspyLeft, "Spy Ignore List", "Names, comma separated")
+	addList(rspyLeft, "Remote List", {}, 240)
+	addButton(rspyLeft, "Clear Spy Logs")
 
-	addSection(analysisLeft, "Zenith Memory Scanner")
-	addCounter(analysisLeft, "Results Found", 0)
-	addCycle(analysisLeft, "Scan Type", { "Constant", "String", "Number", "Pattern", "Function Name", "Table Key" })
-	addText(analysisLeft, "Scan Value", "Value or pattern")
-	addToggle(analysisLeft, "Scan Closures", nil, true)
-	addToggle(analysisLeft, "Scan Tables", nil, true)
-	addToggle(analysisLeft, "Scan Upvalues", nil, false)
-	addToggle(analysisLeft, "Case Sensitive", nil, false)
-	addSlider(analysisLeft, "Scan Max Results", 10, 2000, 200, 0)
-	addButton(analysisLeft, "First Scan")
-	addButton(analysisLeft, "Next Scan")
-	addButton(analysisLeft, "Reset Scan")
-	addList(analysisLeft, "Scan Result List", {}, 90)
-	addOutput(analysisLeft, "Scan Output", 80)
+	addSection(rspyRight, "Call Inspector")
+	addOutput(rspyRight, "Spy Log", 220)
+	addButton(rspyRight, "Copy Call Code")
+	addButton(rspyRight, "Copy Remote Path")
+	addButton(rspyRight, "Repeat Call")
+	addButton(rspyRight, "Block Remote")
+	addButton(rspyRight, "Ignore Remote")
 
-	addSection(analysisLeft, "Zenith Extractor")
-	addToggle(analysisLeft, "Sandbox Isolation", nil, true)
-	addCycle(analysisLeft, "Extract Mode", { "Extract Parts", "Hook Function", "Inject Snippet" })
-	addText(analysisLeft, "Extract Target", "Script or function")
-	addToggle(analysisLeft, "Log Hooked Calls", nil, true)
-	addToggle(analysisLeft, "Capture Arguments", nil, true)
-	addToggle(analysisLeft, "Capture Return Values", nil, false)
-	addSlider(analysisLeft, "Max Captures", 10, 1000, 200, 0)
-	addText(analysisLeft, "Snippet Code", "Code to run")
-	addButton(analysisLeft, "Start Extraction")
-	addButton(analysisLeft, "Stop Extraction")
-	addButton(analysisLeft, "Run In Sandbox")
-	addList(analysisLeft, "Extracted Parts", {}, 80)
-	addOutput(analysisLeft, "Extractor Output", 90)
+	addSection(rspyRight, "Spy Options")
+	addToggle(rspyRight, "Log Client To Server", nil, true)
+	addToggle(rspyRight, "Log Server To Client", nil, true)
+	addToggle(rspyRight, "Log Return Values", nil, false)
+	addToggle(rspyRight, "Show Call Stack", nil, false)
+	addToggle(rspyRight, "Spy Auto Scroll", nil, true)
+	addSlider(rspyRight, "Spy Max Logs", 50, 1000, 300, 0)
 
-	addSection(analysisRight, "Zenith VM Hook")
-	addToggle(analysisRight, "VM Hook", nil, false)
-	addCounter(analysisRight, "Hooked Calls", 0)
-	addCycle(analysisRight, "Hook Level", { "Namecall", "Index", "NewIndex", "Function", "Metamethod" })
-	addToggle(analysisRight, "Log Namecalls", nil, true)
-	addToggle(analysisRight, "Log Index", nil, false)
-	addToggle(analysisRight, "Log NewIndex", nil, false)
-	addToggle(analysisRight, "Log Function Calls", nil, false)
-	addText(analysisRight, "Hook Target", "Function or method")
-	addText(analysisRight, "Hook Filter", "Name filter")
-	addSlider(analysisRight, "VM Log Limit", 20, 500, 150, 0)
-	addButton(analysisRight, "Apply Hook")
-	addButton(analysisRight, "Unhook All")
-	addOutput(analysisRight, "VM Hook Log", 100)
-
-	addSection(analysisRight, "Zenith Projectiles")
-	addToggle(analysisRight, "Projectile Spy", nil, false)
-	addCounter(analysisRight, "Projectiles Logged", 0)
-	addCycle(analysisRight, "Projectile Capture", { "All", "Raycasts", "CFrames", "Remote Args" })
-	addToggle(analysisRight, "Log Raycasts", nil, true)
-	addToggle(analysisRight, "Log CFrames", nil, true)
-	addToggle(analysisRight, "Log Velocity", nil, false)
-	addToggle(analysisRight, "Draw Trajectory", nil, false)
-	addText(analysisRight, "Weapon Filter", "Tool name")
-	addSlider(analysisRight, "Trajectory Steps", 5, 100, 30, 0)
-	addSlider(analysisRight, "Projectile Max Logs", 20, 500, 150, 0)
-	addButton(analysisRight, "Copy Last Projectile")
-	addButton(analysisRight, "Export Ballistics")
-	addOutput(analysisRight, "Projectile Log", 100)
-
-	addSection(analysisRight, "Zenith Stealer")
-	addCounter(analysisRight, "Dumped Items", 0)
-	addCounter(analysisRight, "Dump Errors", 0)
-	addCycle(analysisRight, "Dump Type", { "Assets", "Meshes", "Map", "Files" })
-	addText(analysisRight, "Dump Folder", "Zenith/Dumps", "Zenith/Dumps")
-	addToggle(analysisRight, "Include Textures", nil, true)
-	addToggle(analysisRight, "Include Sounds", nil, false)
-	addToggle(analysisRight, "Include Animations", nil, false)
-	addToggle(analysisRight, "Overwrite Existing", nil, false)
-	addSlider(analysisRight, "Dump Batch Size", 1, 100, 10, 0)
-	addSlider(analysisRight, "Dump Delay", 0, 2, 0.1, 2)
-	addButton(analysisRight, "Start Dump")
-	addButton(analysisRight, "Stop Dump")
-	addOutput(analysisRight, "Stealer Log", 90)
-
-	addSection(analysisRight, "Zenith Env Spoofer")
-	addToggle(analysisRight, "Env Spoofer", nil, false)
-	addCycle(analysisRight, "Spoof Profile", { "Standard", "Strict", "Minimal" })
-	addToggle(analysisRight, "Proxy Globals", nil, true)
-	addToggle(analysisRight, "Hide Executor Globals", nil, true)
-	addToggle(analysisRight, "Spoof Environment Queries", nil, false)
-	addToggle(analysisRight, "Log Detection Probes", nil, true)
-	addButton(analysisRight, "Apply Spoof Profile")
-	addButton(analysisRight, "Restore Environment")
-	addOutput(analysisRight, "Env Probe Log", 80)
-
-	-- Tools tab.
-	local toolsLeft = createColumn(Zenith.pages.Tools, UDim2.fromOffset(0, 0))
-	local toolsRight = createColumn(Zenith.pages.Tools, UDim2.new(0.5, 6, 0, 0))
-
-	addSection(toolsLeft, "Zenith Inspect")
-	addText(toolsLeft, "Inspect Path", "game.Workspace")
-	addButton(toolsLeft, "Run Inspect")
-	addButton(toolsLeft, "Go To Parent")
-	addButton(toolsLeft, "Select Mouse Target")
-	addButton(toolsLeft, "Copy Inspect Path")
-	addCycle(toolsLeft, "Inspect View", { "Hierarchy", "Properties", "Attributes", "Tags", "Tables" })
-	addSlider(toolsLeft, "Inspect Max Depth", 1, 10, 3, 0)
-	addToggle(toolsLeft, "Hover Highlight", nil, false)
-	addToggle(toolsLeft, "Show Hidden Properties", nil, false)
-	addToggle(toolsLeft, "Include Nil Instances", nil, false)
-	addKeybind(toolsLeft, "Select Target Key", "I")
-	addList(toolsLeft, "Inspect Children", {}, 100)
-	addOutput(toolsLeft, "Inspect Output", 130)
-
-	addSection(toolsLeft, "Zenith Create")
-	addToggle(toolsLeft, "Live Layout Mode", nil, false)
-	addCycle(toolsLeft, "Create Class", { "Frame", "TextLabel", "TextButton", "TextBox", "ImageLabel", "ScrollingFrame", "UICorner", "UIStroke", "UIListLayout", "UIPadding" })
-	addCycle(toolsLeft, "Create Target", { "Hidden UI", "PlayerGui", "CoreGui" })
-	addText(toolsLeft, "Create Name", "Instance name")
-	addText(toolsLeft, "Create Parent Path", "Parent path")
-	addButton(toolsLeft, "Create Instance")
-	addButton(toolsLeft, "Duplicate Selected")
-	addButton(toolsLeft, "Delete Selected")
-	addList(toolsLeft, "Created Instances", {}, 80)
-	addText(toolsLeft, "Property Name", "Property")
-	addText(toolsLeft, "Property Value", "Value")
-	addButton(toolsLeft, "Apply Property")
-	addToggle(toolsLeft, "Snap To Grid", nil, false)
-	addSlider(toolsLeft, "Grid Size", 1, 50, 8, 0)
-	addToggle(toolsLeft, "Show Bounds", nil, false)
-	addButton(toolsLeft, "Export GUI Code")
-	addOutput(toolsLeft, "Create Output", 100)
-
-	addSection(toolsRight, "Zenith Console")
-	addToggle(toolsRight, "Console Visible", "Backquote", false)
-	addToggle(toolsRight, "Console Timestamps", nil, true)
-	addCycle(toolsRight, "Console Log Level", { "Debug", "Info", "Warn", "Error" })
-	addSlider(toolsRight, "Console Max Lines", 50, 1000, 200, 0)
-	addButton(toolsRight, "Clear Console")
-	addButton(toolsRight, "Copy Console", function()
-		local parts = {}
-		for _, label in consoleLines do
-			table.insert(parts, label.Text)
-		end
-
-		local copied = Zenith.copy(table.concat(parts, "\n"))
-		Zenith.log(copied and "Info" or "Warn", copied and "Console copied." or "Clipboard is not supported here.")
-	end)
-
-	addSection(toolsRight, "Zenith Math")
-	addCycle(toolsRight, "Math Tool", { "World To Screen", "Prediction", "Trajectory", "Vector Calc" })
-	addText(toolsRight, "Vector A", "x, y, z", "0, 0, 0")
-	addText(toolsRight, "Vector B", "x, y, z", "0, 0, 0")
-	addText(toolsRight, "Target Velocity", "x, y, z", "0, 0, 0")
-	addSlider(toolsRight, "Projectile Speed", 10, 2000, 300, 0)
-	addSlider(toolsRight, "Math Gravity", 0, 500, 196.2, 1)
-	addSlider(toolsRight, "Prediction Multiplier", 0, 3, 1, 2)
-	addToggle(toolsRight, "Gravity Compensation", nil, true)
-	addButton(toolsRight, "Calculate", runMath)
-	addOutput(toolsRight, "Math Output", 80)
-
-	-- Core tab.
+	-- Core tab (Kernel, Console, Decompiler Config & Menu/Session).
 	local coreLeft = createColumn(Zenith.pages.Core, UDim2.fromOffset(0, 0))
 	local coreRight = createColumn(Zenith.pages.Core, UDim2.new(0.5, 6, 0, 0))
-
-	addSection(coreLeft, "Zenith Init")
-	addToggle(coreLeft, "Safe Boot", nil, true)
-	addToggle(coreLeft, "Show Boot Errors", nil, true)
-	addCycle(coreLeft, "Load Order", { "Sequential", "Parallel" })
-	addSlider(coreLeft, "Boot Timeout", 1, 30, 10, 0)
-	addSlider(coreLeft, "Boot Retries", 0, 5, 1, 0)
-	addButton(coreLeft, "Reload Zenith")
-	addOutput(coreLeft, "Boot Log", 100)
-
-	addSection(coreLeft, "Zenith Signal")
-	addCounter(coreLeft, "Signals Fired", 0)
-	addCounter(coreLeft, "Active Listeners", 0)
-	addToggle(coreLeft, "Signal Debug", nil, false)
-	addCycle(coreLeft, "Dispatch Mode", { "Immediate", "Deferred" })
-	addSlider(coreLeft, "Max Listeners", 8, 512, 64, 0)
-	addToggle(coreLeft, "Warn On Leak", nil, true)
-	addButton(coreLeft, "Dump Signals")
-	addOutput(coreLeft, "Signal Log", 80)
-
-	addSection(coreRight, "Zenith Core")
-	addCounter(coreRight, "Modules Loaded", 0)
-	addCounter(coreRight, "Active Connections", 0)
-	addCounter(coreRight, "Uptime", "00:00:00")
-	addToggle(coreRight, "Strict Lifecycle", nil, true)
-	addToggle(coreRight, "Track Connections", nil, true)
-	addToggle(coreRight, "Auto Cleanup On Error", nil, false)
-	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 110)
-	addButton(coreRight, "Refresh Services")
-	addButton(coreRight, "Cleanup Connections")
-
-	-- Config tab (simple como MM2 GUI + opciones esenciales del Decompiler).
-	local configLeft = createColumn(Zenith.pages.Config, UDim2.fromOffset(0, 0))
-	local configRight = createColumn(Zenith.pages.Config, UDim2.new(0.5, 6, 0, 0))
 
 	local statusLabel = create("TextLabel", {
 		Size = UDim2.new(1, -8, 0, 18),
@@ -4117,7 +3850,7 @@ local function initializeScript()
 		Font = TEXT_FONT,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		ZIndex = 5,
-	}, Zenith.pages.Config)
+	}, Zenith.pages.Core)
 
 	local function setStatus(message)
 		statusLabel.Text = message
@@ -4131,44 +3864,53 @@ local function initializeScript()
 		end)
 	end
 
-	addSection(configLeft, "Decompiler Config")
-	addToggle(configLeft, "Include Core Scripts", nil, false)
-	addToggle(configLeft, "Include Nil Scripts", nil, false)
-	addToggle(configLeft, "Rename Locals", nil, true)
-	addToggle(configLeft, "Show Line Numbers", nil, true)
-	addToggle(configLeft, "Include Constants", nil, false)
-	addToggle(configLeft, "Include Upvalues", nil, false)
-	addToggle(configLeft, "Strip Comments", nil, false)
-	addSlider(configLeft, "Decompile Timeout", 1, 60, 10, 0)
-	addSlider(configLeft, "Decompile Max Lines", 100, 2000, 600, 0)
+	addSection(coreLeft, "Decompiler Config")
+	addToggle(coreLeft, "Include Core Scripts", nil, false)
+	addToggle(coreLeft, "Include Nil Scripts", nil, false)
+	addToggle(coreLeft, "Show Line Numbers", nil, true)
+	addToggle(coreLeft, "Include Constants", nil, false)
+	addToggle(coreLeft, "Include Upvalues", nil, false)
+	addToggle(coreLeft, "Strip Comments", nil, false)
+	addSlider(coreLeft, "Decompile Max Lines", 100, 2000, 600, 0)
 
-	addSection(configLeft, "Menu")
-	addCycle(configLeft, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
-	addToggle(configLeft, "Toggle Notifications", nil, true)
-	addToggle(configLeft, "Lock Window", nil, false)
-	addButton(configLeft, "Reset Window Position", function()
-		window.Position = UDim2.new(0.5, -windowWidth / 2, 0.5, -windowHeight / 2)
+	addSection(coreLeft, "Zenith Console")
+	addToggle(coreLeft, "Console Visible", "Backquote", false)
+	addToggle(coreLeft, "Console Timestamps", nil, true)
+	addCycle(coreLeft, "Console Log Level", { "Debug", "Info", "Warn", "Error" })
+	addSlider(coreLeft, "Console Max Lines", 50, 1000, 200, 0)
+	addButton(coreLeft, "Clear Console")
+	addButton(coreLeft, "Copy Console", function()
+		local parts = {}
+		for _, label in consoleLines do
+			table.insert(parts, label.Text)
+		end
+
+		local copied = Zenith.copy(table.concat(parts, "\n"))
+		Zenith.log(copied and "Info" or "Warn", copied and "Console copied." or "Clipboard is not supported here.")
 	end)
 
-	addSection(configRight, "Configs")
-	addText(configRight, "Config Name", "my config")
-	Zenith.transient["Config Name"] = true
-	addList(configRight, "Config Presets", {}, 70)
-	addButton(configRight, "Refresh Presets")
-	addButton(configRight, "Create")
-	addButton(configRight, "Load")
-	addButton(configRight, "Save")
-	addButton(configRight, "Delete Config")
-	addToggle(configRight, "Autoload", nil, false)
-	addSlider(configRight, "Autosave Interval", 5, 120, 15, 0)
-	addButton(configRight, "Export JSON")
-	addText(configRight, "Import JSON Text", "Paste JSON")
-	Zenith.transient["Import JSON Text"] = true
-	addButton(configRight, "Import JSON")
+	addSection(coreRight, "Zenith Core")
+	addCounter(coreRight, "Modules Loaded", 0)
+	addCounter(coreRight, "Active Connections", 0)
+	addCounter(coreRight, "Uptime", "00:00:00")
+	addToggle(coreRight, "Safe Boot", nil, true)
+	addToggle(coreRight, "Track Connections", nil, true)
+	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 100)
+	addButton(coreRight, "Refresh Services")
+	addButton(coreRight, "Cleanup Connections")
+	addOutput(coreRight, "Boot Log", 85)
 
-	addSection(configRight, "Session")
-	addButton(configRight, "Reset Settings")
-	addButton(configRight, "Unload Zenith", function()
+	addSection(coreRight, "Menu & Configs")
+	addCycle(coreRight, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
+	addText(coreRight, "Config Name", "my config")
+	Zenith.transient["Config Name"] = true
+	addList(coreRight, "Config Presets", {}, 65)
+	addButton(coreRight, "Save")
+	addButton(coreRight, "Load")
+	addButton(coreRight, "Delete Config")
+	addToggle(coreRight, "Autoload", nil, false)
+	addButton(coreRight, "Reset Settings")
+	addButton(coreRight, "Unload Zenith", function()
 		Zenith.unload()
 	end)
 
@@ -4176,15 +3918,15 @@ local function initializeScript()
 	local limitLinks = {
 		["Decompile Max Lines"] = "Decompiler Output",
 		["Spy Max Logs"] = "Spy Log",
-		["Projectile Max Logs"] = "Projectile Log",
-		["VM Log Limit"] = "VM Hook Log",
 	}
 
 	for sliderName, outputName in limitLinks do
 		local api = Zenith.outputs[outputName]
-		api.maxLines = Zenith.values[sliderName]
-		Zenith.internal[sliderName] = function(value)
-			api.maxLines = value
+		if api then
+			api.maxLines = Zenith.values[sliderName]
+			Zenith.internal[sliderName] = function(value)
+				api.maxLines = value
+			end
 		end
 	end
 
@@ -4301,8 +4043,6 @@ local function initializeScript()
 		end
 	end
 
-	Zenith.actions["Refresh Presets"] = refreshPresets
-	Zenith.actions["Create"] = saveSettings
 	Zenith.actions["Save"] = saveSettings
 
 	Zenith.actions["Load"] = function()
@@ -4334,23 +4074,6 @@ local function initializeScript()
 		end
 
 		setStatus("Settings reset.")
-	end
-
-	Zenith.actions["Export JSON"] = function()
-		setStatus(Zenith.copy(encodeValues()) and "JSON copied." or "Clipboard is not supported here.")
-	end
-
-	Zenith.actions["Import JSON"] = function()
-		local ok, data = pcall(function()
-			return httpService:JSONDecode(Zenith.values["Import JSON Text"])
-		end)
-
-		if not ok or typeof(data) ~= "table" then
-			return setStatus("Invalid JSON.")
-		end
-
-		applyConfig(data)
-		setStatus("JSON imported.")
 	end
 
 	refreshPresets()
