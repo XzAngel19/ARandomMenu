@@ -14,7 +14,7 @@ local MAX_WIDTH = 700
 local MAX_HEIGHT = 1050
 local CONFIG_FOLDER = "Zenith"
 local CONFIG_FILE = "Zenith/Zenith.json"
-local TAB_NAMES = { "Decompiler", "RSpy", "Core" }
+local TAB_NAMES = { "Decompiler", "RSpy", "Core", "Config" }
 local TITLE_TEXT = "Zenith | Decompiler"
 
 local ACCENT_A = Color3.fromRGB(225, 225, 225)
@@ -1957,6 +1957,25 @@ do
 	end
 end
 
+do
+	Zenith.robloxDefaults = {
+		services = "CoreGui, CorePackages, RobloxReplicatedStorage, Chat, VoiceChatService, LocalizationService, SocialService, PolicyService, UGCValidationService, AdService, AnalyticsService, TelemetryService",
+		scripts = "PlayerModule, CameraModule, ControlModule, Poppercam, Invisicam, BaseCamera, ClassicCamera, OrbitalCamera, VehicleCamera, LegacyCamera, VRBaseCamera, VRCamera, VRVehicleCamera, MouseLockController, BaseCharacterController, Keyboard, Gamepad, TouchJump, TouchThumbstick, DynamicThumbstick, ClickToMoveController, VehicleController, CameraInput, CameraUtils, CameraUI, CameraToggleStateController, ZoomController, TransparencyController, RbxCharacterSounds, AtomicBinding, ChatScript, BubbleChat, ChatMain, ChatBar, ChatChannel, ChatSettings, ChannelsTab, MessageLabelCreator, MessageLogDisplay, MessageSender, CommandProcessor, ChatInstallVerifier, Animate, Health, Freecam, PlayerScriptsLoader, PlayerListManager, TopBarApp, BackpackScript, EmotesMenu, InspectMenu, SelfView, ExperienceChat",
+		remotes = "NewPlayerGroupDetails, UpdatePlayerBlockList, SetPlayerBlockList, SendPlayerBlockList, ShowFriendJoinedPlayerToast, SetDialogInUse, SetPlayerReady, GetServerVersion, ClientLoaded, SetCoreGuiEnabled, AddCoreScriptLocal, UserNotification, SendPlayerProfileSettings, RequestServerStats, DefaultChatSystemChatEvents, SayMessageRequest, MutePlayerRequest, OnMessageDoneFiltering, OnNewMessage, OnNewSystemMessage, OnChannelJoined, OnChannelLeft, OnMuted, OnUnmuted, OnMainChannelSet, GetInitDataRequest, ChannelNameColorUpdated, WhisperChat, SetBlockedUserIdsRequest, CanChatWith, NewFollower, GetFollowRelationships, FollowRelationshipChanged, SetPlayerFollowRelationship, PlayerPolicyInfo, TeleportAsync, RequestDeviceCameraCFrame",
+	}
+
+	function Zenith.parseCsvSet(raw)
+		local out = {}
+		for item in string.gmatch(tostring(raw or ""), "[^,]+") do
+			local trimmed = string.lower((string.gsub(item, "^%s*(.-)%s*$", "%1")))
+			if trimmed ~= "" then
+				out[trimmed] = true
+			end
+		end
+		return out
+	end
+end
+
 -- Zenith Decompiler (Fase 1: Indexer + Bytecode Reader + Disassembler).
 do
 	local band, rshift = bit32.band, bit32.rshift
@@ -1968,6 +1987,10 @@ do
 		path = "Script Path",
 		nilScripts = "Include Nil Scripts",
 		coreScripts = "Include Core Scripts",
+		ignoreInternals = "Ignore Roblox Internals",
+		ignorePlayerMod = "Ignore PlayerModule & Chat",
+		ignoreServices = "Ignore Services",
+		ignoreScripts = "Ignore Roblox Scripts",
 		list = "Script List",
 		mode = "Decompile Mode",
 		target = "Function Target",
@@ -6354,14 +6377,51 @@ do
 			or string.sub(path, 1, 19) == "[nil] CorePackages."
 	end
 
+	local function isRobloxFilteredEntry(e, includeCore, ignoreInternals, ignorePlayerMod, svcSet, scrSet)
+		if not ignoreInternals then
+			return false
+		end
+		local clean = string.gsub(e.lower, "^%[nil%]%s+", "")
+		clean = string.gsub(clean, "%s+#%d+$", "")
+		local svc = string.match(clean, "^([^%.]+)")
+		if svc and svcSet[svc] then
+			if not (includeCore and (svc == "coregui" or svc == "corepackages")) then
+				return true
+			end
+		end
+		for seg in string.gmatch(clean, "[^%.]+") do
+			if scrSet[seg] then
+				return true
+			end
+		end
+		if ignorePlayerMod then
+			if string.find(clean, "playermodule", 1, true)
+				or string.find(clean, "chatscript", 1, true)
+				or string.find(clean, "bubblechat", 1, true)
+				or string.find(clean, "rbxcharactersounds", 1, true)
+				or string.find(clean, "defaultchatsystemchatevents", 1, true)
+				or string.find(clean, "experiencechat", 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
 	function Index.apply()
 		local filter = tostring(Zenith.values[N.class] or "All")
 		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
 		local includeCore = flag(N.coreScripts, false)
+		local ignoreInternals = flag(N.ignoreInternals, true)
+		local ignorePlayerMod = flag(N.ignorePlayerMod, true)
+		local svcSet = Zenith.parseCsvSet(Zenith.values[N.ignoreServices] or (Zenith.robloxDefaults and Zenith.robloxDefaults.services))
+		local scrSet = Zenith.parseCsvSet(Zenith.values[N.ignoreScripts] or (Zenith.robloxDefaults and Zenith.robloxDefaults.scripts))
 		table.clear(Index.shown)
 		local total = 0
 		for _, e in ipairs(Index.entries) do
-			if (includeCore or not e.isCore) and (filter == "All" or e.class == filter) and (needle == "" or string.find(e.lower, needle, 1, true)) then
+			if (includeCore or not e.isCore)
+				and not isRobloxFilteredEntry(e, includeCore, ignoreInternals, ignorePlayerMod, svcSet, scrSet)
+				and (filter == "All" or e.class == filter)
+				and (needle == "" or string.find(e.lower, needle, 1, true)) then
 				total += 1
 				if total <= MAX_SHOWN then
 					Index.shown[total] = e.label
@@ -6775,6 +6835,11 @@ do
 			hook(N.coreScripts, function()
 				task.defer(Index.apply)
 			end)
+			for _, fName in ipairs({ N.ignoreInternals, N.ignorePlayerMod, N.ignoreServices, N.ignoreScripts }) do
+				hook(fName, function()
+					task.defer(Index.apply)
+				end)
+			end
 			for _, name in ipairs({ N.mode, N.target, N.lineNumbers, N.includeConstants, N.includeUpvalues, N.strip, N.maxLines }) do
 				hook(name, function()
 					task.defer(Dec.render)
@@ -6817,6 +6882,12 @@ do
 		showStack = "Show Call Stack",
 		autoScroll = "Spy Auto Scroll",
 		maxLogs = "Spy Max Logs",
+		ignoreInternals = "Ignore Roblox Internals",
+		ignoreBindables = "Ignore Bindables",
+		ignorePlayerMod = "Ignore PlayerModule & Chat",
+		ignoreServices = "Ignore Services",
+		ignoreRbxScripts = "Ignore Roblox Scripts",
+		ignoreRbxRemotes = "Ignore Roblox Remotes",
 	}
 
 	local Players = game:GetService("Players")
@@ -7094,6 +7165,9 @@ do
 		selectedLabel = nil,
 		blocked = setmetatable({}, { __mode = "k" }),
 		ignoredNames = {},
+		ignoredServices = {},
+		ignoredRbxScripts = {},
+		ignoredRbxRemotes = {},
 		internal = setmetatable({}, { __mode = "k" }), -- [thread] = true (our own calls)
 		depth = setmetatable({}, { __mode = "k" }),    -- [thread] = re-entrancy depth
 		queue = {},
@@ -7110,18 +7184,74 @@ do
 	}
 
 	local function refreshIgnoreSet()
-		table.clear(state.ignoredNames)
-		local raw = tostring(Zenith.values[N.ignoreList] or "")
-		for item in string.gmatch(raw, "[^,]+") do
-			local trimmed = string.lower((string.gsub(item, "^%s*(.-)%s*$", "%1")))
-			if trimmed ~= "" then
-				state.ignoredNames[trimmed] = true
-			end
-		end
+		state.ignoredNames = Zenith.parseCsvSet(Zenith.values[N.ignoreList])
+		local defs = Zenith.robloxDefaults or {}
+		state.ignoredServices = Zenith.parseCsvSet(Zenith.values[N.ignoreServices] or defs.services)
+		state.ignoredRbxScripts = Zenith.parseCsvSet(Zenith.values[N.ignoreRbxScripts] or defs.scripts)
+		state.ignoredRbxRemotes = Zenith.parseCsvSet(Zenith.values[N.ignoreRbxRemotes] or defs.remotes)
 	end
 
 	local function isIgnoredName(name)
 		return state.ignoredNames[string.lower(tostring(name or ""))] == true
+	end
+
+	local function isBindableClass(cls)
+		return cls == "BindableEvent" or cls == "BindableFunction"
+	end
+
+	local function hasIgnoredAncestor(inst, setA, setB, checkPlayerMod)
+		local cur, guard = inst, 0
+		while cur and cur ~= game and guard < 24 do
+			local parent = safeRead(cur, "Parent")
+			local nm = string.lower(tostring(safeRead(cur, "Name") or ""))
+			if setA and setA[nm] then
+				return true
+			end
+			if setB and setB[nm] then
+				return true
+			end
+			if parent == game then
+				local svcCls = string.lower(tostring(safeRead(cur, "ClassName") or ""))
+				if state.ignoredServices[svcCls] or state.ignoredServices[nm] then
+					return true
+				end
+				break
+			end
+			if checkPlayerMod and (nm == "playermodule" or nm == "chatscript" or nm == "bubblechat" or nm == "rbxcharactersounds" or nm == "defaultchatsystemchatevents" or nm == "experiencechat") then
+				return true
+			end
+			cur = parent
+			guard += 1
+		end
+		return false
+	end
+
+	local function isRobloxIgnored(inst, rName, callerInst, cls)
+		if isIgnoredName(rName) then
+			return true
+		end
+		if cls and isBindableClass(cls) and flag(N.ignoreBindables, true) then
+			return true
+		end
+		if not flag(N.ignoreInternals, true) then
+			return false
+		end
+		local lowerName = string.lower(tostring(rName or ""))
+		if lowerName ~= "" and state.ignoredRbxRemotes[lowerName] then
+			return true
+		end
+		local playerMod = flag(N.ignorePlayerMod, true)
+		if typeof(inst) == "Instance" then
+			if hasIgnoredAncestor(inst, state.ignoredRbxRemotes, nil, playerMod) then
+				return true
+			end
+		end
+		if typeof(callerInst) == "Instance" then
+			if hasIgnoredAncestor(callerInst, state.ignoredRbxScripts, nil, playerMod) then
+				return true
+			end
+		end
+		return false
 	end
 
 	local function formatCallCode(entry)
@@ -7205,7 +7335,7 @@ do
 		local shownSet = {}
 		for i = #state.entries, 1, -1 do
 			local e = state.entries[i]
-			if not isIgnoredName(e.name) then
+			if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className) then
 				local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
 				local searchOk = (needle == "")
 					or string.find(string.lower(e.label), needle, 1, true) ~= nil
@@ -7229,7 +7359,7 @@ do
 
 	local function addEntry(item)
 		local rName = tostring(safeRead(item.remote, "Name") or "?")
-		if isIgnoredName(rName) then
+		if isRobloxIgnored(item.remote, rName, item.callerInst, item.className) then
 			return
 		end
 		state.seq += 1
@@ -7254,6 +7384,7 @@ do
 			returns = item.returns,
 			blocked = item.blocked,
 			caller = callerStr,
+			callerInst = item.callerInst,
 			stack = item.stack,
 			timeStr = item.timeStr,
 		}
@@ -7362,6 +7493,9 @@ do
 		end
 
 		local shouldLog = flag(N.enabled, false) and flag(N.c2s, true)
+		if shouldLog and isBindableClass(cls) and flag(N.ignoreBindables, true) then
+			shouldLog = false
+		end
 		if not shouldLog and not isBlocked then
 			return origFn(self, ...)
 		end
@@ -7369,17 +7503,24 @@ do
 		local item
 		if shouldLog then
 			local callerInst, stack = captureCallerInfo()
-			item = {
-				remote = self,
-				className = cls,
-				method = canon,
-				dir = "C2S",
-				args = table.pack(...),
-				blocked = isBlocked,
-				callerInst = callerInst,
-				stack = stack,
-				timeStr = timeStamp(),
-			}
+			if not isBlocked and isRobloxIgnored(self, safeRead(self, "Name"), callerInst, cls) then
+				shouldLog = false
+			else
+				item = {
+					remote = self,
+					className = cls,
+					method = canon,
+					dir = "C2S",
+					args = table.pack(...),
+					blocked = isBlocked,
+					callerInst = callerInst,
+					stack = stack,
+					timeStr = timeStamp(),
+				}
+			end
+		end
+		if not shouldLog and not isBlocked then
+			return origFn(self, ...)
 		end
 
 		if isBlocked then
@@ -7459,6 +7600,9 @@ do
 			if not rec.active or stopped or not (flag(N.enabled, false) and flag(N.s2c, true)) then
 				return rec.orig(...)
 			end
+			if isRobloxIgnored(inst, safeRead(inst, "Name"), nil, cls) then
+				return rec.orig(...)
+			end
 
 			local item = {
 				remote = inst,
@@ -7497,6 +7641,9 @@ do
 	local function attachCallbackInstance(inst, cls)
 		local cbProp = CALLBACK_SOURCES[cls]
 		if not cbProp or state.wrappedCallbacks[inst] then
+			return
+		end
+		if isRobloxIgnored(inst, safeRead(inst, "Name"), nil, cls) then
 			return
 		end
 		local origFn = readCallback(inst, cbProp)
@@ -7548,7 +7695,8 @@ do
 			return oldFn(self, key, value)
 		end
 
-		if type(value) == "function" and flag(N.enabled, false) and flag(N.s2c, true) then
+		if type(value) == "function" and flag(N.enabled, false) and flag(N.s2c, true)
+			and not isRobloxIgnored(self, safeRead(self, "Name"), nil, cls) then
 			return oldFn(self, key, (makeCallbackWrapper(self, cls, key, value)))
 		end
 
@@ -7645,6 +7793,9 @@ do
 		if not sigName then
 			return
 		end
+		if isRobloxIgnored(inst, safeRead(inst, "Name"), nil, cls) then
+			return
+		end
 		local sig = safeRead(inst, sigName)
 		if not sig then
 			return
@@ -7652,6 +7803,9 @@ do
 		local ok, conn = pcall(function()
 			return sig:Connect(function(...)
 				if not (flag(N.enabled, false) and flag(N.s2c, true)) then
+					return
+				end
+				if isRobloxIgnored(inst, safeRead(inst, "Name"), nil, cls) then
 					return
 				end
 				enqueue({
@@ -7906,6 +8060,15 @@ do
 				refreshIgnoreSet()
 				applyListFilter()
 			end)
+			for _, fName in ipairs({ N.ignoreInternals, N.ignoreBindables, N.ignorePlayerMod, N.ignoreServices, N.ignoreRbxScripts, N.ignoreRbxRemotes }) do
+				hookUI(fName, function()
+					refreshIgnoreSet()
+					applyListFilter()
+					if flag(N.enabled, false) and flag(N.s2c, true) then
+						syncS2C(true, true)
+					end
+				end)
+			end
 			hookUI(N.showStack, function() renderSelected() end)
 
 			Zenith.actions[N.clear] = function()
@@ -8580,42 +8743,9 @@ local function initializeScript()
 	addToggle(rspyRight, "Spy Auto Scroll", nil, true)
 	addSlider(rspyRight, "Spy Max Logs", 50, 1000, 300, 0)
 
-	-- Core tab (Kernel, Console, Decompiler Config & Menu/Session).
+	-- Core tab (Kernel & Console).
 	local coreLeft = createColumn(Zenith.pages.Core, UDim2.fromOffset(0, 0))
 	local coreRight = createColumn(Zenith.pages.Core, UDim2.new(0.5, 6, 0, 0))
-
-	local statusLabel = create("TextLabel", {
-		Size = UDim2.new(1, -8, 0, 18),
-		Position = UDim2.new(0, 4, 1, -20),
-		BackgroundTransparency = 1,
-		Text = "",
-		TextColor3 = DIM_TEXT_COLOR,
-		TextSize = 12,
-		Font = TEXT_FONT,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 5,
-	}, Zenith.pages.Core)
-
-	local function setStatus(message)
-		statusLabel.Text = message
-		statusLabel.TextTransparency = 0
-		Zenith.log("Info", message)
-
-		task.delay(3, function()
-			if statusLabel.Text == message then
-				tween(statusLabel, MEDIUM_TWEEN, { TextTransparency = 1 })
-			end
-		end)
-	end
-
-	addSection(coreLeft, "Decompiler Config")
-	addToggle(coreLeft, "Include Core Scripts", nil, false)
-	addToggle(coreLeft, "Include Nil Scripts", nil, false)
-	addToggle(coreLeft, "Show Line Numbers", nil, true)
-	addToggle(coreLeft, "Include Constants", nil, false)
-	addToggle(coreLeft, "Include Upvalues", nil, false)
-	addToggle(coreLeft, "Strip Comments", nil, false)
-	addSlider(coreLeft, "Decompile Max Lines", 100, 2000, 600, 0)
 
 	addSection(coreLeft, "Zenith Console")
 	addToggle(coreLeft, "Console Visible", "Backquote", false)
@@ -8639,23 +8769,77 @@ local function initializeScript()
 	addCounter(coreRight, "Uptime", "00:00:00")
 	addToggle(coreRight, "Safe Boot", nil, true)
 	addToggle(coreRight, "Track Connections", nil, true)
-	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 100)
+	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 115)
 	addButton(coreRight, "Refresh Services")
 	addButton(coreRight, "Cleanup Connections")
 	addButton(coreRight, "Reload Zenith")
-	addOutput(coreRight, "Boot Log", 85)
+	addOutput(coreRight, "Boot Log", 110)
 
-	addSection(coreRight, "Menu & Configs")
-	addCycle(coreRight, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
-	addText(coreRight, "Config Name", "my config")
+	-- Config tab (Roblox Ignore/Filters, Decompiler Config & Menu/Configs).
+	local cfgLeft = createColumn(Zenith.pages.Config, UDim2.fromOffset(0, 0))
+	local cfgRight = createColumn(Zenith.pages.Config, UDim2.new(0.5, 6, 0, 0))
+
+	local statusLabel = create("TextLabel", {
+		Size = UDim2.new(1, -8, 0, 18),
+		Position = UDim2.new(0, 4, 1, -20),
+		BackgroundTransparency = 1,
+		Text = "",
+		TextColor3 = DIM_TEXT_COLOR,
+		TextSize = 12,
+		Font = TEXT_FONT,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = 5,
+	}, Zenith.pages.Config)
+
+	local function setStatus(message)
+		statusLabel.Text = message
+		statusLabel.TextTransparency = 0
+		Zenith.log("Info", message)
+
+		task.delay(3, function()
+			if statusLabel.Text == message then
+				tween(statusLabel, MEDIUM_TWEEN, { TextTransparency = 1 })
+			end
+		end)
+	end
+
+	addSection(cfgLeft, "Roblox Ignore & Filters")
+	addToggle(cfgLeft, "Ignore Roblox Internals", nil, true)
+	addToggle(cfgLeft, "Ignore Bindables", nil, true)
+	addToggle(cfgLeft, "Ignore PlayerModule & Chat", nil, true)
+	addText(cfgLeft, "Ignore Services", "Services, comma separated", Zenith.robloxDefaults.services)
+	addText(cfgLeft, "Ignore Roblox Scripts", "Scripts, comma separated", Zenith.robloxDefaults.scripts)
+	addText(cfgLeft, "Ignore Roblox Remotes", "Remotes, comma separated", Zenith.robloxDefaults.remotes)
+	addButton(cfgLeft, "Reset Roblox Filters", function()
+		Zenith.setters["Ignore Roblox Internals"](true)
+		Zenith.setters["Ignore Bindables"](true)
+		Zenith.setters["Ignore PlayerModule & Chat"](true)
+		Zenith.setters["Ignore Services"](Zenith.robloxDefaults.services)
+		Zenith.setters["Ignore Roblox Scripts"](Zenith.robloxDefaults.scripts)
+		Zenith.setters["Ignore Roblox Remotes"](Zenith.robloxDefaults.remotes)
+		setStatus("Roblox filters reset.")
+	end)
+
+	addSection(cfgLeft, "Decompiler Config")
+	addToggle(cfgLeft, "Include Core Scripts", nil, false)
+	addToggle(cfgLeft, "Include Nil Scripts", nil, false)
+	addToggle(cfgLeft, "Show Line Numbers", nil, true)
+	addToggle(cfgLeft, "Include Constants", nil, false)
+	addToggle(cfgLeft, "Include Upvalues", nil, false)
+	addToggle(cfgLeft, "Strip Comments", nil, false)
+	addSlider(cfgLeft, "Decompile Max Lines", 100, 2000, 600, 0)
+
+	addSection(cfgRight, "Menu & Configs")
+	addCycle(cfgRight, "Menu Keybind", { "RightShift", "Insert", "RightControl", "Delete", "End" })
+	addText(cfgRight, "Config Name", "my config")
 	Zenith.transient["Config Name"] = true
-	addList(coreRight, "Config Presets", {}, 65)
-	addButton(coreRight, "Save")
-	addButton(coreRight, "Load")
-	addButton(coreRight, "Delete Config")
-	addToggle(coreRight, "Autoload", nil, false)
-	addButton(coreRight, "Reset Settings")
-	addButton(coreRight, "Unload Zenith", function()
+	addList(cfgRight, "Config Presets", {}, 80)
+	addButton(cfgRight, "Save")
+	addButton(cfgRight, "Load")
+	addButton(cfgRight, "Delete Config")
+	addToggle(cfgRight, "Autoload", nil, false)
+	addButton(cfgRight, "Reset Settings")
+	addButton(cfgRight, "Unload Zenith", function()
 		Zenith.unload()
 	end)
 
