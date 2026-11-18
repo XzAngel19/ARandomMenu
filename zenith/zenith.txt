@@ -6733,6 +6733,868 @@ do
 	})
 end
 
+-- Zenith RSpy (Motor vivo de hooks __namecall / hookfunction / OnClientEvent).
+do
+	local N = {
+		enabled = "Remote Spy",
+		calls = "Calls Logged",
+		filter = "Spy Filter",
+		search = "Spy Search",
+		ignoreList = "Spy Ignore List",
+		list = "Remote List",
+		clear = "Clear Spy Logs",
+		log = "Spy Log",
+		copyCode = "Copy Call Code",
+		copyPath = "Copy Remote Path",
+		repeatCall = "Repeat Call",
+		blockRemote = "Block Remote",
+		ignoreRemote = "Ignore Remote",
+		c2s = "Log Client To Server",
+		s2c = "Log Server To Client",
+		logReturn = "Log Return Values",
+		showStack = "Show Call Stack",
+		autoScroll = "Spy Auto Scroll",
+		maxLogs = "Spy Max Logs",
+	}
+
+	local OUTBOUND_CLASSES = {
+		FireServer = { RemoteEvent = true, UnreliableRemoteEvent = true },
+		InvokeServer = { RemoteFunction = true },
+		Fire = { BindableEvent = true },
+		Invoke = { BindableFunction = true },
+	}
+
+	local FILTER_MATCH = {
+		RemoteEvent = { RemoteEvent = true, UnreliableRemoteEvent = true },
+		RemoteFunction = { RemoteFunction = true },
+		BindableEvent = { BindableEvent = true },
+		BindableFunction = { BindableFunction = true },
+	}
+
+	local function flag(name, default)
+		local v = Zenith.values[name]
+		if v == nil then
+			return default
+		end
+		return v == true
+	end
+
+	local function num(name, default)
+		local v = tonumber(Zenith.values[name])
+		return v or default
+	end
+
+	local function setVal(name, val)
+		local s = Zenith.setters and Zenith.setters[name]
+		if s then
+			pcall(s, val)
+		else
+			Zenith.values[name] = val
+		end
+	end
+
+	local savedHooks = {}
+	local function hookUI(name, fn)
+		local prev = Zenith.hooks[name]
+		savedHooks[name] = { prev = prev }
+		Zenith.hooks[name] = function(...)
+			if prev then
+				pcall(prev, ...)
+			end
+			fn(...)
+		end
+	end
+
+	local function safeRead(obj, prop)
+		local ok, val = pcall(function()
+			return obj[prop]
+		end)
+		return ok and val or nil
+	end
+
+	local ESC = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t", ['"'] = '\\"', ["\\"] = "\\\\" }
+	local function quoteStr(s)
+		return '"' .. (string.gsub(s, '[%c"\\]', function(c)
+			return ESC[c] or string.format("\\%03d", string.byte(c))
+		end)) .. '"'
+	end
+
+	local function isIdent(s)
+		return type(s) == "string" and string.match(s, "^[%a_][%w_]*$") ~= nil
+	end
+
+	local function instancePath(inst)
+		if typeof(inst) ~= "Instance" then
+			return "nil"
+		end
+		if inst == game then
+			return "game"
+		end
+		if localPlayer and inst == localPlayer then
+			return "game:GetService(\"Players\").LocalPlayer"
+		end
+		local parts, cur, guard = {}, inst, 0
+		while cur and cur ~= game and guard < 120 do
+			local parent = safeRead(cur, "Parent")
+			local name = safeRead(cur, "Name") or "?"
+			if parent == game then
+				local cls = safeRead(cur, "ClassName")
+				if cls == "Workspace" then
+					table.insert(parts, 1, "workspace")
+				elseif cls and cls ~= "" then
+					table.insert(parts, 1, string.format("game:GetService(%s)", quoteStr(cls)))
+				else
+					table.insert(parts, 1, string.format("game:FindFirstChild(%s)", quoteStr(name)))
+				end
+				cur = game
+				break
+			elseif localPlayer and cur == localPlayer then
+				table.insert(parts, 1, "game:GetService(\"Players\").LocalPlayer")
+				cur = game
+				break
+			else
+				if isIdent(name) then
+					table.insert(parts, 1, "." .. name)
+				else
+					table.insert(parts, 1, string.format(":FindFirstChild(%s)", quoteStr(name)))
+				end
+			end
+			cur = parent
+			guard += 1
+		end
+		if cur ~= game then
+			return string.format("nil --[[ detached: %s ]]", tostring(safeRead(inst, "Name") or "?"))
+		end
+		local joined = table.concat(parts, "")
+		if string.sub(joined, 1, 1) == "." then
+			joined = "game" .. joined
+		end
+		return joined
+	end
+
+	local function serializeValue(v, depth, seen)
+		depth = depth or 0
+		seen = seen or {}
+		local t = typeof(v)
+		if t == "nil" then
+			return "nil"
+		elseif t == "boolean" then
+			return tostring(v)
+		elseif t == "number" then
+			if v ~= v then
+				return "0/0"
+			elseif v == math.huge then
+				return "math.huge"
+			elseif v == -math.huge then
+				return "-math.huge"
+			end
+			return tostring(v)
+		elseif t == "string" then
+			if #v > 400 then
+				return quoteStr(string.sub(v, 1, 400)) .. " --[[ +" .. (#v - 400) .. " bytes ]]"
+			end
+			return quoteStr(v)
+		elseif t == "Instance" then
+			return instancePath(v)
+		elseif t == "Vector3" then
+			return string.format("Vector3.new(%s, %s, %s)", tostring(v.X), tostring(v.Y), tostring(v.Z))
+		elseif t == "Vector2" then
+			return string.format("Vector2.new(%s, %s)", tostring(v.X), tostring(v.Y))
+		elseif t == "CFrame" then
+			local comps = { v:GetComponents() }
+			for i, c in ipairs(comps) do
+				comps[i] = tostring(c)
+			end
+			return "CFrame.new(" .. table.concat(comps, ", ") .. ")"
+		elseif t == "Color3" then
+			return string.format("Color3.fromRGB(%d, %d, %d)", math.floor(v.R * 255 + 0.5), math.floor(v.G * 255 + 0.5), math.floor(v.B * 255 + 0.5))
+		elseif t == "UDim2" then
+			return string.format("UDim2.new(%s, %s, %s, %s)", tostring(v.X.Scale), tostring(v.X.Offset), tostring(v.Y.Scale), tostring(v.Y.Offset))
+		elseif t == "UDim" then
+			return string.format("UDim.new(%s, %s)", tostring(v.Scale), tostring(v.Offset))
+		elseif t == "BrickColor" then
+			return string.format("BrickColor.new(%s)", quoteStr(tostring(v.Name)))
+		elseif t == "EnumItem" then
+			return tostring(v)
+		elseif t == "NumberRange" then
+			return string.format("NumberRange.new(%s, %s)", tostring(v.Min), tostring(v.Max))
+		elseif t == "buffer" then
+			return string.format("buffer.create(%d)", buffer.len(v))
+		elseif t == "function" then
+			return "function() end"
+		elseif t == "table" then
+			if seen[v] then
+				return "{ --[[ cyclic ]] }"
+			end
+			if depth >= 4 then
+				return "{ --[[ max depth ]] }"
+			end
+			seen[v] = true
+			local pad = string.rep("\t", depth + 1)
+			local closePad = string.rep("\t", depth)
+			local parts, count = {}, 0
+			for k, val in pairs(v) do
+				count += 1
+				if count > 40 then
+					table.insert(parts, pad .. "--[[ ... more keys ]]")
+					break
+				end
+				local keyStr
+				if type(k) == "number" then
+					keyStr = "[" .. tostring(k) .. "]"
+				elseif isIdent(k) then
+					keyStr = k
+				else
+					keyStr = "[" .. serializeValue(k, depth + 1, seen) .. "]"
+				end
+				table.insert(parts, string.format("%s%s = %s,", pad, keyStr, serializeValue(val, depth + 1, seen)))
+			end
+			seen[v] = nil
+			if #parts == 0 then
+				return "{}"
+			end
+			return "{\n" .. table.concat(parts, "\n") .. "\n" .. closePad .. "}"
+		end
+		return string.format("nil --[[ %s: %s ]]", t, tostring(v))
+	end
+
+	local state = {
+		installed = false,
+		seq = 0,
+		entries = {},       -- ordered oldest -> newest
+		byLabel = {},       -- [label] -> entry
+		shownLabels = {},
+		selectedLabel = nil,
+		blocked = setmetatable({}, { __mode = "k" }),
+		ignoredNames = {},
+		inInternal = false,
+		inHookDepth = 0,
+		queue = {},
+		flushing = false,
+		s2cConns = {},
+		s2cHooked = setmetatable({}, { __mode = "k" }),
+		descendantConn = nil,
+		oldNamecall = nil,
+		directHooks = {},
+	}
+
+	local function refreshIgnoreSet()
+		table.clear(state.ignoredNames)
+		local raw = tostring(Zenith.values[N.ignoreList] or "")
+		for item in string.gmatch(raw, "[^,]+") do
+			local trimmed = string.lower((string.gsub(item, "^%s*(.-)%s*$", "%1")))
+			if trimmed ~= "" then
+				state.ignoredNames[trimmed] = true
+			end
+		end
+	end
+
+	local function isIgnoredName(name)
+		return state.ignoredNames[string.lower(tostring(name or ""))] == true
+	end
+
+	local function formatCallCode(entry)
+		local lines = {}
+		local dirTag = entry.dir == "S2C" and "S->C" or "C->S"
+		local blkTag = entry.blocked and " [BLOCKED]" or ""
+		table.insert(lines, string.format("-- [%s] %s:%s | %s%s", dirTag, entry.className, entry.method, entry.timeStr, blkTag))
+		if entry.caller and entry.caller ~= "" then
+			table.insert(lines, "-- Caller: " .. entry.caller)
+		end
+		if flag(N.showStack, false) and entry.stack and entry.stack ~= "" then
+			table.insert(lines, "-- Stack:")
+			for ln in string.gmatch(entry.stack, "[^\n]+") do
+				table.insert(lines, "--   " .. ln)
+			end
+		end
+
+		local argCount = entry.args.n or #entry.args
+		if argCount == 0 then
+			if entry.dir == "S2C" then
+				table.insert(lines, string.format("-- Received by %s.%s()", entry.path, entry.method))
+			else
+				table.insert(lines, string.format("%s:%s()", entry.path, entry.method))
+			end
+		else
+			table.insert(lines, "local args = {")
+			for i = 1, argCount do
+				table.insert(lines, string.format("\t[%d] = %s,", i, serializeValue(entry.args[i], 1, {})))
+			end
+			table.insert(lines, "}")
+			if entry.dir == "S2C" then
+				table.insert(lines, string.format("-- Received by %s.%s(table.unpack(args, 1, %d))", entry.path, entry.method, argCount))
+			else
+				table.insert(lines, string.format("%s:%s(table.unpack(args, 1, %d))", entry.path, entry.method, argCount))
+			end
+		end
+
+		if entry.returns then
+			local rCount = entry.returns.n or #entry.returns
+			table.insert(lines, "")
+			if rCount == 0 then
+				table.insert(lines, "-- Return: (void)")
+			else
+				table.insert(lines, "-- Return Values:")
+				for i = 1, rCount do
+					table.insert(lines, string.format("--   [%d] = %s", i, serializeValue(entry.returns[i], 1, {})))
+				end
+			end
+		end
+
+		return table.concat(lines, "\n")
+	end
+
+	local function renderSelected()
+		local label = state.selectedLabel or Zenith.values[N.list]
+		local entry = label and state.byLabel[label]
+		local out = Zenith.outputs and Zenith.outputs[N.log]
+		if not out then
+			return
+		end
+		if not entry then
+			out.setText("-- Selecciona una llamada capturada en Remote List.")
+			return
+		end
+		out.setText(formatCallCode(entry))
+	end
+
+	local function applyListFilter()
+		local filter = tostring(Zenith.values[N.filter] or "All")
+		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
+		table.clear(state.shownLabels)
+		for i = #state.entries, 1, -1 do
+			local e = state.entries[i]
+			if not isIgnoredName(e.name) then
+				local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
+				local searchOk = (needle == "") or string.find(string.lower(e.label), needle, 1, true) ~= nil or string.find(string.lower(e.path), needle, 1, true) ~= nil
+				if classOk and searchOk then
+					table.insert(state.shownLabels, e.label)
+				end
+			end
+		end
+		Zenith.setItems(N.list, state.shownLabels)
+		if not state.selectedLabel and state.shownLabels[1] then
+			state.selectedLabel = state.shownLabels[1]
+			Zenith.values[N.list] = state.selectedLabel
+		end
+		renderSelected()
+	end
+
+	local function flushQueue()
+		state.flushing = false
+		if #state.queue == 0 then
+			return
+		end
+		local batch = state.queue
+		state.queue = {}
+
+		local maxCap = math.max(10, math.floor(num(N.maxLogs, 300)))
+		for _, item in ipairs(batch) do
+			local rName = tostring(safeRead(item.remote, "Name") or "?")
+			if not isIgnoredName(rName) then
+				state.seq += 1
+				local path = instancePath(item.remote)
+				local dirTag = item.dir == "S2C" and "S->C" or "C->S"
+				local blkTag = item.blocked and "[BLK] " or ""
+				local label = string.format("#%03d [%s] %s%s | %s", state.seq, dirTag, blkTag, item.method, rName)
+				local callerStr = ""
+				if item.callerInst then
+					callerStr = instancePath(item.callerInst)
+				end
+				local entry = {
+					id = state.seq,
+					label = label,
+					remote = item.remote,
+					name = rName,
+					className = item.className,
+					method = item.method,
+					dir = item.dir,
+					path = path,
+					args = item.args,
+					returns = item.returns,
+					blocked = item.blocked,
+					caller = callerStr,
+					stack = item.stack,
+					timeStr = item.timeStr,
+				}
+				table.insert(state.entries, entry)
+				state.byLabel[label] = entry
+				if flag(N.autoScroll, true) then
+					state.selectedLabel = label
+					Zenith.values[N.list] = label
+				end
+			end
+		end
+
+		while #state.entries > maxCap do
+			local oldest = table.remove(state.entries, 1)
+			if oldest then
+				state.byLabel[oldest.label] = nil
+				if state.selectedLabel == oldest.label then
+					state.selectedLabel = nil
+				end
+			end
+		end
+
+		setVal(N.calls, state.seq)
+		applyListFilter()
+	end
+
+	local function enqueue(item)
+		table.insert(state.queue, item)
+		if not state.flushing then
+			state.flushing = true
+			task.defer(flushQueue)
+		end
+	end
+
+	local getCallerFn = Zenith.capFn("getcallingscript")
+	local function captureCallerInfo()
+		local callerInst = nil
+		if getCallerFn then
+			local ok, s = pcall(getCallerFn)
+			if ok and typeof(s) == "Instance" then
+				callerInst = s
+			end
+		end
+		local stack = nil
+		if flag(N.showStack, false) and type(debug) == "table" and type(debug.traceback) == "function" then
+			local ok, tb = pcall(debug.traceback, "", 3)
+			if ok and type(tb) == "string" then
+				stack = tb
+			end
+		end
+		return callerInst, stack
+	end
+
+	local function timeStamp()
+		local ok, s = pcall(os.date, "%H:%M:%S")
+		return ok and s or "00:00:00"
+	end
+
+	local function handleOutbound(isFromNamecall, self, method, origFn, ...)
+		if state.inInternal or typeof(self) ~= "Instance" then
+			return origFn(self, ...)
+		end
+		local allowed = OUTBOUND_CLASSES[method]
+		if not allowed then
+			return origFn(self, ...)
+		end
+		local cls = safeRead(self, "ClassName")
+		if not cls or not allowed[cls] then
+			return origFn(self, ...)
+		end
+
+		local isBlocked = state.blocked[self] == true
+		local shouldLog = flag(N.enabled, false) and flag(N.c2s, true)
+
+		-- Evitar doble registro si __namecall internamente invoca el metodo Lua hookeado
+		if state.inHookDepth > 0 then
+			if isBlocked then
+				return nil
+			end
+			return origFn(self, ...)
+		end
+
+		local callerInst, stack
+		local packedArgs
+		if shouldLog then
+			callerInst, stack = captureCallerInfo()
+			packedArgs = table.pack(...)
+		end
+
+		if isBlocked then
+			if shouldLog then
+				enqueue({
+					remote = self,
+					className = cls,
+					method = method,
+					dir = "C2S",
+					args = packedArgs,
+					blocked = true,
+					callerInst = callerInst,
+					stack = stack,
+					timeStr = timeStamp(),
+				})
+			end
+			return nil
+		end
+
+		local wantRet = shouldLog and flag(N.logReturn, false) and (method == "InvokeServer" or method == "Invoke")
+		state.inHookDepth += 1
+		if wantRet then
+			local ret = table.pack(origFn(self, ...))
+			state.inHookDepth -= 1
+			enqueue({
+				remote = self,
+				className = cls,
+				method = method,
+				dir = "C2S",
+				args = packedArgs,
+				returns = ret,
+				blocked = false,
+				callerInst = callerInst,
+				stack = stack,
+				timeStr = timeStamp(),
+			})
+			return table.unpack(ret, 1, ret.n)
+		end
+
+		if shouldLog then
+			enqueue({
+				remote = self,
+				className = cls,
+				method = method,
+				dir = "C2S",
+				args = packedArgs,
+				blocked = false,
+				callerInst = callerInst,
+				stack = stack,
+				timeStr = timeStamp(),
+			})
+		end
+		local ok, res = pcall(function(...)
+			return table.pack(origFn(self, ...))
+		end, ...)
+		state.inHookDepth -= 1
+		if not ok then
+			error(res, 2)
+		end
+		return table.unpack(res, 1, res.n)
+	end
+
+	local function attachS2CInstance(inst)
+		if state.s2cHooked[inst] or typeof(inst) ~= "Instance" then
+			return
+		end
+		local cls = safeRead(inst, "ClassName")
+		if cls == "RemoteEvent" or cls == "UnreliableRemoteEvent" then
+			local sig = safeRead(inst, "OnClientEvent")
+			if sig and type(sig.Connect) == "function" then
+				state.s2cHooked[inst] = true
+				local ok, conn = pcall(sig.Connect, sig, function(...)
+					if state.inInternal or not (flag(N.enabled, false) and flag(N.s2c, true)) then
+						return
+					end
+					enqueue({
+						remote = inst,
+						className = cls,
+						method = "OnClientEvent",
+						dir = "S2C",
+						args = table.pack(...),
+						blocked = false,
+						timeStr = timeStamp(),
+					})
+				end)
+				if ok and conn then
+					table.insert(state.s2cConns, conn)
+				end
+			end
+		elseif cls == "BindableEvent" then
+			local sig = safeRead(inst, "Event")
+			if sig and type(sig.Connect) == "function" then
+				state.s2cHooked[inst] = true
+				local ok, conn = pcall(sig.Connect, sig, function(...)
+					if state.inInternal or not (flag(N.enabled, false) and flag(N.s2c, true)) then
+						return
+					end
+					enqueue({
+						remote = inst,
+						className = cls,
+						method = "Event",
+						dir = "S2C",
+						args = table.pack(...),
+						blocked = false,
+						timeStr = timeStamp(),
+					})
+				end)
+				if ok and conn then
+					table.insert(state.s2cConns, conn)
+				end
+			end
+		end
+	end
+
+	local function disconnectS2C()
+		for i = #state.s2cConns, 1, -1 do
+			local c = state.s2cConns[i]
+			pcall(function()
+				c:Disconnect()
+			end)
+			state.s2cConns[i] = nil
+		end
+		if state.descendantConn then
+			pcall(function()
+				state.descendantConn:Disconnect()
+			end)
+			state.descendantConn = nil
+		end
+		state.s2cHooked = setmetatable({}, { __mode = "k" })
+	end
+
+	local function syncS2C()
+		disconnectS2C()
+		if not (flag(N.enabled, false) and flag(N.s2c, true)) then
+			return
+		end
+		local okD, desc = pcall(game.GetDescendants, game)
+		if okD and type(desc) == "table" then
+			for _, inst in ipairs(desc) do
+				attachS2CInstance(inst)
+			end
+		end
+		local getNil = Zenith.cap("getnilinstances") and Zenith.capFn("getnilinstances")
+		if getNil then
+			local okn, nils = pcall(getNil)
+			if okn and type(nils) == "table" then
+				for _, inst in ipairs(nils) do
+					attachS2CInstance(inst)
+				end
+			end
+		end
+		local okC, conn = pcall(game.DescendantAdded.Connect, game.DescendantAdded, function(inst)
+			attachS2CInstance(inst)
+		end)
+		if okC and conn then
+			state.descendantConn = conn
+		end
+	end
+
+	local function installHooks()
+		if state.installed then
+			return true
+		end
+		local wrapC = Zenith.capFn("newcclosure") or function(f) return f end
+		local getNCM = Zenith.capFn("getnamecallmethod")
+		local hookMM = Zenith.capFn("hookmetamethod")
+		local hookFn = Zenith.capFn("hookfunction")
+
+		if hookMM and getNCM then
+			local ok, old = pcall(hookMM, game, "__namecall", wrapC(function(self, ...)
+				local method = getNCM()
+				return handleOutbound(true, self, method, state.oldNamecall, ...)
+			end))
+			if ok and type(old) == "function" then
+				state.oldNamecall = old
+				state.installed = true
+			else
+				Zenith.log("Warn", "RSpy: hookmetamethod fallo (" .. tostring(old) .. ")")
+			end
+		elseif Zenith.cap("getrawmetatable") and getNCM then
+			local getRMT = Zenith.capFn("getrawmetatable")
+			local setRO = typeof(setreadonly) == "function" and setreadonly or nil
+			local ok, mt = pcall(getRMT, game)
+			if ok and type(mt) == "table" and type(mt.__namecall) == "function" then
+				state.oldNamecall = mt.__namecall
+				if setRO then pcall(setRO, mt, false) end
+				mt.__namecall = wrapC(function(self, ...)
+					local method = getNCM()
+					return handleOutbound(true, self, method, state.oldNamecall, ...)
+				end)
+				if setRO then pcall(setRO, mt, true) end
+				state.installed = true
+			end
+		end
+
+		if hookFn then
+			local specs = {
+				{ "RemoteEvent", "FireServer" },
+				{ "UnreliableRemoteEvent", "FireServer" },
+				{ "RemoteFunction", "InvokeServer" },
+				{ "BindableEvent", "Fire" },
+				{ "BindableFunction", "Invoke" },
+			}
+			local hookedTargets = {}
+			for _, sp in ipairs(specs) do
+				local cls, method = sp[1], sp[2]
+				local okI, dummy = pcall(Instance.new, cls)
+				if okI and dummy then
+					local fn = safeRead(dummy, method)
+					if type(fn) == "function" and not hookedTargets[fn] then
+						hookedTargets[fn] = true
+						local record = { target = fn, old = nil }
+						local okH, old = pcall(hookFn, fn, wrapC(function(self, ...)
+							return handleOutbound(false, self, method, record.old, ...)
+						end))
+						if okH and type(old) == "function" then
+							record.old = old
+							table.insert(state.directHooks, record)
+							state.installed = true
+						end
+					end
+					pcall(function()
+						dummy:Destroy()
+					end)
+				end
+			end
+		end
+
+		return state.installed
+	end
+
+	local function uninstallHooks()
+		disconnectS2C()
+		local hookMM = Zenith.capFn("hookmetamethod")
+		if state.oldNamecall then
+			if hookMM then
+				pcall(hookMM, game, "__namecall", state.oldNamecall)
+			elseif Zenith.cap("getrawmetatable") then
+				local getRMT = Zenith.capFn("getrawmetatable")
+				local setRO = typeof(setreadonly) == "function" and setreadonly or nil
+				local ok, mt = pcall(getRMT, game)
+				if ok and type(mt) == "table" then
+					if setRO then pcall(setRO, mt, false) end
+					mt.__namecall = state.oldNamecall
+					if setRO then pcall(setRO, mt, true) end
+				end
+			end
+			state.oldNamecall = nil
+		end
+		local hookFn = Zenith.capFn("hookfunction")
+		if hookFn then
+			for _, rec in ipairs(state.directHooks) do
+				if rec.target and rec.old then
+					pcall(hookFn, rec.target, rec.old)
+				end
+			end
+		end
+		table.clear(state.directHooks)
+		state.installed = false
+	end
+
+	Zenith.RSpy = state
+
+	Zenith.register("RSpy", {
+		requires = {},
+		optional = { "hookmetamethod", "hookfunction", "getrawmetatable", "getnamecallmethod", "newcclosure", "getcallingscript", "getnilinstances", "setclipboard" },
+		init = function()
+			refreshIgnoreSet()
+
+			hookUI(N.enabled, function(on)
+				if on then
+					local ok = installHooks()
+					syncS2C()
+					Zenith.log(ok and "Info" or "Warn", ok and "RSpy: captura en vivo activada" or "RSpy: sin soporte de hooks (__namecall/hookfunction), solo OnClientEvent")
+				else
+					disconnectS2C()
+					Zenith.log("Info", "RSpy: captura pausada")
+				end
+			end)
+
+			hookUI(N.s2c, function()
+				syncS2C()
+			end)
+
+			hookUI(N.list, function(label)
+				state.selectedLabel = label
+				renderSelected()
+			end)
+
+			hookUI(N.filter, applyListFilter)
+			hookUI(N.search, applyListFilter)
+			hookUI(N.ignoreList, function()
+				refreshIgnoreSet()
+				applyListFilter()
+			end)
+			hookUI(N.showStack, renderSelected)
+
+			Zenith.actions[N.clear] = function()
+				state.seq = 0
+				table.clear(state.entries)
+				table.clear(state.byLabel)
+				table.clear(state.shownLabels)
+				table.clear(state.queue)
+				state.selectedLabel = nil
+				setVal(N.calls, 0)
+				Zenith.setItems(N.list, {})
+				local out = Zenith.outputs and Zenith.outputs[N.log]
+				if out then
+					out.clear()
+				end
+				Zenith.log("Info", "RSpy: logs limpiados")
+			end
+
+			Zenith.actions[N.copyCode] = function()
+				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				if not entry then
+					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+				end
+				local ok = Zenith.copy(formatCallCode(entry))
+				Zenith.log(ok and "Info" or "Warn", ok and "RSpy: codigo copiado" or "Clipboard no soportado")
+			end
+
+			Zenith.actions[N.copyPath] = function()
+				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				if not entry then
+					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+				end
+				local ok = Zenith.copy(entry.path)
+				Zenith.log(ok and "Info" or "Warn", ok and "RSpy: ruta copiada" or "Clipboard no soportado")
+			end
+
+			Zenith.actions[N.repeatCall] = function()
+				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				if not entry or not entry.remote then
+					return Zenith.log("Warn", "RSpy: selecciona una llamada valida")
+				end
+				if entry.dir == "S2C" then
+					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
+				end
+				task.spawn(function()
+					state.inInternal = true
+					local fn = safeRead(entry.remote, entry.method)
+					local ok, err = pcall(function()
+						if type(fn) ~= "function" then
+							error("metodo no encontrado: " .. tostring(entry.method))
+						end
+						local n = entry.args.n or #entry.args
+						fn(entry.remote, table.unpack(entry.args, 1, n))
+					end)
+					state.inInternal = false
+					Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
+				end)
+			end
+
+			Zenith.actions[N.blockRemote] = function()
+				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				if not entry or not entry.remote then
+					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
+				end
+				local nowBlocked = not (state.blocked[entry.remote] == true)
+				state.blocked[entry.remote] = nowBlocked or nil
+				Zenith.log("Info", string.format("RSpy: %s %s", entry.name, nowBlocked and "BLOQUEADO" or "desbloqueado"))
+			end
+
+			Zenith.actions[N.ignoreRemote] = function()
+				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				if not entry then
+					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
+				end
+				local cur = tostring(Zenith.values[N.ignoreList] or "")
+				if not isIgnoredName(entry.name) then
+					local nextStr = (cur ~= "" and (cur .. ", " .. entry.name)) or entry.name
+					setVal(N.ignoreList, nextStr)
+					refreshIgnoreSet()
+					applyListFilter()
+					Zenith.log("Info", "RSpy: ignorado " .. entry.name)
+				end
+			end
+
+			Zenith.log("Info", "RSpy listo: activa 'Remote Spy' para capturar")
+		end,
+		stop = function()
+			uninstallHooks()
+			for name, s in pairs(savedHooks) do
+				Zenith.hooks[name] = s.prev
+			end
+			table.clear(savedHooks)
+			for _, k in ipairs({ N.clear, N.copyCode, N.copyPath, N.repeatCall, N.blockRemote, N.ignoreRemote }) do
+				Zenith.actions[k] = nil
+			end
+		end,
+	})
+end
+
 local function initializeScript()
 	if typeof(shared) == "table" and shared.ZenithGui then
 		pcall(function()
