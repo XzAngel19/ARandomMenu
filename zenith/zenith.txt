@@ -1502,6 +1502,9 @@ do
 		{ "getnamecallmethod", { "getnamecallmethod" } },
 		{ "checkcaller", { "checkcaller" } },
 		{ "newcclosure", { "newcclosure" } },
+		{ "getcallingscript", { "getcallingscript" } },
+		{ "getcallbackvalue", { "getcallbackvalue", "getcallbackmember" } },
+		{ "getcallbackmember", { "getcallbackmember" } },
 		{ "getgc", { "getgc" } },
 		{ "getconnections", { "getconnections" } },
 		{ "gethui", { "gethui" } },
@@ -1680,11 +1683,18 @@ do
 
 	Zenith.actions["Dump Signals"] = function()
 		local out = Zenith.outputs and Zenith.outputs["Signal Log"]
-		if not out then
-			return
-		end
+		local count = 0
 		for s in pairs(registry) do
-			out.push(string.format("%s: %d listeners", s.name, #s.listeners))
+			count += 1
+			local msg = string.format("%s: %d listeners", s.name, #s.listeners)
+			if out then
+				out.push(msg)
+			else
+				Zenith.log("Info", "[Signal] " .. msg)
+			end
+		end
+		if count == 0 and not out then
+			Zenith.log("Info", "[Signal] Sin senales registradas")
 		end
 	end
 
@@ -6549,23 +6559,59 @@ do
 		}
 	end
 
+	local function tryNativeDecompile(inst, reason)
+		local nativeDec = Zenith.cap("decompile") and Zenith.capFn("decompile")
+		if not nativeDec or typeof(inst) ~= "Instance" then
+			return nil
+		end
+		local ok, src = pcall(nativeDec, inst)
+		if ok and type(src) == "string" and src ~= "" then
+			local out = {
+				"-- [Fallback] Executor decompile(): " .. tostring(reason),
+				"",
+			}
+			for _, ln in ipairs(string.split((string.gsub(src, "\r\n", "\n")), "\n")) do
+				out[#out + 1] = ln
+			end
+			return out
+		end
+		return nil
+	end
+
 	function Dec.render()
 		local cur = Dec.current
 		if not cur then
 			return
 		end
 		local mode = string.lower(tostring(Zenith.values[N.mode] or "bytecode"))
+		if not cur.bc then
+			local fb = tryNativeDecompile(cur.inst, "sin bytecode")
+			if fb then
+				publish(fb, "lua")
+			else
+				publish({ "-- Sin bytecode y decompile() no disponible o fallo" })
+			end
+			return
+		end
 		local builder = BUILD[mode]
 		if not builder then
 			publish({ "-- Mode '" .. mode .. "' no esta disponible todavia (Fase 2). Cambia Decompile Mode a Bytecode, Function, Constants, Upvalues o Protos." })
 			return
 		end
 		local ok, res = pcall(builder, cur, viewOpts())
-		if ok then
+		if ok and type(res) == "table" then
 			publish(res, mode == "source" and "lua" or "txt")
-		else
-			publish({ "-- Error al generar la vista: " .. tostring(res) })
+			return
 		end
+		local reason = ok and "resultado invalido" or res
+		if mode == "source" then
+			local fb = tryNativeDecompile(cur.inst, reason)
+			if fb then
+				publish(fb, "lua")
+				return
+			end
+		end
+		publish({ "-- Error al generar la vista: " .. tostring(reason) })
 	end
 
 	local function fetch(inst)
@@ -6587,12 +6633,28 @@ do
 		end
 		local bytes, err = fetch(inst)
 		if not bytes then
+			local fb = tryNativeDecompile(inst, err)
+			if fb then
+				decompiledCount += 1
+				set(N.decompiled, decompiledCount)
+				Dec.current = { label = label, inst = inst, bc = nil, size = 0, class = inst.ClassName }
+				publish(fb, "lua")
+				return
+			end
 			Dec.current = nil
 			publish({ "-- " .. label, "-- No se pudo obtener el bytecode: " .. tostring(err) })
 			return
 		end
 		local ok, bc = pcall(parseCached, bytes)
 		if not ok then
+			local fb = tryNativeDecompile(inst, bc)
+			if fb then
+				decompiledCount += 1
+				set(N.decompiled, decompiledCount)
+				Dec.current = { label = label, inst = inst, bc = nil, size = #bytes, class = inst.ClassName }
+				publish(fb, "lua")
+				return
+			end
 			Dec.current = nil
 			publish({ "-- " .. label, "-- Error al parsear el bytecode: " .. tostring(bc) })
 			return
@@ -7038,9 +7100,12 @@ do
 		flushing = false,
 		s2cConns = {},
 		s2cHooked = setmetatable({}, { __mode = "k" }),
+		wrappedCallbacks = setmetatable({}, { __mode = "k" }),
 		descendantConn = nil,
 		oldNamecall = nil,
 		namecallRec = nil,
+		oldNewindex = nil,
+		newindexRec = nil,
 		directHooks = {},
 	}
 
@@ -7237,8 +7302,8 @@ do
 		end
 	end
 
-	local getCallerFn = Zenith.capFn("getcallingscript")
 	local function captureCallerInfo()
+		local getCallerFn = Zenith.capFn("getcallingscript")
 		local callerInst = nil
 		if getCallerFn then
 			local ok, s = pcall(getCallerFn)
@@ -7345,11 +7410,237 @@ do
 		return table.unpack(res, 1, res.n)
 	end
 
+	----------------------------------------------------------------
+	-- OnClientInvoke / OnInvoke (callback members)
+	----------------------------------------------------------------
+	local CALLBACK_SOURCES = {
+		RemoteFunction = "OnClientInvoke",
+		BindableFunction = "OnInvoke",
+	}
+	local function getCallbackReader()
+		return Zenith.capFn("getcallbackvalue") or Zenith.capFn("getcallbackmember")
+	end
+
+	local function readCallback(inst, prop)
+		local fnReader = getCallbackReader()
+		if not fnReader then
+			return nil
+		end
+		local ok, fn = pcall(fnReader, inst, prop)
+		if ok and type(fn) == "function" then
+			return fn
+		end
+		return nil
+	end
+
+	-- Assign a callback without our own __newindex hook intercepting it
+	local function setCallbackRaw(inst, prop, fn)
+		local thread = coroutine.running() or MAIN_THREAD
+		local prevFlag = state.internal[thread]
+		state.internal[thread] = true
+		local ok = pcall(function()
+			inst[prop] = fn
+		end)
+		state.internal[thread] = prevFlag
+		return ok
+	end
+
+	local function makeCallbackWrapper(inst, cls, prop, origFn)
+		local prev = state.wrappedCallbacks[inst]
+		if prev and prev.rec.active then
+			if origFn == prev.wrapper or origFn == prev.orig then
+				return prev.wrapper
+			end
+			prev.rec.active = false -- replaced by a new callback; old wrapper becomes pass-through
+		end
+
+		local rec = { active = true, orig = origFn }
+		local function wrapper(...)
+			if not rec.active or stopped or not (flag(N.enabled, false) and flag(N.s2c, true)) then
+				return rec.orig(...)
+			end
+
+			local item = {
+				remote = inst,
+				className = cls,
+				method = prop,
+				dir = "S2C",
+				args = table.pack(...),
+				blocked = false,
+				timeStr = timeStamp(),
+			}
+
+			local wantRet = flag(N.logReturn, false)
+			if not wantRet then
+				enqueue(item)
+			end
+
+			local ok, res = pcall(callOrig, rec.orig, ...)
+			if wantRet then
+				if ok then
+					item.returns = res
+				end
+				enqueue(item)
+			end
+			if not ok then
+				error(res, 0)
+			end
+			return table.unpack(res, 1, res.n)
+		end
+
+		local wrapC = Zenith.capFn("newcclosure")
+		local finalWrapper = wrapC and wrapC(wrapper) or wrapper
+		state.wrappedCallbacks[inst] = { prop = prop, orig = origFn, wrapper = finalWrapper, rec = rec }
+		return finalWrapper
+	end
+
+	local function attachCallbackInstance(inst, cls)
+		local cbProp = CALLBACK_SOURCES[cls]
+		if not cbProp or state.wrappedCallbacks[inst] then
+			return
+		end
+		local origFn = readCallback(inst, cbProp)
+		if not origFn then
+			return
+		end
+		local wrapped = makeCallbackWrapper(inst, cls, cbProp, origFn)
+		if not setCallbackRaw(inst, cbProp, wrapped) then
+			local e = state.wrappedCallbacks[inst]
+			if e then
+				e.rec.active = false
+			end
+			state.wrappedCallbacks[inst] = nil
+		end
+	end
+
+	local function restoreWrappedCallbacks()
+		local list = {}
+		for inst, info in pairs(state.wrappedCallbacks) do
+			list[#list + 1] = { inst, info }
+		end
+		state.wrappedCallbacks = setmetatable({}, { __mode = "k" })
+		local hasReader = getCallbackReader() ~= nil
+		for _, p in ipairs(list) do
+			local inst, info = p[1], p[2]
+			info.rec.active = false
+			local shouldRestore = true
+			if hasReader then
+				-- only restore if the game hasn't replaced/cleared it since
+				shouldRestore = readCallback(inst, info.prop) == info.wrapper
+			end
+			if shouldRestore then
+				setCallbackRaw(inst, info.prop, info.orig)
+			end
+		end
+	end
+
+	local function handleNewindex(rec, self, key, value)
+		local oldFn = rec.old
+		-- cheapest checks first: this runs on EVERY property write in the game
+		if (key ~= "OnClientInvoke" and key ~= "OnInvoke") or not rec.active or stopped then
+			return oldFn(self, key, value)
+		end
+		if typeof(self) ~= "Instance" or state.internal[coroutine.running() or MAIN_THREAD] then
+			return oldFn(self, key, value)
+		end
+		local cls = safeRead(self, "ClassName")
+		if not cls or CALLBACK_SOURCES[cls] ~= key then
+			return oldFn(self, key, value)
+		end
+
+		if type(value) == "function" and flag(N.enabled, false) and flag(N.s2c, true) then
+			return oldFn(self, key, (makeCallbackWrapper(self, cls, key, value)))
+		end
+
+		local existing = state.wrappedCallbacks[self]
+		if existing then
+			existing.rec.active = false
+			state.wrappedCallbacks[self] = nil
+		end
+		return oldFn(self, key, value)
+	end
+
+	local function installNewindexHook(wrapC)
+		if state.newindexRec then
+			return true
+		end
+		local hookMM = Zenith.capFn("hookmetamethod")
+
+		if hookMM then
+			local rec = { active = true, old = nil }
+			local ok, old = pcall(hookMM, game, "__newindex", wrapC(function(self, key, value)
+				return handleNewindex(rec, self, key, value)
+			end))
+			if ok and type(old) == "function" then
+				rec.old = old
+				state.oldNewindex = old
+				state.newindexRec = rec
+				return true
+			end
+			rec.active = false
+		end
+
+		if Zenith.cap("getrawmetatable") then
+			local getRMT = Zenith.capFn("getrawmetatable")
+			local setRO = typeof(setreadonly) == "function" and setreadonly or nil
+			local ok, mt = pcall(getRMT, game)
+			if ok and type(mt) == "table" and type(mt.__newindex) == "function" then
+				local rec = { active = true, old = mt.__newindex }
+				if setRO then pcall(setRO, mt, false) end
+				local okSet = pcall(function()
+					mt.__newindex = wrapC(function(self, key, value)
+						return handleNewindex(rec, self, key, value)
+					end)
+				end)
+				if setRO then pcall(setRO, mt, true) end
+				if okSet then
+					state.oldNewindex = rec.old
+					state.newindexRec = rec
+					return true
+				end
+				rec.active = false
+			end
+		end
+		return false
+	end
+
+	local function uninstallNewindexHook()
+		if state.newindexRec then
+			state.newindexRec.active = false -- wrapper becomes pass-through immediately
+		end
+		restoreWrappedCallbacks()
+		if state.oldNewindex then
+			local hookMM = Zenith.capFn("hookmetamethod")
+			if hookMM then
+				pcall(hookMM, game, "__newindex", state.oldNewindex)
+			elseif Zenith.cap("getrawmetatable") then
+				local getRMT = Zenith.capFn("getrawmetatable")
+				local setRO = typeof(setreadonly) == "function" and setreadonly or nil
+				local ok, mt = pcall(getRMT, game)
+				if ok and type(mt) == "table" then
+					if setRO then pcall(setRO, mt, false) end
+					pcall(function()
+						mt.__newindex = state.oldNewindex
+					end)
+					if setRO then pcall(setRO, mt, true) end
+				end
+			end
+			state.oldNewindex = nil
+		end
+		state.newindexRec = nil
+	end
+
 	local function attachS2CInstance(inst)
-		if typeof(inst) ~= "Instance" or state.s2cHooked[inst] then
+		if typeof(inst) ~= "Instance" then
 			return
 		end
 		local cls = safeRead(inst, "ClassName")
+		if cls and CALLBACK_SOURCES[cls] then
+			return attachCallbackInstance(inst, cls)
+		end
+		if state.s2cHooked[inst] then
+			return
+		end
 		local sigName = cls and S2C_SOURCES[cls]
 		if not sigName then
 			return
@@ -7408,6 +7699,7 @@ do
 			s2c = flag(N.s2c, true)
 		end
 		if not (en and s2c) then
+			restoreWrappedCallbacks()
 			return
 		end
 		local okD, desc = pcall(game.GetDescendants, game)
@@ -7457,7 +7749,8 @@ do
 				rec.active = false
 				Zenith.log("Warn", "RSpy: hookmetamethod fallo (" .. tostring(old) .. ")")
 			end
-		elseif Zenith.cap("getrawmetatable") and getNCM then
+		end
+		if not state.namecallRec and Zenith.cap("getrawmetatable") and getNCM then
 			local getRMT = Zenith.capFn("getrawmetatable")
 			local setRO = typeof(setreadonly) == "function" and setreadonly or nil
 			local ok, mt = pcall(getRMT, game)
@@ -7517,11 +7810,16 @@ do
 			end
 		end
 
+		if installNewindexHook(wrapC) then
+			state.installed = true
+		end
+
 		return state.installed
 	end
 
 	local function uninstallHooks()
 		disconnectS2C()
+		uninstallNewindexHook()
 
 		-- Deactivate first: any wrapper still alive becomes a pure pass-through
 		if state.namecallRec then
@@ -7571,7 +7869,7 @@ do
 
 	Zenith.register("RSpy", {
 		requires = {},
-		optional = { "hookmetamethod", "hookfunction", "getrawmetatable", "getnamecallmethod", "newcclosure", "getcallingscript", "getnilinstances", "setclipboard" },
+		optional = { "hookmetamethod", "hookfunction", "getrawmetatable", "getnamecallmethod", "newcclosure", "getcallingscript", "getnilinstances", "getcallbackvalue", "getcallbackmember", "setclipboard" },
 		init = function()
 			stopped = false
 			Zenith.RSpy = state
@@ -7584,6 +7882,7 @@ do
 					Zenith.log(ok and "Info" or "Warn", ok and "RSpy: captura en vivo activada" or "RSpy: sin soporte de hooks (__namecall/hookfunction), solo OnClientEvent")
 				else
 					disconnectS2C()
+					restoreWrappedCallbacks()
 					Zenith.log("Info", "RSpy: captura pausada")
 				end
 			end
@@ -8343,6 +8642,7 @@ local function initializeScript()
 	addList(coreRight, "Core Services", { "Players", "Workspace", "ReplicatedStorage", "RunService", "UserInputService", "TweenService", "HttpService", "Lighting", "CoreGui", "TeleportService" }, 100)
 	addButton(coreRight, "Refresh Services")
 	addButton(coreRight, "Cleanup Connections")
+	addButton(coreRight, "Reload Zenith")
 	addOutput(coreRight, "Boot Log", 85)
 
 	addSection(coreRight, "Menu & Configs")
