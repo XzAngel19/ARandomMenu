@@ -1,0 +1,112 @@
+return function(CFG, Structurer, Lifter, Phase1)
+	local failures, total = {}, 0
+
+	local function check(cond, msg)
+		total += 1
+		if not cond then
+			failures[#failures + 1] = msg
+		end
+	end
+
+	local function has(haystack, needle)
+		return string.find(haystack, needle, 1, true) ~= nil
+	end
+
+	-- 1. Prueba unitaria: if / elseif / else + short-circuit sin debug info
+	do
+		local p = {
+			index = 0,
+			maxstack = 6,
+			numparams = 4,
+			nups = 0,
+			vararg = false,
+			k = {
+				{ t = "number", v = 1 },
+				{ t = "number", v = 2 },
+				{ t = "number", v = 3 },
+			},
+			children = {},
+			locvars = {},
+			upnames = {},
+		}
+		local insn = {
+			{ pc = 0, len = 1, name = "JUMPIFNOT", A = 0, B = 0, C = 0, D = 3 },
+			{ pc = 1, len = 1, name = "JUMPIFNOT", A = 1, B = 0, C = 0, D = 2 },
+			{ pc = 2, len = 1, name = "LOADK", A = 4, D = 0 },
+			{ pc = 3, len = 1, name = "RETURN", A = 4, B = 2 },
+			{ pc = 4, len = 1, name = "JUMPIF", A = 2, B = 0, C = 0, D = 1 },
+			{ pc = 5, len = 1, name = "JUMPIFNOT", A = 3, B = 0, C = 0, D = 2 },
+			{ pc = 6, len = 1, name = "LOADK", A = 4, D = 1 },
+			{ pc = 7, len = 1, name = "RETURN", A = 4, B = 2 },
+			{ pc = 8, len = 1, name = "LOADK", A = 4, D = 2 },
+			{ pc = 9, len = 1, name = "RETURN", A = 4, B = 2 },
+		}
+		p.insn = insn
+		local bc = { protos = { p }, main = 0 }
+		local out = Lifter.decompileString(bc, { CFG = CFG, Structurer = Structurer })
+		check(has(out, "if p1 and p2 then"), "unit_if_and_or: if p1 and p2")
+		check(has(out, "elseif p3 or p4 then"), "unit_if_and_or: elseif p3 or p4")
+		check(has(out, "return 1") and has(out, "return 2") and has(out, "return 3"), "unit_if_and_or: returns")
+	end
+
+	-- 2. Prueba unitaria: vector + table literal + method call
+	do
+		local p = {
+			index = 0,
+			maxstack = 6,
+			numparams = 1,
+			nups = 0,
+			vararg = false,
+			k = {
+				{ t = "string", v = "SetPos" },
+				{ t = "vector", x = 1, y = 2, z = 3, w = 0 },
+				{ t = "string", v = "ok" },
+			},
+			children = {},
+			locvars = {
+				{ name = "part", startpc = 0, endpc = 7, reg = 0 },
+			},
+			upnames = {},
+		}
+		local insn = {
+			{ pc = 0, len = 1, name = "LOADK", A = 3, D = 1 },
+			{ pc = 1, len = 2, name = "NAMECALL", A = 1, B = 0, C = 0, aux = 0 },
+			{ pc = 3, len = 2, name = "CALLFB", A = 1, B = 3, C = 1, aux = 0 },
+			{ pc = 5, len = 1, name = "LOADK", A = 1, D = 2 },
+			{ pc = 6, len = 1, name = "RETURN", A = 1, B = 2 },
+		}
+		p.insn = insn
+		local bc = { protos = { p }, main = 0 }
+		local out = Lifter.decompileString(bc, { CFG = CFG, Structurer = Structurer })
+		check(has(out, "part:SetPos(Vector3.new(1, 2, 3))"), "unit_namecall_vec: SetPos Vector3")
+		check(has(out, 'return "ok"'), "unit_namecall_vec: return ok")
+	end
+
+	-- 3. Pruebas sobre bytecode real (si Phase1 y SAMPLES se proporcionan)
+	if Phase1 and Phase1.samples then
+		for name, sample in pairs(Phase1.samples) do
+			local bc = Phase1.parse(sample.bytes)
+			Phase1.link(bc)
+			local ok, text = pcall(Lifter.decompileString, bc, {
+				CFG = CFG,
+				Structurer = Structurer,
+				jumpOf = Phase1.jumpOf,
+			})
+			check(ok and type(text) == "string" and #text > 0, "real_" .. name .. ": decompile failed: " .. tostring(text))
+			if ok then
+				check(not has(text, "[unstructured jump"), "real_" .. name .. ": unstructured fallback in output")
+				if sample.expect then
+					for _, pat in ipairs(sample.expect) do
+						check(has(text, pat), "real_" .. name .. ": missing '" .. pat .. "'")
+					end
+				end
+			end
+		end
+	end
+
+	local report = string.format("%d/%d checks OK", total - #failures, total)
+	if #failures > 0 then
+		report ..= "\nFALLOS:\n  - " .. table.concat(failures, "\n  - ")
+	end
+	return #failures == 0, report
+end

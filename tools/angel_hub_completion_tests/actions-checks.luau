@@ -33,10 +33,10 @@ heartbeat:Fire(.25);assert(#touches==6)
 uis.InputBegan:Fire({UserInputType=Enum.UserInputType.Keyboard,KeyCode={Name='H'}},false);assert(not V['Auto Get Gun'])
 heartbeat:Fire(.5);assert(#touches==6);AngelHub.setters['Auto Get Gun'](true)
 AngelHub.getMM2Role=function()return 'Murderer'end;heartbeat:Fire(.25);assert(#touches==6)
-AngelHub.getMM2Role=function()return 'Innocent'end;root.Position=Vector3.new(1000,0,0);heartbeat:Fire(.25);assert(#touches==6)
+AngelHub.getMM2Role=function()return 'Innocent'end;root.Position=Vector3.new(1000,0,0);heartbeat:Fire(.25);assert(#touches==8)
 -- Missing executor API is reported, and the automatic toggle stays off.
 AngelHub.setters['Auto Get Gun'](false);local originalTouch=firetouchinterest;firetouchinterest=nil
 AngelHub.setters['Auto Get Gun'](true);assert(not V['Auto Get Gun'] and pickupStatus:find('no disponible'))
 assert(not AngelHub.actions['Get Gun']() and pickupStatus:find('no disponible'))
 firetouchinterest=originalTouch
-screenGui.Destroying:Fire();heartbeat:Fire(.5);AngelHub.actions['Get Gun']();assert(#touches==6)
+screenGui.Destroying:Fire();heartbeat:Fire(.5);AngelHub.actions['Get Gun']();assert(#touches==8)

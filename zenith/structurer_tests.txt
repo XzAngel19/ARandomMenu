@@ -1,0 +1,184 @@
+return function(CFG, Structurer)
+	local failures, total = {}, 0
+
+	local function check(cond, msg)
+		total += 1
+		if not cond then
+			failures[#failures + 1] = msg
+		end
+	end
+
+	local function I(name, f)
+		f = f or {}
+		f.name = name
+		return f
+	end
+
+	local function mk(list)
+		local pc = 0
+		for _, e in ipairs(list) do
+			e.len = e.len or 1
+			e.pc = pc
+			pc += e.len
+		end
+		return list
+	end
+
+	local function buildTree(name, list)
+		local cfg = CFG.build(mk(list))
+		check(#cfg.errors == 0, name .. ": cfg errors")
+		local tree = Structurer.structure(cfg)
+		local okFmt, text = pcall(Structurer.formatString, tree)
+		check(okFmt and type(text) == "string", name .. ": format failed")
+		return tree, text or "", cfg
+	end
+
+	local function findKind(node, targetKind)
+		if not node then
+			return nil
+		end
+		if node.kind == targetKind then
+			return node
+		end
+		if node.body then
+			if node.body.kind then
+				local r = findKind(node.body, targetKind)
+				if r then return r end
+			else
+				for _, ch in ipairs(node.body) do
+					local r = findKind(ch, targetKind)
+					if r then return r end
+				end
+			end
+		end
+		if node.branches then
+			for _, br in ipairs(node.branches) do
+				local r = findKind(br.body, targetKind)
+				if r then return r end
+			end
+		end
+		if node.elseBody then
+			local r = findKind(node.elseBody, targetKind)
+			if r then return r end
+		end
+		return nil
+	end
+
+	-- 1. if/else diamante
+	do
+		local tree = buildTree("if_else", {
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMP", { D = 1 }),
+			I("LOADN"),
+			I("RETURN"),
+		})
+		local ifn = findKind(tree, "If")
+		check(ifn ~= nil and #ifn.branches == 1 and ifn.elseBody ~= nil, "if_else: If+else")
+	end
+
+	-- 2. short-circuit `if a and b` + `elseif c or d`
+	do
+		local tree, txt = buildTree("and_or_elseif", {
+			I("JUMPIFNOT", { A = 0, D = 3 }),
+			I("JUMPIFNOT", { A = 1, D = 2 }),
+			I("LOADN"),
+			I("RETURN"),
+			I("JUMPIF", { A = 2, D = 1 }),
+			I("JUMPIFNOT", { A = 3, D = 2 }),
+			I("LOADN"),
+			I("RETURN"),
+			I("LOADN"),
+			I("RETURN"),
+		})
+		local ifn = findKind(tree, "If")
+		check(ifn ~= nil and #ifn.branches == 2 and ifn.elseBody ~= nil, "and_or_elseif: 2 branches + else")
+		check(ifn and ifn.branches[1].cond.kind == "and", "and_or_elseif: branch1 is and")
+		check(ifn and ifn.branches[2].cond.kind == "or", "and_or_elseif: branch2 is or")
+		check(not string.find(txt, "unstructured", 1, true), "and_or_elseif: no goto fallback")
+	end
+
+	-- 3. while
+	do
+		local tree = buildTree("while", {
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMPBACK", { D = -3 }),
+			I("RETURN"),
+		})
+		local wn = findKind(tree, "While")
+		check(wn ~= nil and wn.cond.kind == "atom", "while: While cond")
+	end
+
+	-- 4. while true con if/else dentro
+	do
+		local tree, txt = buildTree("while_true_if", {
+			I("LOADN"),
+			I("JUMPIFNOT", { A = 0, D = 2 }),
+			I("LOADN"),
+			I("JUMP", { D = 1 }),
+			I("LOADN"),
+			I("JUMPBACK", { D = -5 }),
+		})
+		local wn = findKind(tree, "While")
+		local ifn = wn and findKind(wn, "If")
+		check(wn ~= nil and wn.cond.kind == "true", "while_true_if: While true")
+		check(ifn ~= nil and ifn.elseBody ~= nil, "while_true_if: nested If+else")
+		check(not string.find(txt, "unstructured", 1, true), "while_true_if: no fallback")
+	end
+
+	-- 5. repeat ... until (forma real Luau con continue y break)
+	do
+		local tree, txt = buildTree("repeat_cont_brk", {
+			I("ADDK", { line = 2 }),
+			I("JUMPIF", { A = 0, D = 1, line = 3 }),   -- continue -> until
+			I("JUMPIF", { A = 1, D = 3, line = 4 }),   -- break -> return
+			I("LOADN", { line = 5 }),
+			I("JUMPIF", { A = 2, D = 1, line = 5 }),   -- until -> return
+			I("JUMPBACK", { D = -6, line = 5 }),
+			I("RETURN", { line = 6 }),
+		})
+		local rn = findKind(tree, "RepeatUntil")
+		check(rn ~= nil, "repeat_cont_brk: RepeatUntil")
+		check(findKind(rn, "Continue") ~= nil, "repeat_cont_brk: Continue")
+		check(findKind(rn, "Break") ~= nil, "repeat_cont_brk: Break")
+		check(not string.find(txt, "unstructured", 1, true), "repeat_cont_brk: no fallback")
+	end
+
+	-- 6. numeric_for anidados
+	do
+		local tree, txt = buildTree("nested_for", {
+			I("FORNPREP", { A = 0, D = 4 }),
+			I("FORNPREP", { A = 3, D = 2 }),
+			I("LOADN"),
+			I("FORNLOOP", { A = 3, D = -2 }),
+			I("FORNLOOP", { A = 0, D = -4 }),
+			I("RETURN"),
+		})
+		local outer = findKind(tree, "NumericFor")
+		local inner = outer and findKind(outer.body, "NumericFor")
+		check(outer ~= nil and inner ~= nil, "nested_for: 2 NumericFor")
+		check(not string.find(txt, "unstructured", 1, true), "nested_for: no fallback")
+	end
+
+	-- 7. generic_for con break
+	do
+		local tree, txt = buildTree("generic_for_brk", {
+			I("FORGPREP", { A = 0, D = 2 }),
+			I("JUMPIF", { A = 3, D = 3 }), -- break -> pc 5 (RETURN)
+			I("LOADN"),
+			I("FORGLOOP", { A = 0, D = -3, len = 2, aux = 2 }),
+			I("RETURN"),
+		})
+		local gn = findKind(tree, "GenericFor")
+		check(gn ~= nil, "generic_for_brk: GenericFor")
+		check(gn and findKind(gn.body, "Break") ~= nil, "generic_for_brk: Break")
+		check(not string.find(txt, "unstructured", 1, true), "generic_for_brk: no fallback")
+	end
+
+	local report = string.format("%d/%d checks OK", total - #failures, total)
+	if #failures > 0 then
+		report ..= "\nFALLOS:\n  - " .. table.concat(failures, "\n  - ")
+	end
+	return #failures == 0, report
+end

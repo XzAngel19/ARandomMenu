@@ -72,7 +72,7 @@ root.Position=Vector3.new(0,-500,0);character.lastPivot=nil;run.PreSimulation:Fi
 assert(not V['Auto Farm'] and root.CanCollide and character.lastPivot==homeFrame)
 root.Position=Vector3.new(0,0,0);root.CFrame=homeFrame
 AngelHub.setters['Auto Farm'](true);heartbeat:Fire(0.11);AngelHub.setters['Noclip'](true)
-assert(not V['Auto Farm']);AngelHub.setters['Noclip'](false);assert(root.CanCollide)
+assert(V['Auto Farm']);AngelHub.setters['Noclip'](false);AngelHub.setters['Auto Farm'](false);assert(root.CanCollide)
 -- Full bag returns to the original interior when Below is active.
 root.Position=Vector3.zero;root.CFrame=homeFrame
 AngelHub.setters['Auto Farm'](true);heartbeat:Fire(.11)
@@ -87,5 +87,26 @@ local platform=created[#created];assert(platform.class=='Part' and not platform.
 root.Position=character.lastPivot.Position;character.lastPivot=nil
 AngelHub.setters['Farm Safe Zone'](false)
 assert(platform.destroyed and character.lastPivot==homeFrame)
+AngelHub.setters['Auto Farm'](false)
+-- Persistent full-bag check across disable/re-enable and Farm Speed clamp + pickup pause.
+V['Farm Speed']=60;collected.OnClientEvent:Fire('Coins',0,50)
+root.Position=Vector3.zero;root.CFrame=homeFrame
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(.11)
+run.PreSimulation:Fire(0.016);assert(root.AssemblyLinearVelocity.X<=28.001 and root.AssemblyLinearVelocity.X>=27.99)
+V['Farm Speed']=0;run.PreSimulation:Fire(0.016);assert(root.AssemblyLinearVelocity.X>=0.99 and root.AssemblyLinearVelocity.X<=1.01)
+V['Farm Speed']=24;coin.Position=Vector3.new(3,0,0)
+local touchBefore=#touches;heartbeat:Fire(.11);assert(#touches>touchBefore)
+run.PreSimulation:Fire(0.01);assert(root.AssemblyLinearVelocity.Magnitude==0)
+run.PreSimulation:Fire(0.03);run.PreSimulation:Fire(0.016);assert(root.AssemblyLinearVelocity.Magnitude>0)
+coin.Position=Vector3.new(8,0,0)
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.11)
+AngelHub.setters['Auto Farm'](false)
+local touchesAtFull=#touches;character.lastPivot=nil
+AngelHub.setters['Auto Farm'](true);heartbeat:Fire(.11)
+run.PreSimulation:Fire(0.016)
+assert(#touches==touchesAtFull and character.lastPivot==nil and root.AssemblyLinearVelocity.Magnitude==0)
+AngelHub.setters['Farm Safe Zone'](true);heartbeat:Fire(.11)
+local fullReenablePark=created[#created];assert(fullReenablePark.class=='Part' and not fullReenablePark.destroyed)
+root.Position=character.lastPivot.Position;AngelHub.setters['Farm Safe Zone'](false);assert(fullReenablePark.destroyed)
 AngelHub.setters['Auto Farm'](false)
 screenGui.Destroying:Fire()
