@@ -2012,6 +2012,8 @@ do
 		mode = "Decompile Mode",
 		target = "Function Target",
 		outputSearch = "Output Search",
+		globalSearch = "Global Search",
+		globalScan = "Global Scan Scripts",
 		out = "Decompiler Output",
 		copyDec = "Copy Decompiled",
 		save = "Save Decompiled",
@@ -7246,6 +7248,139 @@ do
 		return true
 	end
 
+	local xrefCache = {}
+
+	local function getXrefIndex(bytes)
+		local hit = xrefCache[bytes]
+		if hit then
+			return hit
+		end
+		local ok, bc = pcall(parseCached, bytes)
+		if not ok or not bc then
+			return nil
+		end
+		link(bc)
+		local imports, strings = {}, {}
+		for _, p in ipairs(bc.protos) do
+			local fnTag = "#" .. p.index .. (p.name and (" (" .. p.name .. ")") or "")
+			for _, k in ipairs(p.k) do
+				if k.t == "import" then
+					local nm = kstr(p, k, true)
+					imports[#imports + 1] = { val = nm, low = string.lower(nm), fnTag = fnTag }
+				elseif k.t == "string" and type(k.v) == "string" and k.v ~= "" then
+					strings[#strings + 1] = { val = k.v, low = string.lower(k.v), fnTag = fnTag }
+				end
+			end
+		end
+		hit = { imports = imports, strings = strings }
+		xrefCache[bytes] = hit
+		return hit
+	end
+
+	function Dec.globalSearch(rawQuery)
+		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
+		if query == "" then
+			Zenith.log("Warn", "Global Search: escribe un texto o nombre de Remote")
+			return 0
+		end
+		local entries = getExportTargets()
+		if #entries == 0 then
+			publish({ "-- Global Search: no hay scripts tras filtros" }, "txt")
+			return 0
+		end
+
+		local needle = string.lower(query)
+		local out = {
+			"-- Zenith Global Bytecode XRef Search",
+			"-- Query: " .. query .. " | Scripts escaneados: " .. tostring(#entries),
+			"",
+		}
+		local matchedLabels, totalHits, skippedNoBc = {}, 0, 0
+
+		for i, e in ipairs(entries) do
+			local bytes = fetch(e.inst)
+			if not bytes then
+				skippedNoBc += 1
+			else
+				local idx = getXrefIndex(bytes)
+				if idx then
+					local scriptHits = {}
+					for _, imp in ipairs(idx.imports) do
+						if string.find(imp.low, needle, 1, true) then
+							scriptHits[#scriptHits + 1] = string.format("  [IMPORT %s] %s", imp.fnTag, imp.val)
+						end
+					end
+					for _, st in ipairs(idx.strings) do
+						if string.find(st.low, needle, 1, true) then
+							local preview = string.gsub(string.gsub(st.val, "\n", "\\n"), "\r", "\\r")
+							if #preview > 140 then
+								preview = string.sub(preview, 1, 140) .. "..."
+							end
+							scriptHits[#scriptHits + 1] = string.format("  [STRING %s] %q", st.fnTag, preview)
+						end
+					end
+					if #scriptHits > 0 then
+						matchedLabels[#matchedLabels + 1] = e.label
+						totalHits += #scriptHits
+						if #out < 450 then
+							out[#out + 1] = string.format("== %s (%d hits)", e.label, #scriptHits)
+							for k = 1, math.min(#scriptHits, 12) do
+								out[#out + 1] = scriptHits[k]
+							end
+							if #scriptHits > 12 then
+								out[#out + 1] = string.format("  ... (+%d hits mas en este script)", #scriptHits - 12)
+							end
+							out[#out + 1] = ""
+						end
+					end
+				end
+			end
+			if i % 40 == 0 then
+				task.wait()
+			end
+		end
+
+		out[3] = string.format("-- Coincidencias: %d hits en %d scripts (%d sin bytecode omitidos)", totalHits, #matchedLabels, skippedNoBc)
+		if #matchedLabels == 0 then
+			out[#out + 1] = "-- Sin coincidencias para: " .. query
+		else
+			table.clear(Index.shown)
+			for idx, lbl in ipairs(matchedLabels) do
+				if idx <= MAX_SHOWN then
+					Index.shown[idx] = lbl
+				end
+			end
+			set(N.scriptsFound, #matchedLabels)
+			if Zenith.setItems then
+				pcall(Zenith.setItems, N.list, Index.shown)
+			end
+		end
+
+		Dec.current = { label = "GlobalSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
+		publish(out, "txt")
+		Zenith.log("Info", string.format("Global Search '%s': %d hits en %d scripts", query, totalHits, #matchedLabels))
+		return #matchedLabels, totalHits
+	end
+
+	local skipGlobalSearchHook = false
+	function Zenith.findScriptXRefs(query)
+		local q = tostring(query or "")
+		if q == "" then
+			Zenith.log("Warn", "Find Script XRefs: nombre de remote vacio")
+			return 0
+		end
+		if Zenith.switchTab then
+			pcall(Zenith.switchTab, "Decompiler")
+		end
+		skipGlobalSearchHook = true
+		if Zenith.setters and Zenith.setters[N.globalSearch] then
+			pcall(Zenith.setters[N.globalSearch], q)
+		end
+		skipGlobalSearchHook = false
+		Zenith.values[N.globalSearch] = q
+		return Dec.globalSearch(q)
+	end
+
 	local saved = {}
 	local function hook(name, fn)
 		local prev = Zenith.hooks[name]
@@ -7281,10 +7416,18 @@ do
 			Zenith.actions[N.runPath] = function()
 				Dec.loadPath(Zenith.values[N.path])
 			end
+			hook(N.globalSearch, function(q)
+				if not skipGlobalSearchHook and string.match(tostring(q or ""), "%S") then
+					Dec.globalSearch(q)
+				end
+			end)
 			Zenith.actions[N.copyDec] = copyFull
 			Zenith.actions[N.save] = saveFull
 			Zenith.actions[N.dumpAll] = dumpAllScripts
 			Zenith.actions[N.exportRbxmx] = exportScriptsRbxmx
+			Zenith.actions[N.globalScan] = function()
+				Dec.globalSearch(Zenith.values[N.globalSearch])
+			end
 
 			hook(N.list, function(arg)
 				task.defer(Dec.load, selectedLabel(arg))
@@ -7332,11 +7475,12 @@ do
 			end
 			table.clear(saved)
 			Zenith.actions[N.scan], Zenith.actions[N.run], Zenith.actions[N.runPath], Zenith.actions[N.save] = nil, nil, nil, nil
-			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx] = nil, nil, nil
+			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.globalScan] = nil, nil, nil, nil
 			Dec.current, Dec.lines = nil, nil
 			table.clear(cache)
 			table.clear(cacheOrder)
 			table.clear(scriptBytecodeCache)
+			table.clear(xrefCache)
 		end,
 	})
 end
@@ -7356,14 +7500,18 @@ do
 		copyPath = "Copy Remote Path",
 		decompileCaller = "Decompile Caller",
 		copyFnInfo = "Copy Function Info",
+		findXRefs = "Find Script XRefs",
 		exportSession = "Export RSpy Session",
 		repeatCall = "Repeat Call",
+		customArgs = "Custom Args",
+		replayCustom = "Replay Custom Args",
 		blockRemote = "Block Remote",
 		ignoreRemote = "Ignore Remote",
 		c2s = "Log Client To Server",
 		s2c = "Log Server To Client",
 		logReturn = "Log Return Values",
 		showStack = "Show Call Stack",
+		groupByRemote = "Group By Remote",
 		autoScroll = "Spy Auto Scroll",
 		maxLogs = "Spy Max Logs",
 		ignoreInternals = "Ignore Roblox Internals",
@@ -7675,6 +7823,8 @@ do
 		seq = 0,
 		entries = {}, -- oldest -> newest
 		byLabel = {},
+		groupByLabel = {},
+		groupCount = {},
 		shownLabels = {},
 		selectedLabel = nil,
 		blocked = setmetatable({}, { __mode = "k" }),
@@ -7848,9 +7998,13 @@ do
 		return "-- error formatting call: " .. tostring(res)
 	end
 
-	local function renderSelected()
+	local function getSelectedEntry()
 		local label = state.selectedLabel or Zenith.values[N.list]
-		local entry = label and state.byLabel[label]
+		return label and (state.byLabel[label] or state.groupByLabel[label]) or nil, label
+	end
+
+	local function renderSelected()
+		local entry, label = getSelectedEntry()
 		local out = Zenith.outputs and Zenith.outputs[N.log]
 		if not out then
 			return
@@ -7859,28 +8013,76 @@ do
 			out.setText("-- Selecciona una llamada capturada en Remote List.")
 			return
 		end
-		out.setText(safeFormat(entry))
+		local txt = safeFormat(entry)
+		local gCount = label and state.groupCount[label]
+		if gCount and gCount > 1 then
+			txt = string.format("-- Group: %d llamadas capturadas (mostrando #%03d)\n", gCount, entry.id) .. txt
+		end
+		out.setText(txt)
 	end
 
 	-- selectNewest: jump selection to the newest visible entry (auto scroll)
 	local function applyListFilter(selectNewest)
 		local filter = tostring(Zenith.values[N.filter] or "All")
 		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
+		local grouped = flag(N.groupByRemote, false)
 		table.clear(state.shownLabels)
+		table.clear(state.groupByLabel)
+		table.clear(state.groupCount)
 		local shownSet = {}
-		for i = #state.entries, 1, -1 do
-			local e = state.entries[i]
-			if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
-				local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
-				local searchOk = (needle == "")
-					or string.find(string.lower(e.label), needle, 1, true) ~= nil
-					or string.find(string.lower(e.path), needle, 1, true) ~= nil
-				if classOk and searchOk then
-					table.insert(state.shownLabels, e.label)
-					shownSet[e.label] = true
+
+		if grouped then
+			local order, groups = {}, {}
+			for i = #state.entries, 1, -1 do
+				local e = state.entries[i]
+				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
+					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
+					local searchOk = (needle == "")
+						or string.find(string.lower(e.label), needle, 1, true) ~= nil
+						or string.find(string.lower(e.path), needle, 1, true) ~= nil
+					if classOk and searchOk then
+						local gKey = tostring(e.remote or e.path) .. "|" .. e.dir .. "|" .. e.method
+						local g = groups[gKey]
+						if not g then
+							g = { latest = e, count = 1 }
+							groups[gKey] = g
+							order[#order + 1] = g
+						else
+							g.count += 1
+						end
+					end
+				end
+			end
+			for _, g in ipairs(order) do
+				local e = g.latest
+				local dirTag = e.dir == "S2C" and "S->C" or "C->S"
+				local blkTag = e.blocked and "[BLK] " or ""
+				local actTag = e.isActor and "[ACT] " or ""
+				local gLabel = string.format("[%s] (x%d) %s%s%s | %s", dirTag, g.count, blkTag, actTag, e.method, e.name)
+				if state.groupByLabel[gLabel] then
+					gLabel = gLabel .. " #" .. e.id
+				end
+				state.groupByLabel[gLabel] = e
+				state.groupCount[gLabel] = g.count
+				table.insert(state.shownLabels, gLabel)
+				shownSet[gLabel] = true
+			end
+		else
+			for i = #state.entries, 1, -1 do
+				local e = state.entries[i]
+				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
+					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
+					local searchOk = (needle == "")
+						or string.find(string.lower(e.label), needle, 1, true) ~= nil
+						or string.find(string.lower(e.path), needle, 1, true) ~= nil
+					if classOk and searchOk then
+						table.insert(state.shownLabels, e.label)
+						shownSet[e.label] = true
+					end
 				end
 			end
 		end
+
 		Zenith.setItems(N.list, table.clone(state.shownLabels))
 
 		if selectNewest == true and state.shownLabels[1] then
@@ -9040,11 +9242,14 @@ do
 			end)
 			hookUI(N.fullSerialize, function() renderSelected() end)
 			hookUI(N.showStack, function() renderSelected() end)
+			hookUI(N.groupByRemote, function() applyListFilter(true) end)
 
 			Zenith.actions[N.clear] = function()
 				state.seq = 0
 				table.clear(state.entries)
 				table.clear(state.byLabel)
+				table.clear(state.groupByLabel)
+				table.clear(state.groupCount)
 				table.clear(state.shownLabels)
 				table.clear(state.queue)
 				state.selectedLabel = nil
@@ -9059,7 +9264,7 @@ do
 			end
 
 			Zenith.actions[N.copyCode] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry then
 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
 				end
@@ -9068,7 +9273,7 @@ do
 			end
 
 			Zenith.actions[N.copyPath] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry then
 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
 				end
@@ -9077,7 +9282,7 @@ do
 			end
 
 			Zenith.actions[N.decompileCaller] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry then
 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
 				end
@@ -9096,7 +9301,7 @@ do
 			end
 
 			Zenith.actions[N.copyFnInfo] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry then
 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
 				end
@@ -9170,8 +9375,20 @@ do
 				Zenith.log(okC and "Info" or "Warn", okC and "RSpy: sesion copiada al portapapeles" or "Clipboard no soportado")
 			end
 
+			Zenith.actions[N.findXRefs] = function()
+				local entry = getSelectedEntry()
+				if not entry then
+					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+				end
+				if Zenith.findScriptXRefs then
+					Zenith.findScriptXRefs(entry.name)
+				else
+					Zenith.log("Warn", "RSpy: modulo Decompiler no cargado")
+				end
+			end
+
 			Zenith.actions[N.repeatCall] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry or not entry.remote then
 					return Zenith.log("Warn", "RSpy: selecciona una llamada valida")
 				end
@@ -9194,8 +9411,48 @@ do
 				end)
 			end
 
+			Zenith.actions[N.replayCustom] = function()
+				local entry = getSelectedEntry()
+				if not entry or not entry.remote then
+					return Zenith.log("Warn", "RSpy: selecciona una llamada valida")
+				end
+				if entry.dir == "S2C" then
+					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
+				end
+				local raw = string.match(tostring(Zenith.values[N.customArgs] or ""), "^%s*(.-)%s*$")
+				if raw == "" then
+					return Zenith.actions[N.repeatCall]()
+				end
+				local loader = (typeof(loadstring) == "function" and loadstring) or (typeof(load) == "function" and load)
+				if not loader then
+					return Zenith.log("Warn", "RSpy: este entorno no soporta loadstring/load para Custom Args")
+				end
+				local chunk, compileErr = loader("return " .. raw)
+				if not chunk then
+					return Zenith.log("Error", "RSpy Custom Args sintaxis: " .. tostring(compileErr))
+				end
+				local evalPack = table.pack(pcall(chunk))
+				if not evalPack[1] then
+					return Zenith.log("Error", "RSpy Custom Args eval: " .. tostring(evalPack[2]))
+				end
+				local argCount = math.max(0, (evalPack.n or #evalPack) - 1)
+				task.spawn(function()
+					local thread = coroutine.running() or MAIN_THREAD
+					state.internal[thread] = true
+					local ok, err = pcall(function()
+						local fn = safeRead(entry.remote, entry.method)
+						if type(fn) ~= "function" then
+							error("metodo no encontrado: " .. tostring(entry.method))
+						end
+						fn(entry.remote, table.unpack(evalPack, 2, 1 + argCount))
+					end)
+					state.internal[thread] = nil
+					Zenith.log(ok and "Info" or "Error", ok and string.format("RSpy: replay custom (%d args) -> %s", argCount, entry.name) or ("RSpy Replay Custom error: " .. tostring(err)))
+				end)
+			end
+
 			Zenith.actions[N.blockRemote] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry or not entry.remote then
 					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
 				end
@@ -9205,7 +9462,7 @@ do
 			end
 
 			Zenith.actions[N.ignoreRemote] = function()
-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
+				local entry = getSelectedEntry()
 				if not entry then
 					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
 				end
@@ -9233,7 +9490,7 @@ do
 				Zenith.hooks[name] = s.prev
 			end
 			table.clear(savedHooks)
-			for _, k in ipairs({ N.clear, N.copyCode, N.copyPath, N.decompileCaller, N.copyFnInfo, N.exportSession, N.repeatCall, N.blockRemote, N.ignoreRemote }) do
+			for _, k in ipairs({ N.clear, N.copyCode, N.copyPath, N.decompileCaller, N.copyFnInfo, N.findXRefs, N.exportSession, N.repeatCall, N.replayCustom, N.blockRemote, N.ignoreRemote }) do
 				Zenith.actions[k] = nil
 			end
 			table.clear(state.queue)
@@ -9767,6 +10024,8 @@ local function initializeScript()
 	addButton(decLeft, "Scan Scripts")
 	addCycle(decLeft, "Script Class Filter", { "All", "LocalScript", "ModuleScript", "Script" })
 	addText(decLeft, "Script Search", "Filter scripts")
+	addText(decLeft, "Global Search", "Search bytecode strings/imports")
+	addButton(decLeft, "Global Scan Scripts")
 	addList(decLeft, "Script List", {}, 155)
 	addButton(decLeft, "Decompile Selected")
 	addText(decLeft, "Script Path", "Script path")
@@ -9792,6 +10051,7 @@ local function initializeScript()
 	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
 	addText(rspyLeft, "Spy Search", "Search remotes")
 	addText(rspyLeft, "Spy Ignore List", "Names, comma separated")
+	addToggle(rspyLeft, "Group By Remote", nil, false)
 	addList(rspyLeft, "Remote List", {}, 220)
 	addButton(rspyLeft, "Clear Spy Logs")
 	addButton(rspyLeft, "Export RSpy Session")
@@ -9802,7 +10062,10 @@ local function initializeScript()
 	addButton(rspyRight, "Copy Remote Path")
 	addButton(rspyRight, "Decompile Caller")
 	addButton(rspyRight, "Copy Function Info")
+	addButton(rspyRight, "Find Script XRefs")
 	addButton(rspyRight, "Repeat Call")
+	addText(rspyRight, "Custom Args", 'e.g. "Sword", 999, true')
+	addButton(rspyRight, "Replay Custom Args")
 	addButton(rspyRight, "Block Remote")
 	addButton(rspyRight, "Ignore Remote")
 
