@@ -10244,6 +10244,898 @@ do
 	})
 end
 
+-- Zenith | Spy Overlay (Cobalt-style floating inspector integrated with Zenith.RSpy).
+do
+	local TITLE, PER_PAGE, MAX_GROUPS, MIN_W, MIN_H = "Zenith | Spy", 8, 400, 520, 320
+	local Players, UIS = game:GetService("Players"), game:GetService("UserInputService")
+	local okCG, CoreGui = pcall(game.GetService, game, "CoreGui")
+	if not okCG then
+		CoreGui = nil
+	end
+	local env = (typeof(getgenv) == "function" and pcall(getgenv) and getgenv()) or {}
+	local FONT, BOLD, MONO = Enum.Font.GothamMedium, Enum.Font.GothamBold, Enum.Font.RobotoMono
+
+	local T = {
+		bg = Color3.fromRGB(17, 17, 19), panel = Color3.fromRGB(26, 26, 29), panel2 = Color3.fromRGB(33, 33, 37),
+		row = Color3.fromRGB(21, 21, 24), hover = Color3.fromRGB(46, 46, 52), sel = Color3.fromRGB(54, 54, 60),
+		stroke = Color3.fromRGB(48, 48, 54), text = Color3.fromRGB(236, 236, 240), sub = Color3.fromRGB(150, 150, 158),
+		mute = Color3.fromRGB(95, 95, 102), accent = Color3.fromRGB(205, 205, 212), good = Color3.fromRGB(105, 200, 125),
+		warn = Color3.fromRGB(232, 182, 80), bad = Color3.fromRGB(222, 92, 92), num = Color3.fromRGB(236, 200, 88),
+		str = Color3.fromRGB(140, 210, 130), bool = Color3.fromRGB(240, 150, 90), inst = Color3.fromRGB(110, 170, 240),
+		purple = Color3.fromRGB(186, 150, 240), orange = Color3.fromRGB(240, 140, 80),
+	}
+	local RN = {
+		overlay = "Spy Overlay", enabled = "Remote Spy", list = "Remote List", clear = "Clear Spy Logs", copyCode = "Copy Call Code",
+		copyPath = "Copy Remote Path", decompileCaller = "Decompile Caller", findXRefs = "Find Script XRefs",
+		repeatCall = "Repeat Call", blockRemote = "Block Remote", ignoreRemote = "Ignore Remote",
+		ignoreList = "Spy Ignore List", c2s = "Log Client To Server", s2c = "Log Server To Client",
+		logReturn = "Log Return Values", showStack = "Show Call Stack", maxLogs = "Spy Max Logs",
+		ignoreInternals = "Ignore Roblox Internals", ignoreBindables = "Ignore Bindables",
+		ignoreExecutor = "Ignore Executor Calls", autoIgnoreSpam = "Auto Ignore Spammy", logActors = "Log Actors",
+		logInteractions = "Log Interactions", logAttributes = "Log Attributes", fullSerialize = "Full Serialization",
+	}
+	local DEFAULTS = {
+		[RN.enabled] = false, [RN.c2s] = true, [RN.s2c] = true, [RN.logReturn] = false, [RN.showStack] = false,
+		[RN.fullSerialize] = false, [RN.logActors] = true, [RN.logInteractions] = false, [RN.logAttributes] = false,
+		[RN.ignoreInternals] = true, [RN.ignoreBindables] = true, [RN.ignoreExecutor] = true, [RN.autoIgnoreSpam] = false,
+	}
+	local TABS = {
+		{ text = "Outgoing", page = "spy", dir = "C2S" },
+		{ text = "Incoming", page = "spy", dir = "S2C" },
+		{ text = "Events", page = "spy", dir = "EV" },
+		{ text = "Hooks", page = "hooks" },
+		{ text = "Settings", page = "settings" },
+	}
+	local PARENT_MODES = { "auto", "zenith", "gethui", "coregui", "playergui" }
+	local TOGGLES = {
+		{ "CAPTURA", { { RN.enabled, "Remote Spy" }, { RN.c2s, "Log Client -> Server" }, { RN.s2c, "Log Server -> Client" }, { RN.logReturn, "Log Return Values" }, { RN.showStack, "Show Call Stack" }, { RN.fullSerialize, "Full Serialization" } } },
+		{ "FUENTES", { { RN.logActors, "Log Actors" }, { RN.logInteractions, "Log Interactions" }, { RN.logAttributes, "Log Attributes" } } },
+		{ "FILTROS", { { RN.ignoreInternals, "Ignore Roblox Internals" }, { RN.ignoreBindables, "Ignore Bindables" }, { RN.ignoreExecutor, "Ignore Executor Calls" }, { RN.autoIgnoreSpam, "Auto Ignore Spammy" } } },
+	}
+
+	local st = {
+		alive = false, gen = 0, tab = 1, selKey = nil, page = 1, search = "", paused = false, dirty = true,
+		conns = {}, mode = "auto", parentLabel = "?", msg = "", msgUntil = 0, minimized = false, nGroups = 0,
+	}
+	local U = {}
+	local lowerCache = setmetatable({}, { __mode = "k" })
+	local savedOverlayHook = nil
+	local refresh
+
+	local function new(class, props, parent)
+		local i = Instance.new(class)
+		for k, v in pairs(props) do
+			i[k] = v
+		end
+		if parent then
+			i.Parent = parent
+		end
+		return i
+	end
+	local function corner(p, r) return new("UICorner", { CornerRadius = UDim.new(0, r) }, p) end
+	local function stroke(p, c) return new("UIStroke", { Color = c or T.stroke, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, p) end
+	local function pad(p, l, t, r, b)
+		return new("UIPadding", { PaddingLeft = UDim.new(0, l), PaddingTop = UDim.new(0, t or l), PaddingRight = UDim.new(0, r or l), PaddingBottom = UDim.new(0, b or t or l) }, p)
+	end
+	local function vlist(p, gap, dir)
+		return new("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, gap or 4), FillDirection = dir or Enum.FillDirection.Vertical }, p)
+	end
+	local function label(p, text, props)
+		local l = new("TextLabel", { BackgroundTransparency = 1, Text = text, TextColor3 = T.text, Font = FONT, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0 })
+		for k, v in pairs(props or {}) do
+			l[k] = v
+		end
+		l.Parent = p
+		return l
+	end
+	local function button(p, text, props, cb)
+		local b = new("TextButton", { Text = text, Font = FONT, TextSize = 12, TextColor3 = T.text, BackgroundColor3 = T.panel2, AutoButtonColor = false, BorderSizePixel = 0 })
+		for k, v in pairs(props or {}) do
+			b[k] = v
+		end
+		corner(b, 5); stroke(b)
+		b.Parent = p
+		b.MouseEnter:Connect(function() b.BackgroundColor3 = T.hover end)
+		b.MouseLeave:Connect(function() b.BackgroundColor3 = T.panel2 end)
+		if cb then
+			b.MouseButton1Click:Connect(function()
+				local ok, err = pcall(cb)
+				if not ok then
+					Zenith.log("Error", "Overlay: " .. tostring(err))
+				end
+			end)
+		end
+		return b
+	end
+	local function isPressOv(i) return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch end
+	local function isMoveOv(i) return i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch end
+	local function sectionHeader(parent, text, order)
+		local f = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -6, 0, 24), LayoutOrder = order }, parent)
+		new("Frame", { BackgroundColor3 = T.accent, BorderSizePixel = 0, Size = UDim2.new(0, 3, 0, 12), Position = UDim2.new(0, 2, 0, 6) }, f)
+		local t = label(f, text, { Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -12, 1, 0), Font = BOLD, TextColor3 = T.sub, TextSize = 11 })
+		return f, t
+	end
+	local function makePool(parent, buildFn)
+		local pool = { rows = {} }
+		function pool.begin() pool.seen = {} end
+		function pool.get(id, order)
+			local r = pool.rows[id]
+			if not r then
+				r = buildFn(id)
+				r.root.Parent = parent
+				pool.rows[id] = r
+			end
+			r.root.LayoutOrder = order
+			pool.seen[id] = true
+			return r
+		end
+		function pool.finish()
+			for id, r in pairs(pool.rows) do
+				if not pool.seen[id] then
+					r.root:Destroy()
+					pool.rows[id] = nil
+				end
+			end
+		end
+		return pool
+	end
+
+	local function getFlag(name)
+		local v = Zenith.values[name]
+		if v == nil then v = DEFAULTS[name] end
+		return v == true
+	end
+	local function setFlag(name, v)
+		Zenith.values[name] = v
+		local s = Zenith.setters and Zenith.setters[name]
+		if s then
+			pcall(s, v)
+		elseif Zenith.hooks and Zenith.hooks[name] then
+			pcall(Zenith.hooks[name], v)
+		end
+	end
+	local function toast(msg)
+		st.msg, st.msgUntil = tostring(msg), os.clock() + 2.5
+		if U.statusLbl then U.statusLbl.Text = st.msg end
+	end
+	local function runAction(name, entry)
+		local act = Zenith.actions and Zenith.actions[name]
+		if not act then return toast("Accion no disponible: " .. name) end
+		local S = Zenith.RSpy
+		if entry and S then
+			S.selectedLabel, S.selectedGroupKey = entry.label, nil
+			Zenith.values[RN.list] = entry.label
+		end
+		local ok, err = pcall(act)
+		if not ok then toast("Error: " .. tostring(err)) end
+		st.dirty = true
+	end
+	local function pathOfInst(inst)
+		local ok, s = pcall(inst.GetFullName, inst)
+		return ok and s or "?"
+	end
+
+	local ESC_OV = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t" }
+	local function clip(s, n) return #s > n and (string.sub(s, 1, n) .. "...") or s end
+	local function fmtNumber(v)
+		if v ~= v or v == math.huge or v == -math.huge then return tostring(v) end
+		if v % 1 == 0 and math.abs(v) < 2 ^ 53 then return string.format("%d", v) end
+		return string.format("%.3f", v)
+	end
+	local function short(v)
+		local t = typeof(v)
+		if t == "string" then return '"' .. clip((string.gsub(v, "[\n\r\t]", ESC_OV)), 24) .. '"' end
+		if t == "Instance" then
+			local ok, n = pcall(function() return v.Name end)
+			return ok and tostring(n) or "Instance"
+		end
+		if t == "table" then return "{...}" end
+		if t == "buffer" then return string.format("buffer(%d)", buffer.len(v)) end
+		local ok, s = pcall(tostring, v)
+		return ok and s or t
+	end
+	local function fmtVal(v, full)
+		local lim, t = full and 4000 or 120, typeof(v)
+		if t == "string" then return '"' .. clip((string.gsub(v, "[\n\r\t]", ESC_OV)), lim) .. '"', "string", T.str
+		elseif t == "number" then return fmtNumber(v), "number", T.num
+		elseif t == "boolean" then return tostring(v), "boolean", T.bool
+		elseif t == "nil" then return "nil", "nil", T.mute
+		elseif t == "Vector3" then return string.format("%.3f, %.3f, %.3f", v.X, v.Y, v.Z), "Vector3", T.num
+		elseif t == "Vector2" then return string.format("%.3f, %.3f", v.X, v.Y), "Vector2", T.num
+		elseif t == "CFrame" then local p = v.Position; return string.format("%.3f, %.3f, %.3f", p.X, p.Y, p.Z), "CFrame", T.num
+		elseif t == "Color3" then return string.format("%d, %d, %d", v.R * 255 + 0.5, v.G * 255 + 0.5, v.B * 255 + 0.5), "Color3", T.num
+		elseif t == "buffer" then
+			local len = buffer.len(v)
+			if full then
+				local raw = buffer.readstring(v, 0, math.min(len, 512))
+				return string.format("buffer.fromstring(%q)", raw), "buffer", T.purple
+			end
+			return string.format("buffer (%d bytes)", len), "buffer", T.purple
+		elseif t == "Instance" then
+			local okC, cls = pcall(function() return v.ClassName end)
+			return pathOfInst(v), okC and tostring(cls) or "Instance", T.inst
+		elseif t == "table" then
+			local parts, n, maxN = {}, 0, full and 40 or 4
+			for k, val in pairs(v) do
+				n += 1
+				if n > maxN then break end
+				parts[#parts + 1] = (type(k) == "number" and "" or (tostring(k) .. "=")) .. short(val)
+			end
+			return "{" .. table.concat(parts, ", ") .. (n > maxN and ", ..." or "") .. "}", "table", T.purple
+		end
+		local ok, s = pcall(tostring, v)
+		return ok and s or t, t, T.sub
+	end
+	local function safeFmt(v, full)
+		local ok, a, b, c = pcall(fmtVal, v, full)
+		if ok then return a, b, c end
+		return "<error>", typeof(v), T.mute
+	end
+	local ICON = {
+		RemoteEvent = { "E", T.orange }, UnreliableRemoteEvent = { "U", T.orange }, RemoteFunction = { "F", T.inst },
+		BindableEvent = { "B", T.purple }, BindableFunction = { "B", T.purple }, ProximityPrompt = { "P", T.num }, ClickDetector = { "C", T.num },
+	}
+
+	local function findZenithGui()
+		if typeof(shared) == "table" and typeof(shared.ZenithGui) == "Instance" and shared.ZenithGui ~= U.gui then
+			return shared.ZenithGui
+		end
+		local roots = {}
+		local gh = env.gethui
+		if type(gh) == "function" then
+			local ok, h = pcall(gh)
+			if ok and typeof(h) == "Instance" then roots[#roots + 1] = h end
+		end
+		if CoreGui then roots[#roots + 1] = CoreGui end
+		local pg = localPlayer and localPlayer:FindFirstChildOfClass("PlayerGui")
+		if pg then roots[#roots + 1] = pg end
+		for _, root in ipairs(roots) do
+			local okC, kids = pcall(root.GetChildren, root)
+			if okC and type(kids) == "table" then
+				for _, g in ipairs(kids) do
+					if g ~= U.gui and g:IsA("ScreenGui") then
+						local okD, desc = pcall(g.GetDescendants, g)
+						if okD and type(desc) == "table" then
+							for i = 1, math.min(#desc, 300) do
+								local d = desc[i]
+								if (d:IsA("TextLabel") or d:IsA("TextButton")) and string.sub(d.Text, 1, 6) == "Zenith" then
+									return g
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		return nil
+	end
+	local function candidates(mode)
+		local c = {}
+		local function add(inst, lbl)
+			if typeof(inst) == "Instance" then c[#c + 1] = { inst, lbl } end
+		end
+		if (mode == "auto" or mode == "zenith") and U.zGui then add(U.zGui.Parent, "Zenith parent") end
+		if mode == "auto" or mode == "gethui" then
+			local gh = env.gethui
+			if type(gh) == "function" then
+				local ok, h = pcall(gh)
+				if ok then add(h, "gethui") end
+			end
+		end
+		if mode == "auto" or mode == "coregui" then add(CoreGui, "CoreGui") end
+		if mode == "auto" or mode == "playergui" then add(localPlayer and localPlayer:FindFirstChildOfClass("PlayerGui"), "PlayerGui") end
+		return c
+	end
+	local function attach(gui, mode)
+		local c = candidates(mode)
+		if #c == 0 then c = candidates("auto") end
+		local prot = env.protect_gui or (type(env.syn) == "table" and env.syn.protect_gui) or env.protectgui
+		if type(prot) == "function" then pcall(prot, gui) end
+		gui.DisplayOrder = ((U.zGui and U.zGui.DisplayOrder) or 0) + 1
+		for _, cand in ipairs(c) do
+			local ok = pcall(function() gui.Parent = cand[1] end)
+			if ok and gui.Parent == cand[1] then
+				st.parentLabel = cand[2]
+				return true
+			end
+		end
+		return false
+	end
+	local function cycleParent()
+		local idx = 1
+		for i, m in ipairs(PARENT_MODES) do
+			if m == st.mode then idx = i end
+		end
+		st.mode = PARENT_MODES[(idx % #PARENT_MODES) + 1]
+		U.zGui = findZenithGui()
+		if not attach(U.gui, st.mode) then
+			toast("No se pudo re-parentar")
+		else
+			toast("Parent: " .. st.mode .. " -> " .. st.parentLabel)
+		end
+	end
+
+	local function curGroup() return st.byKey and st.byKey[st.selKey] or nil end
+	local function callerName(e)
+		if typeof(e.callerInst) == "Instance" then
+			local ok, n = pcall(function() return e.callerInst.Name end)
+			if ok then return tostring(n) end
+		end
+		if e.funcName and e.funcName ~= "" then return tostring(e.funcName) end
+		return e.isExecutor and "Executor" or "desconocido"
+	end
+	local function addValueRow(card, order, idx, v)
+		local text, typ, col = safeFmt(v)
+		local row = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = T.row, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 22), LayoutOrder = order }, card)
+		corner(row, 5)
+		label(row, tostring(idx), { Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(0, 26, 1, 0), TextColor3 = T.sub })
+		label(row, text, { Position = UDim2.new(0, 34, 0, 0), Size = UDim2.new(1, -122, 1, 0), TextColor3 = col, Font = MONO, TextTruncate = Enum.TextTruncate.AtEnd })
+		label(row, typ, { Position = UDim2.new(1, -84, 0, 0), Size = UDim2.new(0, 76, 1, 0), TextColor3 = T.sub, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd })
+		row.MouseEnter:Connect(function() row.BackgroundColor3 = T.hover end)
+		row.MouseLeave:Connect(function() row.BackgroundColor3 = T.row end)
+		row.MouseButton1Click:Connect(function()
+			local full = safeFmt(v, true)
+			toast(Zenith.copy(full) and "Valor copiado" or "Clipboard no soportado")
+		end)
+	end
+	local function buildCard(e, order)
+		local card = new("Frame", { BackgroundColor3 = T.panel2, BorderSizePixel = 0, Size = UDim2.new(1, -8, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = order }, U.cardScroll)
+		corner(card, 7); stroke(card); pad(card, 6, 5); vlist(card, 3)
+		local o = 0
+		local function nx() o += 1; return o end
+		local args = e.args or { n = 0 }
+		local n = args.n or #args
+		if n == 0 then
+			label(card, "(sin argumentos)", { Size = UDim2.new(1, 0, 0, 20), TextColor3 = T.mute, LayoutOrder = nx() })
+		end
+		for i = 1, math.min(n, 12) do addValueRow(card, nx(), i, args[i]) end
+		if n > 12 then label(card, string.format("... +%d argumentos mas", n - 12), { Size = UDim2.new(1, 0, 0, 18), TextColor3 = T.sub, LayoutOrder = nx() }) end
+		if e.returns then
+			label(card, "RETURNS", { Size = UDim2.new(1, 0, 0, 16), TextColor3 = T.sub, Font = BOLD, TextSize = 10, LayoutOrder = nx() })
+			local rn = e.returns.n or #e.returns
+			if rn == 0 then label(card, "(void)", { Size = UDim2.new(1, 0, 0, 18), TextColor3 = T.mute, LayoutOrder = nx() }) end
+			for i = 1, math.min(rn, 6) do addValueRow(card, nx(), "r" .. i, e.returns[i]) end
+		end
+		local foot = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = nx() }, card)
+		local tags = (e.blocked and "  [BLOCKED]" or "") .. (e.isExecutor and "  [EXECUTOR]" or "") .. (e.isActor and "  [ACTOR]" or "")
+		label(foot, "Script: " .. callerName(e) .. tags, { Size = UDim2.new(1, -80, 1, 0), TextColor3 = e.blocked and T.bad or T.sub, TextTruncate = Enum.TextTruncate.AtEnd })
+		label(foot, "Time: " .. tostring(e.timeStr or "?"), { Position = UDim2.new(1, -80, 0, 0), Size = UDim2.new(0, 80, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = T.sub })
+		local btnOrder, stackOrder = nx(), nx()
+		local stackLbl
+		if e.stack and e.stack ~= "" then
+			stackLbl = label(card, e.stack, { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true, Font = MONO, TextSize = 10, TextColor3 = T.sub, Visible = false, LayoutOrder = stackOrder, TextYAlignment = Enum.TextYAlignment.Top })
+		end
+		local bar = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = btnOrder }, card)
+		vlist(bar, 4, Enum.FillDirection.Horizontal)
+		local function mini(text, w, cb) return button(bar, text, { Size = UDim2.new(0, w, 1, 0), TextSize = 11, LayoutOrder = #bar:GetChildren() }, cb) end
+		mini("Copy", 48, function() runAction(RN.copyCode, e) end)
+		if e.dir ~= "S2C" then mini("Repeat", 54, function() runAction(RN.repeatCall, e) end) end
+		mini("Caller", 52, function() runAction(RN.decompileCaller, e) end)
+		if stackLbl then mini("Stack", 48, function() stackLbl.Visible = not stackLbl.Visible end) end
+		U.cards[#U.cards + 1] = card
+	end
+	local function renderCards(g)
+		for _, c in ipairs(U.cards) do c:Destroy() end
+		U.cards = {}
+		if not g then
+			U.pageChip.Text = "- / -"
+			return
+		end
+		local total = #g.calls
+		local pages = math.max(1, math.ceil(total / PER_PAGE))
+		if st.page > pages then st.page = pages end
+		if st.page < 1 then st.page = 1 end
+		U.pageChip.Text = string.format("%d / %d", st.page, pages)
+		local first = total - (st.page - 1) * PER_PAGE
+		local last = math.max(1, first - PER_PAGE + 1)
+		local order = 0
+		for i = first, last, -1 do
+			order += 1
+			buildCard(g.calls[i], order)
+		end
+	end
+
+	local function selectGroup(key)
+		st.selKey, st.page, st.dirty = key, 1, true
+		refresh(true)
+	end
+	local function buildGroupRow(id)
+		local btn = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -4, 0, 30) })
+		corner(btn, 6)
+		local icon = new("TextLabel", { BackgroundColor3 = T.row, Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 8, 0.5, -9), Font = BOLD, TextSize = 11, Text = "?", TextColor3 = T.orange, BorderSizePixel = 0 }, btn)
+		corner(icon, 4)
+		local nm = label(btn, "", { Position = UDim2.new(0, 34, 0, 0), Size = UDim2.new(1, -86, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+		local cnt = label(btn, "", { Position = UDim2.new(1, -52, 0, 0), Size = UDim2.new(0, 44, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = T.sub })
+		btn.MouseEnter:Connect(function() btn.BackgroundColor3 = T.hover end)
+		btn.MouseLeave:Connect(function() btn.BackgroundColor3 = (st.selKey == id) and T.sel or T.panel end)
+		btn.MouseButton1Click:Connect(function() selectGroup(id) end)
+		return { root = btn, icon = icon, name = nm, count = cnt }
+	end
+	local function computeGroups(S)
+		local mode = TABS[st.tab].dir
+		local needle = string.lower(st.search)
+		local byKey, order, counts = {}, {}, { C2S = 0, S2C = 0, EV = 0 }
+		if not S then return order, byKey, counts end
+		local ign = S.ignoredNames or {}
+		for _, e in ipairs(S.entries) do
+			local d = e.dir
+			local cat = (d == "INT" or d == "ATTR") and "EV" or d
+			if counts[cat] ~= nil then
+				local ln = lowerCache[e]
+				if not ln then
+					ln = string.lower(tostring(e.name))
+					lowerCache[e] = ln
+				end
+				if not ign[ln] then
+					counts[cat] += 1
+					if cat == mode and (needle == "" or string.find(ln, needle, 1, true)) then
+						local key = tostring(e.className) .. "|" .. tostring(e.path) .. "|" .. tostring(e.method)
+						local g = byKey[key]
+						if not g then
+							g = { key = key, name = e.name, className = e.className, method = e.method, path = e.path, calls = {}, count = 0 }
+							byKey[key] = g
+							order[#order + 1] = g
+						end
+						g.count += 1
+						g.calls[g.count] = e
+						g.last = e
+					end
+				end
+			end
+		end
+		return order, byKey, counts
+	end
+	local function updateStatus(S)
+		if os.clock() < st.msgUntil then
+			U.statusLbl.Text = st.msg
+			return
+		end
+		local on = getFlag(RN.enabled)
+		U.statusDot.BackgroundColor3 = on and T.good or T.mute
+		U.statusLbl.Text = string.format("%s  |  %d calls  |  %d remotes  |  cola %d", on and "Spy ON" or "Spy OFF", S and S.seq or 0, st.nGroups, (S and S.queue and #S.queue) or 0)
+	end
+
+	local function collectHookRows(S)
+		local rows = {}
+		local function H(id, text) rows[#rows + 1] = { id = "h:" .. id, text = text } end
+		local function R(id, text, state, detail, btnText, onClick)
+			rows[#rows + 1] = { id = id, text = text, state = state, detail = detail, btnText = btnText, onClick = onClick }
+		end
+		local function recState(r) if not r then return "off" end; return r.active and "on" or "warn" end
+		if not S then
+			H("none", "RSPY")
+			R("nospy", "Zenith.RSpy", "bad", "modulo no cargado")
+		else
+			H("hooks", "HOOKS")
+			local nc = S.namecallRec
+			R("nc", "__namecall", recState(nc), nc and (nc.active and ("activo (" .. tostring(S.namecallVia or "hook") .. ")") or "pass-through") or "no instalado")
+			local dh = S.directHooks or {}
+			local act = 0
+			for _, r in ipairs(dh) do if r.active then act += 1 end end
+			R("dh", "hookfunction / oth", #dh == 0 and "off" or (act > 0 and "on" or "warn"), string.format("%d/%d activos", act, #dh))
+			for i, r in ipairs(dh) do
+				local okN, nm = pcall(debug.info, r.target, "n")
+				R("dh" .. i, "   " .. ((okN and type(nm) == "string" and nm ~= "") and nm or ("fn#" .. i)), recState(r), r.usedOth and "oth" or "hookfunction")
+			end
+			R("ni", "__newindex (callbacks)", recState(S.newindexRec), S.newindexRec and (S.newindexRec.active and "activo" or "pass-through") or "no instalado")
+			R("sg", "Signal hook (__index)", recState(S.signalHook), S.signalHook and (S.signalHook.active and "activo" or "pass-through") or "no instalado")
+			R("ac", "Actors", S.actorChannel and "on" or "off", string.format("%d conexiones", #(S.actorConns or {})))
+			local s2c = #(S.s2cConns or {})
+			R("s2c", "S2C connections", s2c > 0 and "on" or "off", tostring(s2c))
+			local wc = 0
+			for _ in pairs(S.wrappedCallbacks or {}) do wc += 1 end
+			R("wc", "Callbacks wrapped", wc > 0 and "on" or "off", tostring(wc))
+			R("int", "Interactions", #(S.interactionConns or {}) > 0 and "on" or "off", tostring(#(S.interactionConns or {})))
+			R("att", "Attributes", #(S.attrConns or {}) > 0 and "on" or "off", tostring(#(S.attrConns or {})))
+			H("pipe", "PIPELINE")
+			local on = getFlag(RN.enabled)
+			R("spy", "Remote Spy", on and "on" or "off", on and "capturando" or "pausado", on and "Pausar" or "Activar", function() setFlag(RN.enabled, not getFlag(RN.enabled)) end)
+			local q = #(S.queue or {})
+			R("q", "Cola", q > 1500 and "warn" or "on", string.format("%d en cola", q))
+			R("log", "Entradas", "on", string.format("%d / %d  (seq %d)", #S.entries, tonumber(Zenith.values[RN.maxLogs]) or 300, S.seq or 0))
+		end
+		H("par", "OVERLAY PARENT")
+		R("par", "Overlay", U.gui and U.gui.Parent and "on" or "bad", (U.gui and U.gui.Parent and pathOfInst(U.gui.Parent) or "?") .. " [" .. st.parentLabel .. "]", "Cambiar", cycleParent)
+		R("zui", "Zenith GUI", U.zGui and "on" or "off", U.zGui and pathOfInst(U.zGui) or "no detectado", "Detectar", function() U.zGui = findZenithGui(); toast(U.zGui and "Zenith GUI detectado" or "No detectado") end)
+		R("ord", "DisplayOrder", "on", tostring(U.gui and U.gui.DisplayOrder or 0))
+		if S then
+			local bl, n = {}, 0
+			for inst, v in pairs(S.blocked or {}) do
+				if v == true and typeof(inst) == "Instance" then
+					n += 1
+					if n <= 30 then bl[#bl + 1] = inst end
+				end
+			end
+			H("blk", "BLOCKED REMOTES (" .. n .. ")")
+			for i, inst in ipairs(bl) do
+				R("b" .. i, clip(pathOfInst(inst), 40), "bad", inst.ClassName, "Unblock", function() S.blocked[inst] = nil; st.dirty = true end)
+			end
+		end
+		H("cap", "CAPABILITIES")
+		local have, total, missing = 0, 0, {}
+		for name, statusVal in pairs(Zenith.capabilities and Zenith.capabilities.status or {}) do
+			total += 1
+			if statusVal ~= nil and statusVal ~= "missing" then
+				have += 1
+			else
+				missing[#missing + 1] = name
+			end
+		end
+		table.sort(missing)
+		R("capn", "Disponibles", have == total and "on" or "warn", string.format("%d / %d", have, total))
+		if #missing > 0 then R("capm", "Faltan", "warn", table.concat(missing, ", ")) end
+		return rows
+	end
+	local function updateHooks()
+		local rows = collectHookRows(Zenith.RSpy)
+		U.hookPool.begin()
+		for i, d in ipairs(rows) do
+			local r = U.hookPool.get(d.id, i)
+			r.name.Text = d.text
+			if r.dot then
+				r.dot.BackgroundColor3 = d.state == "on" and T.good or d.state == "warn" and T.warn or d.state == "bad" and T.bad or T.mute
+				r.detail.Text = d.detail or ""
+				if d.btnText then
+					r.btn.Visible, r.btn.Text, r.onClick = true, d.btnText, d.onClick
+					r.detail.Size = UDim2.new(0.58, -78, 1, 0)
+				else
+					r.btn.Visible, r.onClick = false, nil
+					r.detail.Size = UDim2.new(0.58, -10, 1, 0)
+				end
+			end
+		end
+		U.hookPool.finish()
+	end
+
+	function refresh(force)
+		if not st.alive or not U.gui then return end
+		local S = Zenith.RSpy
+		updateStatus(S)
+		local tab = TABS[st.tab]
+		if tab.page == "hooks" then return updateHooks() end
+		if tab.page == "settings" then
+			for _, fn in ipairs(U.refreshers) do fn() end
+			return
+		end
+		local g0 = curGroup()
+		if g0 and g0.last then
+			U.blockBtn.Text = (S and S.blocked[g0.last.remote] == true) and "Unblock" or "Block"
+		end
+		if st.paused and not force then return end
+		local sig = table.concat({ S and S.seq or -1, S and #S.entries or -1, (S and S.entries[1] and S.entries[1].id) or 0, S and S.ignoreGen or 0, getFlag(RN.enabled) and 1 or 0, st.tab, st.search }, "|")
+		if sig == st.sig and not st.dirty and not force then return end
+		st.sig, st.dirty = sig, false
+		local order, byKey, counts = computeGroups(S)
+		st.byKey, st.nGroups = byKey, #order
+		U.tabBtns[1].Text = "Outgoing  " .. counts.C2S
+		U.tabBtns[2].Text = "Incoming  " .. counts.S2C
+		U.tabBtns[3].Text = "Events  " .. counts.EV
+		if not byKey[st.selKey] then
+			st.selKey, st.page = order[1] and order[1].key or nil, 1
+		end
+		U.listPool.begin()
+		for i = 1, math.min(#order, MAX_GROUPS) do
+			local g = order[i]
+			local r = U.listPool.get(g.key, i)
+			local blocked = S and g.last and S.blocked[g.last.remote] == true
+			local ic = ICON[g.className] or { "A", T.good }
+			r.icon.Text, r.icon.TextColor3 = ic[1], ic[2]
+			r.name.Text = g.name
+			r.name.TextColor3 = blocked and T.bad or T.text
+			r.count.Text = "x" .. g.count
+			r.root.BackgroundColor3 = (st.selKey == g.key) and T.sel or T.panel
+		end
+		U.listPool.finish()
+		local g = byKey[st.selKey]
+		if g then
+			U.info.Text = g.path .. "  :" .. tostring(g.method)
+			U.empty.Visible = false
+			local cs = table.concat({ g.key, g.count, st.page, g.last.id }, "|")
+			if cs ~= st.cardSig or force then
+				st.cardSig = cs
+				renderCards(g)
+			end
+		else
+			U.info.Text = ""
+			st.cardSig = ""
+			renderCards(nil)
+			U.empty.Text = getFlag(RN.enabled) and "Sin llamadas todavia..." or "Remote Spy esta apagado. Activalo en Settings o en la pestana Hooks."
+			U.empty.Visible = true
+		end
+	end
+
+	local function buildSettings(parent)
+		local o = 0
+		local function nx() o += 1; return o end
+		for _, sec in ipairs(TOGGLES) do
+			sectionHeader(parent, sec[1], nx())
+			for _, t in ipairs(sec[2]) do
+				local key = t[1]
+				local row = new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -6, 0, 28), LayoutOrder = nx() }, parent)
+				corner(row, 6); stroke(row)
+				local box = new("Frame", { BackgroundColor3 = T.row, BorderSizePixel = 0, Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 10, 0.5, -8) }, row)
+				corner(box, 4); stroke(box, T.mute)
+				local fill = new("Frame", { BackgroundColor3 = T.accent, BorderSizePixel = 0, Size = UDim2.new(1, -6, 1, -6), Position = UDim2.new(0, 3, 0, 3) }, box)
+				corner(fill, 2)
+				label(row, t[2], { Position = UDim2.new(0, 34, 0, 0), Size = UDim2.new(1, -40, 1, 0) })
+				row.MouseEnter:Connect(function() row.BackgroundColor3 = T.hover end)
+				row.MouseLeave:Connect(function() row.BackgroundColor3 = T.panel end)
+				row.MouseButton1Click:Connect(function() setFlag(key, not getFlag(key)); fill.Visible = getFlag(key) end)
+				U.refreshers[#U.refreshers + 1] = function() fill.Visible = getFlag(key) end
+				fill.Visible = getFlag(key)
+			end
+		end
+		local function addSlider(order, text, minV, maxV, step, getFn, setFn, fmtFn)
+			local f = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -6, 0, 44), LayoutOrder = order }, parent)
+			corner(f, 6); stroke(f)
+			label(f, text, { Position = UDim2.new(0, 10, 0, 4), Size = UDim2.new(0.6, 0, 0, 16) })
+			local val = label(f, "", { Position = UDim2.new(0.6, 0, 0, 4), Size = UDim2.new(0.4, -10, 0, 16), TextXAlignment = Enum.TextXAlignment.Right, Font = BOLD })
+			local track = new("Frame", { BackgroundColor3 = T.row, BorderSizePixel = 0, Position = UDim2.new(0, 10, 0, 30), Size = UDim2.new(1, -20, 0, 4) }, f)
+			corner(track, 2)
+			local fill = new("Frame", { BackgroundColor3 = T.accent, BorderSizePixel = 0, Size = UDim2.new(0, 0, 1, 0) }, track)
+			corner(fill, 2)
+			local knob = new("Frame", { BackgroundColor3 = T.text, BorderSizePixel = 0, Size = UDim2.new(0, 12, 0, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0) }, track)
+			corner(knob, 6)
+			local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 22), Size = UDim2.new(1, 0, 0, 20) }, f)
+			local function show()
+				local v = tonumber(getFn()) or minV
+				local rel = math.clamp((v - minV) / (maxV - minV), 0, 1)
+				fill.Size = UDim2.new(rel, 0, 1, 0)
+				knob.Position = UDim2.new(rel, 0, 0.5, 0)
+				val.Text = fmtFn and fmtFn(v) or tostring(v)
+			end
+			local dragging = false
+			local function apply(x)
+				local rel = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
+				local v = math.clamp(math.floor((minV + rel * (maxV - minV)) / step + 0.5) * step, minV, maxV)
+				setFn(v)
+				show()
+			end
+			hit.InputBegan:Connect(function(i) if isPressOv(i) then dragging = true; apply(i.Position.X) end end)
+			st.conns[#st.conns + 1] = UIS.InputChanged:Connect(function(i) if dragging and isMoveOv(i) then apply(i.Position.X) end end)
+			st.conns[#st.conns + 1] = UIS.InputEnded:Connect(function(i) if isPressOv(i) then dragging = false end end)
+			U.refreshers[#U.refreshers + 1] = show
+			show()
+		end
+		sectionHeader(parent, "LIMITES", nx())
+		addSlider(nx(), "Spy Max Logs", 50, 1000, 50, function() return Zenith.values[RN.maxLogs] or 300 end, function(v) setFlag(RN.maxLogs, v) end)
+		local box = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -6, 0, 30), LayoutOrder = nx() }, parent)
+		corner(box, 6); stroke(box)
+		label(box, "Ignore List", { Position = UDim2.new(0, 10, 0, 0), Size = UDim2.new(0, 80, 1, 0) })
+		local tb = new("TextBox", { BackgroundColor3 = T.row, BorderSizePixel = 0, Position = UDim2.new(0, 94, 0.5, -11), Size = UDim2.new(1, -104, 0, 22), Font = MONO, TextSize = 11, TextColor3 = T.text, PlaceholderText = "remote1, remote2", PlaceholderColor3 = T.mute, Text = "", ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left }, box)
+		corner(tb, 5); pad(tb, 6, 0)
+		tb.FocusLost:Connect(function() setFlag(RN.ignoreList, tb.Text); st.dirty = true end)
+		U.refreshers[#U.refreshers + 1] = function() if not tb:IsFocused() then tb.Text = tostring(Zenith.values[RN.ignoreList] or "") end end
+		sectionHeader(parent, "OVERLAY", nx())
+		addSlider(nx(), "Escala de ventana", 0.7, 1.4, 0.05, function() return U.scale and U.scale.Scale or 1 end, function(v) if U.scale then U.scale.Scale = v end end, function(v) return string.format("%d%%", v * 100 + 0.5) end)
+		label(parent, "F4 / Toggle 'Spy Overlay': mostrar / ocultar", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = T.mute, LayoutOrder = nx() })
+	end
+
+	local Overlay = {}
+	function Overlay.destroy()
+		st.alive = false
+		st.gen += 1
+		for _, c in ipairs(st.conns) do pcall(function() c:Disconnect() end) end
+		st.conns = {}
+		if U.gui then pcall(function() U.gui:Destroy() end) end
+		U = {}
+	end
+
+	local function buildOverlay(startVisible)
+		if U.gui then
+			if U.win then U.win.Visible = startVisible == true end
+			return
+		end
+		U = { cards = {}, refreshers = {}, tabBtns = {} }
+		st.sig, st.cardSig, st.dirty, st.selKey, st.page, st.minimized = "", "", true, nil, 1, false
+		U.zGui = findZenithGui()
+		local gui = new("ScreenGui", { Name = "ZenithSpyOverlay", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
+		U.gui = gui
+		if not attach(gui, st.mode) then
+			gui:Destroy()
+			U = {}
+			return Zenith.log("Error", "Overlay: no se pudo parentear el GUI")
+		end
+		U.scale = new("UIScale", { Scale = 1 }, gui)
+		local win = new("Frame", { Name = "Window", BackgroundColor3 = T.bg, BorderSizePixel = 0, Size = UDim2.new(0, 600, 0, 430), Position = UDim2.new(0.5, -300, 0.5, -215), ClipsDescendants = true, Active = true, Visible = startVisible == true }, gui)
+		U.win = win
+		corner(win, 9); stroke(win)
+
+		local hdr = new("Frame", { BackgroundColor3 = Color3.fromRGB(32, 32, 36), BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 36) }, win)
+		new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(38, 38, 43), Color3.fromRGB(22, 22, 25)), Rotation = 90 }, hdr)
+		new("Frame", { BackgroundColor3 = T.stroke, BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1) }, hdr)
+		label(hdr, TITLE, { Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -240, 1, 0), Font = BOLD, TextSize = 13 })
+		local search = new("TextBox", { BackgroundColor3 = T.row, BorderSizePixel = 0, Position = UDim2.new(1, -216, 0, 7), Size = UDim2.new(0, 142, 0, 22), Font = FONT, TextSize = 12, TextColor3 = T.text, PlaceholderText = "Buscar", PlaceholderColor3 = T.mute, Text = "", ClearTextOnFocus = false }, hdr)
+		corner(search, 6); stroke(search)
+		search:GetPropertyChangedSignal("Text"):Connect(function() st.search, st.page, st.dirty = search.Text, 1, true end)
+		button(hdr, "-", { Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -68, 0, 7), TextSize = 14 }, function()
+			st.minimized = not st.minimized
+			U.content.Visible, U.tabBar.Visible, U.statusBar.Visible = not st.minimized, not st.minimized, not st.minimized
+			if st.minimized then
+				U.savedH = win.Size.Y.Offset
+				win.Size = UDim2.new(win.Size.X.Scale, win.Size.X.Offset, 0, 36)
+			else
+				win.Size = UDim2.new(win.Size.X.Scale, win.Size.X.Offset, 0, U.savedH or 430)
+			end
+		end)
+		button(hdr, "X", { Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -36, 0, 7) }, function()
+			setFlag(RN.overlay, false)
+		end)
+
+		local tabBar = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Position = UDim2.new(0, 8, 0, 42), Size = UDim2.new(1, -16, 0, 28) }, win)
+		U.tabBar = tabBar
+		corner(tabBar, 8); stroke(tabBar); pad(tabBar, 3); vlist(tabBar, 4, Enum.FillDirection.Horizontal)
+		local content = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 8, 0, 76), Size = UDim2.new(1, -16, 1, -106) }, win)
+		U.content = content
+		local function scroller(visible)
+			local s = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mute, Visible = visible }, content)
+			pad(s, 2); vlist(s, 4)
+			return s
+		end
+
+		local spy = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) }, content)
+		local left = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(0, 190, 1, 0) }, spy)
+		corner(left, 8); stroke(left)
+		local lscroll = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 1, 0), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mute }, left)
+		pad(lscroll, 4); vlist(lscroll, 3)
+		U.listPool = makePool(lscroll, buildGroupRow)
+		local right = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 196, 0, 0), Size = UDim2.new(1, -196, 1, 0) }, spy)
+		U.info = label(right, "", { Position = UDim2.new(0, 2, 0, 0), Size = UDim2.new(1, -4, 0, 18), Font = MONO, TextSize = 11, TextColor3 = T.sub, TextTruncate = Enum.TextTruncate.AtEnd })
+		local toolbar = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 20), Size = UDim2.new(1, 0, 0, 24) }, right)
+		vlist(toolbar, 4, Enum.FillDirection.Horizontal)
+		local function tb(text, w, order, cb) return button(toolbar, text, { Size = UDim2.new(0, w, 1, 0), LayoutOrder = order, TextSize = 11 }, cb) end
+		local function groupAct(name)
+			local g = curGroup()
+			if not g then return toast("Selecciona un remote") end
+			runAction(name, g.last)
+		end
+		tb("Copy Path", 74, 1, function() groupAct(RN.copyPath) end)
+		U.blockBtn = tb("Block", 58, 2, function() groupAct(RN.blockRemote) end)
+		tb("Ignore", 54, 3, function() groupAct(RN.ignoreRemote) end)
+		tb("XRefs", 50, 4, function() groupAct(RN.findXRefs) end)
+		tb("Clear", 50, 5, function() runAction(RN.clear); st.selKey = nil end)
+		U.cardScroll = new("ScrollingFrame", { BackgroundTransparency = 1, BorderSizePixel = 0, Position = UDim2.new(0, 0, 0, 48), Size = UDim2.new(1, 0, 1, -78), CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = T.mute }, right)
+		vlist(U.cardScroll, 6)
+		U.empty = label(right, "", { Position = UDim2.new(0, 0, 0, 60), Size = UDim2.new(1, 0, 0, 60), TextColor3 = T.mute, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Center })
+		local pager = new("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, -26), Size = UDim2.new(1, 0, 0, 24) }, right)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, pager)
+		button(pager, "<", { Size = UDim2.new(0, 28, 0, 22), LayoutOrder = 1 }, function() if st.page > 1 then st.page -= 1; refresh(true) end end)
+		U.pageChip = label(pager, "1 / 1", { Size = UDim2.new(0, 64, 0, 22), LayoutOrder = 2, BackgroundTransparency = 0, BackgroundColor3 = T.sel, TextXAlignment = Enum.TextXAlignment.Center })
+		corner(U.pageChip, 5)
+		button(pager, ">", { Size = UDim2.new(0, 28, 0, 22), LayoutOrder = 3 }, function() st.page += 1; refresh(true) end)
+
+		local hooksPage, setPage = scroller(false), scroller(false)
+		U.hookPool = makePool(hooksPage, function(id)
+			if string.sub(id, 1, 2) == "h:" then
+				local f, t = sectionHeader(nil, "", 0)
+				return { root = f, name = t }
+			end
+			local f = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -6, 0, 26) })
+			corner(f, 6); stroke(f)
+			local dot = new("Frame", { BackgroundColor3 = T.mute, BorderSizePixel = 0, Size = UDim2.new(0, 8, 0, 8), Position = UDim2.new(0, 8, 0.5, -4) }, f)
+			corner(dot, 4)
+			local name = label(f, "", { Position = UDim2.new(0, 22, 0, 0), Size = UDim2.new(0.42, -22, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd })
+			local detail = label(f, "", { Position = UDim2.new(0.42, 0, 0, 0), Size = UDim2.new(0.58, -10, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = T.sub, TextTruncate = Enum.TextTruncate.AtEnd, Font = MONO, TextSize = 11 })
+			local r = { root = f, dot = dot, name = name, detail = detail }
+			r.btn = button(f, "", { Size = UDim2.new(0, 64, 0, 20), Position = UDim2.new(1, -68, 0.5, -10), Visible = false, TextSize = 11 }, function() if r.onClick then r.onClick() end end)
+			return r
+		end)
+		buildSettings(setPage)
+		local pages = { spy = spy, hooks = hooksPage, settings = setPage }
+
+		local function setTab(i)
+			st.tab, st.selKey, st.page, st.sig, st.cardSig, st.dirty = i, nil, 1, "", "", true
+			for k, b in ipairs(U.tabBtns) do
+				b.BackgroundTransparency = (k == i) and 0 or 1
+				b.TextColor3 = (k == i) and T.text or T.sub
+			end
+			for name, p in pairs(pages) do p.Visible = (name == TABS[i].page) end
+			refresh(true)
+		end
+		for i, t in ipairs(TABS) do
+			local b = button(tabBar, t.text, { Size = UDim2.new(1 / #TABS, -4, 1, 0), LayoutOrder = i, BackgroundColor3 = T.sel }, function() setTab(i) end)
+			b.MouseEnter:Connect(function() b.BackgroundColor3 = T.sel end)
+			b.MouseLeave:Connect(function() b.BackgroundColor3 = T.sel end)
+			U.tabBtns[i] = b
+		end
+
+		local sb = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Position = UDim2.new(0, 0, 1, -24), Size = UDim2.new(1, 0, 0, 24) }, win)
+		U.statusBar = sb
+		new("Frame", { BackgroundColor3 = T.stroke, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 1) }, sb)
+		U.statusDot = new("Frame", { BackgroundColor3 = T.mute, BorderSizePixel = 0, Size = UDim2.new(0, 8, 0, 8), Position = UDim2.new(0, 10, 0.5, -4) }, sb)
+		corner(U.statusDot, 4)
+		U.statusLbl = label(sb, "", { Position = UDim2.new(0, 24, 0, 0), Size = UDim2.new(1, -130, 1, 0), TextColor3 = T.sub, TextSize = 11, TextTruncate = Enum.TextTruncate.AtEnd })
+		local pauseBtn
+		pauseBtn = button(sb, "Live", { Size = UDim2.new(0, 56, 0, 18), Position = UDim2.new(1, -92, 0.5, -9), TextSize = 11 }, function()
+			st.paused = not st.paused
+			pauseBtn.Text = st.paused and "Paused" or "Live"
+			pauseBtn.TextColor3 = st.paused and T.warn or T.text
+			if not st.paused then refresh(true) end
+		end)
+		local grip = new("TextButton", { Text = "", BackgroundTransparency = 1, Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(1, -20, 0.5, -9) }, sb)
+		for _, p in ipairs({ { 12, 4 }, { 8, 8 }, { 12, 8 }, { 4, 12 }, { 8, 12 }, { 12, 12 } }) do
+			new("Frame", { BackgroundColor3 = T.mute, BorderSizePixel = 0, Size = UDim2.new(0, 2, 0, 2), Position = UDim2.new(0, p[1], 0, p[2]) }, grip)
+		end
+
+		local drag, resize
+		hdr.InputBegan:Connect(function(i) if isPressOv(i) then drag = { start = i.Position, pos = win.Position } end end)
+		grip.InputBegan:Connect(function(i) if isPressOv(i) and not st.minimized then resize = { start = i.Position, w = win.Size.X.Offset, h = win.Size.Y.Offset } end end)
+		st.conns[#st.conns + 1] = UIS.InputChanged:Connect(function(i)
+			if not isMoveOv(i) then return end
+			local sc = U.scale and U.scale.Scale or 1
+			if drag then
+				local d = (i.Position - drag.start) / sc
+				win.Position = UDim2.new(drag.pos.X.Scale, drag.pos.X.Offset + d.X, drag.pos.Y.Scale, drag.pos.Y.Offset + d.Y)
+			elseif resize then
+				local d = (i.Position - resize.start) / sc
+				win.Size = UDim2.new(0, math.max(MIN_W, resize.w + d.X), 0, math.max(MIN_H, resize.h + d.Y))
+			end
+		end)
+		st.conns[#st.conns + 1] = UIS.InputEnded:Connect(function(i) if isPressOv(i) then drag, resize = nil, nil end end)
+
+		st.alive = true
+		st.gen += 1
+		local myGen = st.gen
+		setTab(1)
+		task.spawn(function()
+			while st.alive and st.gen == myGen and U.gui do
+				if U.win and U.win.Visible then
+					local ok, err = pcall(refresh)
+					if not ok and err ~= st.lastErr then
+						st.lastErr = err
+						Zenith.log("Warn", "Overlay: " .. tostring(err))
+					end
+				end
+				task.wait(0.25)
+			end
+		end)
+		Zenith.log("Info", "Spy Overlay listo (F4 o toggle 'Spy Overlay')")
+	end
+
+	function Overlay.toggle(show)
+		local target = show
+		if target == nil then
+			target = not (U.win and U.win.Visible)
+		end
+		if target then
+			if not U.gui then
+				buildOverlay(true)
+			elseif U.win then
+				U.win.Visible = true
+				refresh(true)
+			end
+		elseif U.win then
+			U.win.Visible = false
+		end
+	end
+
+	Zenith.Overlay = Overlay
+
+	Zenith.register("SpyOverlay", {
+		requires = {},
+		optional = { "gethui" },
+		init = function()
+			Zenith.Overlay = Overlay
+			savedOverlayHook = Zenith.hooks[RN.overlay]
+			Zenith.hooks[RN.overlay] = function(on)
+				if savedOverlayHook then pcall(savedOverlayHook, on) end
+				Overlay.toggle(on == true)
+			end
+			if Zenith.values[RN.overlay] == true then
+				Overlay.toggle(true)
+			end
+		end,
+		stop = function()
+			Zenith.hooks[RN.overlay] = savedOverlayHook
+			savedOverlayHook = nil
+			Overlay.destroy()
+			if Zenith.Overlay == Overlay then
+				Zenith.Overlay = nil
+			end
+		end,
+	})
+end
+
 local function initializeScript()
 	if typeof(shared) == "table" and shared.ZenithGui then
 		pcall(function()
@@ -10793,6 +11685,7 @@ local function initializeScript()
 
 	addSection(rspyLeft, "Captured Remotes")
 	addToggle(rspyLeft, "Remote Spy", nil, false)
+	addToggle(rspyLeft, "Spy Overlay", "F4", false)
 	addCounter(rspyLeft, "Calls Logged", 0)
 	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Interactions", "Attributes" })
 	addText(rspyLeft, "Spy Search", "Search remotes")
