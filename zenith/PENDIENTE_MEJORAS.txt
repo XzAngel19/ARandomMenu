@@ -1,0 +1,1392 @@
+-- Zenith | Extensiones Faltantes (Explorer, ClosurePatcher, RSpyPro, SaveInstancePro, ScriptWatcher, StealthGuard)
+local playersService = game:GetService("Players")
+local httpService = game:GetService("HttpService")
+local runService = game:GetService("RunService")
+local logService = game:GetService("LogService")
+
+local localPlayer = playersService.LocalPlayer
+
+local Zenith = {
+	version = "1.1.0-ext",
+	startTime = os.clock(),
+	values = {},
+	defaults = {},
+	setters = {},
+	actions = {},
+	hooks = {},
+	internal = {},
+	outputs = {},
+	lists = {},
+	connections = {},
+	uiConnections = {},
+}
+
+function Zenith.log(level, msg)
+	print(string.format("[Zenith/%s] %s", tostring(level or "Info"), tostring(msg or "")))
+end
+
+function Zenith.copy(text)
+	local clip = (typeof(setclipboard) == "function" and setclipboard) or (typeof(toclipboard) == "function" and toclipboard)
+	if clip then
+		local ok = pcall(clip, tostring(text or ""))
+		return ok
+	end
+	return false
+end
+
+function Zenith.setItems(name, items)
+	local list = Zenith.lists[name]
+	if list and type(list.set) == "function" then
+		list.set(items)
+	end
+end
+
+local envGlobal = (typeof(getgenv) == "function" and pcall(getgenv) and getgenv()) or _G
+
+local KernelMATRIX = {
+	{ "getscriptbytecode", { "getscriptbytecode", "get_script_bytecode" } },
+	{ "decompile", { "decompile" } },
+	{ "getscripts", { "getscripts" } },
+	{ "getnilinstances", { "getnilinstances" } },
+	{ "getgc", { "getgc" } },
+	{ "getconstants", { "debug.getconstants", "getconstants" } },
+	{ "setconstant", { "debug.setconstant", "setconstant" } },
+	{ "getupvalues", { "debug.getupvalues", "getupvalues" } },
+	{ "setupvalue", { "debug.setupvalue", "setupvalue" } },
+	{ "getprotos", { "debug.getprotos", "getprotos" } },
+	{ "getinfo", { "debug.getinfo", "getinfo" } },
+	{ "getconnections", { "getconnections" } },
+	{ "firesignal", { "firesignal" } },
+	{ "fireproximityprompt", { "fireproximityprompt" } },
+	{ "fireclickdetector", { "fireclickdetector" } },
+	{ "hookfunction", { "hookfunction", "replaceclosure" } },
+	{ "restorefunction", { "restorefunction" } },
+	{ "oth_hook", { "oth.hook" } },
+	{ "oth_unhook", { "oth.unhook" } },
+	{ "newcclosure", { "newcclosure" } },
+	{ "isexecutorclosure", { "isexecutorclosure", "is_synapse_function", "isourclosure" } },
+	{ "islclosure", { "islclosure" } },
+	{ "getrawmetatable", { "getrawmetatable", "debug.getmetatable" } },
+	{ "gethui", { "gethui" } },
+	{ "protect_gui", { "protect_gui", "syn.protect_gui" } },
+	{ "setstackhidden", { "setstackhidden" } },
+	{ "writefile", { "writefile" } },
+	{ "makefolder", { "makefolder" } },
+	{ "isfolder", { "isfolder" } },
+}
+
+local function resolvePath(path)
+	for _, root in ipairs({ envGlobal, _G }) do
+		if type(root) == "table" then
+			local cur = root
+			for key in string.gmatch(path, "[^%.]+") do
+				local ok, nxt = pcall(function()
+					return cur[key]
+				end)
+				cur = ok and nxt or nil
+				if cur == nil then
+					break
+				end
+			end
+			if type(cur) == "function" then
+				return cur
+			end
+		end
+	end
+	return nil
+end
+
+function Zenith.probe()
+	local caps = { status = {}, via = {}, fn = {} }
+	for _, entry in ipairs(KernelMATRIX) do
+		local name, aliases = entry[1], entry[2]
+		local found, usedAlias
+		for _, alias in ipairs(aliases) do
+			local f = resolvePath(alias)
+			if f then
+				found, usedAlias = f, alias
+				break
+			end
+		end
+		caps.status[name] = found and "ok" or "missing"
+		caps.via[name] = usedAlias or "-"
+		caps.fn[name] = found
+	end
+	Zenith.capabilities = caps
+	return caps
+end
+
+function Zenith.cap(name)
+	local c = Zenith.capabilities
+	return c ~= nil and c.status[name] ~= nil and c.status[name] ~= "missing"
+end
+
+function Zenith.capFn(name)
+	local c = Zenith.capabilities
+	return c and c.fn[name] or nil
+end
+
+Zenith.probe()
+
+local modules, order = {}, {}
+
+function Zenith.register(name, spec)
+	if modules[name] then
+		return
+	end
+	modules[name] = {
+		requires = spec.requires or {},
+		optional = spec.optional or {},
+		init = spec.init,
+		stop = spec.stop,
+		state = "pending",
+		owned = {},
+	}
+	table.insert(order, name)
+end
+
+function Zenith.track(conn, bucket)
+	if not conn then
+		return conn
+	end
+	table.insert(Zenith.connections, conn)
+	if type(bucket) == "table" then
+		table.insert(bucket, conn)
+	end
+	return conn
+end
+
+function Zenith.startAll()
+	local caps = Zenith.capabilities or Zenith.probe()
+	for _, name in ipairs(order) do
+		local m = modules[name]
+		if m and m.state ~= "loaded" and m.init then
+			local ok, err = pcall(m.init, caps, {
+				name = name,
+				track = function(conn)
+					return Zenith.track(conn, m.owned)
+				end,
+			})
+			m.state = ok and "loaded" or "failed"
+			if not ok then
+				Zenith.log("Error", name .. " init fallo: " .. tostring(err))
+			end
+		end
+	end
+end
+
+function Zenith.stopAll()
+	for i = #order, 1, -1 do
+		local name = order[i]
+		local m = modules[name]
+		if m and m.state == "loaded" then
+			if m.stop then
+				pcall(m.stop)
+			end
+			for j = #m.owned, 1, -1 do
+				local c = m.owned[j]
+				pcall(function()
+					if typeof(c) == "RBXScriptConnection" then
+						c:Disconnect()
+					elseif type(c) == "table" and type(c.Disconnect) == "function" then
+						c:Disconnect()
+					end
+				end)
+			end
+			table.clear(m.owned)
+			m.state = "pending"
+		end
+	end
+end
+
+function Zenith.instancePath(inst)
+	if typeof(inst) ~= "Instance" then
+		return tostring(inst)
+	end
+	if inst == game then
+		return "game"
+	end
+	local chain = {}
+	local cur = inst
+	local guard = 0
+	while cur and cur ~= game and guard < 64 do
+		guard += 1
+		local okP, par = pcall(function()
+			return cur.Parent
+		end)
+		if not okP then
+			break
+		end
+		if par == game then
+			local okS, cls = pcall(function()
+				return cur.ClassName
+			end)
+			if okS and cls and cls ~= "" then
+				table.insert(chain, 1, string.format("game:GetService(%q)", cls))
+				return table.concat(chain, "")
+			end
+		end
+		local okN, nm = pcall(function()
+			return cur.Name
+		end)
+		local segName = okN and tostring(nm) or "Instance"
+		if string.match(segName, "^[%a_][%w_]*$") then
+			table.insert(chain, 1, "." .. segName)
+		else
+			table.insert(chain, 1, string.format("[%q]", segName))
+		end
+		cur = par
+	end
+	if #chain == 0 then
+		return "nil"
+	end
+	local head = chain[1]
+	if string.sub(head, 1, 1) == "." then
+		chain[1] = string.sub(head, 2)
+	end
+	return "nil --[[" .. table.concat(chain, "") .. "]]"
+end
+
+-- ============================================================================
+-- 1. EXPLORER & INSPECTOR DE CONEXIONES (Dark Dex / Hydroxide style)
+-- ============================================================================
+do
+	local N = {
+		root = "Explorer Root",
+		search = "Explorer Search",
+		list = "Explorer List",
+		output = "Explorer Inspector",
+		connList = "Explorer Connections",
+		openParent = "Explorer Parent",
+		openSelected = "Explorer Open",
+		refresh = "Explorer Refresh",
+		copyPath = "Explorer Copy Path",
+		decompileInst = "Explorer Decompile",
+		triggerInst = "Explorer Trigger",
+		destroyInst = "Explorer Destroy",
+		toggleConn = "Explorer Toggle Conn",
+		fireConn = "Explorer Fire Conn",
+	}
+
+	local DEFAULT_ROOTS = {
+		"Workspace", "Players", "ReplicatedStorage", "ReplicatedFirst",
+		"StarterGui", "StarterPack", "Lighting", "SoundService", "CoreGui", "Nil Instances",
+	}
+
+	local CLASS_TAGS = {
+		LocalScript = "[LS]",
+		ModuleScript = "[MS]",
+		Script = "[SS]",
+		RemoteEvent = "[RE]",
+		RemoteFunction = "[RF]",
+		UnreliableRemoteEvent = "[URE]",
+		BindableEvent = "[BE]",
+		BindableFunction = "[BF]",
+		Folder = "[F]",
+		Model = "[M]",
+		Part = "[P]",
+		MeshPart = "[MP]",
+		ProximityPrompt = "[PP]",
+		ClickDetector = "[CD]",
+	}
+
+	local INSPECT_SIGNALS = {
+		"Changed", "ChildAdded", "ChildRemoved", "DescendantAdded",
+		"Activated", "MouseButton1Click", "MouseButton1Down", "Triggered",
+		"MouseClick", "Touched", "OnClientEvent", "Event", "StateChanged",
+	}
+
+	local state = {
+		currentParent = nil,
+		currentInst = nil,
+		byLabel = {},
+		shownLabels = {},
+		connRecords = {},
+		connByLabel = {},
+		selectedConnLabel = nil,
+	}
+
+	local function getRootTarget(rootName)
+		if rootName == "Nil Instances" then
+			return "NIL_ROOT"
+		end
+		local ok, svc = pcall(game.GetService, game, rootName)
+		return (ok and svc) or nil
+	end
+
+	local function safeProp(inst, prop)
+		local ok, val = pcall(function()
+			return inst[prop]
+		end)
+		if ok then
+			return true, val
+		end
+		return false, nil
+	end
+
+	local function collectChildren(parentTarget)
+		if parentTarget == "NIL_ROOT" then
+			local gni = Zenith.capFn("getnilinstances")
+			if not gni then
+				return {}
+			end
+			local ok, list = pcall(gni)
+			return (ok and type(list) == "table") and list or {}
+		end
+		if typeof(parentTarget) ~= "Instance" then
+			local roots = {}
+			for _, rName in ipairs(DEFAULT_ROOTS) do
+				local tgt = getRootTarget(rName)
+				if tgt and tgt ~= "NIL_ROOT" then
+					table.insert(roots, tgt)
+				end
+			end
+			return roots
+		end
+		local ok, children = pcall(parentTarget.GetChildren, parentTarget)
+		return (ok and type(children) == "table") and children or {}
+	end
+
+	local function refreshTree()
+		local q = string.lower(string.match(tostring(Zenith.values[N.search] or ""), "^%s*(.-)%s*$"))
+		table.clear(state.byLabel)
+		table.clear(state.shownLabels)
+
+		if state.currentParent and state.currentParent ~= "NIL_ROOT" then
+			local upLabel = ".. [Parent]"
+			state.byLabel[upLabel] = "GO_UP"
+			table.insert(state.shownLabels, upLabel)
+		elseif state.currentParent == "NIL_ROOT" then
+			local upLabel = ".. [Roots]"
+			state.byLabel[upLabel] = "GO_ROOTS"
+			table.insert(state.shownLabels, upLabel)
+		end
+
+		local children = collectChildren(state.currentParent)
+		local seenCount = {}
+		for _, child in ipairs(children) do
+			if typeof(child) == "Instance" then
+				local okN, nm = safeProp(child, "Name")
+				local okC, cls = safeProp(child, "ClassName")
+				local nameStr = tostring(okN and nm or "Instance")
+				local clsStr = tostring(okC and cls or "Instance")
+				if q == "" or string.find(string.lower(nameStr), q, 1, true) or string.find(string.lower(clsStr), q, 1, true) then
+					local tag = CLASS_TAGS[clsStr] or ("[" .. clsStr .. "]")
+					local base = string.format("%s %s", tag, nameStr)
+					seenCount[base] = (seenCount[base] or 0) + 1
+					local lbl = seenCount[base] > 1 and string.format("%s #%d", base, seenCount[base]) or base
+					state.byLabel[lbl] = child
+					table.insert(state.shownLabels, lbl)
+				end
+			end
+		end
+		Zenith.setItems(N.list, state.shownLabels)
+	end
+
+	local function scanConnections(inst)
+		table.clear(state.connRecords)
+		table.clear(state.connByLabel)
+		local labels = {}
+		local getConns = Zenith.capFn("getconnections")
+		if not getConns or typeof(inst) ~= "Instance" then
+			Zenith.setItems(N.connList, labels)
+			return
+		end
+
+		local isExec = Zenith.capFn("isexecutorclosure")
+		local getInfo = Zenith.capFn("getinfo")
+		local idx = 0
+		for _, sigName in ipairs(INSPECT_SIGNALS) do
+			local okS, sig = safeProp(inst, sigName)
+			if okS and typeof(sig) == "RBXScriptSignal" then
+				local okC, conns = pcall(getConns, sig)
+				if okC and type(conns) == "table" then
+					for _, conn in ipairs(conns) do
+						idx += 1
+						local fn = conn.Function
+						local isLua = type(fn) == "function"
+						local execFlag = isLua and isExec and select(2, pcall(isExec, fn)) == true
+						local src = "-"
+						if isLua and getInfo then
+							local okI, info = pcall(getInfo, fn)
+							if okI and type(info) == "table" then
+								src = tostring(info.short_src or info.source or "-")
+								if info.currentline and info.currentline > 0 then
+									src = src .. ":" .. tostring(info.currentline)
+								end
+							end
+						end
+						local enabled = (conn.Enabled ~= false)
+						local lbl = string.format("#%d [%s] %s (%s) %s", idx, enabled and "ON" or "OFF", sigName, execFlag and "Exec" or (isLua and "Lua" or "C"), src)
+						local rec = {
+							signalName = sigName,
+							signal = sig,
+							conn = conn,
+							func = fn,
+							enabled = enabled,
+							source = src,
+						}
+						table.insert(state.connRecords, rec)
+						state.connByLabel[lbl] = rec
+						table.insert(labels, lbl)
+					end
+				end
+			end
+		end
+		Zenith.setItems(N.connList, labels)
+	end
+
+	local function inspectInstance(inst)
+		state.currentInst = inst
+		if typeof(inst) ~= "Instance" then
+			return
+		end
+		local okN, nm = safeProp(inst, "Name")
+		local okC, cls = safeProp(inst, "ClassName")
+		local lines = {
+			"-- Zenith Instance Inspector",
+			"-- Name      : " .. tostring(okN and nm or "?"),
+			"-- ClassName : " .. tostring(okC and cls or "?"),
+			"-- Path      : " .. Zenith.instancePath(inst),
+		}
+
+		local props = { "Archivable", "Value", "Text", "Visible", "Enabled", "Disabled", "Anchored", "CanCollide", "Transparency", "Size", "Position", "CFrame", "Color", "SoundId", "AnimationId", "MeshId", "ActionText", "ObjectText", "MaxActivationDistance" }
+		lines[#lines + 1] = "-- Properties:"
+		for _, p in ipairs(props) do
+			local okP, v = safeProp(inst, p)
+			if okP and v ~= nil then
+				lines[#lines + 1] = string.format("  %s = %s", p, tostring(v))
+			end
+		end
+
+		local okA, attrs = pcall(inst.GetAttributes, inst)
+		if okA and type(attrs) == "table" and next(attrs) ~= nil then
+			lines[#lines + 1] = "-- Attributes:"
+			for k, v in pairs(attrs) do
+				lines[#lines + 1] = string.format("  [%s] = %s (%s)", tostring(k), tostring(v), typeof(v))
+			end
+		end
+
+		scanConnections(inst)
+		lines[#lines + 1] = "-- Connections found: " .. tostring(#state.connRecords)
+
+		local out = Zenith.outputs and Zenith.outputs[N.output]
+		if out and type(out.setText) == "function" then
+			out.setText(table.concat(lines, "\n"))
+		end
+	end
+
+	Zenith.Explorer = state
+
+	Zenith.register("Explorer", {
+		requires = {},
+		optional = { "getnilinstances", "getconnections", "firesignal", "fireproximityprompt", "fireclickdetector", "getinfo", "isexecutorclosure" },
+		init = function()
+			Zenith.hooks[N.root] = function(rootName)
+				state.currentParent = getRootTarget(tostring(rootName or "Workspace"))
+				refreshTree()
+			end
+			Zenith.hooks[N.search] = function()
+				refreshTree()
+			end
+			Zenith.hooks[N.list] = function(lbl)
+				local target = state.byLabel[lbl]
+				if target == "GO_UP" and typeof(state.currentParent) == "Instance" then
+					local okP, par = safeProp(state.currentParent, "Parent")
+					state.currentParent = (okP and par ~= game) and par or nil
+					refreshTree()
+				elseif target == "GO_ROOTS" then
+					state.currentParent = nil
+					refreshTree()
+				elseif typeof(target) == "Instance" then
+					inspectInstance(target)
+				end
+			end
+			Zenith.hooks[N.connList] = function(lbl)
+				state.selectedConnLabel = lbl
+			end
+			Zenith.actions[N.openSelected] = function()
+				if typeof(state.currentInst) == "Instance" then
+					state.currentParent = state.currentInst
+					refreshTree()
+				end
+			end
+			Zenith.actions[N.openParent] = function()
+				if typeof(state.currentParent) == "Instance" then
+					local okP, par = safeProp(state.currentParent, "Parent")
+					state.currentParent = (okP and par ~= game) and par or nil
+					refreshTree()
+				end
+			end
+			Zenith.actions[N.refresh] = refreshTree
+			Zenith.actions[N.copyPath] = function()
+				if typeof(state.currentInst) ~= "Instance" then
+					return Zenith.log("Warn", "Explorer: selecciona una instancia primero")
+				end
+				Zenith.copy(Zenith.instancePath(state.currentInst))
+			end
+			Zenith.actions[N.decompileInst] = function()
+				local inst = state.currentInst
+				if typeof(inst) == "Instance" and inst:IsA("LuaSourceContainer") and Zenith.decompileInstance then
+					Zenith.decompileInstance(inst)
+				else
+					Zenith.log("Warn", "Explorer: la instancia seleccionada no es un script")
+				end
+			end
+			Zenith.actions[N.triggerInst] = function()
+				local inst = state.currentInst
+				if typeof(inst) ~= "Instance" then
+					return
+				end
+				if inst:IsA("ProximityPrompt") and Zenith.cap("fireproximityprompt") then
+					pcall(Zenith.capFn("fireproximityprompt"), inst)
+				elseif inst:IsA("ClickDetector") and Zenith.cap("fireclickdetector") then
+					pcall(Zenith.capFn("fireclickdetector"), inst)
+				elseif inst:IsA("GuiButton") and Zenith.cap("firesignal") then
+					pcall(Zenith.capFn("firesignal"), inst.MouseButton1Click)
+				end
+			end
+			Zenith.actions[N.destroyInst] = function()
+				if typeof(state.currentInst) == "Instance" then
+					pcall(state.currentInst.Destroy, state.currentInst)
+					state.currentInst = nil
+					refreshTree()
+				end
+			end
+			Zenith.actions[N.toggleConn] = function()
+				local rec = state.connByLabel[state.selectedConnLabel]
+				if not rec or not rec.conn then
+					return Zenith.log("Warn", "Explorer: selecciona una conexion primero")
+				end
+				if rec.enabled and type(rec.conn.Disable) == "function" then
+					pcall(rec.conn.Disable, rec.conn)
+				elseif not rec.enabled and type(rec.conn.Enable) == "function" then
+					pcall(rec.conn.Enable, rec.conn)
+				end
+				scanConnections(state.currentInst)
+			end
+			Zenith.actions[N.fireConn] = function()
+				local rec = state.connByLabel[state.selectedConnLabel]
+				if not rec then
+					return Zenith.log("Warn", "Explorer: selecciona una conexion primero")
+				end
+				local fs = Zenith.capFn("firesignal")
+				if fs and rec.signal then
+					pcall(fs, rec.signal)
+				elseif rec.conn and type(rec.conn.Fire) == "function" then
+					pcall(rec.conn.Fire, rec.conn)
+				end
+			end
+			refreshTree()
+		end,
+		stop = function()
+			table.clear(state.byLabel)
+			table.clear(state.shownLabels)
+			table.clear(state.connRecords)
+			table.clear(state.connByLabel)
+			state.currentParent, state.currentInst = nil, nil
+		end,
+	})
+end
+
+-- ============================================================================
+-- 2. LIVE CLOSURE PATCHER (Upvalues / Constants / Return Spoof estilo Hydroxide)
+-- ============================================================================
+do
+	local N = {
+		query = "Closure Query",
+		list = "Closure List",
+		inspector = "Closure Inspector",
+		slotIndex = "Closure Slot Index",
+		newValue = "Closure New Value",
+		scan = "Closure Scan",
+		patchUpvalue = "Patch Upvalue",
+		patchConstant = "Patch Constant",
+		spoofReturn = "Spoof Return",
+		restoreSpoof = "Restore Spoof",
+	}
+
+	local state = {
+		closures = {},
+		byLabel = {},
+		selected = nil,
+		hooks = {},
+	}
+
+	local function parsePatchLiteral(raw)
+		local s = string.match(tostring(raw or ""), "^%s*(.-)%s*$")
+		if s == "nil" then
+			return true, nil
+		elseif s == "true" then
+			return true, true
+		elseif s == "false" then
+			return true, false
+		end
+		local num = tonumber(s)
+		if num ~= nil then
+			return true, num
+		end
+		local loader = (typeof(loadstring) == "function" and loadstring) or (typeof(load) == "function" and load)
+		if loader then
+			local chunk, err = loader("return " .. s)
+			if chunk then
+				local ok, val = pcall(chunk)
+				if ok then
+					return true, val
+				end
+				return false, val
+			end
+			return false, err
+		end
+		return true, s
+	end
+
+	local function renderClosure(rec)
+		state.selected = rec
+		if not rec or type(rec.fn) ~= "function" then
+			return
+		end
+		local lines = {
+			"-- Zenith Closure Inspector",
+			"-- Name : " .. tostring(rec.name),
+			"-- Src  : " .. tostring(rec.src),
+		}
+		local gUps = Zenith.capFn("getupvalues")
+		if gUps then
+			local okU, ups = pcall(gUps, rec.fn)
+			lines[#lines + 1] = "-- Upvalues:"
+			if okU and type(ups) == "table" then
+				for i, v in pairs(ups) do
+					lines[#lines + 1] = string.format("  [%s] (%s) = %s", tostring(i), typeof(v), tostring(v))
+				end
+			end
+		end
+		local gKs = Zenith.capFn("getconstants")
+		if gKs then
+			local okK, ks = pcall(gKs, rec.fn)
+			lines[#lines + 1] = "-- Constants:"
+			if okK and type(ks) == "table" then
+				for i, v in pairs(ks) do
+					lines[#lines + 1] = string.format("  [%s] (%s) = %s", tostring(i), typeof(v), tostring(v))
+				end
+			end
+		end
+		local out = Zenith.outputs and Zenith.outputs[N.inspector]
+		if out and type(out.setText) == "function" then
+			out.setText(table.concat(lines, "\n"))
+		end
+	end
+
+	local function scanClosures(rawQuery)
+		local gc = Zenith.capFn("getgc")
+		if not gc then
+			return Zenith.log("Warn", "ClosurePatcher: getgc no disponible")
+		end
+		local q = string.lower(string.match(tostring(rawQuery or ""), "^%s*(.-)%s*$"))
+		local isl = Zenith.capFn("islclosure")
+		local isExec = Zenith.capFn("isexecutorclosure")
+		local gInfo = Zenith.capFn("getinfo")
+		local gKs = Zenith.capFn("getconstants")
+		local gUps = Zenith.capFn("getupvalues")
+
+		table.clear(state.closures)
+		table.clear(state.byLabel)
+		local labels = {}
+		local okG, items = pcall(gc, true)
+		if not okG or type(items) ~= "table" then
+			return 0
+		end
+
+		local count = 0
+		for _, obj in ipairs(items) do
+			if type(obj) == "function" then
+				local isL = not isl or (select(2, pcall(isl, obj)) == true)
+				local execOwn = isExec and (select(2, pcall(isExec, obj)) == true)
+				if isL and not execOwn then
+					local info = gInfo and select(2, pcall(gInfo, obj))
+					local fnName = (type(info) == "table" and info.name and info.name ~= "" and info.name) or "anon"
+					local src = (type(info) == "table" and tostring(info.short_src or info.source or "?")) or "?"
+					local matched = q == "" or string.find(string.lower(fnName), q, 1, true) ~= nil or string.find(string.lower(src), q, 1, true) ~= nil
+					if not matched and gKs then
+						local okK, ks = pcall(gKs, obj)
+						if okK and type(ks) == "table" then
+							for _, k in pairs(ks) do
+								if string.find(string.lower(tostring(k)), q, 1, true) then
+									matched = true
+									break
+								end
+							end
+						end
+					end
+					if not matched and gUps then
+						local okU, ups = pcall(gUps, obj)
+						if okU and type(ups) == "table" then
+							for _, u in pairs(ups) do
+								if string.find(string.lower(tostring(u)), q, 1, true) then
+									matched = true
+									break
+								end
+							end
+						end
+					end
+					if matched then
+						count += 1
+						local lbl = string.format("#%d %s (%s)", count, fnName, src)
+						local rec = { fn = obj, name = fnName, src = src, label = lbl }
+						table.insert(state.closures, rec)
+						state.byLabel[lbl] = rec
+						table.insert(labels, lbl)
+						if count >= 200 then
+							break
+						end
+					end
+				end
+			end
+		end
+		Zenith.setItems(N.list, labels)
+		return count
+	end
+
+	local function patchSlot(kind)
+		local rec = state.selected
+		if not rec or type(rec.fn) ~= "function" then
+			return Zenith.log("Warn", "ClosurePatcher: selecciona un closure primero")
+		end
+		local idx = tonumber(Zenith.values[N.slotIndex])
+		if not idx or idx < 1 then
+			return Zenith.log("Warn", "ClosurePatcher: indice invalido")
+		end
+		local okParse, newVal = parsePatchLiteral(Zenith.values[N.newValue])
+		if not okParse then
+			return Zenith.log("Error", "ClosurePatcher valor invalido: " .. tostring(newVal))
+		end
+		local setter = Zenith.capFn(kind == "upvalue" and "setupvalue" or "setconstant")
+		if not setter then
+			return Zenith.log("Warn", "ClosurePatcher: " .. kind .. " setter no disponible")
+		end
+		local okSet, err = pcall(setter, rec.fn, idx, newVal)
+		if okSet then
+			Zenith.log("Info", string.format("ClosurePatcher: %s[%d] = %s", kind, idx, tostring(newVal)))
+			renderClosure(rec)
+		else
+			Zenith.log("Error", "ClosurePatcher fallo: " .. tostring(err))
+		end
+	end
+
+	local function spoofSelectedReturn()
+		local rec = state.selected
+		if not rec or type(rec.fn) ~= "function" then
+			return Zenith.log("Warn", "ClosurePatcher: selecciona un closure primero")
+		end
+		local okParse, retVal = parsePatchLiteral(Zenith.values[N.newValue])
+		if not okParse then
+			return Zenith.log("Error", "ClosurePatcher spoof valor invalido: " .. tostring(retVal))
+		end
+		local othHook = Zenith.capFn("oth_hook")
+		local hookFn = Zenith.capFn("hookfunction")
+		local newc = Zenith.capFn("newcclosure")
+		if not othHook and not hookFn then
+			return Zenith.log("Warn", "ClosurePatcher: sin hookfunction/oth.hook")
+		end
+		local wrapper = function(...)
+			return retVal
+		end
+		if newc then
+			local okN, c = pcall(newc, wrapper)
+			if okN and type(c) == "function" then
+				wrapper = c
+			end
+		end
+		local usedOth = false
+		local okH, oldFn
+		if othHook then
+			okH, oldFn = pcall(othHook, rec.fn, wrapper)
+			usedOth = okH and type(oldFn) == "function"
+		end
+		if not usedOth and hookFn then
+			okH, oldFn = pcall(hookFn, rec.fn, wrapper)
+		end
+		if okH and type(oldFn) == "function" then
+			table.insert(state.hooks, { target = rec.fn, old = oldFn, usedOth = usedOth })
+			Zenith.log("Info", string.format("ClosurePatcher: retorno de %s spoofeado a %s", rec.name, tostring(retVal)))
+		end
+	end
+
+	local function restoreAllSpoofs()
+		local othUnhook = Zenith.capFn("oth_unhook")
+		local restoreFn = Zenith.capFn("restorefunction")
+		local hookFn = Zenith.capFn("hookfunction")
+		for i = #state.hooks, 1, -1 do
+			local h = state.hooks[i]
+			local ok = false
+			if h.usedOth and othUnhook then
+				ok = pcall(othUnhook, h.target)
+			end
+			if not ok and restoreFn then
+				ok = pcall(restoreFn, h.target)
+			end
+			if not ok and hookFn and h.old then
+				pcall(hookFn, h.target, h.old)
+			end
+		end
+		table.clear(state.hooks)
+	end
+
+	Zenith.ClosurePatcher = {
+		scan = scanClosures,
+		patchSlot = patchSlot,
+		spoofReturn = spoofSelectedReturn,
+		restoreAll = restoreAllSpoofs,
+	}
+
+	Zenith.register("ClosurePatcher", {
+		requires = {},
+		optional = { "getgc", "getconstants", "setconstant", "getupvalues", "setupvalue", "getinfo", "islclosure", "isexecutorclosure", "hookfunction", "restorefunction", "oth_hook", "oth_unhook", "newcclosure" },
+		init = function()
+			Zenith.hooks[N.list] = function(lbl)
+				renderClosure(state.byLabel[lbl])
+			end
+			Zenith.actions[N.scan] = function()
+				scanClosures(Zenith.values[N.query])
+			end
+			Zenith.actions[N.patchUpvalue] = function()
+				patchSlot("upvalue")
+			end
+			Zenith.actions[N.patchConstant] = function()
+				patchSlot("constant")
+			end
+			Zenith.actions[N.spoofReturn] = spoofSelectedReturn
+			Zenith.actions[N.restoreSpoof] = restoreAllSpoofs
+		end,
+		stop = function()
+			restoreAllSpoofs()
+			table.clear(state.closures)
+			table.clear(state.byLabel)
+			state.selected = nil
+		end,
+	})
+end
+
+-- ============================================================================
+-- 3. RSPY PRO (Buffer bytes, Shared Tables fix, Sub-arg rules, Mutador, S2C Replay, Diff/Fuzzer)
+-- ============================================================================
+do
+	local Pro = {
+		subBlocked = {},
+		subIgnored = {},
+		argMutators = {},
+		retSpoofers = {},
+	}
+
+	local function quoteBytes(str)
+		local out = {}
+		for i = 1, #str do
+			local b = string.byte(str, i)
+			if b == 34 then
+				out[#out + 1] = '\\"'
+			elseif b == 92 then
+				out[#out + 1] = "\\\\"
+			elseif b == 10 then
+				out[#out + 1] = "\\n"
+			elseif b == 13 then
+				out[#out + 1] = "\\r"
+			elseif b == 9 then
+				out[#out + 1] = "\\t"
+			elseif b >= 32 and b <= 126 then
+				out[#out + 1] = string.char(b)
+			else
+				out[#out + 1] = string.format("\\%03d", b)
+			end
+		end
+		return '"' .. table.concat(out) .. '"'
+	end
+
+	-- Corrige la serializacion actual de RSpy:
+	-- 1) Preserva bytes reales de `buffer` con buffer.fromstring(...)
+	-- 2) Usa stack activa para ciclos reales, evitando marcar subtablas compartidas como cyclic
+	function Pro.serializeValue(v, depth, activeStack)
+		depth = depth or 0
+		activeStack = activeStack or {}
+		local t = typeof(v)
+		if t == "nil" then
+			return "nil"
+		elseif t == "boolean" or t == "number" then
+			return tostring(v)
+		elseif t == "string" then
+			return quoteBytes(v)
+		elseif t == "Instance" then
+			return Zenith.instancePath(v)
+		elseif t == "buffer" then
+			local len = buffer.len(v)
+			local previewLen = math.min(len, 512)
+			local raw = buffer.readstring(v, 0, previewLen)
+			if len > previewLen then
+				return string.format("buffer.fromstring(%s) --[[ +%d bytes ]]", quoteBytes(raw), len - previewLen)
+			end
+			return string.format("buffer.fromstring(%s)", quoteBytes(raw))
+		elseif t == "Axes" then
+			return string.format("Axes.new(%s)", tostring(v))
+		elseif t == "Faces" then
+			return string.format("Faces.new(%s)", tostring(v))
+		elseif t == "Vector2int16" then
+			return string.format("Vector2int16.new(%d, %d)", v.X, v.Y)
+		elseif t == "table" then
+			if activeStack[v] then
+				return "{ --[[ cyclic ]] }"
+			end
+			if depth >= 8 then
+				return "{ --[[ max depth ]] }"
+			end
+			activeStack[v] = true
+			local parts = {}
+			for k, val in pairs(v) do
+				local ks = (type(k) == "string" and string.match(k, "^[%a_][%w_]*$")) and k or ("[" .. Pro.serializeValue(k, depth + 1, activeStack) .. "]")
+				parts[#parts + 1] = ks .. " = " .. Pro.serializeValue(val, depth + 1, activeStack)
+			end
+			activeStack[v] = nil
+			return "{ " .. table.concat(parts, ", ") .. " }"
+		end
+		return tostring(v)
+	end
+
+	local function subKey(remote, firstArg)
+		return tostring(remote) .. "::" .. typeof(firstArg) .. ":" .. tostring(firstArg)
+	end
+
+	function Pro.setSubRule(kind, remote, firstArg, enabled)
+		local tbl = (kind == "block") and Pro.subBlocked or Pro.subIgnored
+		tbl[subKey(remote, firstArg)] = enabled and true or nil
+	end
+
+	function Pro.shouldBlock(remote, args)
+		local first = type(args) == "table" and args[1] or nil
+		return Pro.subBlocked[subKey(remote, first)] == true
+	end
+
+	function Pro.shouldIgnore(remote, args)
+		local first = type(args) == "table" and args[1] or nil
+		return Pro.subIgnored[subKey(remote, first)] == true
+	end
+
+	function Pro.setArgMutator(remote, mutatorFn)
+		Pro.argMutators[remote] = mutatorFn
+	end
+
+	function Pro.setReturnSpoofer(remote, spooferFn)
+		Pro.retSpoofers[remote] = spooferFn
+	end
+
+	function Pro.applyOutboundIntercept(remote, packedArgs)
+		local mut = Pro.argMutators[remote]
+		if type(mut) ~= "function" then
+			return packedArgs
+		end
+		local ok, replaced = pcall(mut, packedArgs)
+		if ok and type(replaced) == "table" then
+			return replaced
+		end
+		return packedArgs
+	end
+
+	function Pro.applyReturnSpoof(remote, packedResults)
+		local sp = Pro.retSpoofers[remote]
+		if type(sp) ~= "function" then
+			return packedResults
+		end
+		local ok, replaced = pcall(sp, packedResults)
+		if ok and type(replaced) == "table" then
+			return replaced
+		end
+		return packedResults
+	end
+
+	function Pro.replayServerToClient(remote, ...)
+		if typeof(remote) ~= "Instance" or not remote:IsA("RemoteEvent") then
+			return false, "Solo RemoteEvent soporta replay S2C"
+		end
+		local fs = Zenith.capFn("firesignal")
+		if fs then
+			local ok, err = pcall(fs, remote.OnClientEvent, ...)
+			return ok, err
+		end
+		local getConns = Zenith.capFn("getconnections")
+		if getConns then
+			local okC, conns = pcall(getConns, remote.OnClientEvent)
+			if okC and type(conns) == "table" then
+				local firedCount = 0
+				for _, conn in ipairs(conns) do
+					if conn.Enabled ~= false and type(conn.Fire) == "function" then
+						pcall(conn.Fire, conn, ...)
+						firedCount += 1
+					end
+				end
+				return firedCount > 0, firedCount == 0 and "Sin conexiones activas" or nil
+			end
+		end
+		return false, "firesignal y getconnections no disponibles"
+	end
+
+	function Pro.diffEntries(entryA, entryB)
+		if not entryA or not entryB then
+			return "-- Selecciona dos llamadas validas para comparar"
+		end
+		local lines = {
+			string.format("-- Diff: #%d vs #%d (%s)", entryA.id or 0, entryB.id or 0, tostring(entryA.name or entryB.name)),
+		}
+		local maxN = math.max(entryA.args and (entryA.args.n or #entryA.args) or 0, entryB.args and (entryB.args.n or #entryB.args) or 0)
+		for i = 1, maxN do
+			local va = Pro.serializeValue(entryA.args and entryA.args[i])
+			local vb = Pro.serializeValue(entryB.args and entryB.args[i])
+			if va == vb then
+				lines[#lines + 1] = string.format("  [arg %d] == %s", i, va)
+			else
+				lines[#lines + 1] = string.format("- [arg %d] %s", i, va)
+				lines[#lines + 1] = string.format("+ [arg %d] %s", i, vb)
+			end
+		end
+		return table.concat(lines, "\n")
+	end
+
+	function Pro.fuzzRemote(remote, method, argIndex, baseArgs)
+		if typeof(remote) ~= "Instance" then
+			return 0
+		end
+		local fn = remote[method]
+		if type(fn) ~= "function" then
+			return 0
+		end
+		local probes = { 0, -1, 1e9, 0 / 0, "", "__ZENITH_FUZZ__", false, true, {}, nil }
+		local sent = 0
+		for _, payload in ipairs(probes) do
+			local copyArgs = table.clone(baseArgs or {})
+			copyArgs[argIndex or 1] = payload
+			local n = math.max(copyArgs.n or #copyArgs, argIndex or 1)
+			local ok = pcall(fn, remote, table.unpack(copyArgs, 1, n))
+			if ok then
+				sent += 1
+			end
+		end
+		return sent
+	end
+
+	Zenith.RSpyPro = Pro
+	Zenith.register("RSpyPro", {
+		requires = {},
+		optional = { "firesignal", "getconnections" },
+		init = function()
+			Zenith.RSpyPro = Pro
+		end,
+		stop = function()
+			table.clear(Pro.subBlocked)
+			table.clear(Pro.subIgnored)
+			table.clear(Pro.argMutators)
+			table.clear(Pro.retSpoofers)
+		end,
+	})
+end
+
+-- ============================================================================
+-- 4. SAVEINSTANCE PRO + LIVE SCRIPT WATCHER + OBFUSCATION HEURISTICS
+-- ============================================================================
+do
+	local SavePro = {}
+
+	local function xmlEscape(s)
+		s = tostring(s or "")
+		s = string.gsub(s, "[%z\1-\8\11\12\14-\31]", "")
+		s = string.gsub(s, "&", "&amp;")
+		s = string.gsub(s, "<", "&lt;")
+		s = string.gsub(s, ">", "&gt;")
+		s = string.gsub(s, '"', "&quot;")
+		return s
+	end
+
+	local function emitVec3(xml, pad, name, v)
+		xml[#xml + 1] = string.format('%s<Vector3 name="%s"><X>%s</X><Y>%s</Y><Z>%s</Z></Vector3>', pad, name, tostring(v.X), tostring(v.Y), tostring(v.Z))
+	end
+
+	local function emitColor3(xml, pad, name, c)
+		xml[#xml + 1] = string.format('%s<Color3 name="%s"><R>%s</R><G>%s</G><B>%s</B></Color3>', pad, name, tostring(c.R), tostring(c.G), tostring(c.B))
+	end
+
+	local function emitUDim2(xml, pad, name, u)
+		xml[#xml + 1] = string.format('%s<UDim2 name="%s"><XS>%s</XS><XO>%d</XO><YS>%s</YS><YO>%d</YO></UDim2>', pad, name, tostring(u.X.Scale), u.X.Offset, tostring(u.Y.Scale), u.Y.Offset)
+	end
+
+	local function emitCFrame(xml, pad, name, cf)
+		local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = cf:GetComponents()
+		xml[#xml + 1] = string.format(
+			'%s<CoordinateFrame name="%s"><X>%s</X><Y>%s</Y><Z>%s</Z><R00>%s</R00><R01>%s</R01><R02>%s</R02><R10>%s</R10><R11>%s</R11><R12>%s</R12><R20>%s</R20><R21>%s</R21><R22>%s</R22></CoordinateFrame>',
+			pad, name,
+			tostring(x), tostring(y), tostring(z),
+			tostring(r00), tostring(r01), tostring(r02),
+			tostring(r10), tostring(r11), tostring(r12),
+			tostring(r20), tostring(r21), tostring(r22)
+		)
+	end
+
+	function SavePro.serializeRichProperties(inst, pad, referentMap)
+		local xml = {}
+		local propPad = pad .. "\t\t"
+		local function get(p)
+			local ok, v = pcall(function()
+				return inst[p]
+			end)
+			return ok and v or nil
+		end
+
+		if inst:IsA("BasePart") then
+			local sz = get("Size")
+			if typeof(sz) == "Vector3" then emitVec3(xml, propPad, "size", sz) end
+			local cf = get("CFrame")
+			if typeof(cf) == "CFrame" then emitCFrame(xml, propPad, "CFrame", cf) end
+			local col = get("Color")
+			if typeof(col) == "Color3" then emitColor3(xml, propPad, "Color3uint8", col) end
+			local anch = get("Anchored")
+			if type(anch) == "boolean" then xml[#xml + 1] = string.format('%s<bool name="Anchored">%s</bool>', propPad, tostring(anch)) end
+			local cc = get("CanCollide")
+			if type(cc) == "boolean" then xml[#xml + 1] = string.format('%s<bool name="CanCollide">%s</bool>', propPad, tostring(cc)) end
+			local tr = get("Transparency")
+			if type(tr) == "number" then xml[#xml + 1] = string.format('%s<float name="Transparency">%s</float>', propPad, tostring(tr)) end
+			if inst:IsA("MeshPart") then
+				local mid = get("MeshId")
+				if type(mid) == "string" then xml[#xml + 1] = string.format('%s<Content name="MeshId"><url>%s</url></Content>', propPad, xmlEscape(mid)) end
+				local tid = get("TextureID")
+				if type(tid) == "string" then xml[#xml + 1] = string.format('%s<Content name="TextureID"><url>%s</url></Content>', propPad, xmlEscape(tid)) end
+			end
+		elseif inst:IsA("GuiObject") then
+			local sz = get("Size")
+			if typeof(sz) == "UDim2" then emitUDim2(xml, propPad, "Size", sz) end
+			local pos = get("Position")
+			if typeof(pos) == "UDim2" then emitUDim2(xml, propPad, "Position", pos) end
+			local bg = get("BackgroundColor3")
+			if typeof(bg) == "Color3" then emitColor3(xml, propPad, "BackgroundColor3", bg) end
+			local vis = get("Visible")
+			if type(vis) == "boolean" then xml[#xml + 1] = string.format('%s<bool name="Visible">%s</bool>', propPad, tostring(vis)) end
+			local txt = get("Text")
+			if type(txt) == "string" then xml[#xml + 1] = string.format('%s<string name="Text">%s</string>', propPad, xmlEscape(txt)) end
+			local img = get("Image")
+			if type(img) == "string" then xml[#xml + 1] = string.format('%s<Content name="Image"><url>%s</url></Content>', propPad, xmlEscape(img)) end
+		elseif inst:IsA("Sound") then
+			local sid = get("SoundId")
+			if type(sid) == "string" then xml[#xml + 1] = string.format('%s<Content name="SoundId"><url>%s</url></Content>', propPad, xmlEscape(sid)) end
+			local vol = get("Volume")
+			if type(vol) == "number" then xml[#xml + 1] = string.format('%s<float name="Volume">%s</float>', propPad, tostring(vol)) end
+		elseif inst:IsA("Animation") then
+			local aid = get("AnimationId")
+			if type(aid) == "string" then xml[#xml + 1] = string.format('%s<Content name="AnimationId"><url>%s</url></Content>', propPad, xmlEscape(aid)) end
+		elseif inst:IsA("Vector3Value") then
+			local v = get("Value")
+			if typeof(v) == "Vector3" then emitVec3(xml, propPad, "Value", v) end
+		elseif inst:IsA("Color3Value") then
+			local v = get("Value")
+			if typeof(v) == "Color3" then emitColor3(xml, propPad, "Value", v) end
+		elseif inst:IsA("ObjectValue") and type(referentMap) == "table" then
+			local v = get("Value")
+			local refId = v and referentMap[v]
+			if refId then
+				xml[#xml + 1] = string.format('%s<Ref name="Value">RBX%d</Ref>', propPad, refId)
+			end
+		end
+		return table.concat(xml, "\n")
+	end
+
+	function SavePro.analyzeScriptSecurity(sourceText)
+		local src = tostring(sourceText or "")
+		local flags = {}
+		if string.find(src, "getfenv", 1, true) or string.find(src, "setfenv", 1, true) then
+			flags[#flags + 1] = "Uses getfenv/setfenv"
+		end
+		if string.find(src, "loadstring", 1, true) then
+			flags[#flags + 1] = "Dynamic loadstring"
+		end
+		if string.find(src, "Luraph", 1, true) or string.find(src, "MoonSec", 1, true) or string.find(src, "PSU_", 1, true) then
+			flags[#flags + 1] = "Known obfuscator signature"
+		end
+		if #src > 40000 and select(2, string.gsub(src, "\n", "\n")) < 20 then
+			flags[#flags + 1] = "Minified/packed payload"
+		end
+		local requires = {}
+		for reqExpr in string.gmatch(src, "require%s*%(([^%)]+)%)") do
+			requires[#requires + 1] = string.match(reqExpr, "^%s*(.-)%s*$")
+		end
+		return { flags = flags, requires = requires }
+	end
+
+	local watcher = { active = false, archived = {}, seen = setmetatable({}, { __mode = "k" }), conns = {} }
+
+	local function captureDynamicScript(inst)
+		if typeof(inst) ~= "Instance" or watcher.seen[inst] or not inst:IsA("LuaSourceContainer") then
+			return
+		end
+		watcher.seen[inst] = true
+		local gsb = Zenith.capFn("getscriptbytecode")
+		local bc
+		if gsb then
+			local ok, b = pcall(gsb, inst)
+			if ok and type(b) == "string" and #b > 0 then
+				bc = b
+			end
+		end
+		table.insert(watcher.archived, {
+			path = Zenith.instancePath(inst),
+			class = inst.ClassName,
+			time = os.clock(),
+			bytecodeSize = bc and #bc or 0,
+			bytecode = bc,
+		})
+	end
+
+	function SavePro.startScriptWatcher()
+		if watcher.active then
+			return
+		end
+		watcher.active = true
+		table.insert(watcher.conns, game.DescendantAdded:Connect(captureDynamicScript))
+		table.insert(watcher.conns, runService.Heartbeat:Connect(function()
+			if not watcher.active then
+				return
+			end
+			local gni = Zenith.capFn("getnilinstances")
+			if gni then
+				local ok, nils = pcall(gni)
+				if ok and type(nils) == "table" then
+					for _, obj in ipairs(nils) do
+						captureDynamicScript(obj)
+					end
+				end
+			end
+		end))
+	end
+
+	function SavePro.stopScriptWatcher()
+		watcher.active = false
+		for i = #watcher.conns, 1, -1 do
+			pcall(function()
+				watcher.conns[i]:Disconnect()
+			end)
+		end
+		table.clear(watcher.conns)
+	end
+
+	SavePro.watcher = watcher
+	Zenith.SaveInstancePro = SavePro
+
+	Zenith.register("SaveInstancePro", {
+		requires = {},
+		optional = { "getscriptbytecode", "getnilinstances" },
+		init = function()
+			Zenith.SaveInstancePro = SavePro
+		end,
+		stop = function()
+			SavePro.stopScriptWatcher()
+			table.clear(watcher.archived)
+		end,
+	})
+end
+
+-- ============================================================================
+-- 5. STEALTH GUARD (Random GUI, protect_gui, setstackhidden, Anti-Telemetry)
+-- ============================================================================
+do
+	local Stealth = { suppressedConns = {} }
+
+	local function randomName(len)
+		local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+		local buf = table.create(len)
+		for i = 1, len do
+			local idx = math.random(1, #chars)
+			buf[i] = string.sub(chars, idx, idx)
+		end
+		return table.concat(buf)
+	end
+
+	function Stealth.protectGui(gui, fallbackParent)
+		if typeof(gui) ~= "Instance" then
+			return nil
+		end
+		pcall(function()
+			gui.Name = randomName(14)
+		end)
+		local pGui = Zenith.capFn("protect_gui")
+		if pGui then
+			pcall(pGui, gui)
+		end
+		local gethuiFn = Zenith.capFn("gethui")
+		if gethuiFn then
+			local ok, hidden = pcall(gethuiFn)
+			if ok and typeof(hidden) == "Instance" then
+				gui.Parent = hidden
+				return hidden
+			end
+		end
+		if typeof(fallbackParent) == "Instance" then
+			gui.Parent = fallbackParent
+		end
+		return gui.Parent
+	end
+
+	function Stealth.wrapHidden(fn)
+		local ssh = Zenith.capFn("setstackhidden")
+		if not ssh or type(fn) ~= "function" then
+			return fn
+		end
+		return function(...)
+			pcall(ssh, 1, true)
+			return fn(...)
+		end
+	end
+
+	function Stealth.silenceTelemetry()
+		local getConns = Zenith.capFn("getconnections")
+		if not getConns then
+			return 0
+		end
+		local isExec = Zenith.capFn("isexecutorclosure")
+		local disabled = 0
+		local signals = { logService.MessageOut }
+		local okSc, sc = pcall(game.GetService, game, "ScriptContext")
+		if okSc and sc then
+			table.insert(signals, sc.Error)
+		end
+		for _, sig in ipairs(signals) do
+			local okC, conns = pcall(getConns, sig)
+			if okC and type(conns) == "table" then
+				for _, conn in ipairs(conns) do
+					local fn = conn.Function
+					local own = fn and isExec and select(2, pcall(isExec, fn)) == true
+					if not own and conn.Enabled ~= false and type(conn.Disable) == "function" then
+						pcall(conn.Disable, conn)
+						table.insert(Stealth.suppressedConns, conn)
+						disabled += 1
+					end
+				end
+			end
+		end
+		return disabled
+	end
+
+	function Stealth.restoreTelemetry()
+		for i = #Stealth.suppressedConns, 1, -1 do
+			local conn = Stealth.suppressedConns[i]
+			if type(conn.Enable) == "function" then
+				pcall(conn.Enable, conn)
+			end
+		end
+		table.clear(Stealth.suppressedConns)
+	end
+
+	Zenith.StealthGuard = Stealth
+	Zenith.register("StealthGuard", {
+		requires = {},
+		optional = { "gethui", "protect_gui", "setstackhidden", "getconnections", "isexecutorclosure" },
+		init = function()
+			Zenith.StealthGuard = Stealth
+		end,
+		stop = function()
+			Stealth.restoreTelemetry()
+		end,
+	})
+end
+
+Zenith.startAll()
