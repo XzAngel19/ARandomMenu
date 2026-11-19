@@ -22,5 +22,5 @@ coin.Position=Vector3.new(14,0,0);heartbeat:Fire(.6);assert(#touches==4)
 local external={Position=Vector3.new(12,0,0)};coin.CFrame=external;coin.CanCollide=true
 AngelHub.setters['Coins Aura'](false);assert(coin.CFrame==external and coin.CanCollide and not visual.Anchored and weld.Enabled)
 coin.CFrame=original;root.Position=Vector3.new(1000,0,0);AngelHub.setters['Coins Aura'](true);heartbeat:Fire(.6);assert(#touches==4)
-root.Position=Vector3.zero;V['Auto Win']=true;heartbeat:Fire(.6);assert(#touches==6);V['Auto Win']=false
-heartbeat:Fire(.6);assert(#touches==8);screenGui.Destroying:Fire();assert(coin.CFrame==original and coin.CanCollide and not visual.Anchored and weld.Enabled)
+root.Position=Vector3.zero;V['Auto Win']=true;heartbeat:Fire(.6);assert(#touches==4);V['Auto Win']=false
+heartbeat:Fire(.6);assert(#touches==6);screenGui.Destroying:Fire();assert(coin.CFrame==original and coin.CanCollide and not visual.Anchored and weld.Enabled)

@@ -9773,6 +9773,9 @@ do
 				if entry.dir == "S2C" then
 					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
 				end
+				if entry.dir == "INT" then
+					return Zenith.actions[N.repeatCall]()
+				end
 				local raw = string.match(tostring(Zenith.values[N.customArgs] or ""), "^%s*(.-)%s*$")
 				if raw == "" then
 					return Zenith.actions[N.repeatCall]()
