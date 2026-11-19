@@ -2029,6 +2029,7 @@ do
 		decompileTimeout = "Decompile Timeout",
 		run = "Decompile Selected",
 		runPath = "Decompile Path",
+		copyPath = "Copy Script Path",
 		scriptsFound = "Scripts Found",
 		decompiled = "Decompiled",
 		maxLines = "Decompile Max Lines",
@@ -6793,6 +6794,10 @@ do
 		if not cur then
 			return
 		end
+		if cur.static then
+			publish(cur.static, cur.staticExt or "txt")
+			return
+		end
 		local mode = string.lower(tostring(Zenith.values[N.mode] or "bytecode"))
 		if not cur.bc then
 			local fb = tryNativeDecompile(cur.inst, "sin bytecode")
@@ -7143,8 +7148,17 @@ do
 		Zenith.log("Info", string.format("Dump All completo: %d scripts (%d cache hits, %d fallos) -> %s", okCount, cacheHits, failCount, baseDir))
 	end
 
+	local function xmlClean(s)
+		return (string.gsub(tostring(s or ""), "%c", function(c)
+			if c == "\t" or c == "\n" or c == "\r" then
+				return c
+			end
+			return ""
+		end))
+	end
+
 	local function xmlEscape(s)
-		return (string.gsub(tostring(s or ""), "[&<>\"']", {
+		return (string.gsub(xmlClean(s), "[&<>\"']", {
 			["&"] = "&amp;",
 			["<"] = "&lt;",
 			[">"] = "&gt;",
@@ -7154,7 +7168,7 @@ do
 	end
 
 	local function cdataSafe(s)
-		return (string.gsub(tostring(s or ""), "]]>", "]]]]><![CDATA[>"))
+		return (string.gsub(xmlClean(s), "]]>", "]]]]><![CDATA[>"))
 	end
 
 	local function exportScriptsRbxmx()
@@ -7235,21 +7249,25 @@ do
 		return fullXml
 	end
 
-	local function exportPlaceRbxmx()
+	local exportBusy = false
+	local MAX_EXPORT_INSTANCES = 12000
+
+	local function buildPlaceXml()
 		local timeoutSec = math.max(1, num(N.decompileTimeout, 10))
 		local saveBc = flag(N.saveBytecode, false)
 		local anon = flag(N.anonymizeDump, false)
 		local ignoreInternals = flag(N.ignoreInternals, true)
 		local svcNames = { "Workspace", "ReplicatedStorage", "Lighting", "StarterGui", "StarterPack", "StarterPlayer" }
 		local xml = { '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">' }
-		local referent, instCount, scriptCount = 0, 0, 0
+		local referent, instCount, scriptCount, truncated = 0, 0, 0, false
 		local VALUE_CLASSES = { StringValue = "string", IntValue = "int", NumberValue = "double", BoolValue = "bool" }
 
 		local function emitInst(inst, indent, isRootSvc)
-			if instCount >= 12000 then
+			if typeof(inst) ~= "Instance" then
 				return
 			end
-			if typeof(inst) ~= "Instance" then
+			if instCount >= MAX_EXPORT_INSTANCES then
+				truncated = true
 				return
 			end
 			if not isRootSvc then
@@ -7262,15 +7280,18 @@ do
 			local okC, iClass = pcall(function() return inst.ClassName end)
 			iName = tostring(okN and iName or "Instance")
 			iClass = tostring(okC and iClass or "Folder")
-			if ignoreInternals and (iName == "Camera" or iName == "Terrain" or iClass == "Player") then
+			if ignoreInternals and (iClass == "Camera" or iClass == "Terrain" or iClass == "Player") then
 				return
 			end
 
 			referent += 1
 			instCount += 1
+			if instCount % 250 == 0 then
+				task.wait()
+			end
 			local pad = string.rep("\t", indent)
 			xml[#xml + 1] = string.format('%s<Item class="%s" referent="RBX%d">', pad, xmlEscape(iClass), referent)
-			xml[#xml + 1] = string.format('%s\t<Properties>', pad)
+			xml[#xml + 1] = pad .. "\t<Properties>"
 			xml[#xml + 1] = string.format('%s\t\t<string name="Name">%s</string>', pad, xmlEscape(iName))
 			local isScrOk, isScr = pcall(inst.IsA, inst, "LuaSourceContainer")
 			if isScrOk and isScr then
@@ -7285,7 +7306,7 @@ do
 					xml[#xml + 1] = string.format('%s\t\t<%s name="Value">%s</%s>', pad, tag, xmlEscape(tostring(val)), tag)
 				end
 			end
-			xml[#xml + 1] = string.format('%s\t</Properties>', pad)
+			xml[#xml + 1] = pad .. "\t</Properties>"
 
 			local okCh, ch = pcall(inst.GetChildren, inst)
 			if okCh and type(ch) == "table" then
@@ -7294,9 +7315,6 @@ do
 				end
 			end
 			xml[#xml + 1] = pad .. "</Item>"
-			if instCount % 250 == 0 then
-				task.wait()
-			end
 		end
 
 		for _, svcName in ipairs(svcNames) do
@@ -7306,8 +7324,24 @@ do
 			end
 		end
 		xml[#xml + 1] = "</roblox>"
+		return table.concat(xml, "\n"), instCount, scriptCount, truncated
+	end
 
-		local fullXml = table.concat(xml, "\n")
+	local function exportPlaceRbxmx()
+		if exportBusy then
+			return Zenith.log("Warn", "Export Place: ya hay una exportacion en curso")
+		end
+		exportBusy = true
+		local ok, fullXml, instCount, scriptCount, truncated = pcall(buildPlaceXml)
+		exportBusy = false
+		if not ok then
+			Zenith.log("Error", "Export Place fallo: " .. tostring(fullXml))
+			return nil
+		end
+		if truncated then
+			Zenith.log("Warn", "Export Place: limite de " .. MAX_EXPORT_INSTANCES .. " instancias alcanzado (exportacion parcial)")
+		end
+
 		local fileName = "Zenith/Zenith_Place_" .. tostring(game.PlaceId or 0) .. ".rbxmx"
 		if Zenith.cap("writefile") then
 			ensureFolders({ "Zenith" })
@@ -7318,9 +7352,10 @@ do
 			end
 			Zenith.log("Warn", "writefile Place .rbxmx fallo: " .. tostring(errW))
 		end
-		if Zenith.copy then
-			Zenith.copy(fullXml)
+		if Zenith.copy(fullXml) then
 			Zenith.log("Info", string.format("Export Place .rbxmx (%d instancias) copiado al portapapeles", instCount))
+		else
+			Zenith.log("Warn", "Export Place: ni writefile ni portapapeles disponibles")
 		end
 		return fullXml
 	end
@@ -7343,21 +7378,18 @@ do
 		return true
 	end
 
-	local xrefCache = {}
+	local XREF_CACHE_MAX = 500
+	local xrefCache, xrefCount = {}, 0
 
-	local function getXrefIndex(bytes)
-		local hit = xrefCache[bytes]
-		if hit then
-			return hit
-		end
-		local ok, bc = pcall(parseCached, bytes)
-		if not ok or not bc then
+	local function buildXrefIndex(bytes)
+		local bc = parseCached(bytes)
+		if not bc then
 			return nil
 		end
 		link(bc)
 		local imports, strings = {}, {}
 		for _, p in ipairs(bc.protos) do
-			local fnTag = "#" .. p.index .. (p.name and (" (" .. p.name .. ")") or "")
+			local fnTag = "#" .. tostring(p.index) .. (p.name and (" (" .. p.name .. ")") or "")
 			for _, k in ipairs(p.k) do
 				if k.t == "import" then
 					local nm = kstr(p, k, true)
@@ -7367,23 +7399,51 @@ do
 				end
 			end
 		end
-		hit = { imports = imports, strings = strings }
-		xrefCache[bytes] = hit
-		return hit
+		return { imports = imports, strings = strings }
 	end
 
+	local function getXrefIndex(bytes)
+		local hit = xrefCache[bytes]
+		if hit then
+			return hit
+		end
+		local ok, res = pcall(buildXrefIndex, bytes)
+		if not ok or not res then
+			return nil
+		end
+		if xrefCount >= XREF_CACHE_MAX then
+			xrefCache, xrefCount = {}, 0
+		end
+		xrefCache[bytes] = res
+		xrefCount += 1
+		return res
+	end
+
+	local PREVIEW_ESC = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t", ['"'] = '\\"', ["\\"] = "\\\\" }
+	local function quoteShort(s)
+		return '"' .. (string.gsub(s, '[%c"\\]', function(c)
+			return PREVIEW_ESC[c] or string.format("\\%03d", string.byte(c))
+		end)) .. '"'
+	end
+
+	local searchBusy = false
 	function Dec.globalSearch(rawQuery)
 		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
 		if query == "" then
 			Zenith.log("Warn", "Global Search: escribe un texto o nombre de Remote")
 			return 0
 		end
-		local entries = getExportTargets()
+		if searchBusy then
+			Zenith.log("Warn", "Global Search: ya hay una busqueda en curso")
+			return 0
+		end
+		local entries = table.clone(getExportTargets())
 		if #entries == 0 then
 			publish({ "-- Global Search: no hay scripts tras filtros" }, "txt")
 			return 0
 		end
 
+		searchBusy = true
 		local needle = string.lower(query)
 		local out = {
 			"-- Zenith Global Bytecode XRef Search",
@@ -7392,75 +7452,86 @@ do
 		}
 		local matchedLabels, totalHits, skippedNoBc = {}, 0, 0
 
-		for i, e in ipairs(entries) do
-			local bytes = fetch(e.inst)
-			if not bytes then
-				skippedNoBc += 1
-			else
-				local idx = getXrefIndex(bytes)
-				if idx then
-					local scriptHits = {}
-					for _, imp in ipairs(idx.imports) do
-						if string.find(imp.low, needle, 1, true) then
-							scriptHits[#scriptHits + 1] = string.format("  [IMPORT %s] %s", imp.fnTag, imp.val)
+		local okRun, errRun = pcall(function()
+			for i, e in ipairs(entries) do
+				local bytes = fetch(e.inst)
+				if not bytes then
+					skippedNoBc += 1
+				else
+					local idx = getXrefIndex(bytes)
+					if idx then
+						local scriptHits = {}
+						for _, imp in ipairs(idx.imports) do
+							if string.find(imp.low, needle, 1, true) then
+								scriptHits[#scriptHits + 1] = string.format("  [IMPORT %s] %s", imp.fnTag, imp.val)
+							end
 						end
-					end
-					for _, st in ipairs(idx.strings) do
-						if string.find(st.low, needle, 1, true) then
-							local preview = string.gsub(string.gsub(st.val, "\n", "\\n"), "\r", "\\r")
-							if #preview > 140 then
-								preview = string.sub(preview, 1, 140) .. "..."
+						for _, st in ipairs(idx.strings) do
+							if string.find(st.low, needle, 1, true) then
+								local cut = #st.val > 140
+								local preview = quoteShort(string.sub(st.val, 1, 140)) .. (cut and "..." or "")
+								scriptHits[#scriptHits + 1] = string.format("  [STRING %s] %s", st.fnTag, preview)
 							end
-							scriptHits[#scriptHits + 1] = string.format("  [STRING %s] %q", st.fnTag, preview)
 						end
-					end
-					if #scriptHits > 0 then
-						matchedLabels[#matchedLabels + 1] = e.label
-						totalHits += #scriptHits
-						if #out < 450 then
-							out[#out + 1] = string.format("== %s (%d hits)", e.label, #scriptHits)
-							for k = 1, math.min(#scriptHits, 12) do
-								out[#out + 1] = scriptHits[k]
+						if #scriptHits > 0 then
+							matchedLabels[#matchedLabels + 1] = e.label
+							totalHits += #scriptHits
+							if #out < 450 then
+								out[#out + 1] = string.format("== %s (%d hits)", e.label, #scriptHits)
+								for k = 1, math.min(#scriptHits, 12) do
+									out[#out + 1] = scriptHits[k]
+								end
+								if #scriptHits > 12 then
+									out[#out + 1] = string.format("  ... (+%d hits mas en este script)", #scriptHits - 12)
+								end
+								out[#out + 1] = ""
 							end
-							if #scriptHits > 12 then
-								out[#out + 1] = string.format("  ... (+%d hits mas en este script)", #scriptHits - 12)
-							end
-							out[#out + 1] = ""
 						end
 					end
 				end
+				if i % 40 == 0 then
+					task.wait()
+				end
 			end
-			if i % 40 == 0 then
-				task.wait()
-			end
+		end)
+		searchBusy = false
+		if not okRun then
+			Zenith.log("Error", "Global Search fallo: " .. tostring(errRun))
+			return 0
 		end
 
 		out[3] = string.format("-- Coincidencias: %d hits en %d scripts (%d sin bytecode omitidos)", totalHits, #matchedLabels, skippedNoBc)
 		if #matchedLabels == 0 then
 			out[#out + 1] = "-- Sin coincidencias para: " .. query
 		else
+			if #out >= 450 then
+				out[#out + 1] = "-- (salida truncada: usa un termino mas especifico)"
+			end
 			table.clear(Index.shown)
-			for idx, lbl in ipairs(matchedLabels) do
-				if idx <= MAX_SHOWN then
-					Index.shown[idx] = lbl
-				end
+			for idx = 1, math.min(#matchedLabels, MAX_SHOWN) do
+				Index.shown[idx] = matchedLabels[idx]
 			end
 			set(N.scriptsFound, #matchedLabels)
 			if Zenith.setItems then
-				pcall(Zenith.setItems, N.list, Index.shown)
+				pcall(Zenith.setItems, N.list, table.clone(Index.shown))
 			end
 		end
 
-		Dec.current = { label = "GlobalSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
+		Dec.current = { label = "GlobalSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef", static = out, staticExt = "txt" }
 		publish(out, "txt")
 		Zenith.log("Info", string.format("Global Search '%s': %d hits en %d scripts", query, totalHits, #matchedLabels))
 		return #matchedLabels, totalHits
 	end
 
+	local gcBusy = false
 	function Dec.gcSearch(rawQuery)
 		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
 		if query == "" then
 			Zenith.log("Warn", "GC Search: escribe un texto en Global Search")
+			return 0
+		end
+		if gcBusy then
+			Zenith.log("Warn", "GC Search: ya hay un escaneo en curso")
 			return 0
 		end
 		local getGC = Zenith.capFn("getgc")
@@ -7470,92 +7541,153 @@ do
 			return 0
 		end
 
+		gcBusy = true
 		local needle = string.lower(query)
 		local isExecFn = Zenith.capFn("isexecutorclosure")
 		local isLFn = Zenith.capFn("islclosure")
 		local getKs = Zenith.capFn("getconstants") or (type(debug) == "table" and debug.getconstants)
 		local getUps = Zenith.capFn("getupvalues") or (type(debug) == "table" and debug.getupvalues)
-		local okG, gcList = pcall(getGC, false)
+		local okG, gcList = pcall(getGC, true)
 		if not okG or type(gcList) ~= "table" then
+			gcBusy = false
 			Zenith.log("Error", "getgc fallo: " .. tostring(gcList))
 			return 0
 		end
 
+		local function pred(fn, obj)
+			local ok, r = pcall(fn, obj)
+			if ok then
+				return r
+			end
+			return nil
+		end
+
+		local ownTables = {
+			[Zenith] = true, [Zenith.values] = true, [Zenith.defaults] = true, [Zenith.actions] = true,
+			[Zenith.hooks] = true, [Zenith.setters] = true, [Zenith.outputs] = true, [Zenith.lists] = true,
+			[Dec] = true, [Index] = true, [Index.entries] = true, [Index.filteredEntries] = true,
+			[Index.shown] = true, [Index.byLabel] = true, [Index.labelOf] = true, [xrefCache] = true,
+			[gcList] = true,
+		}
+
 		local out = {
-			"-- Zenith Live GC Closure Search",
+			"-- Zenith Live GC Search (Closures + Tables)",
 			"-- Query: " .. query .. " | GC objects: " .. tostring(#gcList),
 			"",
 		}
-		local matched, scanned = 0, 0
-		for i, obj in ipairs(gcList) do
-			if type(obj) == "function" then
-				local skip = (isExecFn and pcall(isExecFn, obj) and isExecFn(obj) == true)
-					or (isLFn and pcall(isLFn, obj) and isLFn(obj) == false)
-				if not skip then
-					scanned += 1
-					local src, line, fname = "?", "?", ""
-					if type(debug) == "table" and type(debug.info) == "function" then
-						local okI, s, l, n = pcall(debug.info, obj, "sln")
-						if okI then
-							src = tostring(s or "?")
-							line = tostring(l or "?")
-							fname = tostring(n or "")
+		local matchedFn, matchedTbl, scannedFn, scannedTbl = 0, 0, 0, 0
+		local okScan, errScan = pcall(function()
+			for i, obj in ipairs(gcList) do
+				local tObj = type(obj)
+				if tObj == "function" then
+					local skip = false
+					if isExecFn and pred(isExecFn, obj) == true then
+						skip = true
+					elseif isLFn and pred(isLFn, obj) == false then
+						skip = true
+					end
+					if not skip then
+						scannedFn += 1
+						local src, line, fname = "?", "?", ""
+						if type(debug) == "table" and type(debug.info) == "function" then
+							local okI, s, l, n = pcall(debug.info, obj, "sln")
+							if okI then
+								src = tostring(s or "?")
+								line = tostring(l or "?")
+								fname = tostring(n or "")
+							end
+						end
+						if src ~= "[C]" then
+							local hits = {}
+							if fname ~= "" and string.find(string.lower(fname), needle, 1, true) then
+								hits[#hits + 1] = "name=" .. fname
+							end
+							if string.find(string.lower(src), needle, 1, true) then
+								hits[#hits + 1] = "src=" .. src
+							end
+							if getKs then
+								local okK, ks = pcall(getKs, obj)
+								if okK and type(ks) == "table" then
+									for ki, kv in pairs(ks) do
+										if type(kv) == "string" and string.find(string.lower(kv), needle, 1, true) then
+											hits[#hits + 1] = "K[" .. tostring(ki) .. "]=" .. quoteShort(string.sub(kv, 1, 80))
+										end
+									end
+								end
+							end
+							if getUps then
+								local okU, ups = pcall(getUps, obj)
+								if okU and type(ups) == "table" then
+									for ui, uv in pairs(ups) do
+										if type(uv) == "string" and string.find(string.lower(uv), needle, 1, true) then
+											hits[#hits + 1] = "U[" .. tostring(ui) .. "]=" .. quoteShort(string.sub(uv, 1, 80))
+										end
+									end
+								end
+							end
+							if #hits > 0 then
+								matchedFn += 1
+								if #out < 450 then
+									out[#out + 1] = string.format("[GC FN #%d] %s:%s fn=%s", matchedFn, src, line, fname ~= "" and fname or "anon")
+									for k = 1, math.min(#hits, 8) do
+										out[#out + 1] = "  " .. hits[k]
+									end
+									out[#out + 1] = ""
+								end
+							end
 						end
 					end
-					if src ~= "[C]" then
-						local hits = {}
-						if fname ~= "" and string.find(string.lower(fname), needle, 1, true) then
-							hits[#hits + 1] = "name=" .. fname
+				elseif tObj == "table" and not ownTables[obj] and getmetatable(obj) == nil then
+					scannedTbl += 1
+					local hits = {}
+					local seenKeys = 0
+					for tk, tv in pairs(obj) do
+						seenKeys += 1
+						if seenKeys > 64 then
+							break
 						end
-						if string.find(string.lower(src), needle, 1, true) then
-							hits[#hits + 1] = "src=" .. src
+						if type(tk) == "string" and string.find(string.lower(tk), needle, 1, true) then
+							hits[#hits + 1] = string.format("[%s] = %s", quoteShort(string.sub(tk, 1, 40)), tostring(tv))
+						elseif type(tv) == "string" and string.find(string.lower(tv), needle, 1, true) then
+							hits[#hits + 1] = string.format("[%s] = %s", tostring(tk), quoteShort(string.sub(tv, 1, 60)))
 						end
-						if getKs then
-							local okK, ks = pcall(getKs, obj)
-							if okK and type(ks) == "table" then
-								for ki, kv in pairs(ks) do
-									if type(kv) == "string" and string.find(string.lower(kv), needle, 1, true) then
-										hits[#hits + 1] = string.format("K[%s]=%q", tostring(ki), string.sub(kv, 1, 80))
-									end
-								end
+						if #hits >= 6 then
+							break
+						end
+					end
+					if #hits > 0 then
+						matchedTbl += 1
+						if #out < 450 then
+							out[#out + 1] = string.format("[GC TBL #%d]", matchedTbl)
+							for _, h in ipairs(hits) do
+								out[#out + 1] = "  " .. h
 							end
-						end
-						if getUps then
-							local okU, ups = pcall(getUps, obj)
-							if okU and type(ups) == "table" then
-								for ui, uv in pairs(ups) do
-									if type(uv) == "string" and string.find(string.lower(uv), needle, 1, true) then
-										hits[#hits + 1] = string.format("U[%s]=%q", tostring(ui), string.sub(uv, 1, 80))
-									end
-								end
-							end
-						end
-						if #hits > 0 then
-							matched += 1
-							if #out < 450 then
-								out[#out + 1] = string.format("[GC #%d] %s:%s fn=%s", matched, src, line, fname ~= "" and fname or "anon")
-								for k = 1, math.min(#hits, 8) do
-									out[#out + 1] = "  " .. hits[k]
-								end
-								out[#out + 1] = ""
-							end
+							out[#out + 1] = ""
 						end
 					end
 				end
+				if i % 400 == 0 then
+					task.wait()
+				end
 			end
-			if i % 400 == 0 then
-				task.wait()
-			end
+		end)
+		gcBusy = false
+		if not okScan then
+			Zenith.log("Error", "GC Search fallo: " .. tostring(errScan))
+			return 0
 		end
 
-		out[3] = string.format("-- Closures Lua escaneadas: %d | Coincidencias: %d", scanned, matched)
-		if matched == 0 then
-			out[#out + 1] = "-- Sin closures en memoria para: " .. query
+		local totalMatched = matchedFn + matchedTbl
+		out[3] = string.format("-- Escaneados: %d closures, %d tablas | Coincidencias: %d closures, %d tablas", scannedFn, scannedTbl, matchedFn, matchedTbl)
+		if totalMatched == 0 then
+			out[#out + 1] = "-- Sin coincidencias en memoria para: " .. query
+		elseif #out >= 450 then
+			out[#out + 1] = "-- (salida truncada: usa un termino mas especifico)"
 		end
-		Dec.current = { label = "GCSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
+		Dec.current = { label = "GCSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef", static = out, staticExt = "txt" }
 		publish(out, "txt")
-		Zenith.log("Info", string.format("GC Search '%s': %d closures de %d", query, matched, scanned))
-		return matched
+		Zenith.log("Info", string.format("GC Search '%s': %d closures, %d tablas", query, matchedFn, matchedTbl))
+		return totalMatched
 	end
 
 	local skipGlobalSearchHook = false
@@ -7611,6 +7743,15 @@ do
 			end
 			Zenith.actions[N.runPath] = function()
 				Dec.loadPath(Zenith.values[N.path])
+			end
+			Zenith.actions[N.copyPath] = function()
+				local lbl = selectedLabel() or (Dec.current and Dec.current.label)
+				if not lbl or lbl == "" then
+					return Zenith.log("Warn", "Decompiler: selecciona un script primero")
+				end
+				local clean = string.gsub(lbl, "%s+#%d+$", "")
+				local ok = Zenith.copy(clean)
+				Zenith.log(ok and "Info" or "Warn", ok and ("Ruta copiada: " .. clean) or "Clipboard no soportado")
 			end
 			hook(N.globalSearch, function(q)
 				if not skipGlobalSearchHook and string.match(tostring(q or ""), "%S") then
@@ -7675,12 +7816,13 @@ do
 			end
 			table.clear(saved)
 			Zenith.actions[N.scan], Zenith.actions[N.run], Zenith.actions[N.runPath], Zenith.actions[N.save] = nil, nil, nil, nil
-			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.exportPlace], Zenith.actions[N.globalScan], Zenith.actions[N.gcSearch] = nil, nil, nil, nil, nil, nil
+			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.exportPlace], Zenith.actions[N.globalScan], Zenith.actions[N.gcSearch], Zenith.actions[N.copyPath] = nil, nil, nil, nil, nil, nil, nil
 			Dec.current, Dec.lines = nil, nil
 			table.clear(cache)
 			table.clear(cacheOrder)
 			table.clear(scriptBytecodeCache)
 			table.clear(xrefCache)
+			xrefCount = 0
 		end,
 	})
 end
@@ -7727,6 +7869,7 @@ do
 		fileLogging = "Spy File Logging",
 		preferOth = "Prefer Stealth Hook (oth)",
 		logInteractions = "Log Interactions",
+		logAttributes = "Log Attributes",
 	}
 
 	local Players = game:GetService("Players")
@@ -8028,8 +8171,10 @@ do
 		byLabel = {},
 		groupByLabel = {},
 		groupCount = {},
+		groupKeyOf = {},
 		shownLabels = {},
 		selectedLabel = nil,
+		selectedGroupKey = nil,
 		blocked = setmetatable({}, { __mode = "k" }),
 		ignoredNames = {},
 		ignoredServices = {},
@@ -8051,6 +8196,8 @@ do
 		actorHooked = setmetatable({}, { __mode = "k" }),
 		interactionConns = {},
 		interactionHooked = setmetatable({}, { __mode = "k" }),
+		attrConns = {},
+		attrHooked = setmetatable({}, { __mode = "k" }),
 		spamTrack = setmetatable({}, { __mode = "k" }),
 		logFilePath = nil,
 		oldNamecall = nil,
@@ -8136,7 +8283,7 @@ do
 
 	local function formatCallCode(entry)
 		local lines = {}
-		local dirTag = entry.dir == "S2C" and "S->C" or (entry.dir == "INT" and "INT" or "C->S")
+		local dirTag = entry.dir == "S2C" and "S->C" or (entry.dir == "INT" and "INT" or (entry.dir == "ATTR" and "ATTR" or "C->S"))
 		local blkTag = entry.blocked and " [BLOCKED]" or ""
 		local execTag = entry.isExecutor and " [EXECUTOR]" or ""
 		local actorTag = entry.isActor and " [ACTOR]" or ""
@@ -8162,6 +8309,13 @@ do
 		if entry.dir == "INT" then
 			local fnName = entry.className == "ProximityPrompt" and "fireproximityprompt" or "fireclickdetector"
 			table.insert(lines, string.format("%s(%s)", fnName, entry.path))
+			return table.concat(lines, "\n")
+		end
+
+		if entry.dir == "ATTR" then
+			local attrKey = serializeValue(entry.args[1], 1, {})
+			local attrVal = serializeValue(entry.args[2], 1, {})
+			table.insert(lines, string.format("%s:SetAttribute(%s, %s)", entry.path, attrKey, attrVal))
 			return table.concat(lines, "\n")
 		end
 
@@ -8232,6 +8386,11 @@ do
 		out.setText(txt)
 	end
 
+	local function selectLabel(label)
+		state.selectedLabel = label
+		state.selectedGroupKey = label and state.groupKeyOf[label] or nil
+	end
+
 	-- selectNewest: jump selection to the newest visible entry (auto scroll)
 	local function applyListFilter(selectNewest)
 		local filter = tostring(Zenith.values[N.filter] or "All")
@@ -8240,33 +8399,54 @@ do
 		table.clear(state.shownLabels)
 		table.clear(state.groupByLabel)
 		table.clear(state.groupCount)
+		table.clear(state.groupKeyOf)
 		local shownSet = {}
+
+		local function passesFilter(e)
+			if isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
+				return false
+			end
+			local classOk
+			if filter == "All" then
+				classOk = true
+			elseif filter == "Interactions" then
+				classOk = (e.dir == "INT")
+			elseif filter == "Attributes" then
+				classOk = (e.dir == "ATTR")
+			else
+				classOk = (FILTER_MATCH[filter] ~= nil and FILTER_MATCH[filter][e.className] == true)
+			end
+			if not classOk then
+				return false
+			end
+			return needle == ""
+				or string.find(string.lower(e.label), needle, 1, true) ~= nil
+				or string.find(string.lower(e.path), needle, 1, true) ~= nil
+		end
+
+		local function tagOf(e)
+			return e.dir == "S2C" and "S->C" or (e.dir == "INT" and "INT" or (e.dir == "ATTR" and "ATTR" or "C->S"))
+		end
 
 		if grouped then
 			local order, groups = {}, {}
 			for i = #state.entries, 1, -1 do
 				local e = state.entries[i]
-				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
-					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
-					local searchOk = (needle == "")
-						or string.find(string.lower(e.label), needle, 1, true) ~= nil
-						or string.find(string.lower(e.path), needle, 1, true) ~= nil
-					if classOk and searchOk then
-						local gKey = tostring(e.remote or e.path) .. "|" .. e.dir .. "|" .. e.method
-						local g = groups[gKey]
-						if not g then
-							g = { latest = e, count = 1 }
-							groups[gKey] = g
-							order[#order + 1] = g
-						else
-							g.count += 1
-						end
+				if passesFilter(e) then
+					local gKey = e.path .. "|" .. e.dir .. "|" .. e.method
+					local g = groups[gKey]
+					if not g then
+						g = { latest = e, count = 1, key = gKey }
+						groups[gKey] = g
+						order[#order + 1] = g
+					else
+						g.count += 1
 					end
 				end
 			end
 			for _, g in ipairs(order) do
 				local e = g.latest
-				local dirTag = e.dir == "S2C" and "S->C" or (e.dir == "INT" and "INT" or "C->S")
+				local dirTag = tagOf(e)
 				local blkTag = e.blocked and "[BLK] " or ""
 				local actTag = e.isActor and "[ACT] " or ""
 				local gLabel = string.format("[%s] (x%d) %s%s%s | %s", dirTag, g.count, blkTag, actTag, e.method, e.name)
@@ -8275,32 +8455,37 @@ do
 				end
 				state.groupByLabel[gLabel] = e
 				state.groupCount[gLabel] = g.count
+				state.groupKeyOf[gLabel] = g.key
 				table.insert(state.shownLabels, gLabel)
 				shownSet[gLabel] = true
 			end
 		else
 			for i = #state.entries, 1, -1 do
 				local e = state.entries[i]
-				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
-					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
-					local searchOk = (needle == "")
-						or string.find(string.lower(e.label), needle, 1, true) ~= nil
-						or string.find(string.lower(e.path), needle, 1, true) ~= nil
-					if classOk and searchOk then
-						table.insert(state.shownLabels, e.label)
-						shownSet[e.label] = true
-					end
+				if passesFilter(e) then
+					table.insert(state.shownLabels, e.label)
+					shownSet[e.label] = true
 				end
 			end
 		end
 
 		Zenith.setItems(N.list, table.clone(state.shownLabels))
 
-		if selectNewest == true and state.shownLabels[1] then
-			state.selectedLabel = state.shownLabels[1]
-		elseif not (state.selectedLabel and shownSet[state.selectedLabel]) then
-			state.selectedLabel = state.shownLabels[1]
+		local keep
+		if selectNewest ~= true then
+			if grouped and state.selectedGroupKey then
+				for _, lbl in ipairs(state.shownLabels) do
+					if state.groupKeyOf[lbl] == state.selectedGroupKey then
+						keep = lbl
+						break
+					end
+				end
+			elseif state.selectedLabel and shownSet[state.selectedLabel] then
+				keep = state.selectedLabel
+			end
 		end
+		local newest = state.shownLabels[1]
+		selectLabel((selectNewest == true and newest) or keep or newest)
 		Zenith.values[N.list] = state.selectedLabel
 		renderSelected()
 	end
@@ -8370,7 +8555,7 @@ do
 
 		state.seq += 1
 		local path = instancePath(item.remote)
-		local dirTag = item.dir == "S2C" and "S->C" or (item.dir == "INT" and "INT" or "C->S")
+		local dirTag = item.dir == "S2C" and "S->C" or (item.dir == "INT" and "INT" or (item.dir == "ATTR" and "ATTR" or "C->S"))
 		local blkTag = item.blocked and "[BLK] " or ""
 		local actTag = item.isActor and "[ACT] " or ""
 		local label = string.format("#%03d [%s] %s%s%s | %s", state.seq, dirTag, blkTag, actTag, item.method, rName)
@@ -8474,6 +8659,12 @@ do
 		return fnName, sourceLine, fnHash
 	end
 
+	local OWN_SOURCE
+	if type(debug) == "table" and type(debug.info) == "function" then
+		local okOwn, srcOwn = pcall(debug.info, 1, "s")
+		OWN_SOURCE = okOwn and srcOwn or nil
+	end
+
 	local function captureCallerInfo()
 		local getCallerFn = Zenith.capFn("getcallingscript")
 		local callerInst = nil
@@ -8495,16 +8686,25 @@ do
 
 		local callerFn, fnName, sourceLine, fnHash = nil, nil, nil, nil
 		if type(debug) == "table" and type(debug.info) == "function" then
-			for i = 2, 12 do
+			for i = 2, 14 do
 				local okI, f, src, ln = pcall(debug.info, i, "fsl")
 				if not okI or not f or not src then
 					break
 				end
-				if src ~= "[C]" then
+				if src ~= "[C]" and (not OWN_SOURCE or src ~= OWN_SOURCE) then
 					callerFn = f
 					fnName, sourceLine, fnHash = extractFuncMeta(f)
 					if not sourceLine then
 						sourceLine = string.format("%s:%s", tostring(src), tostring(ln or "?"))
+					end
+					if not isExec then
+						local isExFn = Zenith.capFn("isexecutorclosure")
+						if isExFn then
+							local okE, rE = pcall(isExFn, f)
+							if okE and rE == true then
+								isExec = true
+							end
+						end
 					end
 					break
 				end
@@ -9438,13 +9638,83 @@ do
 		return #state.interactionConns > 0
 	end
 
-	local function uninstallHooks()
-		disconnectS2C()
-		uninstallNewindexHook()
-		uninstallActorHooks()
-		uninstallInteractionHooks()
+	local function uninstallAttributeHooks()
+		for i = #state.attrConns, 1, -1 do
+			local c = state.attrConns[i]
+			pcall(function()
+				c:Disconnect()
+			end)
+			state.attrConns[i] = nil
+		end
+		state.attrHooked = setmetatable({}, { __mode = "k" })
+	end
 
-		-- Deactivate first: any wrapper still alive becomes a pure pass-through
+	local function installAttributeHooks()
+		uninstallAttributeHooks()
+		if stopped or not (flag(N.enabled, false) and flag(N.logAttributes, false)) then
+			return false
+		end
+
+		local watchedCount = 0
+		local function watchAttr(inst)
+			if typeof(inst) ~= "Instance" or state.attrHooked[inst] or watchedCount >= 4000 then
+				return
+			end
+			if not inst.AttributeChanged then
+				return
+			end
+			state.attrHooked[inst] = true
+			watchedCount += 1
+			local okC, conn = pcall(function()
+				return inst.AttributeChanged:Connect(function(attrName)
+					if stopped or not (flag(N.enabled, false) and flag(N.logAttributes, false)) then
+						return
+					end
+					local okV, val = pcall(inst.GetAttribute, inst, attrName)
+					enqueue({
+						remote = inst,
+						className = safeRead(inst, "ClassName") or "Instance",
+						method = "SetAttribute",
+						dir = "ATTR",
+						args = { n = 2, attrName, okV and val or nil },
+						timeStr = timeStamp(),
+					})
+				end)
+			end)
+			if okC and conn then
+				table.insert(state.attrConns, conn)
+			end
+		end
+
+		if localPlayer then
+			watchAttr(localPlayer)
+			if localPlayer.Character then
+				watchAttr(localPlayer.Character)
+			end
+		end
+		for _, svcName in ipairs({ "Workspace", "ReplicatedStorage" }) do
+			local okS, svc = pcall(game.GetService, game, svcName)
+			if okS and svc then
+				watchAttr(svc)
+				local okD, desc = pcall(svc.GetDescendants, svc)
+				if okD and type(desc) == "table" then
+					for _, d in ipairs(desc) do
+						watchAttr(d)
+					end
+				end
+				local okA, addConn = pcall(function()
+					return svc.DescendantAdded:Connect(watchAttr)
+				end)
+				if okA and addConn then
+					table.insert(state.attrConns, addConn)
+				end
+			end
+		end
+		return #state.attrConns > 0
+	end
+
+	local function uninstallHooks()
+		-- 1) Deactivate first: every live wrapper becomes a pure pass-through immediately
 		if state.namecallRec then
 			state.namecallRec.active = false
 		end
@@ -9454,6 +9724,13 @@ do
 		for _, rec in ipairs(state.directHooks) do
 			rec.active = false
 		end
+
+		-- 2) Disconnect S2C / newindex / actors / interactions / attributes
+		disconnectS2C()
+		uninstallNewindexHook()
+		uninstallActorHooks()
+		uninstallInteractionHooks()
+		uninstallAttributeHooks()
 
 		local hookMM = Zenith.capFn("hookmetamethod")
 		if state.oldNamecall then
@@ -9528,10 +9805,12 @@ do
 					local ok = installHooks()
 					syncS2C(true, nil)
 					installInteractionHooks()
+					installAttributeHooks()
 					Zenith.log(ok and "Info" or "Warn", ok and "RSpy: captura en vivo activada" or "RSpy: sin soporte de hooks (__namecall/hookfunction), solo OnClientEvent")
 				else
 					disconnectS2C()
 					uninstallInteractionHooks()
+					uninstallAttributeHooks()
 					restoreWrappedCallbacks()
 					Zenith.log("Info", "RSpy: captura pausada")
 				end
@@ -9546,7 +9825,7 @@ do
 			end)
 
 			hookUI(N.list, function(label)
-				state.selectedLabel = label
+				selectLabel(label)
 				renderSelected()
 			end)
 
@@ -9579,6 +9858,13 @@ do
 					uninstallInteractionHooks()
 				end
 			end)
+			hookUI(N.logAttributes, function(on)
+				if on and flag(N.enabled, false) then
+					installAttributeHooks()
+				elseif not on then
+					uninstallAttributeHooks()
+				end
+			end)
 			hookUI(N.fullSerialize, function() renderSelected() end)
 			hookUI(N.showStack, function() renderSelected() end)
 			hookUI(N.groupByRemote, function() applyListFilter(true) end)
@@ -9589,9 +9875,10 @@ do
 				table.clear(state.byLabel)
 				table.clear(state.groupByLabel)
 				table.clear(state.groupCount)
+				table.clear(state.groupKeyOf)
 				table.clear(state.shownLabels)
 				table.clear(state.queue)
-				state.selectedLabel = nil
+				selectLabel(nil)
 				Zenith.values[N.list] = nil
 				setVal(N.calls, 0)
 				Zenith.setItems(N.list, {})
@@ -9726,6 +10013,15 @@ do
 				end
 			end
 
+			local function runAsInternal(fn, ...)
+				local thread = coroutine.running() or MAIN_THREAD
+				local prev = state.internal[thread]
+				state.internal[thread] = true
+				local ok, err = pcall(fn, ...)
+				state.internal[thread] = prev
+				return ok, err
+			end
+
 			Zenith.actions[N.repeatCall] = function()
 				local entry = getSelectedEntry()
 				if not entry or not entry.remote then
@@ -9741,18 +10037,22 @@ do
 						return Zenith.log("Warn", "RSpy: " .. fnName .. " no soportado en este executor")
 					end
 					task.spawn(function()
-						local thread = coroutine.running() or MAIN_THREAD
-						state.internal[thread] = true
-						local ok, err = pcall(fn, entry.remote)
-						state.internal[thread] = nil
+						local ok, err = runAsInternal(fn, entry.remote)
 						Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
 					end)
 					return
 				end
+				if entry.dir == "ATTR" then
+					task.spawn(function()
+						local ok, err = runAsInternal(function()
+							entry.remote:SetAttribute(entry.args[1], entry.args[2])
+						end)
+						Zenith.log(ok and "Info" or "Error", ok and ("RSpy: atributo restaurado " .. tostring(entry.args[1])) or ("RSpy Attribute error: " .. tostring(err)))
+					end)
+					return
+				end
 				task.spawn(function()
-					local thread = coroutine.running() or MAIN_THREAD
-					state.internal[thread] = true -- per-thread: other calls keep being logged
-					local ok, err = pcall(function()
+					local ok, err = runAsInternal(function()
 						local fn = safeRead(entry.remote, entry.method)
 						if type(fn) ~= "function" then
 							error("metodo no encontrado: " .. tostring(entry.method))
@@ -9760,7 +10060,6 @@ do
 						local n = entry.args.n or #entry.args
 						fn(entry.remote, table.unpack(entry.args, 1, n))
 					end)
-					state.internal[thread] = nil
 					Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
 				end)
 			end
@@ -9773,7 +10072,7 @@ do
 				if entry.dir == "S2C" then
 					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
 				end
-				if entry.dir == "INT" then
+				if entry.dir == "INT" or entry.dir == "ATTR" then
 					return Zenith.actions[N.repeatCall]()
 				end
 				local raw = string.match(tostring(Zenith.values[N.customArgs] or ""), "^%s*(.-)%s*$")
@@ -9794,16 +10093,13 @@ do
 				end
 				local argCount = math.max(0, (evalPack.n or #evalPack) - 1)
 				task.spawn(function()
-					local thread = coroutine.running() or MAIN_THREAD
-					state.internal[thread] = true
-					local ok, err = pcall(function()
+					local ok, err = runAsInternal(function()
 						local fn = safeRead(entry.remote, entry.method)
 						if type(fn) ~= "function" then
 							error("metodo no encontrado: " .. tostring(entry.method))
 						end
 						fn(entry.remote, table.unpack(evalPack, 2, 1 + argCount))
 					end)
-					state.internal[thread] = nil
 					Zenith.log(ok and "Info" or "Error", ok and string.format("RSpy: replay custom (%d args) -> %s", argCount, entry.name) or ("RSpy Replay Custom error: " .. tostring(err)))
 				end)
 			end
@@ -10386,6 +10682,7 @@ local function initializeScript()
 	addButton(decLeft, "GC Closure Search")
 	addList(decLeft, "Script List", {}, 155)
 	addButton(decLeft, "Decompile Selected")
+	addButton(decLeft, "Copy Script Path")
 	addText(decLeft, "Script Path", "Script path")
 	addButton(decLeft, "Decompile Path")
 	addButton(decLeft, "Dump All Scripts")
@@ -10407,7 +10704,7 @@ local function initializeScript()
 	addSection(rspyLeft, "Captured Remotes")
 	addToggle(rspyLeft, "Remote Spy", nil, false)
 	addCounter(rspyLeft, "Calls Logged", 0)
-	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Interactions" })
+	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Interactions", "Attributes" })
 	addText(rspyLeft, "Spy Search", "Search remotes")
 	addText(rspyLeft, "Spy Ignore List", "Names, comma separated")
 	addToggle(rspyLeft, "Group By Remote", nil, false)
@@ -10530,6 +10827,7 @@ local function initializeScript()
 	addToggle(cfgRight, "Log Actors", nil, true)
 	addToggle(cfgRight, "Prefer Stealth Hook (oth)", nil, true)
 	addToggle(cfgRight, "Log Interactions", nil, false)
+	addToggle(cfgRight, "Log Attributes", nil, false)
 	addToggle(cfgRight, "Auto Ignore Spammy", nil, false)
 	addToggle(cfgRight, "Full Serialization", nil, false)
 	addToggle(cfgRight, "Spy File Logging", nil, false)
