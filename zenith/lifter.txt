@@ -1,0 +1,1662 @@
+-- ============================================================================
+-- Zenith Decompiler (Fase 2 - Paso 3): Expression Lifter + Luau Source Emitter
+--
+-- Consume `(bc, proto, cfg, tree)` de Fase 1 + CFG + Structurer y reconstruye
+-- codigo fuente Luau legible y semanticamente fiel, incluyendo:
+--   - Nombres de parametros, locales (`locvars`) y upvalues (`upnames`/`captures`)
+--   - Plegado de expresiones con precedencia minima de parentesis
+--   - Constructores de tablas (`NEWTABLE` / `DUPTABLE` / `SETTABLE*` / `SETLIST`)
+--   - `NAMECALL` (`obj:Method(...)`), `CALL` / `CALLFB`, `multret`, `varargs`
+--   - Closures anidados recursivos (`NEWCLOSURE` / `DUPCLOSURE`)
+--   - Bucles `while`, `repeat ... until`, `for i = ...`, `for k, v in ...`
+--   - `if / elseif / else` con condiciones compuestas (`and` / `or` / `not`)
+-- ============================================================================
+
+local Lifter = {}
+
+local band, rshift = bit32.band, bit32.rshift
+
+local KEYWORDS = {
+	["and"] = true, ["break"] = true, ["do"] = true, ["else"] = true, ["elseif"] = true,
+	["end"] = true, ["false"] = true, ["for"] = true, ["function"] = true, ["if"] = true,
+	["in"] = true, ["local"] = true, ["nil"] = true, ["not"] = true, ["or"] = true,
+	["repeat"] = true, ["return"] = true, ["then"] = true, ["true"] = true, ["until"] = true,
+	["while"] = true,
+}
+
+local PREC = {
+	OR = 1,
+	AND = 2,
+	CMP = 3,
+	CONCAT = 4,
+	ADD = 5,
+	MUL = 6,
+	UNARY = 7,
+	POW = 8,
+	ATOM = 9,
+}
+
+local BINOP_INFO = {
+	ADD = { op = "+", prec = PREC.ADD, compound = "+=" },
+	ADDK = { op = "+", prec = PREC.ADD, compound = "+=" },
+	SUB = { op = "-", prec = PREC.ADD, compound = "-=" },
+	SUBK = { op = "-", prec = PREC.ADD, compound = "-=" },
+	SUBRK = { op = "-", prec = PREC.ADD },
+	MUL = { op = "*", prec = PREC.MUL, compound = "*=" },
+	MULK = { op = "*", prec = PREC.MUL, compound = "*=" },
+	DIV = { op = "/", prec = PREC.MUL, compound = "/=" },
+	DIVK = { op = "/", prec = PREC.MUL, compound = "/=" },
+	DIVRK = { op = "/", prec = PREC.MUL },
+	IDIV = { op = "//", prec = PREC.MUL, compound = "//=" },
+	IDIVK = { op = "//", prec = PREC.MUL, compound = "//=" },
+	MOD = { op = "%", prec = PREC.MUL, compound = "%=" },
+	MODK = { op = "%", prec = PREC.MUL, compound = "%=" },
+	POW = { op = "^", prec = PREC.POW, right = true, compound = "^=" },
+	POWK = { op = "^", prec = PREC.POW, right = true, compound = "^=" },
+	AND = { op = "and", prec = PREC.AND },
+	ANDK = { op = "and", prec = PREC.AND },
+	OR = { op = "or", prec = PREC.OR },
+	ORK = { op = "or", prec = PREC.OR },
+	CONCAT = { op = "..", prec = PREC.CONCAT, right = true },
+}
+
+local ESC = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t", ['"'] = '\\"', ["\\"] = "\\\\" }
+
+local function isValidIdent(s)
+	return type(s) == "string" and not KEYWORDS[s] and string.match(s, "^[%a_][%w_]*$") ~= nil
+end
+
+local function quoteStr(s)
+	return '"' .. (string.gsub(s or "", '[%c"\\]', function(c)
+		return ESC[c] or string.format("\\%03d", string.byte(c))
+	end)) .. '"'
+end
+
+local function fmtNum(v)
+	if v ~= v then
+		return "0/0"
+	end
+	if v == math.huge then
+		return "math.huge"
+	end
+	if v == -math.huge then
+		return "-math.huge"
+	end
+	if v == math.floor(v) and math.abs(v) < 1e15 then
+		return string.format("%d", v)
+	end
+	local s = string.format("%.14g", v)
+	if tonumber(s) ~= v then
+		s = string.format("%.17g", v)
+	end
+	return s
+end
+
+local function importPath(p, id)
+	local count = rshift(id, 30)
+	local parts = {}
+	for i = 1, count do
+		local k = p.k[band(rshift(id, 30 - 10 * i), 1023) + 1]
+		parts[i] = (k and k.t == "string" and k.v) or "?"
+	end
+	return table.concat(parts, ".")
+end
+
+local function mkExpr(text, prec, extra)
+	local e = { text = text, prec = prec or PREC.ATOM }
+	if extra then
+		for k, v in pairs(extra) do
+			e[k] = v
+		end
+	end
+	return e
+end
+
+local function wrapExpr(e, minPrec, isRight)
+	if not e then
+		return "nil"
+	end
+	local p = e.prec or PREC.ATOM
+	if p < minPrec or (isRight and p == minPrec) then
+		return "(" .. e.text .. ")"
+	end
+	return e.text
+end
+
+local function wrapPrefix(e)
+	if not e then
+		return "nil"
+	end
+	if (e.prec or PREC.ATOM) < PREC.ATOM or e.isTable or e.isLiteral or e.isFunctionExpr then
+		return "(" .. e.text .. ")"
+	end
+	return e.text
+end
+
+local function constToExpr(p, k)
+	if not k then
+		return mkExpr("nil", PREC.ATOM, { isLiteral = true })
+	end
+	local t = k.t
+	if t == "nil" then
+		return mkExpr("nil", PREC.ATOM, { isLiteral = true })
+	elseif t == "boolean" then
+		return mkExpr(tostring(k.v), PREC.ATOM, { isLiteral = true })
+	elseif t == "number" then
+		local txt = fmtNum(k.v)
+		local prec = (string.sub(txt, 1, 1) == "-") and PREC.UNARY or PREC.ATOM
+		return mkExpr(txt, prec, { isLiteral = true, numVal = k.v })
+	elseif t == "string" then
+		return mkExpr(quoteStr(k.v or ""), PREC.ATOM, { isLiteral = true, strVal = k.v })
+	elseif t == "import" then
+		return mkExpr(importPath(p, k.id), PREC.ATOM, { pure = true })
+	elseif t == "vector" then
+		if (k.w or 0) == 0 then
+			return mkExpr(string.format("Vector3.new(%s, %s, %s)", fmtNum(k.x), fmtNum(k.y), fmtNum(k.z)), PREC.ATOM)
+		end
+		return mkExpr(string.format("vector.create(%s, %s, %s, %s)", fmtNum(k.x), fmtNum(k.y), fmtNum(k.z), fmtNum(k.w)), PREC.ATOM)
+	elseif t == "integer" then
+		return mkExpr(string.format("0x%08x%08x", k.hi or 0, k.lo or 0), PREC.ATOM, { isLiteral = true })
+	elseif t == "table" then
+		-- DUPTABLE puede traer keys+vals constantes (v100 / type 8) o solo template (type 5)
+		local fields = {}
+		for i, idx in ipairs(k.keys or {}) do
+			local kk = p.k[idx + 1]
+			local kv = (k.vals and k.vals[i] ~= nil and k.vals[i] >= 0) and p.k[k.vals[i] + 1] or nil
+			local valTxt = kv and constToExpr(p, kv).text or "nil"
+			if kk and kk.t == "string" and isValidIdent(kk.v) then
+				fields[#fields + 1] = kk.v .. " = " .. valTxt
+			elseif kk then
+				fields[#fields + 1] = "[" .. constToExpr(p, kk).text .. "] = " .. valTxt
+			end
+		end
+		return mkExpr(#fields > 0 and ("{ " .. table.concat(fields, ", ") .. " }") or "{}", PREC.ATOM, { isTable = true })
+	end
+	return mkExpr("nil", PREC.ATOM)
+end
+
+-- ----------------------------------------------------------------------------
+-- Analisis de lectura/escritura de registros y liveness por bloque
+-- ----------------------------------------------------------------------------
+local function insReadsWrites(ins)
+	local n = ins.name
+	local reads, writes = {}, {}
+	local function r(x)
+		if x ~= nil then
+			reads[#reads + 1] = x
+		end
+	end
+	local function w(x)
+		if x ~= nil then
+			writes[#writes + 1] = x
+		end
+	end
+
+	if n == "NOP" or n == "BREAK" or n == "COVERAGE" or n == "PREPVARARGS"
+		or n == "NATIVECALL" or n == "JUMP" or n == "JUMPBACK" or n == "JUMPX"
+		or n == "CAPTURE" or n == "CLOSEUPVALS" or n == "FASTCALL" or n == "FASTPCALL" then
+		return reads, writes
+	elseif n == "FASTCALL1" then
+		r(ins.B)
+	elseif n == "FASTCALL2" then
+		r(ins.B)
+		r(band(ins.aux or 0, 255))
+	elseif n == "FASTCALL2K" then
+		r(ins.B)
+	elseif n == "FASTCALL3" then
+		r(ins.B)
+		r(band(ins.aux or 0, 255))
+		r(band(rshift(ins.aux or 0, 8), 255))
+	elseif n == "LOADNIL" or n == "LOADB" or n == "LOADN" or n == "LOADK" or n == "LOADKX"
+		or n == "GETGLOBAL" or n == "GETUPVAL" or n == "GETIMPORT" or n == "NEWTABLE"
+		or n == "DUPTABLE" or n == "NEWCLOSURE" or n == "DUPCLOSURE" then
+		w(ins.A)
+	elseif n == "GETVARARGS" then
+		local count = (ins.B == 0) and 1 or (ins.B - 1)
+		for i = 0, count - 1 do
+			w(ins.A + i)
+		end
+	elseif n == "MOVE" or n == "NOT" or n == "MINUS" or n == "LENGTH"
+		or n == "GETTABLEKS" or n == "GETTABLEN" or n == "GETUDATAKS"
+		or n == "ADDK" or n == "SUBK" or n == "MULK" or n == "DIVK" or n == "IDIVK"
+		or n == "MODK" or n == "POWK" or n == "ANDK" or n == "ORK" then
+		r(ins.B)
+		w(ins.A)
+	elseif n == "SUBRK" or n == "DIVRK" then
+		r(ins.C)
+		w(ins.A)
+	elseif n == "GETTABLE" or n == "ADD" or n == "SUB" or n == "MUL" or n == "DIV"
+		or n == "IDIV" or n == "MOD" or n == "POW" or n == "AND" or n == "OR" then
+		r(ins.B)
+		r(ins.C)
+		w(ins.A)
+	elseif n == "CONCAT" then
+		for reg = ins.B, ins.C do
+			r(reg)
+		end
+		w(ins.A)
+	elseif n == "NAMECALL" or n == "NAMECALLUDATA" then
+		r(ins.B)
+		w(ins.A)
+		w(ins.A + 1)
+	elseif n == "CALL" or n == "CALLFB" then
+		r(ins.A)
+		if ins.B > 1 then
+			for reg = ins.A + 1, ins.A + ins.B - 1 do
+				r(reg)
+			end
+		elseif ins.B == 0 then
+			r(ins.A + 1)
+		end
+		if ins.C > 1 then
+			for reg = ins.A, ins.A + ins.C - 2 do
+				w(reg)
+			end
+		elseif ins.C == 0 then
+			w(ins.A)
+		end
+	elseif n == "RETURN" then
+		if ins.B > 1 then
+			for reg = ins.A, ins.A + ins.B - 2 do
+				r(reg)
+			end
+		elseif ins.B == 0 then
+			r(ins.A)
+		end
+	elseif n == "SETGLOBAL" or n == "SETUPVAL" then
+		r(ins.A)
+	elseif n == "SETTABLE" then
+		r(ins.A)
+		r(ins.B)
+		r(ins.C)
+	elseif n == "SETTABLEKS" or n == "SETTABLEN" or n == "SETUDATAKS" then
+		r(ins.A)
+		r(ins.B)
+	elseif n == "SETLIST" then
+		r(ins.A)
+		if ins.C > 1 then
+			for reg = ins.B, ins.B + ins.C - 2 do
+				r(reg)
+			end
+		elseif ins.C == 0 then
+			r(ins.B)
+		end
+	elseif n == "JUMPIF" or n == "JUMPIFNOT"
+		or n == "JUMPXEQKNIL" or n == "JUMPXEQKB" or n == "JUMPXEQKN" or n == "JUMPXEQKS" then
+		r(ins.A)
+	elseif n == "JUMPIFEQ" or n == "JUMPIFLE" or n == "JUMPIFLT"
+		or n == "JUMPIFNOTEQ" or n == "JUMPIFNOTLE" or n == "JUMPIFNOTLT" then
+		r(ins.A)
+		r(band(ins.aux or 0, 255))
+	elseif n == "FORNPREP" then
+		r(ins.A)
+		r(ins.A + 1)
+		r(ins.A + 2)
+		w(ins.A + 2)
+	elseif n == "FORNLOOP" then
+		r(ins.A)
+		r(ins.A + 1)
+		r(ins.A + 2)
+		w(ins.A + 2)
+	elseif n == "FORGPREP" or n == "FORGPREP_INEXT" or n == "FORGPREP_NEXT" then
+		r(ins.A)
+		r(ins.A + 1)
+		r(ins.A + 2)
+	elseif n == "FORGLOOP" then
+		local nvars = band(ins.aux or 0, 255)
+		for i = 0, math.max(1, nvars) - 1 do
+			w(ins.A + 3 + i)
+		end
+	end
+	return reads, writes
+end
+
+local function computeLiveness(cfg)
+	local use, def, liveIn, liveOut = {}, {}, {}, {}
+	for _, b in ipairs(cfg.blocks) do
+		local u, d = {}, {}
+		for _, ins in ipairs(b.insns) do
+			local reads, writes = insReadsWrites(ins)
+			for _, r in ipairs(reads) do
+				if not d[r] then
+					u[r] = true
+				end
+			end
+			for _, w in ipairs(writes) do
+				d[w] = true
+			end
+		end
+		use[b.id] = u
+		def[b.id] = d
+		liveIn[b.id] = {}
+		liveOut[b.id] = {}
+	end
+
+	local changed = true
+	while changed do
+		changed = false
+		for i = #cfg.blocks, 1, -1 do
+			local b = cfg.blocks[i]
+			local outSet = {}
+			for _, e in ipairs(b.edgesOut) do
+				if not e.virtual and e.to then
+					for r in pairs(liveIn[e.to.id]) do
+						outSet[r] = true
+					end
+				end
+			end
+			local inSet = {}
+			for r in pairs(use[b.id]) do
+				inSet[r] = true
+			end
+			for r in pairs(outSet) do
+				if not def[b.id][r] then
+					inSet[r] = true
+				end
+			end
+			for r in pairs(outSet) do
+				if not liveOut[b.id][r] then
+					changed = true
+					break
+				end
+			end
+			if not changed then
+				for r in pairs(inSet) do
+					if not liveIn[b.id][r] then
+						changed = true
+						break
+					end
+				end
+			end
+			liveOut[b.id] = outSet
+			liveIn[b.id] = inSet
+		end
+	end
+
+	return liveIn, liveOut
+end
+
+-- ----------------------------------------------------------------------------
+-- Resolucion de nombres de variables (parametros, locales, upvalues, temps)
+-- ----------------------------------------------------------------------------
+local function findLocVar(p, reg, pc)
+	local best
+	for _, lv in ipairs(p.locvars or {}) do
+		if lv.reg == reg and lv.startpc <= pc and pc <= lv.endpc then
+			if not best or lv.startpc >= best.startpc then
+				best = lv
+			end
+		end
+	end
+	return best
+end
+
+local function sanitizeIdent(name, fallback)
+	if isValidIdent(name) then
+		return name
+	end
+	if type(name) == "string" and name ~= "" then
+		local cleaned = string.gsub(name, "[^%w_]", "_")
+		if string.match(cleaned, "^%d") then
+			cleaned = "_" .. cleaned
+		end
+		if isValidIdent(cleaned) then
+			return cleaned
+		end
+	end
+	return fallback
+end
+
+local function isLoopHeaderLocvar(loopVars, reg)
+	return loopVars[reg] == true
+end
+
+-- ----------------------------------------------------------------------------
+-- Lifter principal por proto
+-- ----------------------------------------------------------------------------
+function Lifter.liftProto(bc, p, cfg, tree, opts, scopeCtx)
+	opts = opts or {}
+	local CFG = opts.CFG
+	local Structurer = opts.Structurer
+	local indentUnit = opts.indent or "\t"
+	local insn = cfg.insns or (p.insn) or {}
+	local liveIn, liveOut = computeLiveness(cfg)
+
+	-- Detectar registros de bucles for (no declarar con `local` previo ni forzar persistencia en control regs)
+	local forLoopRegs = {}
+	local forCtrlRegs = {}
+	local prepToForVars = {} -- [baseReg] -> nvars
+	for _, ins in ipairs(insn) do
+		if ins.name == "FORNPREP" then
+			forCtrlRegs[ins.A] = true
+			forCtrlRegs[ins.A + 1] = true
+			forLoopRegs[ins.A + 2] = true
+		elseif ins.name == "FORGLOOP" then
+			forCtrlRegs[ins.A] = true
+			forCtrlRegs[ins.A + 1] = true
+			forCtrlRegs[ins.A + 2] = true
+			local nvars = math.max(1, band(ins.aux or 0, 255))
+			for i = 0, nvars - 1 do
+				forLoopRegs[ins.A + 3 + i] = true
+			end
+			prepToForVars[ins.A] = math.max(prepToForVars[ins.A] or 0, nvars)
+		elseif ins.name == "FORGPREP" or ins.name == "FORGPREP_INEXT" or ins.name == "FORGPREP_NEXT" then
+			forCtrlRegs[ins.A] = true
+			forCtrlRegs[ins.A + 1] = true
+			forCtrlRegs[ins.A + 2] = true
+		end
+	end
+
+	-- Registros capturados por closures hijos
+	local capturedRegs = {}
+	for _, cpIdx in ipairs(p.children or {}) do
+		local cp = bc.protos[cpIdx + 1]
+		if cp and cp.captures then
+			for _, cap in ipairs(cp.captures) do
+				if cap.kind == 0 or cap.kind == 1 then
+					capturedRegs[cap.index] = true
+				end
+			end
+		end
+	end
+
+	-- Contar escrituras y bloques de lectura por registro para decidir registros materializados
+	local writeCount, multiBlockReg = {}, {}
+	for _, b in ipairs(cfg.blocks) do
+		for r in pairs(liveIn[b.id]) do
+			if not forCtrlRegs[r] then
+				multiBlockReg[r] = true
+			end
+		end
+		for r in pairs(liveOut[b.id]) do
+			if not forCtrlRegs[r] then
+				multiBlockReg[r] = true
+			end
+		end
+		for _, ins in ipairs(b.insns) do
+			local _, writes = insReadsWrites(ins)
+			for _, r in ipairs(writes) do
+				writeCount[r] = (writeCount[r] or 0) + 1
+			end
+		end
+	end
+
+	-- Nombres unicos en la funcion
+	local usedNames = {}
+	local function allocName(preferred, fallback)
+		local base = sanitizeIdent(preferred, fallback)
+		if not usedNames[base] then
+			usedNames[base] = true
+			return base
+		end
+		local idx = 2
+		while usedNames[base .. "_" .. idx] do
+			idx += 1
+		end
+		local chosen = base .. "_" .. idx
+		usedNames[chosen] = true
+		return chosen
+	end
+
+	-- Parametros
+	local paramNames = {}
+	local paramRegName = {}
+	for r = 0, p.numparams - 1 do
+		local lv = findLocVar(p, r, 0)
+		local nm = allocName(lv and lv.name, "p" .. (r + 1))
+		paramNames[#paramNames + 1] = nm
+		paramRegName[r] = nm
+	end
+
+	-- Upvalues de esta funcion
+	local upvalNames = {}
+	for i = 0, p.nups - 1 do
+		local uname = p.upnames and p.upnames[i + 1]
+		if not uname and p.captures and p.captures[i + 1] and scopeCtx then
+			local cap = p.captures[i + 1]
+			if cap.kind == 2 then
+				uname = scopeCtx.upvalNames and scopeCtx.upvalNames[cap.index]
+			else
+				uname = scopeCtx.regVarName and scopeCtx.regVarName[cap.index]
+			end
+		end
+		upvalNames[i] = sanitizeIdent(uname, "upval" .. (i + 1))
+	end
+
+	-- Nombres de registros por (reg, locvar) o fallback `v<r>`
+	local locvarName = {} -- [lv] -> uniqueName
+	local singleLocvarByReg = {}
+	local countLocvarByReg = {}
+	for _, lv in ipairs(p.locvars or {}) do
+		if lv.reg < p.numparams and lv.startpc == 0 then
+			locvarName[lv] = paramRegName[lv.reg]
+		else
+			locvarName[lv] = allocName(lv.name, "v" .. lv.reg)
+		end
+		countLocvarByReg[lv.reg] = (countLocvarByReg[lv.reg] or 0) + 1
+		singleLocvarByReg[lv.reg] = lv
+	end
+
+	local fallbackRegName = {}
+	local function regVar(reg, pc)
+		if reg < p.numparams and paramRegName[reg] and (not pc or not findLocVar(p, reg, pc)) then
+			return paramRegName[reg]
+		end
+		local lv = pc and findLocVar(p, reg, pc)
+		if lv and locvarName[lv] then
+			return locvarName[lv]
+		end
+		if countLocvarByReg[reg] == 1 and not forLoopRegs[reg] and singleLocvarByReg[reg] then
+			return locvarName[singleLocvarByReg[reg]]
+		end
+		if not fallbackRegName[reg] then
+			fallbackRegName[reg] = allocName(nil, "v" .. reg)
+		end
+		return fallbackRegName[reg]
+	end
+
+	-- Determinar que registros son variables persistentes (vs temps inlineables)
+	local persistentRegs = {}
+	for r = 0, p.numparams - 1 do
+		persistentRegs[r] = true
+	end
+	for _, lv in ipairs(p.locvars or {}) do
+		if not forLoopRegs[lv.reg] then
+			persistentRegs[lv.reg] = true
+		end
+	end
+	for r in pairs(capturedRegs) do
+		persistentRegs[r] = true
+	end
+	for r in pairs(multiBlockReg) do
+		if not forLoopRegs[r] then
+			persistentRegs[r] = true
+		end
+	end
+
+	-- Escaneo previo del arbol para detectar registros que requieren hoisting (`local r` antes de if/loop)
+	local hoistedBeforeNode = {} -- [node] -> { varName, ... }
+	local declaredGlobalVars = {} -- [varName] -> true
+	for r = 0, p.numparams - 1 do
+		declaredGlobalVars[paramRegName[r]] = true
+	end
+
+	local function collectNodeReadWrite(node, readsOut, writesOut, firstWriteNode)
+		if not node then
+			return
+		end
+		local k = node.kind
+		if k == "Seq" then
+			for _, ch in ipairs(node.body) do
+				collectNodeReadWrite(ch, readsOut, writesOut, firstWriteNode)
+			end
+		elseif k == "BlockRef" then
+			local b = node.block
+			for i = node.fromIdx, node.toIdx do
+				local ins = b.insns[i]
+				if ins then
+					local rs, ws = insReadsWrites(ins)
+					for _, r in ipairs(rs) do
+						readsOut[r] = true
+					end
+					for _, w in ipairs(ws) do
+						writesOut[w] = true
+						if not firstWriteNode[w] then
+							firstWriteNode[w] = ins
+						end
+					end
+				end
+			end
+		elseif k == "If" then
+			local function scanCond(c)
+				if not c then return end
+				if c.kind == "atom" and c.block then
+					for _, ins in ipairs(c.block.insns) do
+						local rs = insReadsWrites(ins)
+						for _, r in ipairs(rs) do
+							readsOut[r] = true
+						end
+					end
+				elseif c.kind == "not" then
+					scanCond(c.inner)
+				elseif c.kind == "and" or c.kind == "or" then
+					scanCond(c.left)
+					scanCond(c.right)
+				end
+			end
+			for _, br in ipairs(node.branches) do
+				scanCond(br.cond)
+				collectNodeReadWrite(br.body, readsOut, writesOut, firstWriteNode)
+			end
+			if node.elseBody then
+				collectNodeReadWrite(node.elseBody, readsOut, writesOut, firstWriteNode)
+			end
+		elseif k == "While" then
+			if node.condSetup then
+				collectNodeReadWrite(node.condSetup, readsOut, writesOut, firstWriteNode)
+			end
+			collectNodeReadWrite(node.body, readsOut, writesOut, firstWriteNode)
+		elseif k == "RepeatUntil" or k == "NumericFor" or k == "GenericFor" then
+			collectNodeReadWrite(node.body, readsOut, writesOut, firstWriteNode)
+		end
+	end
+
+	local function planHoisting(seqNode, activeDeclared)
+		if not seqNode or seqNode.kind ~= "Seq" then
+			return
+		end
+		local body = seqNode.body
+		local suffixReads = {} -- [idx] -> set of regs read in body[idx+1 .. #body]
+		local acc = {}
+		for i = #body, 1, -1 do
+			local copy = {}
+			for r in pairs(acc) do
+				copy[r] = true
+			end
+			suffixReads[i] = copy
+			local rSet, wSet, fw = {}, {}, {}
+			collectNodeReadWrite(body[i], rSet, wSet, fw)
+			for r in pairs(rSet) do
+				acc[r] = true
+			end
+		end
+
+		local curDeclared = {}
+		for k, v in pairs(activeDeclared) do
+			curDeclared[k] = v
+		end
+
+		for i, ch in ipairs(body) do
+			if ch.kind == "BlockRef" then
+				for j = ch.fromIdx, ch.toIdx do
+					local ins = ch.block.insns[j]
+					if ins then
+						local _, ws = insReadsWrites(ins)
+						for _, r in ipairs(ws) do
+							if persistentRegs[r] then
+								curDeclared[regVar(r, ins.pc + ins.len)] = true
+							end
+						end
+					end
+				end
+			elseif ch.kind == "If" or ch.kind == "While" or ch.kind == "RepeatUntil" or ch.kind == "NumericFor" or ch.kind == "GenericFor" then
+				local rSet, wSet, fw = {}, {}, {}
+				collectNodeReadWrite(ch, rSet, wSet, fw)
+				local hoistList = {}
+				local sortedRegs = {}
+				for r in pairs(wSet) do
+					if persistentRegs[r] and not forLoopRegs[r] and suffixReads[i][r] then
+						sortedRegs[#sortedRegs + 1] = r
+					end
+				end
+				table.sort(sortedRegs)
+				for _, r in ipairs(sortedRegs) do
+					local ins = fw[r]
+					local vn = regVar(r, ins and (ins.pc + ins.len) or nil)
+					if not curDeclared[vn] then
+						curDeclared[vn] = true
+						hoistList[#hoistList + 1] = vn
+					end
+				end
+				if #hoistList > 0 then
+					hoistedBeforeNode[ch] = hoistList
+				end
+
+				-- Recursivamente planear dentro de sub-bloques
+				if ch.kind == "If" then
+					for _, br in ipairs(ch.branches) do
+						planHoisting(br.body, curDeclared)
+					end
+					if ch.elseBody then
+						planHoisting(ch.elseBody, curDeclared)
+					end
+				elseif ch.body and ch.body.kind == "Seq" then
+					planHoisting(ch.body, curDeclared)
+				end
+			end
+		end
+	end
+	planHoisting(tree, declaredGlobalVars)
+
+	-- ------------------------------------------------------------------------
+	-- Estado de expresiones en registros durante la emision
+	-- ------------------------------------------------------------------------
+	local lines = {}
+	local indentLevel = scopeCtx and scopeCtx.indent or 0
+	local function emitLine(s)
+		lines[#lines + 1] = string.rep(indentUnit, indentLevel) .. s
+	end
+
+	local regExpr = {}       -- [reg] -> expr
+	local pendingTable = {}  -- [reg] -> { array = {}, hash = {}, seqIdx = 0 }
+	local pendingNamecall    -- { reg = A, obj = expr, method = str }
+	local pendingMultret     -- { reg = A, expr = expr }
+	local activeForVars = {} -- [reg] -> varName (en cabecera de for)
+	local declaredVars = {}
+	for k, v in pairs(declaredGlobalVars) do
+		declaredVars[k] = v
+	end
+
+	local function tableToExpr(tb)
+		local items = {}
+		local maxArr = 0
+		for idx in pairs(tb.array) do
+			if idx > maxArr then
+				maxArr = idx
+			end
+		end
+		local contiguous = 0
+		for i = 1, maxArr do
+			if tb.array[i] ~= nil then
+				contiguous = i
+				items[#items + 1] = tb.array[i]
+			else
+				break
+			end
+		end
+		for _, kv in ipairs(tb.hash) do
+			if isValidIdent(kv.rawKey) then
+				items[#items + 1] = kv.rawKey .. " = " .. kv.val
+			else
+				items[#items + 1] = "[" .. kv.key .. "] = " .. kv.val
+			end
+		end
+		for i = contiguous + 1, maxArr do
+			if tb.array[i] ~= nil then
+				items[#items + 1] = "[" .. i .. "] = " .. tb.array[i]
+			end
+		end
+		return mkExpr(#items > 0 and ("{ " .. table.concat(items, ", ") .. " }") or "{}", PREC.ATOM, { isTable = true })
+	end
+
+	local function materializePendingTable(r, pc)
+		local tb = pendingTable[r]
+		if not tb then
+			return nil
+		end
+		pendingTable[r] = nil
+		local e = tableToExpr(tb)
+		if persistentRegs[r] then
+			local vn = regVar(r, pc)
+			if not declaredVars[vn] then
+				declaredVars[vn] = true
+				emitLine(string.format("local %s = %s", vn, e.text))
+				e = mkExpr(vn, PREC.ATOM, { varName = vn })
+			end
+		end
+		regExpr[r] = e
+		return e
+	end
+
+	local function snapshotState()
+		local snap = { regExpr = {}, pendingTable = {} }
+		for k, v in pairs(regExpr) do
+			snap.regExpr[k] = v
+		end
+		for k, v in pairs(pendingTable) do
+			snap.pendingTable[k] = v
+		end
+		return snap
+	end
+
+	local function restoreState(snap)
+		regExpr = {}
+		for k, v in pairs(snap.regExpr) do
+			regExpr[k] = v
+		end
+		pendingTable = {}
+		for k, v in pairs(snap.pendingTable) do
+			pendingTable[k] = v
+		end
+	end
+
+	local function readReg(r, pc, preferVar)
+		if pendingTable[r] then
+			materializePendingTable(r, pc)
+		end
+		if activeForVars[r] then
+			return mkExpr(activeForVars[r], PREC.ATOM, { varName = activeForVars[r] })
+		end
+		if preferVar and persistentRegs[r] then
+			local vn = regVar(r, pc)
+			if declaredVars[vn] then
+				return mkExpr(vn, PREC.ATOM, { varName = vn })
+			end
+		end
+		if regExpr[r] then
+			if not persistentRegs[r] then
+				regExpr[r].consumed = true
+			end
+			return regExpr[r]
+		end
+		local vn = regVar(r, pc)
+		return mkExpr(vn, PREC.ATOM, { varName = vn })
+	end
+
+	-- Cuando una variable o estado mutable cambia, asegurar que temps pendientes que dependan de ello
+	-- no se reordenen ilegalmente.
+	local tmpCounter = 0
+	local function flushConflictingTemps(writtenReg, isSideEffect)
+		local regs = {}
+		for r, e in pairs(regExpr) do
+			if r ~= writtenReg and not persistentRegs[r] and e and not e.isLiteral and not e.consumed then
+				if isSideEffect and e.hasSideEffect then
+					regs[#regs + 1] = r
+				elseif writtenReg ~= nil and e.deps and e.deps[writtenReg] then
+					regs[#regs + 1] = r
+				end
+			end
+		end
+		table.sort(regs)
+		for _, r in ipairs(regs) do
+			local e = regExpr[r]
+			tmpCounter += 1
+			local tn = allocName(nil, "tmp" .. tmpCounter)
+			emitLine(string.format("local %s = %s", tn, e.text))
+			declaredVars[tn] = true
+			regExpr[r] = mkExpr(tn, PREC.ATOM, { varName = tn })
+		end
+	end
+
+	local function assignReg(r, expr, pc, ins)
+		if pendingTable[r] then
+			pendingTable[r] = nil
+		end
+		flushConflictingTemps(r, expr.hasSideEffect)
+
+		-- Detectar compound assignment: `i += 1` cuando el destino es una variable declarada
+		local lv = pc and findLocVar(p, r, pc + (ins and ins.len or 1))
+		local vn = regVar(r, pc and (pc + (ins and ins.len or 1)) or nil)
+		local isNamedOrPersist = persistentRegs[r] or (lv ~= nil)
+
+		if not isNamedOrPersist and not expr.forceEmit then
+			-- Temporal puro en bloque: mantener en `regExpr` para plegar en su consumidor
+			regExpr[r] = expr
+			return
+		end
+
+		-- Variable persistente o con local debug:
+		if declaredVars[vn] then
+			if expr.compoundOp and expr.compoundLhs == vn then
+				emitLine(string.format("%s %s %s", vn, expr.compoundOp, expr.compoundRhs))
+			else
+				emitLine(string.format("%s = %s", vn, expr.text))
+			end
+		else
+			declaredVars[vn] = true
+			if expr.isFunctionStmt then
+				emitLine(string.format("local function %s%s", vn, expr.funcBody))
+			else
+				emitLine(string.format("local %s = %s", vn, expr.text))
+			end
+		end
+		regExpr[r] = mkExpr(vn, PREC.ATOM, { varName = vn })
+	end
+
+	local function formatChildFunction(childProto, isStmt)
+		local childCtx = {
+			indent = indentLevel + 1,
+			upvalNames = upvalNames,
+			regVarName = {},
+		}
+		for r = 0, p.maxstack - 1 do
+			local e = regExpr[r]
+			if e and e.varName then
+				childCtx.regVarName[r] = e.varName
+			elseif persistentRegs[r] then
+				childCtx.regVarName[r] = regVar(r)
+			end
+		end
+		local cCfg = CFG.build(bc.protos[childProto.index + 1] and (function()
+			local ins = childProto.insn
+			return ins
+		end)() or {}, { jumpOf = opts.jumpOf })
+		local cTree = Structurer.structure(cCfg)
+		local cLines = Lifter.liftProto(bc, childProto, cCfg, cTree, opts, childCtx)
+		local sigParams = table.concat(cLines.params, ", ")
+		if childProto.vararg then
+			sigParams = (#sigParams > 0) and (sigParams .. ", ...") or "..."
+		end
+		local headerArgs = "(" .. sigParams .. ")"
+		if #cLines.body == 0 then
+			local inline = headerArgs .. " end"
+			if isStmt then
+				return mkExpr("function" .. inline, PREC.ATOM, { isFunctionStmt = true, funcBody = inline, isFunctionExpr = true })
+			end
+			return mkExpr("function" .. inline, PREC.ATOM, { isFunctionExpr = true })
+		end
+		local buf = { headerArgs }
+		for _, ln in ipairs(cLines.body) do
+			buf[#buf + 1] = ln
+		end
+		buf[#buf + 1] = string.rep(indentUnit, indentLevel) .. "end"
+		local bodyStr = table.concat(buf, "\n")
+		if isStmt then
+			return mkExpr("function" .. bodyStr, PREC.ATOM, { isFunctionStmt = true, funcBody = bodyStr, isFunctionExpr = true })
+		end
+		return mkExpr("function" .. bodyStr, PREC.ATOM, { isFunctionExpr = true })
+	end
+
+	local function buildDeps(...)
+		local d = {}
+		for i = 1, select("#", ...) do
+			local r = select(i, ...)
+			if r ~= nil then
+				d[r] = true
+				local e = regExpr[r]
+				if e and e.deps then
+					for dr in pairs(e.deps) do
+						d[dr] = true
+					end
+				end
+			end
+		end
+		return d
+	end
+
+	local function liftIns(ins)
+		local n = ins.name
+		local pc = ins.pc
+		local aux = ins.aux or 0
+
+		if n == "NOP" or n == "BREAK" or n == "COVERAGE" or n == "PREPVARARGS"
+			or n == "NATIVECALL" or n == "CLOSEUPVALS" or n == "CAPTURE"
+			or n == "FASTCALL" or n == "FASTCALL1" or n == "FASTCALL2"
+			or n == "FASTCALL2K" or n == "FASTCALL3" or n == "FASTPCALL"
+			or n == "JUMP" or n == "JUMPBACK" or n == "JUMPX" then
+			return
+		end
+
+		if n == "LOADNIL" then
+			assignReg(ins.A, mkExpr("nil", PREC.ATOM, { isLiteral = true }), pc, ins)
+		elseif n == "LOADB" then
+			assignReg(ins.A, mkExpr(ins.B ~= 0 and "true" or "false", PREC.ATOM, { isLiteral = true }), pc, ins)
+		elseif n == "LOADN" then
+			local txt = tostring(ins.D)
+			assignReg(ins.A, mkExpr(txt, ins.D < 0 and PREC.UNARY or PREC.ATOM, { isLiteral = true, numVal = ins.D }), pc, ins)
+		elseif n == "LOADK" then
+			assignReg(ins.A, constToExpr(p, p.k[ins.D + 1]), pc, ins)
+		elseif n == "LOADKX" then
+			assignReg(ins.A, constToExpr(p, p.k[aux + 1]), pc, ins)
+		elseif n == "MOVE" then
+			local src = readReg(ins.B, pc, true)
+			assignReg(ins.A, mkExpr(src.text, src.prec, { deps = buildDeps(ins.B), varName = src.varName }), pc, ins)
+		elseif n == "GETGLOBAL" then
+			local k = p.k[aux + 1]
+			local name = (k and k.t == "string" and k.v) or "?"
+			local expr = isValidIdent(name) and mkExpr(name, PREC.ATOM) or mkExpr("_ENV[" .. quoteStr(name) .. "]", PREC.ATOM)
+			assignReg(ins.A, expr, pc, ins)
+		elseif n == "SETGLOBAL" then
+			local k = p.k[aux + 1]
+			local name = (k and k.t == "string" and k.v) or "?"
+			local val = readReg(ins.A, pc, true)
+			flushConflictingTemps(nil, true)
+			if val.isFunctionStmt and isValidIdent(name) then
+				emitLine("function " .. name .. val.funcBody)
+			elseif isValidIdent(name) then
+				emitLine(name .. " = " .. val.text)
+			else
+				emitLine("_ENV[" .. quoteStr(name) .. "] = " .. val.text)
+			end
+		elseif n == "GETUPVAL" then
+			assignReg(ins.A, mkExpr(upvalNames[ins.B] or ("upval" .. (ins.B + 1)), PREC.ATOM), pc, ins)
+		elseif n == "SETUPVAL" then
+			local uname = upvalNames[ins.B] or ("upval" .. (ins.B + 1))
+			local val = readReg(ins.A, pc, true)
+			flushConflictingTemps(nil, true)
+			if val.compoundOp and val.compoundLhs == uname then
+				emitLine(string.format("%s %s %s", uname, val.compoundOp, val.compoundRhs))
+			else
+				emitLine(string.format("%s = %s", uname, val.text))
+			end
+		elseif n == "GETIMPORT" then
+			assignReg(ins.A, constToExpr(p, p.k[ins.D + 1]), pc, ins)
+		elseif n == "GETVARARGS" then
+			if ins.B == 0 then
+				pendingMultret = { reg = ins.A, expr = mkExpr("...", PREC.ATOM) }
+				regExpr[ins.A] = mkExpr("...", PREC.ATOM)
+			elseif ins.B == 2 then
+				assignReg(ins.A, mkExpr("...", PREC.ATOM), pc, ins)
+			else
+				local vars = {}
+				for i = 0, ins.B - 2 do
+					local vn = regVar(ins.A + i, pc + ins.len)
+					vars[#vars + 1] = vn
+					declaredVars[vn] = true
+					regExpr[ins.A + i] = mkExpr(vn, PREC.ATOM, { varName = vn })
+				end
+				emitLine("local " .. table.concat(vars, ", ") .. " = ...")
+			end
+		elseif n == "NEWTABLE" then
+			pendingTable[ins.A] = { array = {}, hash = {} }
+			regExpr[ins.A] = mkExpr("{}", PREC.ATOM, { isTable = true })
+		elseif n == "DUPTABLE" then
+			local k = p.k[ins.D + 1]
+			local tb = { array = {}, hash = {} }
+			if k and k.t == "table" and k.vals then
+				for i, idx in ipairs(k.keys or {}) do
+					local kk = p.k[idx + 1]
+					local kv = (k.vals[i] ~= nil and k.vals[i] >= 0) and p.k[k.vals[i] + 1] or nil
+					if kk and kv then
+						tb.hash[#tb.hash + 1] = {
+							rawKey = (kk.t == "string") and kk.v or nil,
+							key = constToExpr(p, kk).text,
+							val = constToExpr(p, kv).text,
+						}
+					end
+				end
+			end
+			pendingTable[ins.A] = tb
+			regExpr[ins.A] = tableToExpr(tb)
+		elseif n == "SETLIST" then
+			local tb = pendingTable[ins.A]
+			local startIdx = aux
+			if tb then
+				if ins.C == 0 then
+					if pendingMultret and pendingMultret.reg == ins.B then
+						tb.array[startIdx] = pendingMultret.expr.text
+						pendingMultret.expr.consumed = true
+						regExpr[pendingMultret.reg] = nil
+						pendingMultret = nil
+					else
+						tb.array[startIdx] = readReg(ins.B, pc, true).text
+					end
+				else
+					for i = 0, ins.C - 2 do
+						tb.array[startIdx + i] = readReg(ins.B + i, pc, true).text
+					end
+				end
+				regExpr[ins.A] = tableToExpr(tb)
+			else
+				local tbl = readReg(ins.A, pc, true)
+				local mrText
+				if ins.C == 0 and pendingMultret and pendingMultret.reg == ins.B then
+					mrText = pendingMultret.expr.text
+					pendingMultret.expr.consumed = true
+					regExpr[pendingMultret.reg] = nil
+					pendingMultret = nil
+				end
+				flushConflictingTemps(nil, true)
+				if mrText then
+					emitLine(string.format("%s[%d] = %s", wrapPrefix(tbl), startIdx, mrText))
+				else
+					for i = 0, ins.C - 2 do
+						local val = readReg(ins.B + i, pc, true)
+						emitLine(string.format("%s[%d] = %s", wrapPrefix(tbl), startIdx + i, val.text))
+					end
+				end
+			end
+		elseif n == "GETTABLEKS" or n == "GETUDATAKS" then
+			local tbl = readReg(ins.B, pc, true)
+			local k = p.k[aux + 1]
+			local key = (k and k.t == "string" and k.v) or "?"
+			local access = isValidIdent(key)
+				and (wrapPrefix(tbl) .. "." .. key)
+				or (wrapPrefix(tbl) .. "[" .. quoteStr(key) .. "]")
+			assignReg(ins.A, mkExpr(access, PREC.ATOM, { deps = buildDeps(ins.B) }), pc, ins)
+		elseif n == "SETTABLEKS" or n == "SETUDATAKS" then
+			local k = p.k[aux + 1]
+			local key = (k and k.t == "string" and k.v) or "?"
+			local val = readReg(ins.A, pc, true)
+			local tb = pendingTable[ins.B]
+			if tb then
+				tb.hash[#tb.hash + 1] = { rawKey = key, key = quoteStr(key), val = val.text }
+				regExpr[ins.B] = tableToExpr(tb)
+			else
+				local tbl = readReg(ins.B, pc, true)
+				flushConflictingTemps(nil, true)
+				if isValidIdent(key) then
+					emitLine(string.format("%s.%s = %s", wrapPrefix(tbl), key, val.text))
+				else
+					emitLine(string.format("%s[%s] = %s", wrapPrefix(tbl), quoteStr(key), val.text))
+				end
+			end
+		elseif n == "GETTABLEN" then
+			local tbl = readReg(ins.B, pc, true)
+			assignReg(ins.A, mkExpr(string.format("%s[%d]", wrapPrefix(tbl), ins.C + 1), PREC.ATOM, { deps = buildDeps(ins.B) }), pc, ins)
+		elseif n == "SETTABLEN" then
+			local val = readReg(ins.A, pc, true)
+			local idx = ins.C + 1
+			local tb = pendingTable[ins.B]
+			if tb then
+				tb.array[idx] = val.text
+				regExpr[ins.B] = tableToExpr(tb)
+			else
+				local tbl = readReg(ins.B, pc, true)
+				flushConflictingTemps(nil, true)
+				emitLine(string.format("%s[%d] = %s", wrapPrefix(tbl), idx, val.text))
+			end
+		elseif n == "GETTABLE" then
+			local tbl = readReg(ins.B, pc, true)
+			local key = readReg(ins.C, pc, true)
+			assignReg(ins.A, mkExpr(string.format("%s[%s]", wrapPrefix(tbl), key.text), PREC.ATOM, { deps = buildDeps(ins.B, ins.C) }), pc, ins)
+		elseif n == "SETTABLE" then
+			local val = readReg(ins.A, pc, true)
+			local key = readReg(ins.C, pc, true)
+			local tb = pendingTable[ins.B]
+			if tb then
+				tb.hash[#tb.hash + 1] = { key = key.text, val = val.text }
+				regExpr[ins.B] = tableToExpr(tb)
+			else
+				local tbl = readReg(ins.B, pc, true)
+				flushConflictingTemps(nil, true)
+				emitLine(string.format("%s[%s] = %s", wrapPrefix(tbl), key.text, val.text))
+			end
+		elseif n == "NAMECALL" or n == "NAMECALLUDATA" then
+			local obj = readReg(ins.B, pc, true)
+			local k = p.k[aux + 1]
+			local method = (k and k.t == "string" and k.v) or "?"
+			pendingNamecall = { reg = ins.A, obj = obj, method = method }
+		elseif n == "CALL" or n == "CALLFB" then
+			local args = {}
+			local isMethod = pendingNamecall and pendingNamecall.reg == ins.A
+			local startArg = isMethod and (ins.A + 2) or (ins.A + 1)
+
+			if ins.B == 0 then
+				-- Usa resultados multret previos a partir de `startArg` (o del ultimo reg antes de multret)
+				local mr = pendingMultret
+				if mr then
+					for r = startArg, mr.reg - 1 do
+						args[#args + 1] = readReg(r, pc, true).text
+					end
+					args[#args + 1] = mr.expr.text
+					mr.expr.consumed = true
+					regExpr[mr.reg] = nil
+					pendingMultret = nil
+				else
+					args[#args + 1] = readReg(startArg, pc, true).text
+				end
+			else
+				local lastArg = ins.A + ins.B - 1
+				for r = startArg, lastArg do
+					args[#args + 1] = readReg(r, pc, true).text
+				end
+			end
+
+			local callText
+			if isMethod then
+				local nc = pendingNamecall
+				pendingNamecall = nil
+				if isValidIdent(nc.method) then
+					callText = string.format("%s:%s(%s)", wrapPrefix(nc.obj), nc.method, table.concat(args, ", "))
+				else
+					callText = string.format("%s[%s](%s, %s)", wrapPrefix(nc.obj), quoteStr(nc.method), nc.obj.text, table.concat(args, ", "))
+				end
+			else
+				local fn = readReg(ins.A, pc, true)
+				callText = string.format("%s(%s)", wrapPrefix(fn), table.concat(args, ", "))
+			end
+
+			local callExpr = mkExpr(callText, PREC.ATOM, { hasSideEffect = true, isCall = true })
+			flushConflictingTemps(nil, true)
+
+			if ins.C == 1 then
+				-- 0 resultados: sentencia directa
+				emitLine(callText)
+			elseif ins.C == 0 then
+				-- multret: guardar en pendingMultret (y si es destino persistente, materializar)
+				pendingMultret = { reg = ins.A, expr = callExpr }
+				regExpr[ins.A] = callExpr
+			elseif ins.C == 2 then
+				-- 1 resultado
+				assignReg(ins.A, callExpr, pc, ins)
+			else
+				-- C >= 3: N resultados (e.g. `local a, b = f()` o `for k, v in pairs(t)`)
+				local nres = ins.C - 1
+				if nres == 3 and (ins.A == ins.A) then
+					-- Guardar primero por si el siguiente bloque/instruccion es FORGPREP
+					regExpr[ins.A] = mkExpr(callText, PREC.ATOM, { isGenCall = true, numResults = 3, hasSideEffect = true })
+				end
+				-- Verificar si es inmediatamente consumido por FORGPREP en este bloque
+				local nextIns
+				for idx, candidate in ipairs(insn) do
+					if candidate == ins then
+						nextIns = insn[idx + 1]
+						break
+					end
+				end
+				if nextIns and (nextIns.name == "FORGPREP" or nextIns.name == "FORGPREP_INEXT" or nextIns.name == "FORGPREP_NEXT") and nextIns.A == ins.A then
+					regExpr[ins.A] = mkExpr(callText, PREC.ATOM, { isGenCall = true })
+				else
+					local lhs, allNew = {}, true
+					for i = 0, nres - 1 do
+						local vn = regVar(ins.A + i, pc + ins.len)
+						lhs[#lhs + 1] = vn
+						if declaredVars[vn] then
+							allNew = false
+						end
+					end
+					for _, vn in ipairs(lhs) do
+						declaredVars[vn] = true
+					end
+					for i = 0, nres - 1 do
+						regExpr[ins.A + i] = mkExpr(lhs[i + 1], PREC.ATOM, { varName = lhs[i + 1] })
+					end
+					emitLine((allNew and "local " or "") .. table.concat(lhs, ", ") .. " = " .. callText)
+				end
+			end
+		elseif n == "RETURN" then
+			if ins.B == 1 then
+				flushConflictingTemps(nil, true)
+				emitLine("return")
+			elseif ins.B == 0 then
+				local vals = {}
+				if pendingMultret then
+					local mr = pendingMultret
+					for r = ins.A, mr.reg - 1 do
+						vals[#vals + 1] = readReg(r, pc, true).text
+					end
+					vals[#vals + 1] = mr.expr.text
+					mr.expr.consumed = true
+					regExpr[mr.reg] = nil
+					pendingMultret = nil
+				else
+					vals[#vals + 1] = readReg(ins.A, pc, true).text
+				end
+				flushConflictingTemps(nil, true)
+				emitLine("return " .. table.concat(vals, ", "))
+			else
+				local vals = {}
+				for r = ins.A, ins.A + ins.B - 2 do
+					vals[#vals + 1] = readReg(r, pc, true).text
+				end
+				flushConflictingTemps(nil, true)
+				emitLine("return " .. table.concat(vals, ", "))
+			end
+		elseif n == "NEWCLOSURE" then
+			local gi = p.children and p.children[ins.D + 1]
+			local cp = gi and bc.protos[gi + 1]
+			if cp then
+				local lv = findLocVar(p, ins.A, pc + ins.len)
+				local wantStmt = (lv ~= nil) or persistentRegs[ins.A]
+				assignReg(ins.A, formatChildFunction(cp, wantStmt), pc, ins)
+			end
+		elseif n == "DUPCLOSURE" then
+			local k = p.k[ins.D + 1]
+			local cp = k and k.proto and bc.protos[k.proto + 1]
+			if cp then
+				local lv = findLocVar(p, ins.A, pc + ins.len)
+				local wantStmt = (lv ~= nil) or persistentRegs[ins.A]
+				assignReg(ins.A, formatChildFunction(cp, wantStmt), pc, ins)
+			end
+		elseif n == "NOT" then
+			local rhs = readReg(ins.B, pc, true)
+			assignReg(ins.A, mkExpr("not " .. wrapExpr(rhs, PREC.UNARY), PREC.UNARY, { deps = buildDeps(ins.B) }), pc, ins)
+		elseif n == "MINUS" then
+			local rhs = readReg(ins.B, pc, true)
+			local opStr = (rhs.prec <= PREC.UNARY) and ("-(" .. rhs.text .. ")") or ("-" .. rhs.text)
+			assignReg(ins.A, mkExpr(opStr, PREC.UNARY, { deps = buildDeps(ins.B) }), pc, ins)
+		elseif n == "LENGTH" then
+			local rhs = readReg(ins.B, pc, true)
+			assignReg(ins.A, mkExpr("#" .. wrapExpr(rhs, PREC.UNARY), PREC.UNARY, { deps = buildDeps(ins.B) }), pc, ins)
+		elseif n == "CONCAT" then
+			local parts = {}
+			local deps = {}
+			for r = ins.B, ins.C do
+				local e = readReg(r, pc, true)
+				parts[#parts + 1] = wrapExpr(e, PREC.CONCAT, r == ins.B)
+				deps[r] = true
+			end
+			assignReg(ins.A, mkExpr(table.concat(parts, " .. "), PREC.CONCAT, { deps = deps }), pc, ins)
+		elseif BINOP_INFO[n] then
+			local info = BINOP_INFO[n]
+			local lhs, rhs, deps
+			if n == "SUBRK" or n == "DIVRK" then
+				lhs = constToExpr(p, p.k[ins.B + 1])
+				rhs = readReg(ins.C, pc, true)
+				deps = buildDeps(ins.C)
+			elseif string.sub(n, -1) == "K" then
+				lhs = readReg(ins.B, pc, true)
+				rhs = constToExpr(p, p.k[ins.C + 1])
+				deps = buildDeps(ins.B)
+			else
+				lhs = readReg(ins.B, pc, true)
+				rhs = readReg(ins.C, pc, true)
+				deps = buildDeps(ins.B, ins.C)
+			end
+			local lTxt = wrapExpr(lhs, info.prec, info.right)
+			local rTxt = wrapExpr(rhs, info.prec, not info.right)
+			local expr = mkExpr(string.format("%s %s %s", lTxt, info.op, rTxt), info.prec, { deps = deps })
+			if info.compound and lhs.varName then
+				expr.compoundOp = info.compound
+				expr.compoundLhs = lhs.varName
+				expr.compoundRhs = rTxt
+			end
+			assignReg(ins.A, expr, pc, ins)
+		end
+	end
+
+	-- ------------------------------------------------------------------------
+	-- Evaluacion de condiciones estructuradas (`atom`, `and`, `or`, `not`)
+	-- ------------------------------------------------------------------------
+	local function evalAtom(atom)
+		local blk = atom.block
+		local c = atom.cond
+		local snap = snapshotState()
+
+		-- Si este bloque tiene instrucciones previas al salto que no se emitieron (e.g. RHS de `and`/`or` o `elseif`),
+		-- levantarlas en estado temporal para resolver sus operandos.
+		if blk and #blk.insns > 1 then
+			-- Solo re-evaluar si aun no estan en regExpr o si pertenecen a un bloque consumido en short-circuit
+			for i = 1, #blk.insns - 1 do
+				local ins = blk.insns[i]
+				if ins.name ~= "NOP" and ins.name ~= "CAPTURE" then
+					-- Para atomos puros, evaluar en un regExpr aislado sin emitir sentencias globales
+					local saveEmit = emitLine
+					emitLine = function() end
+					liftIns(ins)
+					emitLine = saveEmit
+				end
+			end
+		end
+
+		local lastIns = blk and blk.insns[#blk.insns]
+		local pc = lastIns and lastIns.pc or 0
+		local neg = atom.negated == true
+		local res
+
+		if c.op == "truthy" then
+			local a = readReg(c.regA, pc, true)
+			if neg then
+				res = mkExpr("not " .. wrapExpr(a, PREC.UNARY), PREC.UNARY)
+			else
+				res = a
+			end
+		elseif c.op == "eq" then
+			local a = readReg(c.regA, pc, true)
+			local b = readReg(c.regB, pc, true)
+			local op = neg and "~=" or "=="
+			res = mkExpr(string.format("%s %s %s", wrapExpr(a, PREC.CMP), op, wrapExpr(b, PREC.CMP)), PREC.CMP)
+		elseif c.op == "lt" then
+			local a = readReg(c.regA, pc, true)
+			local b = readReg(c.regB, pc, true)
+			if neg then
+				-- not (a < b) -> a >= b
+				res = mkExpr(string.format("%s >= %s", wrapExpr(a, PREC.CMP), wrapExpr(b, PREC.CMP)), PREC.CMP)
+			else
+				res = mkExpr(string.format("%s < %s", wrapExpr(a, PREC.CMP), wrapExpr(b, PREC.CMP)), PREC.CMP)
+			end
+		elseif c.op == "le" then
+			local a = readReg(c.regA, pc, true)
+			local b = readReg(c.regB, pc, true)
+			if neg then
+				res = mkExpr(string.format("%s > %s", wrapExpr(a, PREC.CMP), wrapExpr(b, PREC.CMP)), PREC.CMP)
+			else
+				res = mkExpr(string.format("%s <= %s", wrapExpr(a, PREC.CMP), wrapExpr(b, PREC.CMP)), PREC.CMP)
+			end
+		elseif c.op == "eq_nil" then
+			local a = readReg(c.regA, pc, true)
+			local op = neg and "~=" or "=="
+			res = mkExpr(string.format("%s %s nil", wrapExpr(a, PREC.CMP), op), PREC.CMP)
+		elseif c.op == "eq_b" then
+			local a = readReg(c.regA, pc, true)
+			local op = neg and "~=" or "=="
+			res = mkExpr(string.format("%s %s %s", wrapExpr(a, PREC.CMP), op, tostring(c.val)), PREC.CMP)
+		elseif c.op == "eq_k" then
+			local a = readReg(c.regA, pc, true)
+			local kidx = c.kIdx or c.kidx
+			if kidx == nil and lastIns then
+				kidx = band(lastIns.aux or 0, 0xFFFFFF)
+			end
+			local k = p.k[(kidx or 0) + 1]
+			local kExpr = constToExpr(p, k)
+			local op = neg and "~=" or "=="
+			res = mkExpr(string.format("%s %s %s", wrapExpr(a, PREC.CMP), op, wrapExpr(kExpr, PREC.CMP)), PREC.CMP)
+		else
+			res = mkExpr("true", PREC.ATOM)
+		end
+
+		restoreState(snap)
+		return res
+	end
+
+	local function evalCond(cond)
+		if not cond then
+			return mkExpr("true", PREC.ATOM)
+		end
+		if cond.kind == "true" then
+			return mkExpr("true", PREC.ATOM)
+		elseif cond.kind == "atom" then
+			return evalAtom(cond)
+		elseif cond.kind == "not" then
+			local inner = evalCond(cond.inner)
+			return mkExpr("not " .. wrapExpr(inner, PREC.UNARY), PREC.UNARY)
+		elseif cond.kind == "and" then
+			local l = evalCond(cond.left)
+			local r = evalCond(cond.right)
+			return mkExpr(string.format("%s and %s", wrapExpr(l, PREC.AND), wrapExpr(r, PREC.AND)), PREC.AND)
+		elseif cond.kind == "or" then
+			local l = evalCond(cond.left)
+			local r = evalCond(cond.right)
+			return mkExpr(string.format("%s or %s", wrapExpr(l, PREC.OR), wrapExpr(r, PREC.OR)), PREC.OR)
+		end
+		return mkExpr("true", PREC.ATOM)
+	end
+
+	-- ------------------------------------------------------------------------
+	-- Emisor recursivo sobre el AST estructurado
+	-- ------------------------------------------------------------------------
+	local function emitNode(node, isTrailingMain)
+		if not node then
+			return
+		end
+		if hoistedBeforeNode[node] then
+			emitLine("local " .. table.concat(hoistedBeforeNode[node], ", "))
+			for _, vn in ipairs(hoistedBeforeNode[node]) do
+				declaredVars[vn] = true
+			end
+		end
+
+		local k = node.kind
+		if k == "Seq" then
+			for idx, ch in ipairs(node.body) do
+				emitNode(ch, isTrailingMain and idx == #node.body)
+			end
+		elseif k == "BlockRef" then
+			local b = node.block
+			for i = node.fromIdx, node.toIdx do
+				local ins = b.insns[i]
+				if ins then
+					-- Suprimir `return` final vacio del prototipo principal o cuerpo de funcion
+					if isTrailingMain and i == node.toIdx and ins.name == "RETURN" and ins.B == 1 then
+						-- nada que emitir
+					else
+						liftIns(ins)
+					end
+				end
+			end
+		elseif k == "Break" then
+			emitLine("break")
+		elseif k == "Continue" then
+			emitLine("continue")
+		elseif k == "GotoFallback" then
+			emitLine(string.format("-- [unstructured jump -> B%d]", node.target.id))
+		elseif k == "If" then
+			local branches = {}
+			for _, br in ipairs(node.branches) do
+				branches[#branches + 1] = br
+			end
+			local tailElse = node.elseBody
+			while tailElse do
+				local innerIf
+				if tailElse.kind == "If" and not hoistedBeforeNode[tailElse] then
+					innerIf = tailElse
+				elseif tailElse.kind == "Seq" and #tailElse.body == 1 and tailElse.body[1].kind == "If" and not hoistedBeforeNode[tailElse.body[1]] then
+					innerIf = tailElse.body[1]
+				end
+				if not innerIf then
+					break
+				end
+				for _, br in ipairs(innerIf.branches) do
+					branches[#branches + 1] = br
+				end
+				tailElse = innerIf.elseBody
+			end
+			for i, br in ipairs(branches) do
+				local kw = (i == 1) and "if" or "elseif"
+				local condE = evalCond(br.cond)
+				emitLine(string.format("%s %s then", kw, condE.text))
+				local savedDecl = {}
+				for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+				local snap = snapshotState()
+				indentLevel += 1
+				emitNode(br.body, false)
+				indentLevel -= 1
+				declaredVars = savedDecl
+				restoreState(snap)
+			end
+			if tailElse then
+				emitLine("else")
+				local savedDecl = {}
+				for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+				local snap = snapshotState()
+				indentLevel += 1
+				emitNode(tailElse, false)
+				indentLevel -= 1
+				declaredVars = savedDecl
+				restoreState(snap)
+			end
+			emitLine("end")
+		elseif k == "While" then
+			if node.condSetup then
+				-- Si condSetup tiene una unica expresion/llamada que alimenta `cond`, intentar integrarla en `while <cond> do`
+				local hasSideAssign = false
+				for i = node.condSetup.fromIdx, node.condSetup.toIdx do
+					local ins = node.condSetup.block.insns[i]
+					if ins and persistentRegs[ins.A] and ins.name ~= "NOP" then
+						hasSideAssign = true
+						break
+					end
+				end
+				if not hasSideAssign then
+					local saveEmit = emitLine
+					emitLine = function() end
+					emitNode(node.condSetup, false)
+					emitLine = saveEmit
+					local condE = evalCond(node.cond)
+					emitLine(string.format("while %s do", condE.text))
+				else
+					emitLine("while true do")
+					indentLevel += 1
+					emitNode(node.condSetup, false)
+					local condE = evalCond(node.cond)
+					emitLine(string.format("if not (%s) then break end", condE.text))
+					indentLevel -= 1
+				end
+			else
+				local condE = evalCond(node.cond)
+				emitLine(string.format("while %s do", condE.text))
+			end
+			local savedDecl = {}
+			for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+			indentLevel += 1
+			emitNode(node.body, false)
+			indentLevel -= 1
+			declaredVars = savedDecl
+			emitLine("end")
+		elseif k == "RepeatUntil" then
+			emitLine("repeat")
+			local savedDecl = {}
+			for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+			indentLevel += 1
+			emitNode(node.body, false)
+			indentLevel -= 1
+			local condE = evalCond(node.cond)
+			declaredVars = savedDecl
+			emitLine(string.format("until %s", condE.text))
+		elseif k == "NumericFor" then
+			local prepBlk = node.prep or node.prepBlock
+			local prepIns = prepBlk and prepBlk.insns[#prepBlk.insns]
+			local baseReg = prepIns and prepIns.A or 0
+			local limitE = readReg(baseReg, prepIns and prepIns.pc, false)
+			local stepE = readReg(baseReg + 1, prepIns and prepIns.pc, false)
+			local initE = readReg(baseReg + 2, prepIns and prepIns.pc, false)
+			local loopPc = node.header and node.header.startPc or (prepIns and prepIns.pc + 1) or 0
+			local lv = findLocVar(p, baseReg + 2, loopPc)
+			local idxName = lv and locvarName[lv] or allocName(nil, "i" .. (baseReg + 2))
+			if stepE.numVal == 1 then
+				emitLine(string.format("for %s = %s, %s do", idxName, initE.text, limitE.text))
+			else
+				emitLine(string.format("for %s = %s, %s, %s do", idxName, initE.text, limitE.text, stepE.text))
+			end
+			local prevFor = activeForVars[baseReg + 2]
+			local savedDecl = {}
+			for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+			activeForVars[baseReg + 2] = idxName
+			declaredVars[idxName] = true
+			indentLevel += 1
+			emitNode(node.body, false)
+			indentLevel -= 1
+			activeForVars[baseReg + 2] = prevFor
+			declaredVars = savedDecl
+			emitLine("end")
+		elseif k == "GenericFor" then
+			local prepBlk = node.prep or node.prepBlock
+			local prepIns = prepBlk and prepBlk.insns[#prepBlk.insns]
+			local baseReg = prepIns and prepIns.A or 0
+			local nvars = prepToForVars[baseReg] or 2
+			local loopPc = node.header and node.header.startPc or (prepIns and prepIns.pc + 1) or 0
+			local varNames, prevFor = {}, {}
+			for i = 0, nvars - 1 do
+				local r = baseReg + 3 + i
+				local lv = findLocVar(p, r, loopPc)
+				local vn = lv and locvarName[lv] or allocName(nil, "v" .. r)
+				varNames[#varNames + 1] = vn
+				prevFor[r] = activeForVars[r]
+				activeForVars[r] = vn
+			end
+			local iterE = regExpr[baseReg] or readReg(baseReg, prepIns and prepIns.pc, false)
+			local iterText = iterE.text
+			if not iterE.isGenCall and regExpr[baseReg + 1] then
+				local parts = { iterE.text, regExpr[baseReg + 1].text }
+				if regExpr[baseReg + 2] then
+					parts[#parts + 1] = regExpr[baseReg + 2].text
+				end
+				iterText = table.concat(parts, ", ")
+			end
+			emitLine(string.format("for %s in %s do", table.concat(varNames, ", "), iterText))
+			local savedDecl = {}
+			for dk, dv in pairs(declaredVars) do savedDecl[dk] = dv end
+			for _, vn in ipairs(varNames) do
+				declaredVars[vn] = true
+			end
+			indentLevel += 1
+			emitNode(node.body, false)
+			indentLevel -= 1
+			for i = 0, nvars - 1 do
+				activeForVars[baseReg + 3 + i] = prevFor[baseReg + 3 + i]
+			end
+			declaredVars = savedDecl
+			emitLine("end")
+		end
+	end
+
+	emitNode(tree, true)
+
+	return {
+		params = paramNames,
+		body = lines,
+		upvalNames = upvalNames,
+	}
+end
+
+function Lifter.decompile(bc, opts)
+	opts = opts or {}
+	local CFG = opts.CFG
+	local Structurer = opts.Structurer
+	assert(CFG and Structurer, "Lifter.decompile requiere opts.CFG y opts.Structurer")
+
+	local mainProto = bc.protos[bc.main + 1]
+	assert(mainProto, "Proto principal no encontrado")
+
+	local cfg = CFG.build(mainProto.insn or {}, { jumpOf = opts.jumpOf })
+	local tree = Structurer.structure(cfg)
+	local res = Lifter.liftProto(bc, mainProto, cfg, tree, opts)
+	return res.body
+end
+
+function Lifter.decompileString(bc, opts)
+	return table.concat(Lifter.decompile(bc, opts), "\n")
+end
+
+return Lifter

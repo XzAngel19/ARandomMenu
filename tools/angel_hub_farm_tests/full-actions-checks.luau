@@ -43,23 +43,31 @@ heartbeat:Fire(.2);assert(#attempts==0 and humanoid.PlatformStand)
 collected.OnClientEvent:Fire('Coins',50,50);character.lastPivot=nil;heartbeat:Fire(.2)
 assert(#attempts==1 and attempts[1]=='kill' and character.lastPivot==home and activeValid())
 heartbeat:Fire(.2);assert(#attempts==1 and V['Auto Farm'])
-AngelHub.mm2CancelFarmKills();heartbeat:Fire(.2);assert(attempts[2]=='Murderer' and activeValid())
+AngelHub.mm2CancelFarmKills();heartbeat:Fire(.2);assert(#attempts==1) -- waits on map 1.5s settle before flinging
+fakeNow+=1.6;heartbeat:Fire(.2);assert(attempts[2]=='Murderer' and activeValid())
 heartbeat:Fire(.2);assert(V['Auto Farm'] and #attempts==2)
 roles[murderer]='Innocent';assert(not activeValid());roles[murderer]='Murderer';assert(activeValid())
-AngelHub.mm2CancelOwnedFling('farm');heartbeat:Fire(.2);assert(attempts[3]=='Sheriff' and activeValid())
+-- While Murderer is still alive (Health > 0), cancelling/ending one fling burst settles 1s then retries Murderer until dead!
+AngelHub.mm2CancelOwnedFling('farm');heartbeat:Fire(.2);assert(#attempts==2);fakeNow+=1.1;heartbeat:Fire(.2);assert(#attempts==3 and attempts[3]=='Murderer' and activeValid())
+murderer.Character:FindFirstChildOfClass('Humanoid').Health=0
+AngelHub.mm2CancelOwnedFling('farm');heartbeat:Fire(.2);fakeNow+=1.1;heartbeat:Fire(.2);assert(attempts[4]=='Sheriff' and activeValid())
+-- While Sheriff is still alive (Health > 0), cancelling/ending one fling burst settles 1s then retries Sheriff until dead!
+AngelHub.mm2CancelOwnedFling('farm');heartbeat:Fire(.2);assert(#attempts==4);fakeNow+=1.1;heartbeat:Fire(.2);assert(#attempts==5 and attempts[5]=='Sheriff' and activeValid())
+sheriff.Character:FindFirstChildOfClass('Humanoid').Health=0
 AngelHub.mm2CancelOwnedFling('farm');character.lastPivot=nil;heartbeat:Fire(.2)
-assert(#attempts==3 and character.lastPivot==nil and V['Auto Farm']) -- must not teleport to spawn after return
-heartbeat:Fire(.2);assert(#attempts==3)
+assert(#attempts==5 and character.lastPivot==nil and V['Auto Farm']) -- must not teleport to spawn after return
+heartbeat:Fire(.2);assert(#attempts==5)
 -- A new bag creates a new sequence. Disabling an active option cancels it.
+murderer.Character:FindFirstChildOfClass('Humanoid').Health=100;sheriff.Character:FindFirstChildOfClass('Humanoid').Health=100
 collected.OnClientEvent:Fire('Coins',0,50);heartbeat:Fire(.2)
 collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2)
-assert(attempts[4]=='kill' and activeValid())
+assert(attempts[6]=='kill' and activeValid())
 AngelHub.setters['Auto Kill All When Full Bag'](false);assert(not AngelHub.mm2KnifeKillBusy and not activeValid())
-heartbeat:Fire(.2);assert(attempts[5]=='Murderer' and activeValid())
+fakeNow+=1.6;heartbeat:Fire(.2);assert(attempts[7]=='Murderer' and activeValid())
 ended.OnClientEvent:Fire();assert(not AngelHub.mm2FlingBusy and not activeValid())
-heartbeat:Fire(.2);assert(#attempts==5)
+heartbeat:Fire(.2);assert(#attempts==7)
 started.OnClientEvent:Fire(10);collected.OnClientEvent:Fire('Coins',0,50);heartbeat:Fire(.2)
-collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2)
-assert(attempts[6]=='Murderer' and activeValid())
+collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);fakeNow+=1.6;heartbeat:Fire(.2)
+assert(attempts[8]=='Murderer' and activeValid())
 AngelHub.setters['Auto Farm'](false);assert(not AngelHub.mm2FlingBusy and not activeValid())
 screenGui.Destroying:Fire()

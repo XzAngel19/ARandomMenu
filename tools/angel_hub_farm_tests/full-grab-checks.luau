@@ -14,13 +14,18 @@ AngelHub.farmGrabShoot=function()shots+=1 end
 local gun={};local equipped=false;local oldFind=character.FindFirstChild
 function character:FindFirstChild(n)if n=='Gun' and equipped then return gun end;return oldFind(self,n)end
 installMM2Farm(screenGui);AngelHub.setters['Auto Farm'](true)
-heartbeat:Fire(.2);assert(touches==0 and shots==0)
-collected.OnClientEvent:Fire('Coins',49,50);heartbeat:Fire(.2);assert(touches==0)
-collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);assert(touches==1 and shots==0)
-fakeNow+=.3;role='Murderer';heartbeat:Fire(.2);assert(touches==1)
-fakeNow+=.3;role='Innocent';equipped=true;heartbeat:Fire(.2);assert(shots==1)
-fakeNow+=.3;root.Position=Vector3.new(1000,0,0);heartbeat:Fire(.2);assert(shots==1)
-root.Position=Vector3.zero;fakeNow+=.3;heartbeat:Fire(.2);assert(shots==2)
+-- Grab gun uses 1s cooldown even before full bag, and NEVER shoots before full bag or below the map!
+heartbeat:Fire(.2);assert(touches==1 and shots==0)
+fakeNow+=.3;heartbeat:Fire(.2);assert(touches==1) -- respects >=1s grab cooldown
+fakeNow+=.8;equipped=true;heartbeat:Fire(.2);assert(shots==0)
+equipped=false;fakeNow+=1.1;collected.OnClientEvent:Fire('Coins',49,50);heartbeat:Fire(.2);assert(touches==2 and shots==0)
+fakeNow+=1.1;equipped=true;heartbeat:Fire(.2);assert(shots==0)
+-- At 50/50 full bag: returns to map first, waits 1s cooldown on map before shooting!
+equipped=false;fakeNow+=1.1;collected.OnClientEvent:Fire('Coins',50,50);heartbeat:Fire(.2);assert(touches==3 and shots==0)
+fakeNow+=.3;role='Murderer';heartbeat:Fire(.2);assert(touches==3 and shots==0)
+fakeNow+=.9;role='Innocent';equipped=true;heartbeat:Fire(.2);assert(shots==1)
+fakeNow+=1.1;root.Position=Vector3.new(1000,0,0);heartbeat:Fire(.2);assert(shots==1)
+root.Position=Vector3.zero;fakeNow+=1.1;heartbeat:Fire(.2);assert(shots==2)
 local ticket=AngelHub.farmFullTicket();AngelHub.setters['Auto Grab Gun And Shoot'](false);AngelHub.setters['Auto Grab Gun And Shoot'](true)
 assert(AngelHub.farmFullTicket()~=ticket);ticket=AngelHub.farmFullTicket()
 collected.OnClientEvent:Fire('Coins',0,50);assert(AngelHub.farmFullTicket()~=ticket)

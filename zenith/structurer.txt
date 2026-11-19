@@ -1,0 +1,814 @@
+-- ============================================================================
+-- Zenith Decompiler (Fase 2 - Paso 2): Control-Flow Structurer + Pretty Printer
+--
+-- Consume un `cfg` generado por `CFG.build(insn, opts)` y reconstruye un arbol
+-- estructurado de sentencias (`Seq`, `If`, `While`, `RepeatUntil`, `NumericFor`,
+-- `GenericFor`, `Break`, `Continue`, `BlockRef`, `GotoFallback`) sin bucles
+-- infinitos ni cuelgues ante grafos complejos o irreducibles.
+-- ============================================================================
+
+local Structurer = {}
+
+-- ----------------------------------------------------------------------------
+-- 1. Utilidades de inspeccion de bloques y condiciones
+-- ----------------------------------------------------------------------------
+local PURE_COND_OPS = {
+	NOP = true, LOADNIL = true, LOADN = true, LOADK = true, LOADKX = true,
+	MOVE = true, GETGLOBAL = true, GETUPVAL = true, GETIMPORT = true,
+	GETTABLE = true, GETTABLEKS = true, GETTABLEN = true, GETUDATAKS = true,
+	ADD = true, SUB = true, MUL = true, DIV = true, IDIV = true, MOD = true, POW = true,
+	ADDK = true, SUBK = true, MULK = true, DIVK = true, IDIVK = true, MODK = true, POWK = true,
+	SUBRK = true, DIVRK = true, CONCAT = true, NOT = true, MINUS = true, LENGTH = true,
+}
+
+local function lastInsOf(blk)
+	return blk and blk.insns and blk.insns[#blk.insns] or nil
+end
+
+local function edgeByKind(blk, kind)
+	for _, e in ipairs(blk.edgesOut) do
+		if e.kind == kind then
+			return e
+		end
+	end
+	return nil
+end
+
+local function insReadsReg(ins, reg)
+	local n = ins.name
+	if n == "NOP" or n == "COVERAGE" or n == "PREPVARARGS" or n == "NATIVECALL"
+		or n == "LOADNIL" or n == "LOADB" or n == "LOADN" or n == "LOADK" or n == "LOADKX"
+		or n == "GETGLOBAL" or n == "GETUPVAL" or n == "GETIMPORT"
+		or n == "NEWTABLE" or n == "DUPTABLE" or n == "NEWCLOSURE" or n == "DUPCLOSURE"
+		or n == "GETVARARGS" or n == "JUMP" or n == "JUMPBACK" or n == "JUMPX" then
+		return false
+	end
+	if n == "MOVE" or n == "NOT" or n == "MINUS" or n == "LENGTH"
+		or n == "GETTABLEKS" or n == "GETTABLEN" or n == "GETUDATAKS"
+		or n == "ADDK" or n == "SUBK" or n == "MULK" or n == "DIVK" or n == "IDIVK"
+		or n == "MODK" or n == "POWK" or n == "ANDK" or n == "ORK" or n == "NAMECALL" or n == "NAMECALLUDATA" then
+		return ins.B == reg
+	end
+	if n == "SUBRK" or n == "DIVRK" then
+		return ins.C == reg
+	end
+	if n == "GETTABLE" or n == "ADD" or n == "SUB" or n == "MUL" or n == "DIV"
+		or n == "IDIV" or n == "MOD" or n == "POW" or n == "AND" or n == "OR" then
+		return ins.B == reg or ins.C == reg
+	end
+	if n == "CONCAT" then
+		return reg >= ins.B and reg <= ins.C
+	end
+	if n == "SETTABLE" then
+		return ins.A == reg or ins.B == reg or ins.C == reg
+	end
+	if n == "SETTABLEKS" or n == "SETTABLEN" or n == "SETUDATAKS" then
+		return ins.A == reg or ins.B == reg
+	end
+	if n == "SETGLOBAL" or n == "SETUPVAL" or n == "JUMPIF" or n == "JUMPIFNOT"
+		or n == "JUMPXEQKNIL" or n == "JUMPXEQKB" or n == "JUMPXEQKN" or n == "JUMPXEQKS" then
+		return ins.A == reg
+	end
+	if n == "JUMPIFEQ" or n == "JUMPIFLE" or n == "JUMPIFLT"
+		or n == "JUMPIFNOTEQ" or n == "JUMPIFNOTLE" or n == "JUMPIFNOTLT" then
+		return ins.A == reg or bit32.band(ins.aux or 0, 255) == reg
+	end
+	if n == "RETURN" then
+		if ins.B == 0 then
+			return reg >= ins.A
+		end
+		return reg >= ins.A and reg <= ins.A + ins.B - 2
+	end
+	if n == "CALL" or n == "CALLFB" then
+		if ins.B == 0 then
+			return reg >= ins.A
+		end
+		return reg >= ins.A and reg <= ins.A + ins.B - 1
+	end
+	return true
+end
+
+local function isRegLiveFrom(reg, startBlk)
+	if not startBlk then
+		return false
+	end
+	local seen, queue, head = { [startBlk.id] = true }, { startBlk }, 1
+	while head <= #queue do
+		local b = queue[head]
+		head += 1
+		local killed = false
+		for _, ins in ipairs(b.insns) do
+			if insReadsReg(ins, reg) then
+				return true
+			end
+			if PURE_COND_OPS[ins.name] and ins.name ~= "NOP" and ins.A == reg then
+				killed = true
+				break
+			end
+		end
+		if not killed then
+			for _, e in ipairs(b.edgesOut) do
+				if not e.virtual and e.to and not seen[e.to.id] then
+					seen[e.to.id] = true
+					queue[#queue + 1] = e.to
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function isPureCondBlock(blk)
+	if not blk or not blk.cond then
+		return false
+	end
+	local insns = blk.insns
+	local nTaken = edgeByKind(blk, "taken")
+	local nFall = edgeByKind(blk, "fallthrough")
+	for i = 1, #insns - 1 do
+		local ins = insns[i]
+		if not PURE_COND_OPS[ins.name] then
+			return false
+		end
+		if ins.name ~= "NOP" then
+			if (nTaken and isRegLiveFrom(ins.A, nTaken.to)) or (nFall and isRegLiveFrom(ins.A, nFall.to)) then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+local function makeAtom(blk, wantTaken)
+	local cond = blk.cond
+	local effNeg = (not wantTaken) ~= (cond.negated == true)
+	return {
+		kind = "atom",
+		block = blk,
+		cond = cond,
+		wantTaken = wantTaken,
+		negated = effNeg,
+	}
+end
+
+local function negateCond(c)
+	if c.kind == "not" then
+		return c.inner
+	elseif c.kind == "atom" then
+		return {
+			kind = "atom",
+			block = c.block,
+			cond = c.cond,
+			wantTaken = not c.wantTaken,
+			negated = not c.negated,
+		}
+	end
+	return { kind = "not", inner = c }
+end
+
+-- ----------------------------------------------------------------------------
+-- 2. Paso 1: Fusion de condiciones short-circuit (and / or)
+-- ----------------------------------------------------------------------------
+-- Dada una cabecera condicional `blk`, intenta fusionar bloques sucesores de
+-- condicion pura en un unico CondExpr + (trueTarget, falseTarget, consumed).
+--
+-- Identidad algebraica en Luau:
+--   `blk` entra en `fall` cuando `onFall(blk)` es cierto, o salta a `taken`.
+--   Si `fall` es un bloque condicional puro `nxt` con un unico predecesor:
+--   - `taken(blk) == taken(nxt)`:
+--       va a `fall(nxt)` ssi `onFall(blk) and onFall(nxt)`, si no `taken(blk)`.
+--   - `taken(blk) == fall(nxt)`:
+--       va a `taken(blk)` ssi `onTaken(blk) or onFall(nxt)`, si no `taken(nxt)`.
+local function resolveShortCircuit(blk, stopSet, loopByHeader)
+	local takenEdge = edgeByKind(blk, "taken")
+	local fallEdge = edgeByKind(blk, "fallthrough")
+	if not (takenEdge and fallEdge) then
+		return nil
+	end
+
+	local consumed = { [blk.id] = true }
+	local trueTarget = fallEdge.to
+	local falseTarget = takenEdge.to
+	local cond = makeAtom(blk, false) -- verdadero cuando toma fallthrough (entra al then)
+
+	local guard = 0
+	while guard < 32 do
+		guard += 1
+		local nxt = trueTarget
+		if not nxt or consumed[nxt.id] or (stopSet and stopSet[nxt.id]) then
+			break
+		end
+		if loopByHeader[nxt.id] or #nxt.pred ~= 1 or not isPureCondBlock(nxt) then
+			break
+		end
+
+		local nTaken = edgeByKind(nxt, "taken")
+		local nFall = edgeByKind(nxt, "fallthrough")
+		if not (nTaken and nFall) then
+			break
+		end
+
+		if falseTarget == nTaken.to then
+			-- A and B -> nFall; si falla -> falseTarget
+			consumed[nxt.id] = true
+			cond = { kind = "and", left = cond, right = makeAtom(nxt, false) }
+			trueTarget = nFall.to
+		elseif falseTarget == nFall.to and not (stopSet and stopSet[falseTarget.id]) then
+			-- (not A) or B -> falseTarget; si falla -> nTaken
+			consumed[nxt.id] = true
+			cond = { kind = "or", left = negateCond(cond), right = makeAtom(nxt, false) }
+			trueTarget = falseTarget
+			falseTarget = nTaken.to
+			break
+		else
+			break
+		end
+	end
+
+	-- Si trueTarget sale del bucle o es un retorno inmediato y falseTarget sigue en el flujo,
+	-- mantenemos la polaridad natural; el emisor de If decidira si invertir (if not c).
+	return {
+		cond = cond,
+		trueTarget = trueTarget,
+		falseTarget = falseTarget,
+		consumed = consumed,
+	}
+end
+
+-- ----------------------------------------------------------------------------
+-- 3. Paso 2: Estructuracion de regiones (loops, if/elseif/else, seq)
+-- ----------------------------------------------------------------------------
+local function copySet(src)
+	local out = {}
+	if src then
+		for k, v in pairs(src) do
+			out[k] = v
+		end
+	end
+	return out
+end
+
+local function makeBlockRef(blk, trimLast)
+	local count = #blk.insns - (trimLast and 1 or 0)
+	return {
+		kind = "BlockRef",
+		block = blk,
+		fromIdx = 1,
+		toIdx = math.max(0, count),
+	}
+end
+
+local function appendStmt(seq, node)
+	if not node then
+		return
+	end
+	if node.kind == "Seq" then
+		for _, child in ipairs(node.body) do
+			appendStmt(seq, child)
+		end
+		return
+	end
+	if node.kind == "BlockRef" and node.toIdx < node.fromIdx then
+		return
+	end
+	seq[#seq + 1] = node
+end
+
+function Structurer.structure(cfg)
+	local ctx = {
+		cfg = cfg,
+		loopByHeader = {},
+		numericPrepLoops = {}, -- [prepBlock.id] -> loop
+		genericPrepLoops = {}, -- [prepBlock.id] -> loop
+		repeatUntilBlock = {}, -- [loop] -> condBlock
+		repeatLatchBlock = {}, -- [loop] -> latchBlock
+		structuredLoops = {},  -- [loop] -> true mientras ya se estructuro su entrada
+	}
+
+	-- Indexar bucles por cabecera y detectar bloques prep / until
+	for _, loop in ipairs(cfg.loops) do
+		ctx.loopByHeader[loop.header.id] = loop
+
+		if loop.kind == "numeric_for" then
+			for _, p in ipairs(loop.header.pred) do
+				local last = lastInsOf(p)
+				if last and last.name == "FORNPREP" then
+					ctx.numericPrepLoops[p.id] = loop
+				end
+			end
+		elseif loop.kind == "generic_for" then
+			for _, p in ipairs(loop.header.pred) do
+				local last = lastInsOf(p)
+				if last and (last.name == "FORGPREP" or last.name == "FORGPREP_INEXT" or last.name == "FORGPREP_NEXT") then
+					ctx.genericPrepLoops[p.id] = loop
+				end
+			end
+		elseif loop.kind == "repeat_until" then
+			local latch = loop.latches[1]
+			if latch then
+				ctx.repeatLatchBlock[loop] = latch
+				if latch.edgesIn[1] and latch.edgesIn[1].kind == "fallthrough" then
+					ctx.repeatUntilBlock[loop] = latch.edgesIn[1].from
+				else
+					ctx.repeatUntilBlock[loop] = latch
+				end
+			end
+		end
+	end
+
+	local function isInLoop(blk, loopCtx)
+		if not loopCtx or not blk then
+			return true
+		end
+		return loopCtx.body[blk.id] == true
+	end
+
+	local function isLoopExitTarget(target, loopCtx)
+		if not loopCtx or not target then
+			return false
+		end
+		return not loopCtx.body[target.id]
+	end
+
+	local function structureLoop(loop, stopSet, outerLoopCtx)
+		local stmts = {}
+		local innerStop = copySet(stopSet)
+
+		-- Salidas del bucle actuan como limites de region
+		local exitTargets = {}
+		for _, ex in ipairs(loop.exits) do
+			innerStop[ex.to.id] = true
+			exitTargets[ex.to.id] = true
+		end
+
+		local afterLoop = nil
+		if #loop.exits > 0 then
+			-- Elegimos como continuacion tras el bucle el primer target de salida por RPO (o for_exit)
+			for _, ex in ipairs(loop.exits) do
+				if ex.kind == "for_exit" then
+					afterLoop = ex.to
+					break
+				end
+			end
+			if not afterLoop then
+				afterLoop = loop.exits[1].to
+			end
+		end
+
+		-- Marcar este bucle como activo mientras estructuramos su interior
+		local prevLoopActive = ctx.structuredLoops[loop]
+		ctx.structuredLoops[loop] = true
+
+		local kind = loop.kind
+		if kind == "numeric_for" then
+			-- En numeric_for, el latch termina en FORNLOOP -> loop.header
+			local latchStop = copySet(innerStop)
+			latchStop[loop.header.id] = true
+			local body = ctx.structureRegion(loop.header, latchStop, loop, {}, true)
+			ctx.structuredLoops[loop] = prevLoopActive
+			return {
+				kind = "NumericFor",
+				loop = loop,
+				header = loop.header,
+				latch = loop.latches[1],
+				body = body,
+			}, afterLoop
+		elseif kind == "generic_for" then
+			-- En generic_for, loop.header ES FORGLOOP; el cuerpo arranca en for_loop edge
+			local bodyStart = edgeByKind(loop.header, "for_loop")
+			local latchStop = copySet(innerStop)
+			latchStop[loop.header.id] = true
+			local body = bodyStart and ctx.structureRegion(bodyStart.to, latchStop, loop, {}) or { kind = "Seq", body = {} }
+			ctx.structuredLoops[loop] = prevLoopActive
+			return {
+				kind = "GenericFor",
+				loop = loop,
+				header = loop.header,
+				body = body,
+			}, afterLoop
+		elseif kind == "repeat_until" then
+			local untilBlk = ctx.repeatUntilBlock[loop]
+			local latchBlk = ctx.repeatLatchBlock[loop]
+			local bodyStop = copySet(innerStop)
+			if untilBlk and untilBlk ~= loop.header then
+				bodyStop[untilBlk.id] = true
+			end
+			if latchBlk then
+				bodyStop[latchBlk.id] = true
+			end
+
+			local body = { kind = "Seq", body = {} }
+			local condExpr = nil
+
+			if untilBlk == loop.header then
+				-- Caso de 1 solo bloque (ej. repeat_simple: B2 tiene cuerpo + JUMPIFLE -> salida)
+				appendStmt(body.body, makeBlockRef(loop.header, true))
+				condExpr = makeAtom(loop.header, true)
+			else
+				local innerBody = ctx.structureRegion(loop.header, bodyStop, loop, {})
+				appendStmt(body.body, innerBody)
+				-- Si la ultima sentencia antes de `untilBlk` es un Continue por fallthrough natural, quitarlo
+				local lastNode = body.body[#body.body]
+				if lastNode and lastNode.kind == "Continue" and lastNode.target == untilBlk then
+					body.body[#body.body] = nil
+				end
+				if untilBlk then
+					-- Las instrucciones antes del salto final de untilBlk forman parte del cuerpo
+					appendStmt(body.body, makeBlockRef(untilBlk, true))
+					condExpr = makeAtom(untilBlk, true)
+				end
+			end
+
+			ctx.structuredLoops[loop] = prevLoopActive
+			return {
+				kind = "RepeatUntil",
+				loop = loop,
+				header = loop.header,
+				untilBlock = untilBlk,
+				cond = condExpr,
+				body = body,
+			}, afterLoop
+		else
+			-- while_or_loop: distinguir `while cond do` vs `while true do`
+			local h = loop.header
+			local sc = h.cond and resolveShortCircuit(h, nil, ctx.loopByHeader) or nil
+			local latchStop = copySet(innerStop)
+			latchStop[h.id] = true
+
+			if sc and (not loop.body[sc.falseTarget.id] or not loop.body[sc.trueTarget.id]) then
+				-- Uno de los dos caminos de la cabecera sale del bucle: es `while cond do ... end`
+				local enterBlk, condExpr, exitBlk
+				if loop.body[sc.trueTarget.id] then
+					enterBlk = sc.trueTarget
+					exitBlk = sc.falseTarget
+					condExpr = sc.cond
+				else
+					enterBlk = sc.falseTarget
+					exitBlk = sc.trueTarget
+					condExpr = negateCond(sc.cond)
+				end
+
+				-- Prefijo dentro de `h` (evaluacion de la condicion) si existe
+				local condSetup = makeBlockRef(h, true)
+				local visitedInCond = copySet(sc.consumed)
+				local body = ctx.structureRegion(enterBlk, latchStop, loop, visitedInCond)
+				ctx.structuredLoops[loop] = prevLoopActive
+
+				return {
+					kind = "While",
+					loop = loop,
+					header = h,
+					condSetup = (condSetup.toIdx >= condSetup.fromIdx) and condSetup or nil,
+					cond = condExpr,
+					body = body,
+				}, afterLoop or exitBlk
+			else
+				-- Bucle sin test de salida en cabecera (`while true do ... end`)
+				local body = ctx.structureRegion(h, latchStop, loop, {}, true)
+				ctx.structuredLoops[loop] = prevLoopActive
+				return {
+					kind = "While",
+					loop = loop,
+					header = h,
+					cond = { kind = "true" },
+					body = body,
+				}, afterLoop
+			end
+		end
+	end
+
+	-- Emite un edge target dentro de una region respetando break/continue/stopSet
+	local function emitTarget(target, stopSet, loopCtx, visited, skipLoopCheck)
+		if not target then
+			return { kind = "Seq", body = {} }
+		end
+		if loopCtx and isLoopExitTarget(target, loopCtx) then
+			return { kind = "Break", target = target }
+		end
+		if loopCtx and loopCtx.kind == "repeat_until" and target == ctx.repeatUntilBlock[loopCtx] and target ~= loopCtx.header then
+			return { kind = "Continue", target = target }
+		end
+		if loopCtx and target == loopCtx.header then
+			return { kind = "Continue", target = target }
+		end
+		if stopSet and stopSet[target.id] then
+			return { kind = "Seq", body = {} }
+		end
+		return ctx.structureRegion(target, stopSet, loopCtx, visited, skipLoopCheck)
+	end
+
+	function ctx.structureRegion(startBlk, stopSet, loopCtx, visited, skipHeaderLoopEntry)
+		local out = {}
+		local cur = startBlk
+		visited = visited or {}
+
+		local guard = 0
+		while cur and guard < 10000 do
+			guard += 1
+
+			local firstEntry = (guard == 1 and skipHeaderLoopEntry)
+			if not firstEntry and stopSet and stopSet[cur.id] then
+				break
+			end
+			if loopCtx and isLoopExitTarget(cur, loopCtx) then
+				appendStmt(out, { kind = "Break", target = cur })
+				break
+			end
+
+			-- Si entramos a un bucle (que no esta ya activo en loopCtx)
+			local enteringLoop = ctx.loopByHeader[cur.id]
+			if enteringLoop and not skipHeaderLoopEntry and not ctx.structuredLoops[enteringLoop] then
+				local loopNode, nextAfter = structureLoop(enteringLoop, stopSet, loopCtx)
+				appendStmt(out, loopNode)
+				cur = nextAfter
+				continue
+			end
+			skipHeaderLoopEntry = false
+
+			-- Si alcanzamos el latch de `repeat_until` (JUMPBACK -> header), terminamos el cuerpo
+			if loopCtx and loopCtx.kind == "repeat_until" and cur == ctx.repeatLatchBlock[loopCtx] then
+				break
+			end
+
+			-- Evitar bucles infinitos en grafos irreducibles o visitados
+			if visited[cur.id] then
+				appendStmt(out, { kind = "GotoFallback", target = cur })
+				break
+			end
+			visited[cur.id] = true
+
+			-- Bloque preparatorio de `for` numerico (FORNPREP)
+			local numLoop = ctx.numericPrepLoops[cur.id]
+			if numLoop and not ctx.structuredLoops[numLoop] then
+				local prepRef = makeBlockRef(cur, true)
+				appendStmt(out, prepRef)
+				local loopNode, nextAfter = structureLoop(numLoop, stopSet, loopCtx)
+				loopNode.prep = cur
+				appendStmt(out, loopNode)
+				cur = nextAfter
+				continue
+			end
+
+			-- Bloque preparatorio de `for` generico (FORGPREP*)
+			local genLoop = ctx.genericPrepLoops[cur.id]
+			if genLoop and not ctx.structuredLoops[genLoop] then
+				local prepRef = makeBlockRef(cur, true)
+				appendStmt(out, prepRef)
+				local loopNode, nextAfter = structureLoop(genLoop, stopSet, loopCtx)
+				loopNode.prep = cur
+				appendStmt(out, loopNode)
+				cur = nextAfter
+				continue
+			end
+
+			-- Latch de numeric_for (FORNLOOP): emitir instrucciones previas y terminar iteracion
+			local last = lastInsOf(cur)
+			if last and last.name == "FORNLOOP" and loopCtx and loopCtx.kind == "numeric_for" then
+				appendStmt(out, makeBlockRef(cur, true))
+				break
+			end
+
+			-- Salida normal (RETURN / sin sucesores)
+			if #cur.edgesOut == 0 then
+				appendStmt(out, makeBlockRef(cur, false))
+				break
+			end
+
+			-- Bloque lineal con 1 sucesor
+			if #cur.edgesOut == 1 then
+				local e = cur.edgesOut[1]
+				local trimLast = (last and (last.name == "JUMP" or last.name == "JUMPBACK" or last.name == "JUMPX"))
+				appendStmt(out, makeBlockRef(cur, trimLast))
+
+				if e.isBack then
+					if loopCtx and e.to == loopCtx.header then
+						-- Fin natural de iteracion o `continue` explicito si no es ultimo bloque
+						if cur.edgesOut[1].kind == "jump_back" and loopCtx.kind ~= "while_or_loop" then
+							appendStmt(out, { kind = "Continue", target = e.to })
+						end
+					else
+						appendStmt(out, { kind = "GotoFallback", target = e.to })
+					end
+					break
+				end
+
+				if loopCtx and loopCtx.kind == "repeat_until" and e.to == ctx.repeatUntilBlock[loopCtx] and e.kind == "jump" then
+					appendStmt(out, { kind = "Continue", target = e.to })
+					break
+				end
+
+				if stopSet and stopSet[e.to.id] then
+					break
+				end
+				if loopCtx and isLoopExitTarget(e.to, loopCtx) then
+					appendStmt(out, { kind = "Break", target = e.to })
+					break
+				end
+				cur = e.to
+				continue
+			end
+
+			-- Bloque condicional (If / ElseIf / Else)
+			if cur.cond then
+				local sc = resolveShortCircuit(cur, stopSet, ctx.loopByHeader)
+				if sc then
+					-- Instrucciones previas a la condicion en `cur`
+					appendStmt(out, makeBlockRef(cur, true))
+					for cid in pairs(sc.consumed) do
+						visited[cid] = true
+					end
+
+					-- Determinar punto de convergencia (join) usando post-dominador
+					local joinBlk = cur.ipdom
+					if joinBlk and stopSet and stopSet[joinBlk.id] then
+						-- joinBlk esta dentro o justo en el borde
+					end
+					if joinBlk and loopCtx and isLoopExitTarget(joinBlk, loopCtx) then
+						-- Si ipdom esta fuera del bucle, las ramas pueden contener `break`
+						joinBlk = nil
+					end
+
+					local branchStop = copySet(stopSet)
+					if joinBlk then
+						branchStop[joinBlk.id] = true
+					end
+
+					local branches = {}
+					local elseBody = nil
+
+					local thenNode = emitTarget(sc.trueTarget, branchStop, loopCtx, copySet(visited))
+					branches[1] = { cond = sc.cond, body = thenNode }
+
+					-- Detectar cadena elseif / else (permitir Break/Continue aunque fTarget este en stopSet)
+					local fTarget = sc.falseTarget
+					local fIsLoopCtrl = loopCtx and (isLoopExitTarget(fTarget, loopCtx) or fTarget == loopCtx.header or (loopCtx.kind == "repeat_until" and fTarget == ctx.repeatUntilBlock[loopCtx]))
+					if fTarget and fTarget ~= joinBlk and (fIsLoopCtrl or not (stopSet and stopSet[fTarget.id])) then
+						local fNode = emitTarget(fTarget, branchStop, loopCtx, copySet(visited))
+						if fNode.kind == "Seq" and #fNode.body == 1 then
+							fNode = fNode.body[1]
+						end
+						if fNode.kind == "If" then
+							for _, br in ipairs(fNode.branches) do
+								branches[#branches + 1] = br
+							end
+							elseBody = fNode.elseBody
+						elseif fNode.kind ~= "Seq" or #fNode.body > 0 then
+							elseBody = fNode
+						end
+					end
+
+					-- Si `then` quedo vacio y `else` tiene cuerpo, invertimos `if not cond then elseBody end`
+					if #branches == 1 and elseBody ~= nil and branches[1].body.kind == "Seq" and #branches[1].body.body == 0 then
+						branches[1] = { cond = negateCond(branches[1].cond), body = elseBody }
+						elseBody = nil
+					end
+
+					-- Si `else` es Break/Continue y no hay joinBlk, emitir guardia limpia:
+					-- `if not cond then break/continue end` seguido del cuerpo `then`
+					if #branches == 1 and joinBlk == nil and elseBody ~= nil and (elseBody.kind == "Break" or elseBody.kind == "Continue") then
+						local guardThen = branches[1].body
+						appendStmt(out, {
+							kind = "If",
+							header = cur,
+							branches = { { cond = negateCond(branches[1].cond), body = elseBody } },
+							elseBody = nil,
+							join = nil,
+						})
+						appendStmt(out, guardThen)
+						break
+					end
+
+					appendStmt(out, {
+						kind = "If",
+						header = cur,
+						branches = branches,
+						elseBody = elseBody,
+						join = joinBlk,
+					})
+
+					if joinBlk and not (stopSet and stopSet[joinBlk.id]) and isInLoop(joinBlk, loopCtx) then
+						cur = joinBlk
+						continue
+					end
+					break
+				end
+			end
+
+			-- Fallback seguro si una bifurcacion no es condicional estandar
+			appendStmt(out, makeBlockRef(cur, false))
+			for _, e in ipairs(cur.edgesOut) do
+				appendStmt(out, { kind = "GotoFallback", target = e.to })
+			end
+			break
+		end
+
+		return { kind = "Seq", body = out }
+	end
+
+	if not cfg.entry then
+		return { kind = "Seq", body = {} }
+	end
+
+	return ctx.structureRegion(cfg.entry, {}, nil, {})
+end
+
+-- ----------------------------------------------------------------------------
+-- 4. Paso 3: Pretty Printer legible del AST estructurado
+-- ----------------------------------------------------------------------------
+local function fmtCond(c)
+	if not c then
+		return "<?>"
+	end
+	if c.kind == "true" then
+		return "true"
+	elseif c.kind == "not" then
+		return "not (" .. fmtCond(c.inner) .. ")"
+	elseif c.kind == "and" then
+		return "(" .. fmtCond(c.left) .. " and " .. fmtCond(c.right) .. ")"
+	elseif c.kind == "or" then
+		return "(" .. fmtCond(c.left) .. " or " .. fmtCond(c.right) .. ")"
+	elseif c.kind == "atom" then
+		local prefix = c.negated and "not " or ""
+		local tag = c.cond.op
+		if c.cond.regA ~= nil then
+			tag ..= "(R" .. c.cond.regA .. (c.cond.regB and (",R" .. c.cond.regB) or "") .. ")"
+		end
+		return string.format("%s%s@B%d", prefix, tag, c.block.id)
+	end
+	return "<?>"
+end
+
+function Structurer.format(tree)
+	local out = {}
+
+	local function emit(node, indent)
+		if not node then
+			return
+		end
+		local pad = string.rep("  ", indent)
+		local k = node.kind
+
+		if k == "Seq" then
+			for _, child in ipairs(node.body) do
+				emit(child, indent)
+			end
+		elseif k == "BlockRef" then
+			local b = node.block
+			local names = {}
+			for i = node.fromIdx, node.toIdx do
+				local ins = b.insns[i]
+				if ins then
+					names[#names + 1] = ins.name
+				end
+			end
+			if #names > 0 then
+				out[#out + 1] = string.format("%sB%d [%s]", pad, b.id, table.concat(names, ", "))
+			end
+		elseif k == "Break" then
+			out[#out + 1] = string.format("%sbreak -- -> B%d", pad, node.target.id)
+		elseif k == "Continue" then
+			out[#out + 1] = string.format("%scontinue -- -> B%d", pad, node.target.id)
+		elseif k == "GotoFallback" then
+			out[#out + 1] = string.format("%s-- [unstructured jump -> B%d]", pad, node.target.id)
+		elseif k == "If" then
+			for i, br in ipairs(node.branches) do
+				local kw = (i == 1) and "if" or "elseif"
+				out[#out + 1] = string.format("%s%s %s then", pad, kw, fmtCond(br.cond))
+				emit(br.body, indent + 1)
+			end
+			if node.elseBody then
+				out[#out + 1] = pad .. "else"
+				emit(node.elseBody, indent + 1)
+			end
+			out[#out + 1] = pad .. "end"
+		elseif k == "While" then
+			if node.condSetup then
+				emit(node.condSetup, indent)
+			end
+			out[#out + 1] = string.format("%swhile %s do", pad, fmtCond(node.cond))
+			emit(node.body, indent + 1)
+			out[#out + 1] = pad .. "end"
+		elseif k == "RepeatUntil" then
+			out[#out + 1] = pad .. "repeat"
+			emit(node.body, indent + 1)
+			out[#out + 1] = string.format("%suntil %s", pad, fmtCond(node.cond))
+		elseif k == "NumericFor" then
+			out[#out + 1] = string.format("%sfor_num (header=B%d) do", pad, node.header.id)
+			emit(node.body, indent + 1)
+			out[#out + 1] = pad .. "end"
+		elseif k == "GenericFor" then
+			out[#out + 1] = string.format("%sfor_gen (header=B%d) do", pad, node.header.id)
+			emit(node.body, indent + 1)
+			out[#out + 1] = pad .. "end"
+		end
+	end
+
+	emit(tree, 0)
+	return out
+end
+
+function Structurer.formatString(tree)
+	return table.concat(Structurer.format(tree), "\n")
+end
+
+return Structurer
