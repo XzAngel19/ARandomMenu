@@ -1,0 +1,468 @@
+-- Speed Hub X 3.7.0 | standalone, client-side Luau UI reference
+-- Run the contents of this one file in a Roblox client Luau context.
+-- Modules are local tables rather than ModuleScripts; no imports or assets are required.
+-- The screenshot shows only the Farming page. The other four tabs are empty
+-- shells, and Bald is the only character option shown. No gameplay is implemented.
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Input = game:GetService("UserInputService")
+
+local Theme = {
+    width = 961,
+    height = 612,
+    name = "SpeedHubX370Reference",
+    window = Color3.fromRGB(16, 16, 16),
+    top = Color3.fromRGB(9, 9, 9),
+    border = Color3.fromRGB(8, 8, 8),
+    row = Color3.fromRGB(30, 30, 30),
+    hover = Color3.fromRGB(23, 23, 23),
+    inset = Color3.fromRGB(40, 40, 40),
+    text = Color3.fromRGB(247, 247, 247),
+    navText = Color3.fromRGB(193, 193, 193),
+    activeTab = Color3.fromRGB(165, 6, 5),
+    activeText = Color3.fromRGB(219, 95, 92),
+    accent = Color3.fromRGB(201, 1, 0),
+    rail = Color3.fromRGB(39, 39, 39),
+    knob = Color3.fromRGB(188, 186, 184),
+    font = Enum.Font.Gotham,
+    bold = Enum.Font.GothamBold,
+}
+
+-- FeatureHooks: intentional no-ops. The controls only change their own UI state.
+local FeatureHooks = {}
+function FeatureHooks.AutoVoid(_enabled) end
+function FeatureHooks.AutoBlock(_enabled) end
+function FeatureHooks.AntiSlow(_enabled) end
+function FeatureHooks.ChooseEquipCharacter(_choice) end
+function FeatureHooks.EquipCharacter(_enabled) end
+function FeatureHooks.Health(_value) end
+function FeatureHooks.UntilHealthToBack(_value) end
+function FeatureHooks.AutoToSafeModeAtHealth(_enabled) end
+
+local UI = {}
+
+function UI.create(class, parent, properties)
+    local object = Instance.new(class)
+    for key, value in pairs(properties) do
+        object[key] = value
+    end
+    object.Parent = parent
+    return object
+end
+
+function UI.rect(class, parent, name, x, y, width, height, color, radius)
+    local properties = {
+        Name = name,
+        Position = UDim2.fromOffset(x, y),
+        Size = UDim2.fromOffset(width, height),
+        BackgroundColor3 = color or Theme.row,
+        BackgroundTransparency = color and 0 or 1,
+        BorderSizePixel = 0,
+    }
+    if class == "TextButton" then
+        properties.Text = ""
+        properties.AutoButtonColor = false
+    end
+    local object = UI.create(class, parent, properties)
+    if radius then
+        UI.create("UICorner", object, { CornerRadius = UDim.new(0, radius) })
+    end
+    return object
+end
+
+function UI.text(parent, name, value, x, y, width, height, size, bold, centered)
+    local label = UI.rect("TextLabel", parent, name, x, y, width, height)
+    label.Text = value
+    label.TextSize = size
+    label.Font = bold and Theme.bold or Theme.font
+    label.TextColor3 = Theme.text
+    label.TextXAlignment = centered and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    label.TextTruncate = Enum.TextTruncate.AtEnd
+    return label
+end
+
+function UI.hover(object, restingColor, hoverColor)
+    object.MouseEnter:Connect(function()
+        object.BackgroundColor3 = hoverColor
+    end)
+    object.MouseLeave:Connect(function()
+        object.BackgroundColor3 = restingColor
+    end)
+end
+
+-- Icons: tiny line drawings, so the GUI never depends on asset permissions.
+local Icons = {}
+local iconPaths = {
+    Home = {
+        { 2, 6, 2, 3, 4, 1, 7, 1 }, { 13, 1, 16, 1, 18, 3, 18, 6 },
+        { 18, 13, 18, 16, 16, 18, 13, 18 }, { 7, 18, 4, 18, 2, 16, 2, 13 },
+        { 6, 7, 6, 8 }, { 14, 7, 14, 8 }, { 6.5, 11, 8, 13, 12, 13, 13.5, 11 },
+    },
+    Main = {
+        { 2, 8, 10, 1, 18, 8, 18, 19, 2, 19, 2, 8 },
+        { 7, 19, 7, 10, 13, 10, 13, 19 },
+    },
+    Farming = {
+        { 2, 9, 4, 5, 9, 2, 14, 1, 17, 3 }, { 6, 4, 18, 17 },
+        { 5, 5, 4, 9, 2, 13 },
+    },
+    Killer = {
+        { 2, 15, 1, 6, 3, 4, 6, 4, 7, 3, 10, 3, 11, 2, 14, 2, 15, 4, 18, 4, 19, 6, 19, 14, 17, 15 },
+        { 2, 15, 5, 15, 6, 13, 6, 5 }, { 6, 14, 9, 15, 10, 13, 10, 4 },
+        { 10, 15, 13, 16, 14, 14, 14, 3 }, { 14, 15, 17, 15, 17, 6 },
+        { 5, 16, 7, 18, 15, 19, 17, 16 },
+    },
+    Misc = {
+        { 1, 18, 5, 1, 10, 9, 15, 3, 19, 18, 1, 18 }, { 3, 13, 7, 11, 12, 14, 17, 12 },
+    },
+    Close = { { 4, 4, 16, 16 }, { 16, 4, 4, 16 } },
+    Chevron = { { 4, 13, 10, 7, 16, 13 } },
+}
+
+function Icons.draw(parent, name, x, y, color, thickness)
+    local icon = UI.rect("Frame", parent, name .. "Icon", x, y, 20, 20)
+    local segments = {}
+    for _, path in ipairs(iconPaths[name]) do
+        for index = 1, #path - 2, 2 do
+            local x1, y1, x2, y2 = path[index], path[index + 1], path[index + 2], path[index + 3]
+            local dx, dy = x2 - x1, y2 - y1
+            local length = math.sqrt(dx * dx + dy * dy) + 0.7
+            local line = UI.rect("Frame", icon, "Stroke", 0, 0, length, thickness, color, 1)
+            line.AnchorPoint = Vector2.new(0.5, 0.5)
+            line.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+            line.Rotation = math.deg(math.atan2(dy, dx))
+            table.insert(segments, line)
+        end
+    end
+    return icon, function(newColor)
+        for _, line in ipairs(segments) do
+            line.BackgroundColor3 = newColor
+        end
+    end
+end
+
+-- Window: mount in the local player's GUI, with a bounded wait if it isn't ready.
+-- Uses no privileged GUI roots, executor-specific globals, or protection methods.
+local Window = {}
+
+function Window.mount()
+    if not RunService:IsClient() then
+        return nil
+    end
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+    local player = Players.LocalPlayer
+    if not player then
+        warn("Speed Hub X GUI: no local Roblox player")
+        return nil
+    end
+    local parent = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+    if not parent or not parent:IsA("PlayerGui") then
+        warn("Speed Hub X GUI: PlayerGui was not available")
+        return nil
+    end
+
+    local old = parent:FindFirstChild(Theme.name)
+    if old and old:IsA("ScreenGui") and old:GetAttribute("SpeedHubReference") then
+        old:Destroy()
+    end
+
+    local screen = UI.create("ScreenGui", nil, {
+        Name = Theme.name,
+        DisplayOrder = 20,
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        ScreenInsets = Enum.ScreenInsets.None,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    })
+    screen:SetAttribute("SpeedHubReference", true)
+    local viewport = UI.rect("Frame", screen, "Viewport", 0, 0, 0, 0)
+    viewport.Size = UDim2.fromScale(1, 1)
+
+    local frame = UI.rect("Frame", viewport, "Window", 0, 0, Theme.width, Theme.height, Theme.window, 11)
+    frame.ClipsDescendants = true
+    local scaler = UI.create("UIScale", frame, { Scale = 1 })
+    -- UIGradient multiplies the background; use white to preserve the stops.
+    frame.BackgroundColor3 = Color3.new(1, 1, 1)
+    UI.create("UIGradient", frame, {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Theme.top),
+            ColorSequenceKeypoint.new(0.5, Theme.window),
+            ColorSequenceKeypoint.new(1, Theme.window),
+        }),
+        Rotation = 90,
+    })
+    UI.create("UIStroke", frame, { Color = Theme.border, Thickness = 1, Transparency = 0.25 })
+    UI.rect("Frame", frame, "RightEdge", Theme.width - 2, 49, 2, 540, Color3.fromRGB(54, 9, 7), 1)
+    UI.text(frame, "Title", "Speed Hub X | Version: 3.7.0", 26, 9, 780, 30, 18)
+
+    local close = UI.rect("TextButton", frame, "Close", 913, 7, 36, 34)
+    local _, tintClose = Icons.draw(close, "Close", 8, 7, Theme.text, 2)
+    close.MouseEnter:Connect(function() tintClose(Theme.activeText) end)
+    close.MouseLeave:Connect(function() tintClose(Theme.text) end)
+    close.Activated:Connect(function() screen:Destroy() end)
+
+    local function fit()
+        local size = viewport.AbsoluteSize
+        if size.X <= 12 or size.Y <= 12 then
+            return
+        end
+        local scale = math.min(1, (size.X - 12) / Theme.width, (size.Y - 12) / Theme.height)
+        scaler.Scale = scale
+        local left = math.max(6, math.floor((size.X - Theme.width * scale) / 2 - 3 * scale))
+        local centerY = (size.Y - Theme.height * scale) / 2
+        local top = math.max(6, math.floor(math.min(centerY + 38 * scale, size.Y - Theme.height * scale - 6)))
+        frame.Position = UDim2.fromOffset(left, top)
+    end
+    viewport:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+    screen.Parent = parent
+    fit()
+    return screen, frame
+end
+
+-- Navigation: one independently scrollable page per tab.
+local Navigation = {}
+
+function Navigation.build(frame, labels, initial)
+    local sidebar = UI.rect("Frame", frame, "Sidebar", 17, 67, 245, 245)
+    local records = {}
+    local selected
+    local function paint(record)
+        local active = record.name == selected
+        record.button.BackgroundColor3 = active and Theme.activeTab or (record.hovered and Theme.inset or Theme.row)
+        local tint = active and Theme.activeText or Theme.navText
+        record.label.TextColor3 = tint
+        record.separator.BackgroundColor3 = tint
+        record.tintIcon(tint)
+        record.page.Visible = active
+    end
+    local function selectPage(name)
+        selected = name
+        for _, record in pairs(records) do
+            paint(record)
+        end
+    end
+
+    for index, name in ipairs(labels) do
+        local y = (index - 1) * 50 + math.max(0, index - 3)
+        local button = UI.rect("TextButton", sidebar, name .. "Tab", 0, y, 245, index == 1 and 41 or 42, Theme.row, 11)
+        local _, tint = Icons.draw(button, name, 15, 11, Theme.navText, name == "Killer" and 1.15 or 1.8)
+        local separator = UI.rect("Frame", button, "Separator", 45, 14, 1, 15, Theme.navText)
+        local label = UI.text(button, "TabLabel", name, 52, 0, 178, 42, 16)
+        local page = UI.rect("ScrollingFrame", frame, name .. "Page", 297, 66, 647, 546)
+        page.Visible = false
+        page.Active = true
+        page.ClipsDescendants = true
+        page.CanvasSize = UDim2.fromOffset(0, 0)
+        page.ScrollBarThickness = 0
+        page.ScrollingDirection = Enum.ScrollingDirection.Y
+        page.ElasticBehavior = Enum.ElasticBehavior.Never
+        local record = { name = name, button = button, label = label, separator = separator,
+            tintIcon = tint, page = page, hovered = false }
+        records[name] = record
+        button.Activated:Connect(function() selectPage(name) end)
+        button.MouseEnter:Connect(function() record.hovered = true; paint(record) end)
+        button.MouseLeave:Connect(function() record.hovered = false; paint(record) end)
+    end
+    selectPage(initial)
+    return records
+end
+
+-- Sections: fixed reference spacing at full scale, with scroll bounds recomputed
+-- when a dropdown grows or shrinks. The bottom row is initially clipped as shown.
+local Sections = {}
+
+function Sections.new(page)
+    local entries = {}
+    local stack = {}
+    function stack:layout()
+        local y = 0
+        for _, entry in ipairs(entries) do
+            entry.gui.Position = UDim2.fromOffset(entry.x, y)
+            entry.gui.Size = UDim2.fromOffset(entry.width, entry.height)
+            y += entry.height + entry.gap
+        end
+        page.CanvasSize = UDim2.fromOffset(0, y)
+    end
+    function stack:add(gui, height, x, width, gap)
+        local entry = { gui = gui, height = height, x = x or 0, width = width or 647, gap = gap or 8 }
+        table.insert(entries, entry)
+        self:layout()
+        return function(newHeight)
+            entry.height = newHeight
+            self:layout()
+        end
+    end
+    function stack:heading(title)
+        local heading = UI.text(page, title .. "Heading", title, 9, 0, 638, 36, 21, true)
+        self:add(heading, 36, 9, 638)
+    end
+    return stack
+end
+
+-- Controls: interactions update local visuals and dispatch only empty hooks.
+local Controls = {}
+
+local function controlRow(host, caption, class, height)
+    local row = UI.rect(class, host, caption:gsub("%s", ""), 0, 0, 647, height, Theme.row, 11)
+    UI.text(row, "Label", caption, 17, 0, 300, height, 16)
+    UI.hover(row, Theme.row, Theme.hover)
+    return row
+end
+
+function Controls.toggle(page, stack, caption, onChanged, gap)
+    local height = 44
+    local row = controlRow(page, caption, "TextButton", height)
+    local box = UI.rect("Frame", row, "ToggleBox", 595, 5, 35, 34, Theme.inset, 8)
+    local check = UI.text(box, "Tick", "✓", 0, 0, 35, 34, 20, true, true)
+    local enabled = false
+    check.Visible = false
+    row.Activated:Connect(function()
+        enabled = not enabled
+        check.Visible = enabled
+        box.BackgroundColor3 = enabled and Theme.accent or Theme.inset
+        onChanged(enabled)
+    end)
+    stack:add(row, height, nil, nil, gap)
+end
+
+function Controls.dropdown(page, stack, caption, options, default, onChanged)
+    local wrapper = UI.rect("Frame", page, "CharacterDropdown", 0, 0, 647, 44)
+    local row = controlRow(wrapper, caption, "TextButton", 44)
+    local field = UI.rect("Frame", row, "SelectedField", 367, 5, 262, 34, Theme.inset, 8)
+    local value = UI.text(field, "SelectedValue", default, 0, 0, 262, 34, 22, true, true)
+    local arrow = Icons.draw(row, "Chevron", 335, 12, Theme.text, 2)
+    local listHeight = #options * 34 + 8
+    local list = UI.rect("Frame", wrapper, "Choices", 367, 49, 262, listHeight, Theme.row, 8)
+    list.Visible = false
+    local resize = stack:add(wrapper, 44, nil, nil, 9)
+    local function setOpen(open)
+        list.Visible = open
+        arrow.Rotation = open and 180 or 0
+        resize(open and (49 + listHeight) or 44)
+    end
+    row.Activated:Connect(function() setOpen(not list.Visible) end)
+    page:GetPropertyChangedSignal("Visible"):Connect(function()
+        if not page.Visible and list.Visible then
+            setOpen(false)
+        end
+    end)
+    for index, option in ipairs(options) do
+        local button = UI.rect("TextButton", list, "Choice" .. index, 4, 4 + (index - 1) * 34, 254, 34, Theme.inset, 6)
+        UI.text(button, "ChoiceLabel", option, 0, 0, 254, 34, 16, true, true)
+        UI.hover(button, Theme.inset, Theme.hover)
+        button.Activated:Connect(function()
+            value.Text = option
+            setOpen(false)
+            onChanged(option)
+        end)
+    end
+end
+
+-- One input tracker per window handles both sliders, including releases off-track.
+function Controls.dragTracker(screen)
+    local drag
+    local function finish()
+        if drag then
+            local current = drag
+            drag = nil
+            current.page.ScrollingEnabled = current.wasScrolling
+        end
+    end
+    local moved = Input.InputChanged:Connect(function(input)
+        if drag and (input == drag.press or (drag.mouse and input.UserInputType == Enum.UserInputType.MouseMovement)) then
+            drag.update(input.Position.X)
+        end
+    end)
+    local ended = Input.InputEnded:Connect(function(input)
+        if drag and (input == drag.press or (drag.mouse and input.UserInputType == Enum.UserInputType.MouseButton1)) then
+            finish()
+        end
+    end)
+    local focusLost = Input.WindowFocusReleased:Connect(finish)
+    screen.Destroying:Connect(function()
+        moved:Disconnect()
+        ended:Disconnect()
+        focusLost:Disconnect()
+        drag = nil
+    end)
+    return function(page, input, update)
+        local mouse = input.UserInputType == Enum.UserInputType.MouseButton1
+        if drag or not (mouse or input.UserInputType == Enum.UserInputType.Touch) then
+            return
+        end
+        drag = { page = page, press = input, mouse = mouse, update = update, wasScrolling = page.ScrollingEnabled }
+        page.ScrollingEnabled = false
+        update(input.Position.X)
+    end, function(page)
+        if drag and drag.page == page then
+            finish()
+        end
+    end
+end
+
+function Controls.slider(page, stack, caption, default, onChanged, startDrag, gap)
+    local height = 49
+    local row = controlRow(page, caption, "Frame", height)
+    local number = UI.text(row, "Value", tostring(default), 321, 0, 46, height, 18, true, true)
+    local rail = UI.rect("Frame", row, "Rail", 373, 19, 257, 11, Theme.rail, 6)
+    local fill = UI.rect("Frame", rail, "Fill", 0, 0, 0, 11, Theme.accent, 6)
+    local knob = UI.rect("Frame", rail, "Knob", 0, 0, 21, 21, Theme.knob, 11)
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    UI.create("UIStroke", knob, { Color = Theme.border, Thickness = 1, Transparency = 0.4 })
+    local hitArea = UI.rect("TextButton", row, "SliderInput", 362, 0, 277, height)
+    hitArea.Selectable = false
+    local value = default
+    local function render()
+        local fraction = value / 100
+        number.Text = tostring(value)
+        fill.Size = UDim2.new(fraction, 0, 1, 0)
+        knob.Position = UDim2.fromScale(fraction, 0.5)
+    end
+    local function update(screenX)
+        if rail.AbsoluteSize.X <= 0 then
+            return
+        end
+        local nextValue = math.round(100 * math.clamp((screenX - rail.AbsolutePosition.X) / rail.AbsoluteSize.X, 0, 1))
+        if nextValue ~= value then
+            value = nextValue
+            render()
+            onChanged(value)
+        end
+    end
+    hitArea.InputBegan:Connect(function(input) startDrag(page, input, update) end)
+    render()
+    stack:add(row, height, nil, nil, gap)
+end
+
+local screen, frame = Window.mount()
+if not screen then
+    return
+end
+
+local tabs = Navigation.build(frame, { "Home", "Main", "Farming", "Killer", "Misc" }, "Farming")
+local farming = tabs.Farming.page
+local stack = Sections.new(farming)
+local startDrag, cancelDrag = Controls.dragTracker(screen)
+farming:GetPropertyChangedSignal("Visible"):Connect(function()
+    if not farming.Visible then
+        cancelDrag(farming)
+    end
+end)
+
+stack:heading("Player")
+Controls.toggle(farming, stack, "Auto Void", FeatureHooks.AutoVoid, 9)
+Controls.toggle(farming, stack, "Auto Block", FeatureHooks.AutoBlock)
+Controls.toggle(farming, stack, "Anti-Slow", FeatureHooks.AntiSlow)
+
+stack:heading("Character")
+Controls.dropdown(farming, stack, "Choose Equip Character", { "Bald" }, "Bald", FeatureHooks.ChooseEquipCharacter)
+Controls.toggle(farming, stack, "Equip Character", FeatureHooks.EquipCharacter)
+
+stack:heading("Safe Mode")
+Controls.slider(farming, stack, "Health", 50, FeatureHooks.Health, startDrag)
+Controls.slider(farming, stack, "Until Health To back", 69, FeatureHooks.UntilHealthToBack, startDrag, 9)
+Controls.toggle(farming, stack, "Auto To Safe Mode At Health", FeatureHooks.AutoToSafeModeAtHealth)
