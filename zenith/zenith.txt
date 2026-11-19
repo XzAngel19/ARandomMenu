@@ -1387,6 +1387,7 @@ do
 		if ok and type(fe) == "table" then
 			table.insert(roots, fe)
 		end
+		table.insert(roots, { debug = debug, buffer = buffer })
 	end
 
 	local function resolve(path)
@@ -10424,7 +10425,10 @@ do
 			S.selectedLabel, S.selectedGroupKey = entry.label, nil
 			Zenith.values[RN.list] = entry.label
 		end
+		local Pro = Zenith.RSpyPro
+		if Pro then Pro.activeEntry = entry end
 		local ok, err = pcall(act)
+		if Pro then Pro.activeEntry = nil end
 		if not ok then toast("Error: " .. tostring(err)) end
 		st.dirty = true
 	end
@@ -10437,7 +10441,7 @@ do
 	local function clip(s, n) return #s > n and (string.sub(s, 1, n) .. "...") or s end
 	local function fmtNumber(v)
 		if v ~= v or v == math.huge or v == -math.huge then return tostring(v) end
-		if v % 1 == 0 and math.abs(v) < 2 ^ 53 then return string.format("%d", v) end
+		if v % 1 == 0 and math.abs(v) < 2 ^ 53 then return string.format("%.0f", v) end
 		return string.format("%.3f", v)
 	end
 	local function short(v)
@@ -10510,8 +10514,8 @@ do
 		for _, root in ipairs(roots) do
 			local okC, kids = pcall(root.GetChildren, root)
 			if okC and type(kids) == "table" then
-				for _, g in ipairs(kids) do
-					if g ~= U.gui and g:IsA("ScreenGui") then
+			for _, g in ipairs(kids) do
+				if g ~= U.gui and g.Name ~= "ZenithSpyOverlay" and g:IsA("ScreenGui") then
 						local okD, desc = pcall(g.GetDescendants, g)
 						if okD and type(desc) == "table" then
 							for i = 1, math.min(#desc, 300) do
@@ -10630,7 +10634,7 @@ do
 		if e.dir ~= "S2C" then
 			mini("Repeat", 54, function() runAction(RN.repeatCall, e) end)
 		else
-			mini("S2C", 44, function() runAction("Replay S2C", e) end)
+			mini("Replay", 48, function() runAction("Replay S2C", e) end)
 		end
 		mini("Caller", 52, function() runAction(RN.decompileCaller, e) end)
 		if stackLbl then mini("Stack", 48, function() stackLbl.Visible = not stackLbl.Visible end) end
@@ -10842,7 +10846,7 @@ do
 			local blocked = S and g.last and S.blocked[g.last.remote] == true
 			local ic = ICON[g.className] or { "A", T.good }
 			r.icon.Text, r.icon.TextColor3 = ic[1], ic[2]
-			r.name.Text = g.name
+			r.name.Text = tostring(g.name)
 			r.name.TextColor3 = blocked and T.bad or T.text
 			r.count.Text = "x" .. g.count
 			r.root.BackgroundColor3 = (st.selKey == g.key) and T.sel or T.panel
@@ -10850,9 +10854,9 @@ do
 		U.listPool.finish()
 		local g = byKey[st.selKey]
 		if g then
-			U.info.Text = g.path .. "  :" .. tostring(g.method)
+			U.info.Text = tostring(g.path) .. "  :" .. tostring(g.method)
 			U.empty.Visible = false
-			local cs = table.concat({ g.key, g.count, st.page, g.last.id }, "|")
+			local cs = table.concat({ g.key, g.count, st.page, g.last.id, g.last.returns ~= nil and 1 or 0 }, "|")
 			if cs ~= st.cardSig or force then
 				st.cardSig = cs
 				renderCards(g)
@@ -10887,7 +10891,7 @@ do
 				fill.Visible = getFlag(key)
 			end
 		end
-		local function addSlider(order, text, minV, maxV, step, getFn, setFn, fmtFn)
+		local function addSlider(order, text, minV, maxV, step, getFn, setFn, fmtFn, deferred)
 			local f = new("Frame", { BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, -6, 0, 44), LayoutOrder = order }, parent)
 			corner(f, 6); stroke(f)
 			label(f, text, { Position = UDim2.new(0, 10, 0, 4), Size = UDim2.new(0.6, 0, 0, 16) })
@@ -10899,23 +10903,32 @@ do
 			local knob = new("Frame", { BackgroundColor3 = T.text, BorderSizePixel = 0, Size = UDim2.new(0, 12, 0, 12), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0) }, track)
 			corner(knob, 6)
 			local hit = new("TextButton", { Text = "", BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 22), Size = UDim2.new(1, 0, 0, 20) }, f)
-			local function show()
-				local v = tonumber(getFn()) or minV
+			local dragging, pending = false, nil
+			local function paint(v)
 				local rel = math.clamp((v - minV) / (maxV - minV), 0, 1)
 				fill.Size = UDim2.new(rel, 0, 1, 0)
 				knob.Position = UDim2.new(rel, 0, 0.5, 0)
 				val.Text = fmtFn and fmtFn(v) or tostring(v)
 			end
-			local dragging = false
+			local function show()
+				if not dragging then
+					paint(tonumber(getFn()) or minV)
+				end
+			end
 			local function apply(x)
 				local rel = math.clamp((x - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X), 0, 1)
 				local v = math.clamp(math.floor((minV + rel * (maxV - minV)) / step + 0.5) * step, minV, maxV)
-				setFn(v)
-				show()
+				if deferred then pending = v else setFn(v) end
+				paint(v)
 			end
 			hit.InputBegan:Connect(function(i) if isPressOv(i) then dragging = true; apply(i.Position.X) end end)
 			st.conns[#st.conns + 1] = UIS.InputChanged:Connect(function(i) if dragging and isMoveOv(i) then apply(i.Position.X) end end)
-			st.conns[#st.conns + 1] = UIS.InputEnded:Connect(function(i) if isPressOv(i) then dragging = false end end)
+			st.conns[#st.conns + 1] = UIS.InputEnded:Connect(function(i)
+				if isPressOv(i) and dragging then
+					dragging = false
+					if deferred and pending then setFn(pending); pending = nil end
+				end
+			end)
 			U.refreshers[#U.refreshers + 1] = show
 			show()
 		end
@@ -10929,7 +10942,7 @@ do
 		tb.FocusLost:Connect(function() setFlag(RN.ignoreList, tb.Text); st.dirty = true end)
 		U.refreshers[#U.refreshers + 1] = function() if not tb:IsFocused() then tb.Text = tostring(Zenith.values[RN.ignoreList] or "") end end
 		sectionHeader(parent, "OVERLAY", nx())
-		addSlider(nx(), "Escala de ventana", 0.7, 1.4, 0.05, function() return U.scale and U.scale.Scale or 1 end, function(v) if U.scale then U.scale.Scale = v end end, function(v) return string.format("%d%%", v * 100 + 0.5) end)
+		addSlider(nx(), "Escala de ventana", 0.7, 1.4, 0.05, function() return U.scale and U.scale.Scale or 1 end, function(v) if U.scale then U.scale.Scale = v end end, function(v) return string.format("%d%%", v * 100 + 0.5) end, true)
 		label(parent, "F4 / Toggle 'Spy Overlay': mostrar / ocultar", { Size = UDim2.new(1, -6, 0, 20), TextColor3 = T.mute, LayoutOrder = nx() })
 	end
 
@@ -11056,9 +11069,9 @@ do
 			refresh(true)
 		end
 		for i, t in ipairs(TABS) do
-			local b = button(tabBar, t.text, { Size = UDim2.new(1 / #TABS, -4, 1, 0), LayoutOrder = i, BackgroundColor3 = T.sel }, function() setTab(i) end)
-			b.MouseEnter:Connect(function() b.BackgroundColor3 = T.sel end)
-			b.MouseLeave:Connect(function() b.BackgroundColor3 = T.sel end)
+			local b = new("TextButton", { Text = t.text, Font = FONT, TextSize = 12, TextColor3 = T.sub, BackgroundColor3 = T.sel, BackgroundTransparency = 1, AutoButtonColor = false, BorderSizePixel = 0, Size = UDim2.new(1 / #TABS, -4, 1, 0), LayoutOrder = i }, tabBar)
+			corner(b, 6)
+			b.MouseButton1Click:Connect(function() setTab(i) end)
 			U.tabBtns[i] = b
 		end
 
@@ -11137,14 +11150,28 @@ do
 	Zenith.register("SpyOverlay", {
 		requires = {},
 		optional = { "gethui" },
-		init = function()
+		init = function(_, ctx)
+			local old = (typeof(shared) == "table" and shared.Zenith and shared.Zenith.Overlay) or (type(env) == "table" and env.Zenith and env.Zenith.Overlay)
+			if old and old ~= Overlay and old.destroy then
+				pcall(old.destroy)
+			end
 			Zenith.Overlay = Overlay
 			savedOverlayHook = Zenith.hooks[RN.overlay]
 			Zenith.hooks[RN.overlay] = function(on)
 				if savedOverlayHook then pcall(savedOverlayHook, on) end
 				Overlay.toggle(on == true)
 			end
-			if Zenith.values[RN.overlay] == true then
+			if not (Zenith.keybinds and Zenith.keybinds[RN.overlay]) and ctx and ctx.track then
+				ctx.track(UIS.InputBegan:Connect(function(i, gp)
+					if gp or (UIS.GetFocusedTextBox and UIS:GetFocusedTextBox()) then return end
+					if i.KeyCode == Enum.KeyCode.F4 then
+						local show = not (U.win and U.win.Visible)
+						Zenith.values[RN.overlay] = show
+						Overlay.toggle(show)
+					end
+				end))
+			end
+			if Zenith.values[RN.overlay] == true or (not Zenith.keybinds and Zenith.values[RN.overlay] ~= false) then
 				Overlay.toggle(true)
 			end
 		end,
@@ -11162,11 +11189,34 @@ end
 -- RSpyPro (Sub-arg block/ignore, arg mutators, return spoofers, S2C replay, diff & fuzzer).
 do
 	local Pro = {
-		subBlocked = {},
-		subIgnored = {},
+		subBlocked = setmetatable({}, { __mode = "k" }),
+		subIgnored = setmetatable({}, { __mode = "k" }),
 		argMutators = setmetatable({}, { __mode = "k" }),
 		retSpoofers = setmetatable({}, { __mode = "k" }),
+		activeEntry = nil,
 	}
+
+	local KEYWORDS = {}
+	for w in string.gmatch("and break do else elseif end false for function if in local nil not or repeat return then true until while continue", "%a+") do
+		KEYWORDS[w] = true
+	end
+	local function isIdent(s)
+		return type(s) == "string" and string.match(s, "^[%a_][%w_]*$") ~= nil and not KEYWORDS[s]
+	end
+	local function num(n)
+		if n ~= n then return "0/0" end
+		if n == math.huge then return "math.huge" end
+		if n == -math.huge then return "-math.huge" end
+		return tostring(n)
+	end
+	local function flags(v, names, prefix)
+		local o = {}
+		for _, n in ipairs(names) do
+			local ok, on = pcall(function() return v[n] end)
+			if ok and on then o[#o + 1] = prefix .. n end
+		end
+		return table.concat(o, ", ")
+	end
 
 	local function quoteBytes(str)
 		local out = {}
@@ -11197,26 +11247,53 @@ do
 		local t = typeof(v)
 		if t == "nil" then
 			return "nil"
-		elseif t == "boolean" or t == "number" then
+		elseif t == "boolean" then
 			return tostring(v)
+		elseif t == "number" then
+			return num(v)
 		elseif t == "string" then
 			return quoteBytes(v)
 		elseif t == "Instance" then
 			return Zenith.instancePath and Zenith.instancePath(v) or tostring(v)
+		elseif t == "EnumItem" then
+			return tostring(v)
+		elseif t == "Vector3" then
+			return string.format("Vector3.new(%s, %s, %s)", num(v.X), num(v.Y), num(v.Z))
+		elseif t == "Vector2" then
+			return string.format("Vector2.new(%s, %s)", num(v.X), num(v.Y))
+		elseif t == "Vector3int16" then
+			return string.format("Vector3int16.new(%d, %d, %d)", v.X, v.Y, v.Z)
+		elseif t == "Vector2int16" then
+			return string.format("Vector2int16.new(%d, %d)", v.X, v.Y)
+		elseif t == "CFrame" then
+			local c = { v:GetComponents() }
+			for i = 1, #c do c[i] = num(c[i]) end
+			return "CFrame.new(" .. table.concat(c, ", ") .. ")"
+		elseif t == "Color3" then
+			return string.format("Color3.new(%s, %s, %s)", num(v.R), num(v.G), num(v.B))
+		elseif t == "UDim2" then
+			return string.format("UDim2.new(%s, %d, %s, %d)", num(v.X.Scale), v.X.Offset, num(v.Y.Scale), v.Y.Offset)
+		elseif t == "UDim" then
+			return string.format("UDim.new(%s, %d)", num(v.Scale), v.Offset)
+		elseif t == "BrickColor" then
+			return string.format("BrickColor.new(%q)", v.Name)
+		elseif t == "NumberRange" then
+			return string.format("NumberRange.new(%s, %s)", num(v.Min), num(v.Max))
+		elseif t == "Rect" then
+			return string.format("Rect.new(%s, %s, %s, %s)", num(v.Min.X), num(v.Min.Y), num(v.Max.X), num(v.Max.Y))
+		elseif t == "Axes" then
+			local ax = flags(v, { "X", "Y", "Z" }, "Enum.Axis.")
+			local nm = flags(v, { "Top", "Bottom", "Left", "Right", "Back", "Front" }, "Enum.NormalId.")
+			local both = (ax ~= "" and nm ~= "") and (ax .. ", " .. nm) or (ax ~= "" and ax or nm)
+			return "Axes.new(" .. both .. ")"
+		elseif t == "Faces" then
+			return "Faces.new(" .. flags(v, { "Top", "Bottom", "Left", "Right", "Back", "Front" }, "Enum.NormalId.") .. ")"
 		elseif t == "buffer" then
 			local len = buffer.len(v)
 			local previewLen = math.min(len, 512)
 			local raw = buffer.readstring(v, 0, previewLen)
-			if len > previewLen then
-				return string.format("buffer.fromstring(%s) --[[ +%d bytes ]]", quoteBytes(raw), len - previewLen)
-			end
-			return string.format("buffer.fromstring(%s)", quoteBytes(raw))
-		elseif t == "Axes" then
-			return string.format("Axes.new(%s)", tostring(v))
-		elseif t == "Faces" then
-			return string.format("Faces.new(%s)", tostring(v))
-		elseif t == "Vector2int16" then
-			return string.format("Vector2int16.new(%d, %d)", v.X, v.Y)
+			local s = string.format("buffer.fromstring(%s)", quoteBytes(raw))
+			return len > previewLen and (s .. string.format(" --[[ +%d bytes ]]", len - previewLen)) or s
 		elseif t == "table" then
 			if activeStack[v] then
 				return "{ --[[ cyclic ]] }"
@@ -11225,34 +11302,63 @@ do
 				return "{ --[[ max depth ]] }"
 			end
 			activeStack[v] = true
-			local parts = {}
-			for k, val in pairs(v) do
-				local ks = (type(k) == "string" and string.match(k, "^[%a_][%w_]*$")) and k or ("[" .. Pro.serializeValue(k, depth + 1, activeStack) .. "]")
-				parts[#parts + 1] = ks .. " = " .. Pro.serializeValue(val, depth + 1, activeStack)
+			local parts, arrN = {}, #v
+			for i = 1, arrN do
+				parts[i] = Pro.serializeValue(v[i], depth + 1, activeStack)
+			end
+			local rest = {}
+			for k in pairs(v) do
+				if not (type(k) == "number" and k >= 1 and k <= arrN and k % 1 == 0) then
+					rest[#rest + 1] = k
+				end
+			end
+			table.sort(rest, function(a, b)
+				local ta, tb = type(a), type(b)
+				if ta ~= tb then return ta < tb end
+				if ta == "number" or ta == "string" then return a < b end
+				return tostring(a) < tostring(b)
+			end)
+			for _, k in ipairs(rest) do
+				local ks = isIdent(k) and k or ("[" .. Pro.serializeValue(k, depth + 1, activeStack) .. "]")
+				parts[#parts + 1] = ks .. " = " .. Pro.serializeValue(v[k], depth + 1, activeStack)
 			end
 			activeStack[v] = nil
 			return "{ " .. table.concat(parts, ", ") .. " }"
 		end
-		return tostring(v)
+		return string.format("nil --[[ %s: %s ]]", t, tostring(v))
 	end
 
-	local function subKey(remote, firstArg)
-		return tostring(remote) .. "::" .. typeof(firstArg) .. ":" .. tostring(firstArg)
+	local NIL, NAN = {}, {}
+	local function normKey(v)
+		if v == nil then return NIL end
+		if v ~= v then return NAN end
+		return v
+	end
+
+	function Pro.hasSubRule(kind, remote, first)
+		if remote == nil then return false end
+		local t = (kind == "block" and Pro.subBlocked or Pro.subIgnored)[remote]
+		return t ~= nil and t[normKey(first)] == true
 	end
 
 	function Pro.setSubRule(kind, remote, firstArg, enabled)
+		if remote == nil then return end
 		local tbl = (kind == "block") and Pro.subBlocked or Pro.subIgnored
-		tbl[subKey(remote, firstArg)] = enabled and true or nil
+		local t = tbl[remote]
+		if not t then
+			if not enabled then return end
+			t = {}
+			tbl[remote] = t
+		end
+		t[normKey(firstArg)] = enabled and true or nil
 	end
 
 	function Pro.shouldBlock(remote, args)
-		local first = type(args) == "table" and args[1] or nil
-		return Pro.subBlocked[subKey(remote, first)] == true
+		return Pro.hasSubRule("block", remote, type(args) == "table" and args[1] or nil)
 	end
 
 	function Pro.shouldIgnore(remote, args)
-		local first = type(args) == "table" and args[1] or nil
-		return Pro.subIgnored[subKey(remote, first)] == true
+		return Pro.hasSubRule("ignore", remote, type(args) == "table" and args[1] or nil)
 	end
 
 	function Pro.setArgMutator(remote, mutatorFn)
@@ -11288,8 +11394,8 @@ do
 	end
 
 	function Pro.replayServerToClient(remote, ...)
-		if typeof(remote) ~= "Instance" or not remote:IsA("RemoteEvent") then
-			return false, "Solo RemoteEvent soporta replay S2C"
+		if typeof(remote) ~= "Instance" or not remote:IsA("BaseRemoteEvent") then
+			return false, "Solo BaseRemoteEvent soporta replay S2C"
 		end
 		local fs = Zenith.capFn("firesignal")
 		if fs then
@@ -11334,22 +11440,31 @@ do
 		return table.concat(lines, "\n")
 	end
 
+	local NILP = {}
 	function Pro.fuzzRemote(remote, method, argIndex, baseArgs)
 		if typeof(remote) ~= "Instance" then
 			return 0
 		end
-		local fn = remote[method]
-		if type(fn) ~= "function" then
+		local okF, fn = pcall(function() return remote[method] end)
+		if not okF or type(fn) ~= "function" then
 			return 0
 		end
-		local probes = { 0, -1, 1e9, 0 / 0, "", "__ZENITH_FUZZ__", false, true, {}, nil }
+		local probes = { 0, -1, 1e9, 0 / 0, "", "__ZENITH_FUZZ__", false, true, {}, NILP }
+		local idx = argIndex or 1
+		local isFn = remote:IsA("RemoteFunction") or remote:IsA("BindableFunction")
 		local sent = 0
 		for _, payload in ipairs(probes) do
+			if payload == NILP then payload = nil end
 			local copyArgs = table.clone(baseArgs or {})
-			copyArgs[argIndex or 1] = payload
-			local n = math.max(copyArgs.n or #copyArgs, argIndex or 1)
-			local ok = pcall(fn, remote, table.unpack(copyArgs, 1, n))
-			if ok then
+			copyArgs[idx] = payload
+			local n = math.max(copyArgs.n or #copyArgs, idx)
+			local function fire()
+				return pcall(fn, remote, table.unpack(copyArgs, 1, n))
+			end
+			if isFn then
+				task.spawn(fire)
+				sent += 1
+			elseif fire() then
 				sent += 1
 			end
 		end
@@ -11357,6 +11472,9 @@ do
 	end
 
 	local function getActiveEntry()
+		if Pro.activeEntry then
+			return Pro.activeEntry
+		end
 		local S = Zenith.RSpy
 		if not S then
 			return nil
@@ -11380,8 +11498,7 @@ do
 					return Zenith.log("Warn", "RSpyPro: selecciona una llamada primero")
 				end
 				local first = e.args and e.args[1]
-				local k = subKey(e.remote, first)
-				local nextOn = not (Pro.subBlocked[k] == true)
+				local nextOn = not Pro.hasSubRule("block", e.remote, first)
 				Pro.setSubRule("block", e.remote, first, nextOn)
 				Zenith.log("Info", string.format("RSpyPro: Sub-Block (%s, %s) = %s", tostring(e.name), tostring(first), tostring(nextOn)))
 			end
@@ -11392,8 +11509,7 @@ do
 					return Zenith.log("Warn", "RSpyPro: selecciona una llamada primero")
 				end
 				local first = e.args and e.args[1]
-				local k = subKey(e.remote, first)
-				local nextOn = not (Pro.subIgnored[k] == true)
+				local nextOn = not Pro.hasSubRule("ignore", e.remote, first)
 				Pro.setSubRule("ignore", e.remote, first, nextOn)
 				Zenith.log("Info", string.format("RSpyPro: Sub-Ignore (%s, %s) = %s", tostring(e.name), tostring(first), tostring(nextOn)))
 			end
@@ -11440,8 +11556,11 @@ do
 				local out = Zenith.outputs and Zenith.outputs["Spy Log"]
 				if out and type(out.setText) == "function" then
 					out.setText(txt)
+					Zenith.log("Info", "RSpyPro: Diff generado en Spy Log")
+				else
+					Zenith.copy(txt)
+					Zenith.log("Info", "RSpyPro: Diff copiado al portapapeles")
 				end
-				Zenith.log("Info", "RSpyPro: Diff generado en Spy Log")
 			end
 		end,
 		stop = function()
@@ -11586,6 +11705,11 @@ do
 				end
 			end
 		end
+		if state.currentParent == nil and (q == "" or string.find("nil instances", q, 1, true)) then
+			local nilLbl = "[NIL] Nil Instances"
+			state.byLabel[nilLbl] = "GO_NIL"
+			table.insert(state.shownLabels, nilLbl)
+		end
 		Zenith.setItems(N.list, state.shownLabels)
 	end
 
@@ -11609,7 +11733,8 @@ do
 				if okC and type(conns) == "table" then
 					for _, conn in ipairs(conns) do
 						idx += 1
-						local fn = conn.Function
+						local okF, fn = pcall(function() return conn.Function end)
+						if not okF then fn = nil end
 						local isLua = type(fn) == "function"
 						local execFlag = isLua and isExec and select(2, pcall(isExec, fn)) == true
 						local src = "-"
@@ -11624,7 +11749,7 @@ do
 						end
 						local enabled = (conn.Enabled ~= false)
 						local lbl = string.format("#%d [%s] %s (%s) %s", idx, enabled and "ON" or "OFF", sigName, execFlag and "Exec" or (isLua and "Lua" or "C"), src)
-						local rec = { signalName = sigName, signal = sig, conn = conn, func = fn, enabled = enabled, source = src }
+						local rec = { idx = idx, label = lbl, signalName = sigName, signal = sig, conn = conn, func = fn, enabled = enabled, source = src }
 						table.insert(state.connRecords, rec)
 						state.connByLabel[lbl] = rec
 						table.insert(labels, lbl)
@@ -11697,6 +11822,9 @@ do
 				elseif target == "GO_ROOTS" then
 					state.currentParent = nil
 					refreshTree()
+				elseif target == "GO_NIL" then
+					state.currentParent = "NIL_ROOT"
+					refreshTree()
 				elseif typeof(target) == "Instance" then
 					inspectInstance(target)
 				end
@@ -11763,23 +11891,29 @@ do
 				if not rec or not rec.conn then
 					return Zenith.log("Warn", "Explorer: selecciona una conexion primero")
 				end
+				local keep = rec.idx
 				if rec.enabled and type(rec.conn.Disable) == "function" then
 					pcall(rec.conn.Disable, rec.conn)
 				elseif not rec.enabled and type(rec.conn.Enable) == "function" then
 					pcall(rec.conn.Enable, rec.conn)
 				end
 				scanConnections(state.currentInst)
+				for lbl, r in pairs(state.connByLabel) do
+					if r.idx == keep then
+						state.selectedConnLabel = lbl
+						break
+					end
+				end
 			end
 			Zenith.actions[N.fireConn] = function()
 				local rec = state.connByLabel[state.selectedConnLabel]
 				if not rec then
 					return Zenith.log("Warn", "Explorer: selecciona una conexion primero")
 				end
-				local fs = Zenith.capFn("firesignal")
-				if fs and rec.signal then
-					pcall(fs, rec.signal)
-				elseif rec.conn and type(rec.conn.Fire) == "function" then
+				if rec.conn and type(rec.conn.Fire) == "function" then
 					pcall(rec.conn.Fire, rec.conn)
+				elseif Zenith.capFn("firesignal") and rec.signal then
+					pcall(Zenith.capFn("firesignal"), rec.signal)
 				end
 			end
 			refreshTree()
@@ -11829,6 +11963,11 @@ local function initializeScript()
 	if typeof(shared) == "table" then
 		shared.ZenithGui = screenGui
 		shared.Zenith = Zenith
+	end
+	if typeof(getgenv) == "function" then
+		pcall(function()
+			getgenv().Zenith = Zenith
+		end)
 	end
 
 	if typeof(getgenv) == "function" then

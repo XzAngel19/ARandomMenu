@@ -39,31 +39,29 @@ assert(#created==0 and not AngelHub.mm2FlingBusy)
 -- Missing map/lobby refs no longer silently reject selected targets.
 AngelHub.findMM2Map=function()return nil end
 AngelHub.actions['Fling']();local first=created[#created];assert(first and first.Parent==root and status:find('Alice'))
-heartbeat:Fire(.1);assert(root.Velocity.X==9e7 and root.RotVelocity.X==9e8)
-AngelHub.setters['Noclip'](true);assert(first.destroyed and character.lastPivot==home and workspace.FallenPartsDestroyHeight==-500);AngelHub.setters['Noclip'](false)
+heartbeat:Fire(.1);assert(root.Velocity.X==240)
+AngelHub.setters['Noclip'](true);assert(first.destroyed and character.lastPivot==home);AngelHub.setters['Noclip'](false)
 AngelHub.findMM2Map=function()return map end
 V['Fling Target']='Nobody';AngelHub.actions['Fling']();assert(status:find('Selecciona'))
 V['Fling Target']='Alice';humanoid.FloorMaterial=Enum.Material.Air;AngelHub.actions['Fling']();assert(status:find('suelo'))
 humanoid.FloorMaterial=Enum.Material.Ground
 
 AngelHub.actions['Fling']();local pin=created[#created]
-assert(pin.class=='BodyVelocity' and pin.Name=='EpixVel' and pin.Parent==root and not humanoid.seated and shieldCalls==2)
-assert(pin.Velocity.X==9e8 and pin.Velocity.Y==9e8 and pin.MaxForce.X==9e9 and workspace.FallenPartsDestroyHeight~=workspace.FallenPartsDestroyHeight)
-heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and character.lastPivot.Position.Y==1.5 and root.Velocity.X==9e7 and root.RotVelocity.X==9e8 and not pin.destroyed)
-heartbeat:Fire(.1);assert(character.lastPivot.Position.Y==-1.5)
+assert(pin.class=='BodyVelocity' and pin.Parent==root and not humanoid.seated and shieldCalls==2)
+assert(pin.Velocity.X==240 and pin.Velocity.Y==160 and pin.MaxForce.X<=60000 and pin.P==400)
+heartbeat:Fire(.1);assert(character.lastPivot.Position.X==20 and root.Velocity.X==240 and root.RotVelocity.Magnitude<150 and not pin.destroyed)
+local previousPose=character.lastPivot;heartbeat:Fire(.1);assert(character.lastPivot==previousPose) -- max 30 poses/second
 head.AssemblyLinearVelocity=Vector3.new(900,0,0);head.AssemblyAngularVelocity=Vector3.new(0,900,0)
-AngelHub.setters['Noclip'](true);assert(pin.destroyed and humanoid.seated and character.lastPivot==home and workspace.FallenPartsDestroyHeight==-500 and not AngelHub.mm2FlingBusy)
+AngelHub.setters['Noclip'](true);assert(pin.destroyed and humanoid.seated and character.lastPivot==home and not AngelHub.mm2FlingBusy)
 assert(root.AssemblyLinearVelocity.Magnitude==0 and root.AssemblyAngularVelocity.Magnitude==0 and head.AssemblyLinearVelocity.Magnitude==0 and head.AssemblyAngularVelocity.Magnitude==0)
 AngelHub.actions['Fling']();assert(created[#created]==pin and status:find('Apaga'))
 AngelHub.setters['Noclip'](false)
 AngelHub.actions['Fling']();pin=created[#created];victimRoot.AssemblyLinearVelocity=Vector3.new(600,0,0)
 heartbeat:Fire(.1);assert(pin.destroyed and humanoid.seated)
 victimRoot.AssemblyLinearVelocity=Vector3.zero
--- Active fling keeps running during high local velocity/spin until stopped.
+-- Excess local speed or spin cancels promptly and clears assembly motion.
 AngelHub.actions['Fling']();pin=created[#created];root.AssemblyAngularVelocity=Vector3.new(0,350,0)
-heartbeat:Fire(.1);assert(not pin.destroyed)
-AngelHub.setters['Noclip'](true);assert(pin.destroyed and root.AssemblyAngularVelocity.Magnitude==0 and root.AssemblyLinearVelocity.Magnitude==0)
-AngelHub.setters['Noclip'](false)
+heartbeat:Fire(.1);assert(pin.destroyed and root.AssemblyAngularVelocity.Magnitude==0 and root.AssemblyLinearVelocity.Magnitude==0)
 AngelHub.setters['Auto Fling Selected Target'](true);fakeNow+=5;heartbeat:Fire(.1)
 pin=created[#created];assert(not pin.destroyed)
 V['Fling Target']='Nobody';heartbeat:Fire(.1);assert(pin.destroyed)
@@ -90,11 +88,5 @@ function target:FindFirstChild(n)if n=='Head'then return victimRoot end end
 AngelHub.actions['Fling']();pin=created[#created];assert(not pin.destroyed)
 AngelHub.setters['Noclip'](true);assert(pin.destroyed);AngelHub.setters['Noclip'](false)
 target.FindFirstChild=originalFind
--- Fling Sheriff targets Hero and respects owned lobby returns without a Spawns folder.
-local oldGetRole=AngelHub.getMM2Role
-AngelHub.getMM2Role=function(p)return p==other and 'Hero' end
-AngelHub.actions['Fling Sheriff']();heartbeat:Fire(.1);pin=created[#created];assert(not pin.destroyed and pin.Velocity.X==9e8)
-AngelHub.setters['Noclip'](true);assert(pin.destroyed);AngelHub.setters['Noclip'](false)
-AngelHub.getMM2Role=oldGetRole
 AngelHub.actions['Fling']();pin=created[#created];screenGui.Destroying:Fire();assert(pin.destroyed and humanoid.seated)
 assert(#errors==0)

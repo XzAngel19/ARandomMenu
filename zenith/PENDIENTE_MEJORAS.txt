@@ -5,8 +5,13 @@ local runService = game:GetService("RunService")
 local logService = game:GetService("LogService")
 
 local localPlayer = playersService.LocalPlayer
+local envGlobal = (typeof(getgenv) == "function" and pcall(getgenv) and getgenv()) or _G
 
-local Zenith = {
+local existingZenith = (typeof(shared) == "table" and type(shared.Zenith) == "table" and shared.Zenith)
+	or (type(envGlobal) == "table" and type(envGlobal.Zenith) == "table" and envGlobal.Zenith)
+	or nil
+
+local Zenith = existingZenith or {
 	version = "1.1.0-ext",
 	startTime = os.clock(),
 	values = {},
@@ -20,12 +25,14 @@ local Zenith = {
 	connections = {},
 	uiConnections = {},
 }
+if type(envGlobal) == "table" then envGlobal.Zenith = Zenith end
+if typeof(shared) == "table" then shared.Zenith = Zenith end
 
-function Zenith.log(level, msg)
+Zenith.log = Zenith.log or function(level, msg)
 	print(string.format("[Zenith/%s] %s", tostring(level or "Info"), tostring(msg or "")))
 end
 
-function Zenith.copy(text)
+Zenith.copy = Zenith.copy or function(text)
 	local clip = (typeof(setclipboard) == "function" and setclipboard) or (typeof(toclipboard) == "function" and toclipboard)
 	if clip then
 		local ok = pcall(clip, tostring(text or ""))
@@ -34,14 +41,16 @@ function Zenith.copy(text)
 	return false
 end
 
-function Zenith.setItems(name, items)
+Zenith.setItems = Zenith.setItems or function(name, items)
 	local list = Zenith.lists[name]
 	if list and type(list.set) == "function" then
 		list.set(items)
 	end
 end
 
-local envGlobal = (typeof(getgenv) == "function" and pcall(getgenv) and getgenv()) or _G
+Zenith.switchTab = Zenith.switchTab or function(tabName)
+	Zenith.activeTab = tabName
+end
 
 local KernelMATRIX = {
 	{ "getscriptbytecode", { "getscriptbytecode", "get_script_bytecode" } },
@@ -76,7 +85,7 @@ local KernelMATRIX = {
 }
 
 local function resolvePath(path)
-	for _, root in ipairs({ envGlobal, _G }) do
+	for _, root in ipairs({ envGlobal, _G, { debug = debug, buffer = buffer } }) do
 		if type(root) == "table" then
 			local cur = root
 			for key in string.gmatch(path, "[^%.]+") do
@@ -96,7 +105,7 @@ local function resolvePath(path)
 	return nil
 end
 
-function Zenith.probe()
+Zenith.probe = Zenith.probe or function()
 	local caps = { status = {}, via = {}, fn = {} }
 	for _, entry in ipairs(KernelMATRIX) do
 		local name, aliases = entry[1], entry[2]
@@ -116,21 +125,23 @@ function Zenith.probe()
 	return caps
 end
 
-function Zenith.cap(name)
+Zenith.cap = Zenith.cap or function(name)
 	local c = Zenith.capabilities
 	return c ~= nil and c.status[name] ~= nil and c.status[name] ~= "missing"
 end
 
-function Zenith.capFn(name)
+Zenith.capFn = Zenith.capFn or function(name)
 	local c = Zenith.capabilities
 	return c and c.fn[name] or nil
 end
 
-Zenith.probe()
+if not Zenith.capabilities then
+	Zenith.probe()
+end
 
 local modules, order = {}, {}
 
-function Zenith.register(name, spec)
+Zenith.register = Zenith.register or function(name, spec)
 	if modules[name] then
 		return
 	end
@@ -145,7 +156,7 @@ function Zenith.register(name, spec)
 	table.insert(order, name)
 end
 
-function Zenith.track(conn, bucket)
+Zenith.track = Zenith.track or function(conn, bucket)
 	if not conn then
 		return conn
 	end
@@ -161,15 +172,27 @@ function Zenith.startAll()
 	for _, name in ipairs(order) do
 		local m = modules[name]
 		if m and m.state ~= "loaded" and m.init then
-			local ok, err = pcall(m.init, caps, {
-				name = name,
-				track = function(conn)
-					return Zenith.track(conn, m.owned)
-				end,
-			})
-			m.state = ok and "loaded" or "failed"
-			if not ok then
-				Zenith.log("Error", name .. " init fallo: " .. tostring(err))
+			local missing
+			for _, r in ipairs(m.requires) do
+				if not Zenith.cap(r) then
+					missing = r
+					break
+				end
+			end
+			if missing then
+				m.state = "skipped"
+				Zenith.log("Warn", name .. " omitido: falta " .. missing)
+			else
+				local ok, err = pcall(m.init, caps, {
+					name = name,
+					track = function(conn)
+						return Zenith.track(conn, m.owned)
+					end,
+				})
+				m.state = ok and "loaded" or "failed"
+				if not ok then
+					Zenith.log("Error", name .. " init fallo: " .. tostring(err))
+				end
 			end
 		end
 	end
@@ -199,7 +222,7 @@ function Zenith.stopAll()
 	end
 end
 
-function Zenith.instancePath(inst)
+Zenith.instancePath = Zenith.instancePath or function(inst)
 	if typeof(inst) ~= "Instance" then
 		return tostring(inst)
 	end
@@ -245,6 +268,27 @@ function Zenith.instancePath(inst)
 		chain[1] = string.sub(head, 2)
 	end
 	return "nil --[[" .. table.concat(chain, "") .. "]]"
+end
+
+Zenith.decompileInstance = Zenith.decompileInstance or function(inst)
+	if typeof(inst) ~= "Instance" then
+		return nil
+	end
+	local decFn = Zenith.capFn("decompile")
+	if not decFn then
+		Zenith.log("Warn", "Decompile no disponible para: " .. Zenith.instancePath(inst))
+		return nil
+	end
+	local ok, src = pcall(decFn, inst)
+	if ok and type(src) == "string" then
+		local out = Zenith.outputs and Zenith.outputs["Decompiler Output"]
+		if out and type(out.setText) == "function" then
+			out.setText(src)
+		end
+		Zenith.log("Info", "Decompiled: " .. Zenith.instancePath(inst))
+		return src
+	end
+	return nil
 end
 
 -- ============================================================================

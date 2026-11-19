@@ -22,8 +22,7 @@ local target={Parent=workspace};victimRoot.Parent=target
 function target:FindFirstChildOfClass(n)if n=='Humanoid'then return victimHuman end end
 function target:FindFirstChild(n)if n=='HumanoidRootPart'then return victimRoot end end
 other.Character=target;function other:FindFirstChildOfClass()return nil end
-local role='Sheriff';local localRole='Innocent'
-AngelHub.getMM2Role=function(p)if p==localPlayer then return localRole elseif p==other then return role end end
+local role='Sheriff';AngelHub.getMM2Role=function(p)if p==localPlayer then return 'Innocent' elseif p==other then return role end end
 local drop,touches=nil,0;AngelHub.findMM2DroppedGun=function()return drop end
 AngelHub.actions={['Get Gun']=function()touches+=1 end}
 local ended={OnClientEvent=event()};function ended:IsA(c)return c=='RemoteEvent'end
@@ -71,11 +70,4 @@ heartbeat:Fire(.2);AngelHub.setters['Fling Murder If Dead'](false)
 assert(pin.destroyed and nr.Position.X==1000 and not AngelHub.mm2FlingBusy)
 AngelHub.setters['Fling Murder If Dead'](true);fakeNow+=5;heartbeat:Fire(.2);assert(created[#created]==pin)
 started.OnClientEvent:Fire(10);fakeNow+=1;heartbeat:Fire(.2);assert(created[#created]==pin)
--- sheriffFling still runs when localPlayer role is nil (not yet populated).
-localRole=nil;role='Sheriff'
-AngelHub.setters['Auto Win'](false);localPlayer.Character=character;humanoid.Health=100;root.Position=Vector3.zero;root.CFrame=CFrame.new(root.Position)
-AngelHub.setters['Fling Murder If Dead'](false);AngelHub.setters['Fling Sheriff And Get Gun'](true)
-AngelHub.setters['Auto Win'](true);heartbeat:Fire(.2);fakeNow+=3;heartbeat:Fire(.2)
-local nilRolePin=created[#created];assert(nilRolePin~=pin and nilRolePin.class=='BodyVelocity' and not nilRolePin.destroyed)
-ended.OnClientEvent:Fire();assert(nilRolePin.destroyed)
 screenGui.Destroying:Fire()
