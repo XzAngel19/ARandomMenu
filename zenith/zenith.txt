@@ -1293,6 +1293,7 @@ do
 	end
 
 	function set(name, value)
+		V[name] = value
 		local s = Zenith.setters and Zenith.setters[name]
 		if s then
 			pcall(s, value)
@@ -6831,6 +6832,9 @@ do
 
 	local function fetch(inst)
 		local f = Zenith.capFn("getscriptbytecode")
+		if not f then
+			return nil, "getscriptbytecode no disponible"
+		end
 		local ok, bc = pcall(f, inst)
 		if not ok then
 			return nil, tostring(bc)
@@ -7149,12 +7153,42 @@ do
 	end
 
 	local function xmlClean(s)
-		return (string.gsub(tostring(s or ""), "%c", function(c)
+		local str = string.gsub(tostring(s or ""), "%c", function(c)
 			if c == "\t" or c == "\n" or c == "\r" then
 				return c
 			end
 			return ""
-		end))
+		end)
+		if type(utf8) == "table" and type(utf8.len) == "function" then
+			local okLen = utf8.len(str)
+			if not okLen then
+				local clean = {}
+				local i, n = 1, #str
+				while i <= n do
+					local okChar, pos = utf8.len(str, i, i)
+					if okChar then
+						clean[#clean + 1] = string.sub(str, i, i)
+						i += 1
+					else
+						local matched = false
+						for len = 2, 4 do
+							if i + len - 1 <= n and utf8.len(str, i, i + len - 1) then
+								clean[#clean + 1] = string.sub(str, i, i + len - 1)
+								i += len
+								matched = true
+								break
+							end
+						end
+						if not matched then
+							clean[#clean + 1] = "?"
+							i += 1
+						end
+					end
+				end
+				str = table.concat(clean)
+			end
+		end
+		return str
 	end
 
 	local function xmlEscape(s)
@@ -7562,6 +7596,17 @@ do
 			return nil
 		end
 
+		local function safeStr(v)
+			local t = type(v)
+			if t == "string" then
+				return quoteShort(string.sub(v, 1, 60))
+			end
+			if t == "number" or t == "boolean" or t == "nil" then
+				return tostring(v)
+			end
+			return "<" .. typeof(v) .. ">"
+		end
+
 		local ownTables = {
 			[Zenith] = true, [Zenith.values] = true, [Zenith.defaults] = true, [Zenith.actions] = true,
 			[Zenith.hooks] = true, [Zenith.setters] = true, [Zenith.outputs] = true, [Zenith.lists] = true,
@@ -7647,9 +7692,9 @@ do
 							break
 						end
 						if type(tk) == "string" and string.find(string.lower(tk), needle, 1, true) then
-							hits[#hits + 1] = string.format("[%s] = %s", quoteShort(string.sub(tk, 1, 40)), tostring(tv))
+							hits[#hits + 1] = string.format("[%s] = %s", quoteShort(string.sub(tk, 1, 40)), safeStr(tv))
 						elseif type(tv) == "string" and string.find(string.lower(tv), needle, 1, true) then
-							hits[#hits + 1] = string.format("[%s] = %s", tostring(tk), quoteShort(string.sub(tv, 1, 60)))
+							hits[#hits + 1] = string.format("[%s] = %s", safeStr(tk), quoteShort(string.sub(tv, 1, 60)))
 						end
 						if #hits >= 6 then
 							break
@@ -7929,11 +7974,11 @@ do
 	end
 
 	local function setVal(name, val)
+		Zenith.values[name] = val
 		local s = Zenith.setters and Zenith.setters[name]
 		if s then
 			pcall(s, val)
 		end
-		Zenith.values[name] = val
 	end
 
 	local savedHooks = {}
@@ -8202,9 +8247,11 @@ do
 		logFilePath = nil,
 		oldNamecall = nil,
 		namecallRec = nil,
+		namecallVia = nil,
 		oldNewindex = nil,
 		newindexRec = nil,
 		directHooks = {},
+		ignoreGen = 0,
 	}
 
 	local function refreshIgnoreSet()
@@ -8213,6 +8260,7 @@ do
 		state.ignoredServices = Zenith.parseCsvSet(Zenith.values[N.ignoreServices] or defs.services)
 		state.ignoredRbxScripts = Zenith.parseCsvSet(Zenith.values[N.ignoreRbxScripts] or defs.scripts)
 		state.ignoredRbxRemotes = Zenith.parseCsvSet(Zenith.values[N.ignoreRbxRemotes] or defs.remotes)
+		state.ignoreGen = (state.ignoreGen or 0) + 1
 	end
 
 	local function isIgnoredName(name)
@@ -8250,11 +8298,8 @@ do
 		return false
 	end
 
-	local function isRobloxIgnored(inst, rName, callerInst, cls, isExecutor)
+	local function remoteIgnored(inst, rName, cls)
 		if isIgnoredName(rName) then
-			return true
-		end
-		if isExecutor and flag(N.ignoreExecutor, true) then
 			return true
 		end
 		if cls and isBindableClass(cls) and flag(N.ignoreBindables, true) then
@@ -8267,18 +8312,27 @@ do
 		if lowerName ~= "" and state.ignoredRbxRemotes[lowerName] then
 			return true
 		end
-		local playerMod = flag(N.ignorePlayerMod, true)
-		if typeof(inst) == "Instance" then
-			if hasIgnoredAncestor(inst, state.ignoredRbxRemotes, nil, playerMod) then
-				return true
-			end
-		end
-		if typeof(callerInst) == "Instance" then
-			if hasIgnoredAncestor(callerInst, state.ignoredRbxScripts, nil, playerMod) then
-				return true
-			end
+		if typeof(inst) == "Instance" and hasIgnoredAncestor(inst, state.ignoredRbxRemotes, nil, flag(N.ignorePlayerMod, true)) then
+			return true
 		end
 		return false
+	end
+
+	local function callerIgnored(callerInst, isExecutor)
+		if isExecutor and flag(N.ignoreExecutor, true) then
+			return true
+		end
+		if not flag(N.ignoreInternals, true) then
+			return false
+		end
+		if typeof(callerInst) == "Instance" and hasIgnoredAncestor(callerInst, state.ignoredRbxScripts, nil, flag(N.ignorePlayerMod, true)) then
+			return true
+		end
+		return false
+	end
+
+	local function isRobloxIgnored(inst, rName, callerInst, cls, isExecutor)
+		return remoteIgnored(inst, rName, cls) or callerIgnored(callerInst, isExecutor)
 	end
 
 	local function formatCallCode(entry)
@@ -8393,6 +8447,7 @@ do
 
 	-- selectNewest: jump selection to the newest visible entry (auto scroll)
 	local function applyListFilter(selectNewest)
+		local prevLabel, prevKey = state.selectedLabel, state.selectedGroupKey
 		local filter = tostring(Zenith.values[N.filter] or "All")
 		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
 		local grouped = flag(N.groupByRemote, false)
@@ -8403,7 +8458,11 @@ do
 		local shownSet = {}
 
 		local function passesFilter(e)
-			if isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
+			if e.ignGen ~= state.ignoreGen then
+				e.ign = isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor)
+				e.ignGen = state.ignoreGen
+			end
+			if e.ign then
 				return false
 			end
 			local classOk
@@ -8473,15 +8532,15 @@ do
 
 		local keep
 		if selectNewest ~= true then
-			if grouped and state.selectedGroupKey then
+			if grouped and prevKey then
 				for _, lbl in ipairs(state.shownLabels) do
-					if state.groupKeyOf[lbl] == state.selectedGroupKey then
+					if state.groupKeyOf[lbl] == prevKey then
 						keep = lbl
 						break
 					end
 				end
-			elseif state.selectedLabel and shownSet[state.selectedLabel] then
-				keep = state.selectedLabel
+			elseif prevLabel and shownSet[prevLabel] then
+				keep = prevLabel
 			end
 		end
 		local newest = state.shownLabels[1]
@@ -8534,7 +8593,7 @@ do
 			return
 		end
 
-		if flag(N.autoIgnoreSpam, false) and typeof(item.remote) == "Instance" and not item.blocked then
+		if flag(N.autoIgnoreSpam, false) and (item.dir == "C2S" or item.dir == "S2C") and typeof(item.remote) == "Instance" and not item.blocked then
 			local now = os.clock()
 			local rec = state.spamTrack[item.remote]
 			if not rec or (now - rec.t0) > 1 then
@@ -8607,13 +8666,21 @@ do
 		end
 
 		local maxCap = math.max(10, math.floor(num(N.maxLogs, 300)))
-		while #state.entries > maxCap do
-			local oldest = table.remove(state.entries, 1)
-			if oldest then
-				state.byLabel[oldest.label] = nil
-				if state.selectedLabel == oldest.label then
-					state.selectedLabel = nil
+		local nEntries = #state.entries
+		local excess = nEntries - maxCap
+		if excess > 0 then
+			for i = 1, excess do
+				local oldest = state.entries[i]
+				if oldest then
+					state.byLabel[oldest.label] = nil
+					if state.selectedLabel == oldest.label then
+						state.selectedLabel = nil
+					end
 				end
+			end
+			table.move(state.entries, excess + 1, nEntries, 1)
+			for i = nEntries - excess + 1, nEntries do
+				state.entries[i] = nil
 			end
 		end
 
@@ -8632,9 +8699,14 @@ do
 		end
 	end
 
+	local metaCache = setmetatable({}, { __mode = "k" })
 	local function extractFuncMeta(fn)
 		if type(fn) ~= "function" then
 			return nil, nil, nil
+		end
+		local hit = metaCache[fn]
+		if hit then
+			return hit[1], hit[2], hit[3]
 		end
 		local fnName, sourceLine, fnHash = nil, nil, nil
 		if type(debug) == "table" and type(debug.info) == "function" then
@@ -8650,18 +8722,26 @@ do
 		end
 		local isl = Zenith.capFn("islclosure")
 		local gfh = Zenith.capFn("getfunctionhash")
-		if gfh and (not isl or (pcall(isl, fn) and isl(fn) == true)) then
-			local okH, h = pcall(gfh, fn)
-			if okH and h ~= nil then
-				fnHash = tostring(h)
+		if gfh then
+			local isLua = true
+			if isl then
+				local okL, r = pcall(isl, fn)
+				isLua = okL and r == true
+			end
+			if isLua then
+				local okH, h = pcall(gfh, fn)
+				if okH and h ~= nil then
+					fnHash = tostring(h)
+				end
 			end
 		end
+		metaCache[fn] = { fnName, sourceLine, fnHash }
 		return fnName, sourceLine, fnHash
 	end
 
 	local OWN_SOURCE
 	if type(debug) == "table" and type(debug.info) == "function" then
-		local okOwn, srcOwn = pcall(debug.info, 1, "s")
+		local okOwn, srcOwn = pcall(debug.info, function() end, "s")
 		OWN_SOURCE = okOwn and srcOwn or nil
 	end
 
@@ -8770,9 +8850,12 @@ do
 		end
 
 		local item
+		if shouldLog and not isBlocked and remoteIgnored(self, safeRead(self, "Name"), cls) then
+			shouldLog = false
+		end
 		if shouldLog then
 			local callerInst, stack, isExec, callerFn, fnName, sourceLine, fnHash = captureCallerInfo()
-			if not isBlocked and isRobloxIgnored(self, safeRead(self, "Name"), callerInst, cls, isExec) then
+			if not isBlocked and callerIgnored(callerInst, isExec) then
 				shouldLog = false
 			else
 				item = {
@@ -9345,9 +9428,12 @@ do
 	]]
 
 	local function uninstallActorHooks()
-		if state.actorChannel then
-			pcall(state.actorChannel.Fire, state.actorChannel, "Unload")
-			pcall(state.actorChannel.Destroy, state.actorChannel)
+		local ch = state.actorChannel
+		if ch then
+			pcall(ch.Fire, ch, "Unload")
+			task.delay(1, function()
+				pcall(ch.Destroy, ch)
+			end)
 			state.actorChannel = nil
 		end
 		for i = #state.actorConns, 1, -1 do
@@ -9420,8 +9506,11 @@ do
 		end
 		local okD, dConn = pcall(function()
 			return game.DescendantAdded:Connect(function(inst)
-				if typeof(inst) == "Instance" and pcall(inst.IsA, inst, "Actor") and inst:IsA("Actor") then
-					hookOneActor(inst)
+				if typeof(inst) == "Instance" then
+					local okI, isA = pcall(inst.IsA, inst, "Actor")
+					if okI and isA then
+						hookOneActor(inst)
+					end
 				end
 			end)
 		end)
@@ -9451,6 +9540,7 @@ do
 				rec.old = old
 				state.oldNamecall = old
 				state.namecallRec = rec
+				state.namecallVia = "hookmm"
 				state.installed = true
 			else
 				rec.active = false
@@ -9474,6 +9564,7 @@ do
 				if okSet then
 					state.oldNamecall = rec.old
 					state.namecallRec = rec
+					state.namecallVia = "rawmt"
 					state.installed = true
 				else
 					rec.active = false
@@ -9725,8 +9816,9 @@ do
 			rec.active = false
 		end
 
-		-- 2) Disconnect S2C / newindex / actors / interactions / attributes
+		-- 2) Disconnect S2C / callbacks / newindex / actors / interactions / attributes
 		disconnectS2C()
+		restoreWrappedCallbacks()
 		uninstallNewindexHook()
 		uninstallActorHooks()
 		uninstallInteractionHooks()
@@ -9734,7 +9826,7 @@ do
 
 		local hookMM = Zenith.capFn("hookmetamethod")
 		if state.oldNamecall then
-			if hookMM then
+			if state.namecallVia == "hookmm" and hookMM then
 				pcall(hookMM, game, "__namecall", state.oldNamecall)
 			elseif Zenith.cap("getrawmetatable") then
 				local getRMT = Zenith.capFn("getrawmetatable")
@@ -9749,6 +9841,7 @@ do
 				end
 			end
 			state.oldNamecall = nil
+			state.namecallVia = nil
 		end
 		state.namecallRec = nil
 
@@ -9882,10 +9975,7 @@ do
 				Zenith.values[N.list] = nil
 				setVal(N.calls, 0)
 				Zenith.setItems(N.list, {})
-				local out = Zenith.outputs and Zenith.outputs[N.log]
-				if out then
-					out.clear()
-				end
+				renderSelected()
 				Zenith.log("Info", "RSpy: logs limpiados")
 			end
 
