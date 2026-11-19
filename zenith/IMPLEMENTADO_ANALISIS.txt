@@ -1,0 +1,1125 @@
+================================================================================
+ZENITH — IMPLEMENTACION COMPLETA PARA ANALISIS (OPCIONES 1, 2 + FEATURES FINALES)
+Archivo fuente: zenith/zenith.txt
+Base commit:    6c62298
+Estadistica:    zenith/zenith.txt | 695 +++++++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 658 insertions(+), 37 deletions(-)
+================================================================================
+
+RESUMEN DE MODULOS AGREGADOS (6 BLOQUES):
+1. [Decompiler] Global Script Search (getXrefIndex + Dec.globalSearch)
+   - Cachea imports y strings por bytecode unico (xrefCache).
+   - Busca en todos los scripts visibles tras filtros y filtra Script List.
+2. [RSpy -> Decompiler] Remote XRefs (Zenith.findScriptXRefs + boton "Find Script XRefs")
+   - Salta a la pestana Decompiler, rellena Global Search con el nombre del remote y busca sus referencias en scripts.
+3. [Decompiler] GC Closure Search (Dec.gcSearch)
+   - Escanea closures Lua vivas via getgc(false), debug.info, getconstants y getupvalues sin congelar el cliente.
+4. [Decompiler] Export Place .rbxmx (exportPlaceRbxmx)
+   - Serializa Workspace, ReplicatedStorage, Lighting, StarterGui, StarterPack y StarterPlayer en formato XML .rbxmx, incluyendo scripts decompilados y ValueBases.
+5. [RSpy] Group By Remote + Replay Custom Args
+   - Agrupa llamadas repetidas por remote/direccion/metodo con contador (xN) manteniendo seleccion de la ultima llamada.
+   - Evalua expresiones Lua separadas por coma en "Custom Args" con loadstring/load bajo pcall y reenvia en hilo interno sin auto-logueo.
+6. [RSpy] Stealth Hook (oth.hook / oth.unhook) + Interaction Spy (ProximityPrompt / ClickDetector)
+   - Usa oth.hook cuando "Prefer Stealth Hook (oth)" esta activo (y oth.unhook al descargar).
+   - Captura ProximityPromptService.PromptTriggered y ClickDetector.MouseClick cuando "Log Interactions" esta activo, con filtro "Interactions" y Repeat Call via fireproximityprompt / fireclickdetector.
+
+================================================================================
+DIFF UNIFICADO COMPLETO (git diff -U4 6c62298 -- zenith/zenith.txt)
+================================================================================
+
+diff --git a/zenith/zenith.txt b/zenith/zenith.txt
+index 7fedd66..b0d1c57 100644
+--- a/zenith/zenith.txt
++++ b/zenith/zenith.txt
+@@ -1524,8 +1524,11 @@ do
+ 		{ "compareinstances", { "compareinstances" } },
+ 		{ "setthreadidentity", { "setthreadidentity", "set_thread_identity" } },
+ 		{ "getthreadidentity", { "getthreadidentity", "get_thread_identity" } },
+ 		{ "oth_hook", { "oth.hook" } },
++		{ "oth_unhook", { "oth.unhook" } },
++		{ "fireproximityprompt", { "fireproximityprompt" } },
++		{ "fireclickdetector", { "fireclickdetector" } },
+ 	}
+ 
+ 	function Zenith.probe()
+ 		local caps = { status = {}, via = {}, fn = {}, executor = "unknown" }
+@@ -2011,13 +2014,17 @@ do
+ 		list = "Script List",
+ 		mode = "Decompile Mode",
+ 		target = "Function Target",
+ 		outputSearch = "Output Search",
++		globalSearch = "Global Search",
++		globalScan = "Global Scan Scripts",
++		gcSearch = "GC Closure Search",
+ 		out = "Decompiler Output",
+ 		copyDec = "Copy Decompiled",
+ 		save = "Save Decompiled",
+ 		dumpAll = "Dump All Scripts",
+ 		exportRbxmx = "Export Scripts .rbxmx",
++		exportPlace = "Export Place .rbxmx",
+ 		saveBytecode = "Save Bytecode",
+ 		anonymizeDump = "Anonymize Dump",
+ 		decompileTimeout = "Decompile Timeout",
+ 		run = "Decompile Selected",
+@@ -7227,8 +7234,98 @@ do
+ 		end
+ 		return fullXml
+ 	end
+ 
++	local function exportPlaceRbxmx()
++		local timeoutSec = math.max(1, num(N.decompileTimeout, 10))
++		local saveBc = flag(N.saveBytecode, false)
++		local anon = flag(N.anonymizeDump, false)
++		local ignoreInternals = flag(N.ignoreInternals, true)
++		local svcNames = { "Workspace", "ReplicatedStorage", "Lighting", "StarterGui", "StarterPack", "StarterPlayer" }
++		local xml = { '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">' }
++		local referent, instCount, scriptCount = 0, 0, 0
++		local VALUE_CLASSES = { StringValue = "string", IntValue = "int", NumberValue = "double", BoolValue = "bool" }
++
++		local function emitInst(inst, indent, isRootSvc)
++			if instCount >= 12000 then
++				return
++			end
++			if typeof(inst) ~= "Instance" then
++				return
++			end
++			if not isRootSvc then
++				local okA, arch = pcall(function() return inst.Archivable end)
++				if okA and arch == false then
++					return
++				end
++			end
++			local okN, iName = pcall(function() return inst.Name end)
++			local okC, iClass = pcall(function() return inst.ClassName end)
++			iName = tostring(okN and iName or "Instance")
++			iClass = tostring(okC and iClass or "Folder")
++			if ignoreInternals and (iName == "Camera" or iName == "Terrain" or iClass == "Player") then
++				return
++			end
++
++			referent += 1
++			instCount += 1
++			local pad = string.rep("\t", indent)
++			xml[#xml + 1] = string.format('%s<Item class="%s" referent="RBX%d">', pad, xmlEscape(iClass), referent)
++			xml[#xml + 1] = string.format('%s\t<Properties>', pad)
++			xml[#xml + 1] = string.format('%s\t\t<string name="Name">%s</string>', pad, xmlEscape(iName))
++			local isScrOk, isScr = pcall(inst.IsA, inst, "LuaSourceContainer")
++			if isScrOk and isScr then
++				scriptCount += 1
++				local lbl = Index.labelOf[inst] or iName
++				local src = decompileEntryToText(inst, lbl, timeoutSec, saveBc, anon)
++				xml[#xml + 1] = string.format('%s\t\t<ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>', pad, cdataSafe(src))
++			elseif VALUE_CLASSES[iClass] then
++				local okV, val = pcall(function() return inst.Value end)
++				if okV and val ~= nil then
++					local tag = VALUE_CLASSES[iClass]
++					xml[#xml + 1] = string.format('%s\t\t<%s name="Value">%s</%s>', pad, tag, xmlEscape(tostring(val)), tag)
++				end
++			end
++			xml[#xml + 1] = string.format('%s\t</Properties>', pad)
++
++			local okCh, ch = pcall(inst.GetChildren, inst)
++			if okCh and type(ch) == "table" then
++				for _, child in ipairs(ch) do
++					emitInst(child, indent + 1, false)
++				end
++			end
++			xml[#xml + 1] = pad .. "</Item>"
++			if instCount % 250 == 0 then
++				task.wait()
++			end
++		end
++
++		for _, svcName in ipairs(svcNames) do
++			local okS, svc = pcall(game.GetService, game, svcName)
++			if okS and svc then
++				emitInst(svc, 1, true)
++			end
++		end
++		xml[#xml + 1] = "</roblox>"
++
++		local fullXml = table.concat(xml, "\n")
++		local fileName = "Zenith/Zenith_Place_" .. tostring(game.PlaceId or 0) .. ".rbxmx"
++		if Zenith.cap("writefile") then
++			ensureFolders({ "Zenith" })
++			local okW, errW = pcall(Zenith.capFn("writefile"), fileName, fullXml)
++			if okW then
++				Zenith.log("Info", string.format("Export Place .rbxmx: %d instancias (%d scripts) -> %s", instCount, scriptCount, fileName))
++				return fullXml
++			end
++			Zenith.log("Warn", "writefile Place .rbxmx fallo: " .. tostring(errW))
++		end
++		if Zenith.copy then
++			Zenith.copy(fullXml)
++			Zenith.log("Info", string.format("Export Place .rbxmx (%d instancias) copiado al portapapeles", instCount))
++		end
++		return fullXml
++	end
++
+ 	function Zenith.decompileInstance(inst)
+ 		if typeof(inst) ~= "Instance" then
+ 			Zenith.log("Warn", "Decompile Caller: script origen no es una Instance valida")
+ 			return false
+@@ -7245,8 +7342,242 @@ do
+ 		Dec.loadInstance(inst, label)
+ 		return true
+ 	end
+ 
++	local xrefCache = {}
++
++	local function getXrefIndex(bytes)
++		local hit = xrefCache[bytes]
++		if hit then
++			return hit
++		end
++		local ok, bc = pcall(parseCached, bytes)
++		if not ok or not bc then
++			return nil
++		end
++		link(bc)
++		local imports, strings = {}, {}
++		for _, p in ipairs(bc.protos) do
++			local fnTag = "#" .. p.index .. (p.name and (" (" .. p.name .. ")") or "")
++			for _, k in ipairs(p.k) do
++				if k.t == "import" then
++					local nm = kstr(p, k, true)
++					imports[#imports + 1] = { val = nm, low = string.lower(nm), fnTag = fnTag }
++				elseif k.t == "string" and type(k.v) == "string" and k.v ~= "" then
++					strings[#strings + 1] = { val = k.v, low = string.lower(k.v), fnTag = fnTag }
++				end
++			end
++		end
++		hit = { imports = imports, strings = strings }
++		xrefCache[bytes] = hit
++		return hit
++	end
++
++	function Dec.globalSearch(rawQuery)
++		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
++		if query == "" then
++			Zenith.log("Warn", "Global Search: escribe un texto o nombre de Remote")
++			return 0
++		end
++		local entries = getExportTargets()
++		if #entries == 0 then
++			publish({ "-- Global Search: no hay scripts tras filtros" }, "txt")
++			return 0
++		end
++
++		local needle = string.lower(query)
++		local out = {
++			"-- Zenith Global Bytecode XRef Search",
++			"-- Query: " .. query .. " | Scripts escaneados: " .. tostring(#entries),
++			"",
++		}
++		local matchedLabels, totalHits, skippedNoBc = {}, 0, 0
++
++		for i, e in ipairs(entries) do
++			local bytes = fetch(e.inst)
++			if not bytes then
++				skippedNoBc += 1
++			else
++				local idx = getXrefIndex(bytes)
++				if idx then
++					local scriptHits = {}
++					for _, imp in ipairs(idx.imports) do
++						if string.find(imp.low, needle, 1, true) then
++							scriptHits[#scriptHits + 1] = string.format("  [IMPORT %s] %s", imp.fnTag, imp.val)
++						end
++					end
++					for _, st in ipairs(idx.strings) do
++						if string.find(st.low, needle, 1, true) then
++							local preview = string.gsub(string.gsub(st.val, "\n", "\\n"), "\r", "\\r")
++							if #preview > 140 then
++								preview = string.sub(preview, 1, 140) .. "..."
++							end
++							scriptHits[#scriptHits + 1] = string.format("  [STRING %s] %q", st.fnTag, preview)
++						end
++					end
++					if #scriptHits > 0 then
++						matchedLabels[#matchedLabels + 1] = e.label
++						totalHits += #scriptHits
++						if #out < 450 then
++							out[#out + 1] = string.format("== %s (%d hits)", e.label, #scriptHits)
++							for k = 1, math.min(#scriptHits, 12) do
++								out[#out + 1] = scriptHits[k]
++							end
++							if #scriptHits > 12 then
++								out[#out + 1] = string.format("  ... (+%d hits mas en este script)", #scriptHits - 12)
++							end
++							out[#out + 1] = ""
++						end
++					end
++				end
++			end
++			if i % 40 == 0 then
++				task.wait()
++			end
++		end
++
++		out[3] = string.format("-- Coincidencias: %d hits en %d scripts (%d sin bytecode omitidos)", totalHits, #matchedLabels, skippedNoBc)
++		if #matchedLabels == 0 then
++			out[#out + 1] = "-- Sin coincidencias para: " .. query
++		else
++			table.clear(Index.shown)
++			for idx, lbl in ipairs(matchedLabels) do
++				if idx <= MAX_SHOWN then
++					Index.shown[idx] = lbl
++				end
++			end
++			set(N.scriptsFound, #matchedLabels)
++			if Zenith.setItems then
++				pcall(Zenith.setItems, N.list, Index.shown)
++			end
++		end
++
++		Dec.current = { label = "GlobalSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
++		publish(out, "txt")
++		Zenith.log("Info", string.format("Global Search '%s': %d hits en %d scripts", query, totalHits, #matchedLabels))
++		return #matchedLabels, totalHits
++	end
++
++	function Dec.gcSearch(rawQuery)
++		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
++		if query == "" then
++			Zenith.log("Warn", "GC Search: escribe un texto en Global Search")
++			return 0
++		end
++		local getGC = Zenith.capFn("getgc")
++		if not getGC then
++			Zenith.log("Warn", "GC Search requiere getgc() en el executor")
++			publish({ "-- GC Closure Search requiere getgc() en el executor" }, "txt")
++			return 0
++		end
++
++		local needle = string.lower(query)
++		local isExecFn = Zenith.capFn("isexecutorclosure")
++		local isLFn = Zenith.capFn("islclosure")
++		local getKs = Zenith.capFn("getconstants") or (type(debug) == "table" and debug.getconstants)
++		local getUps = Zenith.capFn("getupvalues") or (type(debug) == "table" and debug.getupvalues)
++		local okG, gcList = pcall(getGC, false)
++		if not okG or type(gcList) ~= "table" then
++			Zenith.log("Error", "getgc fallo: " .. tostring(gcList))
++			return 0
++		end
++
++		local out = {
++			"-- Zenith Live GC Closure Search",
++			"-- Query: " .. query .. " | GC objects: " .. tostring(#gcList),
++			"",
++		}
++		local matched, scanned = 0, 0
++		for i, obj in ipairs(gcList) do
++			if type(obj) == "function" then
++				local skip = (isExecFn and pcall(isExecFn, obj) and isExecFn(obj) == true)
++					or (isLFn and pcall(isLFn, obj) and isLFn(obj) == false)
++				if not skip then
++					scanned += 1
++					local src, line, fname = "?", "?", ""
++					if type(debug) == "table" and type(debug.info) == "function" then
++						local okI, s, l, n = pcall(debug.info, obj, "sln")
++						if okI then
++							src = tostring(s or "?")
++							line = tostring(l or "?")
++							fname = tostring(n or "")
++						end
++					end
++					if src ~= "[C]" then
++						local hits = {}
++						if fname ~= "" and string.find(string.lower(fname), needle, 1, true) then
++							hits[#hits + 1] = "name=" .. fname
++						end
++						if string.find(string.lower(src), needle, 1, true) then
++							hits[#hits + 1] = "src=" .. src
++						end
++						if getKs then
++							local okK, ks = pcall(getKs, obj)
++							if okK and type(ks) == "table" then
++								for ki, kv in pairs(ks) do
++									if type(kv) == "string" and string.find(string.lower(kv), needle, 1, true) then
++										hits[#hits + 1] = string.format("K[%s]=%q", tostring(ki), string.sub(kv, 1, 80))
++									end
++								end
++							end
++						end
++						if getUps then
++							local okU, ups = pcall(getUps, obj)
++							if okU and type(ups) == "table" then
++								for ui, uv in pairs(ups) do
++									if type(uv) == "string" and string.find(string.lower(uv), needle, 1, true) then
++										hits[#hits + 1] = string.format("U[%s]=%q", tostring(ui), string.sub(uv, 1, 80))
++									end
++								end
++							end
++						end
++						if #hits > 0 then
++							matched += 1
++							if #out < 450 then
++								out[#out + 1] = string.format("[GC #%d] %s:%s fn=%s", matched, src, line, fname ~= "" and fname or "anon")
++								for k = 1, math.min(#hits, 8) do
++									out[#out + 1] = "  " .. hits[k]
++								end
++								out[#out + 1] = ""
++							end
++						end
++					end
++				end
++			end
++			if i % 400 == 0 then
++				task.wait()
++			end
++		end
++
++		out[3] = string.format("-- Closures Lua escaneadas: %d | Coincidencias: %d", scanned, matched)
++		if matched == 0 then
++			out[#out + 1] = "-- Sin closures en memoria para: " .. query
++		end
++		Dec.current = { label = "GCSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
++		publish(out, "txt")
++		Zenith.log("Info", string.format("GC Search '%s': %d closures de %d", query, matched, scanned))
++		return matched
++	end
++
++	local skipGlobalSearchHook = false
++	function Zenith.findScriptXRefs(query)
++		local q = tostring(query or "")
++		if q == "" then
++			Zenith.log("Warn", "Find Script XRefs: nombre de remote vacio")
++			return 0
++		end
++		if Zenith.switchTab then
++			pcall(Zenith.switchTab, "Decompiler")
++		end
++		skipGlobalSearchHook = true
++		if Zenith.setters and Zenith.setters[N.globalSearch] then
++			pcall(Zenith.setters[N.globalSearch], q)
++		end
++		skipGlobalSearchHook = false
++		Zenith.values[N.globalSearch] = q
++		return Dec.globalSearch(q)
++	end
++
+ 	local saved = {}
+ 	local function hook(name, fn)
+ 		local prev = Zenith.hooks[name]
+ 		saved[name] = { prev = prev }
+@@ -7269,9 +7600,9 @@ do
+ 	local searchToken = 0
+ 
+ 	Zenith.register("Decompiler", {
+ 		requires = { "getscriptbytecode", "buffer" },
+-		optional = { "getscripts", "getloadedmodules", "getnilinstances", "writefile", "makefolder", "isfolder", "setclipboard", "decompile" },
++		optional = { "getscripts", "getloadedmodules", "getnilinstances", "writefile", "makefolder", "isfolder", "setclipboard", "decompile", "getgc", "getconstants", "getupvalues" },
+ 		init = function()
+ 			Zenith.actions[N.scan] = function()
+ 				Index.scan()
+ 			end
+@@ -7280,12 +7611,24 @@ do
+ 			end
+ 			Zenith.actions[N.runPath] = function()
+ 				Dec.loadPath(Zenith.values[N.path])
+ 			end
++			hook(N.globalSearch, function(q)
++				if not skipGlobalSearchHook and string.match(tostring(q or ""), "%S") then
++					Dec.globalSearch(q)
++				end
++			end)
+ 			Zenith.actions[N.copyDec] = copyFull
+ 			Zenith.actions[N.save] = saveFull
+ 			Zenith.actions[N.dumpAll] = dumpAllScripts
+ 			Zenith.actions[N.exportRbxmx] = exportScriptsRbxmx
++			Zenith.actions[N.exportPlace] = exportPlaceRbxmx
++			Zenith.actions[N.globalScan] = function()
++				Dec.globalSearch(Zenith.values[N.globalSearch])
++			end
++			Zenith.actions[N.gcSearch] = function()
++				Dec.gcSearch(Zenith.values[N.globalSearch])
++			end
+ 
+ 			hook(N.list, function(arg)
+ 				task.defer(Dec.load, selectedLabel(arg))
+ 			end)
+@@ -7331,13 +7674,14 @@ do
+ 				Zenith.hooks[name] = s.prev
+ 			end
+ 			table.clear(saved)
+ 			Zenith.actions[N.scan], Zenith.actions[N.run], Zenith.actions[N.runPath], Zenith.actions[N.save] = nil, nil, nil, nil
+-			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx] = nil, nil, nil
++			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.exportPlace], Zenith.actions[N.globalScan], Zenith.actions[N.gcSearch] = nil, nil, nil, nil, nil, nil
+ 			Dec.current, Dec.lines = nil, nil
+ 			table.clear(cache)
+ 			table.clear(cacheOrder)
+ 			table.clear(scriptBytecodeCache)
++			table.clear(xrefCache)
+ 		end,
+ 	})
+ end
+ 
+@@ -7355,16 +7699,20 @@ do
+ 		copyCode = "Copy Call Code",
+ 		copyPath = "Copy Remote Path",
+ 		decompileCaller = "Decompile Caller",
+ 		copyFnInfo = "Copy Function Info",
++		findXRefs = "Find Script XRefs",
+ 		exportSession = "Export RSpy Session",
+ 		repeatCall = "Repeat Call",
++		customArgs = "Custom Args",
++		replayCustom = "Replay Custom Args",
+ 		blockRemote = "Block Remote",
+ 		ignoreRemote = "Ignore Remote",
+ 		c2s = "Log Client To Server",
+ 		s2c = "Log Server To Client",
+ 		logReturn = "Log Return Values",
+ 		showStack = "Show Call Stack",
++		groupByRemote = "Group By Remote",
+ 		autoScroll = "Spy Auto Scroll",
+ 		maxLogs = "Spy Max Logs",
+ 		ignoreInternals = "Ignore Roblox Internals",
+ 		ignoreBindables = "Ignore Bindables",
+@@ -7376,8 +7724,10 @@ do
+ 		logActors = "Log Actors",
+ 		autoIgnoreSpam = "Auto Ignore Spammy",
+ 		fullSerialize = "Full Serialization",
+ 		fileLogging = "Spy File Logging",
++		preferOth = "Prefer Stealth Hook (oth)",
++		logInteractions = "Log Interactions",
+ 	}
+ 
+ 	local Players = game:GetService("Players")
+ 	local localPlayer = Players.LocalPlayer
+@@ -7394,8 +7744,9 @@ do
+ 		RemoteEvent = { RemoteEvent = true, UnreliableRemoteEvent = true },
+ 		RemoteFunction = { RemoteFunction = true },
+ 		BindableEvent = { BindableEvent = true },
+ 		BindableFunction = { BindableFunction = true },
++		Interactions = { ProximityPrompt = true, ClickDetector = true },
+ 	}
+ 
+ 	local S2C_SOURCES = {
+ 		RemoteEvent = "OnClientEvent",
+@@ -7674,8 +8025,10 @@ do
+ 		installed = false,
+ 		seq = 0,
+ 		entries = {}, -- oldest -> newest
+ 		byLabel = {},
++		groupByLabel = {},
++		groupCount = {},
+ 		shownLabels = {},
+ 		selectedLabel = nil,
+ 		blocked = setmetatable({}, { __mode = "k" }),
+ 		ignoredNames = {},
+@@ -7695,8 +8048,10 @@ do
+ 		descendantConn = nil,
+ 		actorChannel = nil,
+ 		actorConns = {},
+ 		actorHooked = setmetatable({}, { __mode = "k" }),
++		interactionConns = {},
++		interactionHooked = setmetatable({}, { __mode = "k" }),
+ 		spamTrack = setmetatable({}, { __mode = "k" }),
+ 		logFilePath = nil,
+ 		oldNamecall = nil,
+ 		namecallRec = nil,
+@@ -7780,9 +8135,9 @@ do
+ 	end
+ 
+ 	local function formatCallCode(entry)
+ 		local lines = {}
+-		local dirTag = entry.dir == "S2C" and "S->C" or "C->S"
++		local dirTag = entry.dir == "S2C" and "S->C" or (entry.dir == "INT" and "INT" or "C->S")
+ 		local blkTag = entry.blocked and " [BLOCKED]" or ""
+ 		local execTag = entry.isExecutor and " [EXECUTOR]" or ""
+ 		local actorTag = entry.isActor and " [ACTOR]" or ""
+ 		table.insert(lines, string.format("-- [%s] %s:%s | %s%s%s%s", dirTag, entry.className, entry.method, entry.timeStr or "?", blkTag, execTag, actorTag))
+@@ -7803,8 +8158,14 @@ do
+ 				table.insert(lines, "--   " .. ln)
+ 			end
+ 		end
+ 
++		if entry.dir == "INT" then
++			local fnName = entry.className == "ProximityPrompt" and "fireproximityprompt" or "fireclickdetector"
++			table.insert(lines, string.format("%s(%s)", fnName, entry.path))
++			return table.concat(lines, "\n")
++		end
++
+ 		local argCount = entry.args.n or #entry.args
+ 		if argCount == 0 then
+ 			if entry.dir == "S2C" then
+ 				table.insert(lines, string.format("-- Received by %s.%s()", entry.path, entry.method))
+@@ -7847,41 +8208,93 @@ do
+ 		end
+ 		return "-- error formatting call: " .. tostring(res)
+ 	end
+ 
+-	local function renderSelected()
++	local function getSelectedEntry()
+ 		local label = state.selectedLabel or Zenith.values[N.list]
+-		local entry = label and state.byLabel[label]
++		return label and (state.byLabel[label] or state.groupByLabel[label]) or nil, label
++	end
++
++	local function renderSelected()
++		local entry, label = getSelectedEntry()
+ 		local out = Zenith.outputs and Zenith.outputs[N.log]
+ 		if not out then
+ 			return
+ 		end
+ 		if not entry then
+ 			out.setText("-- Selecciona una llamada capturada en Remote List.")
+ 			return
+ 		end
+-		out.setText(safeFormat(entry))
++		local txt = safeFormat(entry)
++		local gCount = label and state.groupCount[label]
++		if gCount and gCount > 1 then
++			txt = string.format("-- Group: %d llamadas capturadas (mostrando #%03d)\n", gCount, entry.id) .. txt
++		end
++		out.setText(txt)
+ 	end
+ 
+ 	-- selectNewest: jump selection to the newest visible entry (auto scroll)
+ 	local function applyListFilter(selectNewest)
+ 		local filter = tostring(Zenith.values[N.filter] or "All")
+ 		local needle = string.lower(tostring(Zenith.values[N.search] or ""))
++		local grouped = flag(N.groupByRemote, false)
+ 		table.clear(state.shownLabels)
++		table.clear(state.groupByLabel)
++		table.clear(state.groupCount)
+ 		local shownSet = {}
+-		for i = #state.entries, 1, -1 do
+-			local e = state.entries[i]
+-			if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
+-				local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
+-				local searchOk = (needle == "")
+-					or string.find(string.lower(e.label), needle, 1, true) ~= nil
+-					or string.find(string.lower(e.path), needle, 1, true) ~= nil
+-				if classOk and searchOk then
+-					table.insert(state.shownLabels, e.label)
+-					shownSet[e.label] = true
++
++		if grouped then
++			local order, groups = {}, {}
++			for i = #state.entries, 1, -1 do
++				local e = state.entries[i]
++				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
++					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
++					local searchOk = (needle == "")
++						or string.find(string.lower(e.label), needle, 1, true) ~= nil
++						or string.find(string.lower(e.path), needle, 1, true) ~= nil
++					if classOk and searchOk then
++						local gKey = tostring(e.remote or e.path) .. "|" .. e.dir .. "|" .. e.method
++						local g = groups[gKey]
++						if not g then
++							g = { latest = e, count = 1 }
++							groups[gKey] = g
++							order[#order + 1] = g
++						else
++							g.count += 1
++						end
++					end
++				end
++			end
++			for _, g in ipairs(order) do
++				local e = g.latest
++				local dirTag = e.dir == "S2C" and "S->C" or (e.dir == "INT" and "INT" or "C->S")
++				local blkTag = e.blocked and "[BLK] " or ""
++				local actTag = e.isActor and "[ACT] " or ""
++				local gLabel = string.format("[%s] (x%d) %s%s%s | %s", dirTag, g.count, blkTag, actTag, e.method, e.name)
++				if state.groupByLabel[gLabel] then
++					gLabel = gLabel .. " #" .. e.id
++				end
++				state.groupByLabel[gLabel] = e
++				state.groupCount[gLabel] = g.count
++				table.insert(state.shownLabels, gLabel)
++				shownSet[gLabel] = true
++			end
++		else
++			for i = #state.entries, 1, -1 do
++				local e = state.entries[i]
++				if not isRobloxIgnored(e.remote, e.name, e.callerInst, e.className, e.isExecutor) then
++					local classOk = (filter == "All") or (FILTER_MATCH[filter] and FILTER_MATCH[filter][e.className] == true)
++					local searchOk = (needle == "")
++						or string.find(string.lower(e.label), needle, 1, true) ~= nil
++						or string.find(string.lower(e.path), needle, 1, true) ~= nil
++					if classOk and searchOk then
++						table.insert(state.shownLabels, e.label)
++						shownSet[e.label] = true
++					end
+ 				end
+ 			end
+ 		end
++
+ 		Zenith.setItems(N.list, table.clone(state.shownLabels))
+ 
+ 		if selectNewest == true and state.shownLabels[1] then
+ 			state.selectedLabel = state.shownLabels[1]
+@@ -7956,9 +8369,9 @@ do
+ 		end
+ 
+ 		state.seq += 1
+ 		local path = instancePath(item.remote)
+-		local dirTag = item.dir == "S2C" and "S->C" or "C->S"
++		local dirTag = item.dir == "S2C" and "S->C" or (item.dir == "INT" and "INT" or "C->S")
+ 		local blkTag = item.blocked and "[BLK] " or ""
+ 		local actTag = item.isActor and "[ACT] " or ""
+ 		local label = string.format("#%03d [%s] %s%s%s | %s", state.seq, dirTag, blkTag, actTag, item.method, rName)
+ 		local callerStr = ""
+@@ -8825,8 +9238,9 @@ do
+ 		local wrapC = Zenith.capFn("newcclosure") or function(f) return f end
+ 		local getNCM = Zenith.capFn("getnamecallmethod")
+ 		local hookMM = Zenith.capFn("hookmetamethod")
+ 		local hookFn = Zenith.capFn("hookfunction")
++		local othHook = flag(N.preferOth, true) and Zenith.capFn("oth_hook") or nil
+ 
+ 		if hookMM and getNCM then
+ 			local rec = { active = true, old = nil }
+ 			local ok, old = pcall(hookMM, game, "__namecall", wrapC(function(self, ...)
+@@ -8867,9 +9281,9 @@ do
+ 				end
+ 			end
+ 		end
+ 
+-		if hookFn then
++		if hookFn or othHook then
+ 			local specs = {
+ 				{ "RemoteEvent", "FireServer" },
+ 				{ "UnreliableRemoteEvent", "FireServer" },
+ 				{ "RemoteFunction", "InvokeServer" },
+@@ -8883,17 +9297,34 @@ do
+ 				if okI and dummy then
+ 					local fn = safeRead(dummy, method)
+ 					if type(fn) == "function" and not hookedTargets[fn] then
+ 						hookedTargets[fn] = true
+-						local record = { active = true, target = fn, old = nil }
+-						local okH, old = pcall(hookFn, fn, wrapC(function(self, ...)
+-							return handleOutbound(record, self, method, ...)
+-						end))
+-						if okH and type(old) == "function" then
+-							record.old = old
+-							table.insert(state.directHooks, record)
+-							state.installed = true
+-						else
++						local record = { active = true, target = fn, old = nil, usedOth = false }
++						local hooked = false
++						if othHook then
++							local okO, oldO = pcall(othHook, fn, wrapC(function(self, ...)
++								return handleOutbound(record, self, method, ...)
++							end))
++							if okO and type(oldO) == "function" then
++								record.old = oldO
++								record.usedOth = true
++								table.insert(state.directHooks, record)
++								state.installed = true
++								hooked = true
++							end
++						end
++						if not hooked and hookFn then
++							local okH, old = pcall(hookFn, fn, wrapC(function(self, ...)
++								return handleOutbound(record, self, method, ...)
++							end))
++							if okH and type(old) == "function" then
++								record.old = old
++								table.insert(state.directHooks, record)
++								state.installed = true
++							else
++								record.active = false
++							end
++						elseif not hooked then
+ 							record.active = false
+ 						end
+ 					end
+ 					pcall(function()
+@@ -8911,12 +9342,108 @@ do
+ 
+ 		return state.installed
+ 	end
+ 
++	local function uninstallInteractionHooks()
++		for i = #state.interactionConns, 1, -1 do
++			local c = state.interactionConns[i]
++			pcall(function()
++				c:Disconnect()
++			end)
++			state.interactionConns[i] = nil
++		end
++		state.interactionHooked = setmetatable({}, { __mode = "k" })
++	end
++
++	local function installInteractionHooks()
++		uninstallInteractionHooks()
++		if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
++			return false
++		end
++
++		local okP, pps = pcall(game.GetService, game, "ProximityPromptService")
++		if okP and pps and pps.PromptTriggered then
++			local okC, conn = pcall(function()
++				return pps.PromptTriggered:Connect(function(prompt, plr)
++					if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
++						return
++					end
++					if plr and localPlayer and plr ~= localPlayer then
++						return
++					end
++					if typeof(prompt) ~= "Instance" then
++						return
++					end
++					enqueue({
++						remote = prompt,
++						className = "ProximityPrompt",
++						method = "FireProximityPrompt",
++						dir = "INT",
++						args = { n = 0 },
++						timeStr = timeStamp(),
++					})
++				end)
++			end)
++			if okC and conn then
++				table.insert(state.interactionConns, conn)
++			end
++		end
++
++		local function watchClickDetector(cd)
++			if typeof(cd) ~= "Instance" or state.interactionHooked[cd] then
++				return
++			end
++			local okIs, isCD = pcall(cd.IsA, cd, "ClickDetector")
++			if not okIs or not isCD then
++				return
++			end
++			state.interactionHooked[cd] = true
++			local okC, conn = pcall(function()
++				return cd.MouseClick:Connect(function(plr)
++					if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
++						return
++					end
++					if plr and localPlayer and plr ~= localPlayer then
++						return
++					end
++					enqueue({
++						remote = cd,
++						className = "ClickDetector",
++						method = "FireClickDetector",
++						dir = "INT",
++						args = { n = 0 },
++						timeStr = timeStamp(),
++					})
++				end)
++			end)
++			if okC and conn then
++				table.insert(state.interactionConns, conn)
++			end
++		end
++
++		local okW, ws = pcall(game.GetService, game, "Workspace")
++		if okW and ws then
++			local okD, desc = pcall(ws.GetDescendants, ws)
++			if okD and type(desc) == "table" then
++				for _, d in ipairs(desc) do
++					watchClickDetector(d)
++				end
++			end
++			local okA, addConn = pcall(function()
++				return ws.DescendantAdded:Connect(watchClickDetector)
++			end)
++			if okA and addConn then
++				table.insert(state.interactionConns, addConn)
++			end
++		end
++		return #state.interactionConns > 0
++	end
++
+ 	local function uninstallHooks()
+ 		disconnectS2C()
+ 		uninstallNewindexHook()
+ 		uninstallActorHooks()
++		uninstallInteractionHooks()
+ 
+ 		-- Deactivate first: any wrapper still alive becomes a pure pass-through
+ 		if state.namecallRec then
+ 			state.namecallRec.active = false
+@@ -8959,12 +9486,16 @@ do
+ 			end
+ 		end
+ 		state.signalHook = nil
+ 
++		local othUnhook = Zenith.capFn("oth_unhook")
+ 		for _, rec in ipairs(state.directHooks) do
+ 			if rec.target and rec.old then
+ 				local restored = false
+-				if typeof(restorefunction) == "function" then
++				if rec.usedOth and othUnhook then
++					restored = pcall(othUnhook, rec.target)
++				end
++				if not restored and typeof(restorefunction) == "function" then
+ 					restored = pcall(restorefunction, rec.target)
+ 				end
+ 				if not restored and hookFn then
+ 					pcall(hookFn, rec.target, rec.old)
+@@ -8983,8 +9514,9 @@ do
+ 			"hookmetamethod", "hookfunction", "getrawmetatable", "getnamecallmethod", "newcclosure",
+ 			"getcallingscript", "getnilinstances", "getcallbackvalue", "getcallbackmember", "setclipboard",
+ 			"getconnections", "getscriptfromthread", "getfunctionhash", "checkcaller", "isexecutorclosure",
+ 			"islclosure", "setstackhidden", "run_on_actor", "getactors", "create_comm_channel",
++			"oth_hook", "oth_unhook", "fireproximityprompt", "fireclickdetector",
+ 			"writefile", "appendfile", "makefolder", "isfolder",
+ 		},
+ 		init = function()
+ 			stopped = false
+@@ -8994,11 +9526,13 @@ do
+ 			local function onEnabled(on)
+ 				if on then
+ 					local ok = installHooks()
+ 					syncS2C(true, nil)
++					installInteractionHooks()
+ 					Zenith.log(ok and "Info" or "Warn", ok and "RSpy: captura en vivo activada" or "RSpy: sin soporte de hooks (__namecall/hookfunction), solo OnClientEvent")
+ 				else
+ 					disconnectS2C()
++					uninstallInteractionHooks()
+ 					restoreWrappedCallbacks()
+ 					Zenith.log("Info", "RSpy: captura pausada")
+ 				end
+ 			end
+@@ -9037,15 +9571,25 @@ do
+ 				elseif not on then
+ 					uninstallActorHooks()
+ 				end
+ 			end)
++			hookUI(N.logInteractions, function(on)
++				if on and flag(N.enabled, false) then
++					installInteractionHooks()
++				elseif not on then
++					uninstallInteractionHooks()
++				end
++			end)
+ 			hookUI(N.fullSerialize, function() renderSelected() end)
+ 			hookUI(N.showStack, function() renderSelected() end)
++			hookUI(N.groupByRemote, function() applyListFilter(true) end)
+ 
+ 			Zenith.actions[N.clear] = function()
+ 				state.seq = 0
+ 				table.clear(state.entries)
+ 				table.clear(state.byLabel)
++				table.clear(state.groupByLabel)
++				table.clear(state.groupCount)
+ 				table.clear(state.shownLabels)
+ 				table.clear(state.queue)
+ 				state.selectedLabel = nil
+ 				Zenith.values[N.list] = nil
+@@ -9058,27 +9602,27 @@ do
+ 				Zenith.log("Info", "RSpy: logs limpiados")
+ 			end
+ 
+ 			Zenith.actions[N.copyCode] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry then
+ 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+ 				end
+ 				local ok = Zenith.copy(safeFormat(entry))
+ 				Zenith.log(ok and "Info" or "Warn", ok and "RSpy: codigo copiado" or "Clipboard no soportado")
+ 			end
+ 
+ 			Zenith.actions[N.copyPath] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry then
+ 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+ 				end
+ 				local ok = Zenith.copy(entry.path)
+ 				Zenith.log(ok and "Info" or "Warn", ok and "RSpy: ruta copiada" or "Clipboard no soportado")
+ 			end
+ 
+ 			Zenith.actions[N.decompileCaller] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry then
+ 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+ 				end
+ 				local callerInst = entry.callerInst
+@@ -9095,9 +9639,9 @@ do
+ 				end
+ 			end
+ 
+ 			Zenith.actions[N.copyFnInfo] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry then
+ 					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
+ 				end
+ 				local lines = {
+@@ -9169,16 +9713,43 @@ do
+ 				local okC = Zenith.copy(payload)
+ 				Zenith.log(okC and "Info" or "Warn", okC and "RSpy: sesion copiada al portapapeles" or "Clipboard no soportado")
+ 			end
+ 
++			Zenith.actions[N.findXRefs] = function()
++				local entry = getSelectedEntry()
++				if not entry then
++					return Zenith.log("Warn", "RSpy: selecciona una llamada primero")
++				end
++				if Zenith.findScriptXRefs then
++					Zenith.findScriptXRefs(entry.name)
++				else
++					Zenith.log("Warn", "RSpy: modulo Decompiler no cargado")
++				end
++			end
++
+ 			Zenith.actions[N.repeatCall] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry or not entry.remote then
+ 					return Zenith.log("Warn", "RSpy: selecciona una llamada valida")
+ 				end
+ 				if entry.dir == "S2C" then
+ 					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
+ 				end
++				if entry.dir == "INT" then
++					local fnName = entry.className == "ProximityPrompt" and "fireproximityprompt" or "fireclickdetector"
++					local fn = Zenith.capFn(fnName)
++					if not fn then
++						return Zenith.log("Warn", "RSpy: " .. fnName .. " no soportado en este executor")
++					end
++					task.spawn(function()
++						local thread = coroutine.running() or MAIN_THREAD
++						state.internal[thread] = true
++						local ok, err = pcall(fn, entry.remote)
++						state.internal[thread] = nil
++						Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
++					end)
++					return
++				end
+ 				task.spawn(function()
+ 					local thread = coroutine.running() or MAIN_THREAD
+ 					state.internal[thread] = true -- per-thread: other calls keep being logged
+ 					local ok, err = pcall(function()
+@@ -9193,10 +9764,50 @@ do
+ 					Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
+ 				end)
+ 			end
+ 
++			Zenith.actions[N.replayCustom] = function()
++				local entry = getSelectedEntry()
++				if not entry or not entry.remote then
++					return Zenith.log("Warn", "RSpy: selecciona una llamada valida")
++				end
++				if entry.dir == "S2C" then
++					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
++				end
++				local raw = string.match(tostring(Zenith.values[N.customArgs] or ""), "^%s*(.-)%s*$")
++				if raw == "" then
++					return Zenith.actions[N.repeatCall]()
++				end
++				local loader = (typeof(loadstring) == "function" and loadstring) or (typeof(load) == "function" and load)
++				if not loader then
++					return Zenith.log("Warn", "RSpy: este entorno no soporta loadstring/load para Custom Args")
++				end
++				local chunk, compileErr = loader("return " .. raw)
++				if not chunk then
++					return Zenith.log("Error", "RSpy Custom Args sintaxis: " .. tostring(compileErr))
++				end
++				local evalPack = table.pack(pcall(chunk))
++				if not evalPack[1] then
++					return Zenith.log("Error", "RSpy Custom Args eval: " .. tostring(evalPack[2]))
++				end
++				local argCount = math.max(0, (evalPack.n or #evalPack) - 1)
++				task.spawn(function()
++					local thread = coroutine.running() or MAIN_THREAD
++					state.internal[thread] = true
++					local ok, err = pcall(function()
++						local fn = safeRead(entry.remote, entry.method)
++						if type(fn) ~= "function" then
++							error("metodo no encontrado: " .. tostring(entry.method))
++						end
++						fn(entry.remote, table.unpack(evalPack, 2, 1 + argCount))
++					end)
++					state.internal[thread] = nil
++					Zenith.log(ok and "Info" or "Error", ok and string.format("RSpy: replay custom (%d args) -> %s", argCount, entry.name) or ("RSpy Replay Custom error: " .. tostring(err)))
++				end)
++			end
++
+ 			Zenith.actions[N.blockRemote] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry or not entry.remote then
+ 					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
+ 				end
+ 				local nowBlocked = not (state.blocked[entry.remote] == true)
+@@ -9204,9 +9815,9 @@ do
+ 				Zenith.log("Info", string.format("RSpy: %s %s", entry.name, nowBlocked and "BLOQUEADO" or "desbloqueado"))
+ 			end
+ 
+ 			Zenith.actions[N.ignoreRemote] = function()
+-				local entry = state.selectedLabel and state.byLabel[state.selectedLabel]
++				local entry = getSelectedEntry()
+ 				if not entry then
+ 					return Zenith.log("Warn", "RSpy: selecciona un remote primero")
+ 				end
+ 				local cur = tostring(Zenith.values[N.ignoreList] or "")
+@@ -9232,9 +9843,9 @@ do
+ 			for name, s in pairs(savedHooks) do
+ 				Zenith.hooks[name] = s.prev
+ 			end
+ 			table.clear(savedHooks)
+-			for _, k in ipairs({ N.clear, N.copyCode, N.copyPath, N.decompileCaller, N.copyFnInfo, N.exportSession, N.repeatCall, N.blockRemote, N.ignoreRemote }) do
++			for _, k in ipairs({ N.clear, N.copyCode, N.copyPath, N.decompileCaller, N.copyFnInfo, N.findXRefs, N.exportSession, N.repeatCall, N.replayCustom, N.blockRemote, N.ignoreRemote }) do
+ 				Zenith.actions[k] = nil
+ 			end
+ 			table.clear(state.queue)
+ 			if Zenith.RSpy == state then
+@@ -9766,14 +10377,18 @@ local function initializeScript()
+ 	addCounter(decLeft, "Decompiled", 0)
+ 	addButton(decLeft, "Scan Scripts")
+ 	addCycle(decLeft, "Script Class Filter", { "All", "LocalScript", "ModuleScript", "Script" })
+ 	addText(decLeft, "Script Search", "Filter scripts")
++	addText(decLeft, "Global Search", "Search bytecode strings/imports")
++	addButton(decLeft, "Global Scan Scripts")
++	addButton(decLeft, "GC Closure Search")
+ 	addList(decLeft, "Script List", {}, 155)
+ 	addButton(decLeft, "Decompile Selected")
+ 	addText(decLeft, "Script Path", "Script path")
+ 	addButton(decLeft, "Decompile Path")
+ 	addButton(decLeft, "Dump All Scripts")
+ 	addButton(decLeft, "Export Scripts .rbxmx")
++	addButton(decLeft, "Export Place .rbxmx")
+ 
+ 	addSection(decRight, "Decompiler Output")
+ 	addCycle(decRight, "Decompile Mode", { "Source", "Function", "Bytecode", "Constants", "Upvalues", "Protos", "Strings & Refs", "Script Info" })
+ 	addText(decRight, "Function Target", "Fn index or name (empty = main)")
+@@ -9788,11 +10403,12 @@ local function initializeScript()
+ 
+ 	addSection(rspyLeft, "Captured Remotes")
+ 	addToggle(rspyLeft, "Remote Spy", nil, false)
+ 	addCounter(rspyLeft, "Calls Logged", 0)
+-	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
++	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Interactions" })
+ 	addText(rspyLeft, "Spy Search", "Search remotes")
+ 	addText(rspyLeft, "Spy Ignore List", "Names, comma separated")
++	addToggle(rspyLeft, "Group By Remote", nil, false)
+ 	addList(rspyLeft, "Remote List", {}, 220)
+ 	addButton(rspyLeft, "Clear Spy Logs")
+ 	addButton(rspyLeft, "Export RSpy Session")
+ 
+@@ -9801,9 +10417,12 @@ local function initializeScript()
+ 	addButton(rspyRight, "Copy Call Code")
+ 	addButton(rspyRight, "Copy Remote Path")
+ 	addButton(rspyRight, "Decompile Caller")
+ 	addButton(rspyRight, "Copy Function Info")
++	addButton(rspyRight, "Find Script XRefs")
+ 	addButton(rspyRight, "Repeat Call")
++	addText(rspyRight, "Custom Args", 'e.g. "Sword", 999, true')
++	addButton(rspyRight, "Replay Custom Args")
+ 	addButton(rspyRight, "Block Remote")
+ 	addButton(rspyRight, "Ignore Remote")
+ 
+ 	addSection(rspyRight, "Spy Options")
+@@ -9905,8 +10524,10 @@ local function initializeScript()
+ 
+ 	addSection(cfgRight, "RSpy Advanced")
+ 	addToggle(cfgRight, "Ignore Executor Calls", nil, true)
+ 	addToggle(cfgRight, "Log Actors", nil, true)
++	addToggle(cfgRight, "Prefer Stealth Hook (oth)", nil, true)
++	addToggle(cfgRight, "Log Interactions", nil, false)
+ 	addToggle(cfgRight, "Auto Ignore Spammy", nil, false)
+ 	addToggle(cfgRight, "Full Serialization", nil, false)
+ 	addToggle(cfgRight, "Spy File Logging", nil, false)
+ 

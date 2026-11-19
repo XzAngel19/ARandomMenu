@@ -1525,6 +1525,9 @@ do
 		{ "setthreadidentity", { "setthreadidentity", "set_thread_identity" } },
 		{ "getthreadidentity", { "getthreadidentity", "get_thread_identity" } },
 		{ "oth_hook", { "oth.hook" } },
+		{ "oth_unhook", { "oth.unhook" } },
+		{ "fireproximityprompt", { "fireproximityprompt" } },
+		{ "fireclickdetector", { "fireclickdetector" } },
 	}
 
 	function Zenith.probe()
@@ -2014,11 +2017,13 @@ do
 		outputSearch = "Output Search",
 		globalSearch = "Global Search",
 		globalScan = "Global Scan Scripts",
+		gcSearch = "GC Closure Search",
 		out = "Decompiler Output",
 		copyDec = "Copy Decompiled",
 		save = "Save Decompiled",
 		dumpAll = "Dump All Scripts",
 		exportRbxmx = "Export Scripts .rbxmx",
+		exportPlace = "Export Place .rbxmx",
 		saveBytecode = "Save Bytecode",
 		anonymizeDump = "Anonymize Dump",
 		decompileTimeout = "Decompile Timeout",
@@ -7230,6 +7235,96 @@ do
 		return fullXml
 	end
 
+	local function exportPlaceRbxmx()
+		local timeoutSec = math.max(1, num(N.decompileTimeout, 10))
+		local saveBc = flag(N.saveBytecode, false)
+		local anon = flag(N.anonymizeDump, false)
+		local ignoreInternals = flag(N.ignoreInternals, true)
+		local svcNames = { "Workspace", "ReplicatedStorage", "Lighting", "StarterGui", "StarterPack", "StarterPlayer" }
+		local xml = { '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">' }
+		local referent, instCount, scriptCount = 0, 0, 0
+		local VALUE_CLASSES = { StringValue = "string", IntValue = "int", NumberValue = "double", BoolValue = "bool" }
+
+		local function emitInst(inst, indent, isRootSvc)
+			if instCount >= 12000 then
+				return
+			end
+			if typeof(inst) ~= "Instance" then
+				return
+			end
+			if not isRootSvc then
+				local okA, arch = pcall(function() return inst.Archivable end)
+				if okA and arch == false then
+					return
+				end
+			end
+			local okN, iName = pcall(function() return inst.Name end)
+			local okC, iClass = pcall(function() return inst.ClassName end)
+			iName = tostring(okN and iName or "Instance")
+			iClass = tostring(okC and iClass or "Folder")
+			if ignoreInternals and (iName == "Camera" or iName == "Terrain" or iClass == "Player") then
+				return
+			end
+
+			referent += 1
+			instCount += 1
+			local pad = string.rep("\t", indent)
+			xml[#xml + 1] = string.format('%s<Item class="%s" referent="RBX%d">', pad, xmlEscape(iClass), referent)
+			xml[#xml + 1] = string.format('%s\t<Properties>', pad)
+			xml[#xml + 1] = string.format('%s\t\t<string name="Name">%s</string>', pad, xmlEscape(iName))
+			local isScrOk, isScr = pcall(inst.IsA, inst, "LuaSourceContainer")
+			if isScrOk and isScr then
+				scriptCount += 1
+				local lbl = Index.labelOf[inst] or iName
+				local src = decompileEntryToText(inst, lbl, timeoutSec, saveBc, anon)
+				xml[#xml + 1] = string.format('%s\t\t<ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>', pad, cdataSafe(src))
+			elseif VALUE_CLASSES[iClass] then
+				local okV, val = pcall(function() return inst.Value end)
+				if okV and val ~= nil then
+					local tag = VALUE_CLASSES[iClass]
+					xml[#xml + 1] = string.format('%s\t\t<%s name="Value">%s</%s>', pad, tag, xmlEscape(tostring(val)), tag)
+				end
+			end
+			xml[#xml + 1] = string.format('%s\t</Properties>', pad)
+
+			local okCh, ch = pcall(inst.GetChildren, inst)
+			if okCh and type(ch) == "table" then
+				for _, child in ipairs(ch) do
+					emitInst(child, indent + 1, false)
+				end
+			end
+			xml[#xml + 1] = pad .. "</Item>"
+			if instCount % 250 == 0 then
+				task.wait()
+			end
+		end
+
+		for _, svcName in ipairs(svcNames) do
+			local okS, svc = pcall(game.GetService, game, svcName)
+			if okS and svc then
+				emitInst(svc, 1, true)
+			end
+		end
+		xml[#xml + 1] = "</roblox>"
+
+		local fullXml = table.concat(xml, "\n")
+		local fileName = "Zenith/Zenith_Place_" .. tostring(game.PlaceId or 0) .. ".rbxmx"
+		if Zenith.cap("writefile") then
+			ensureFolders({ "Zenith" })
+			local okW, errW = pcall(Zenith.capFn("writefile"), fileName, fullXml)
+			if okW then
+				Zenith.log("Info", string.format("Export Place .rbxmx: %d instancias (%d scripts) -> %s", instCount, scriptCount, fileName))
+				return fullXml
+			end
+			Zenith.log("Warn", "writefile Place .rbxmx fallo: " .. tostring(errW))
+		end
+		if Zenith.copy then
+			Zenith.copy(fullXml)
+			Zenith.log("Info", string.format("Export Place .rbxmx (%d instancias) copiado al portapapeles", instCount))
+		end
+		return fullXml
+	end
+
 	function Zenith.decompileInstance(inst)
 		if typeof(inst) ~= "Instance" then
 			Zenith.log("Warn", "Decompile Caller: script origen no es una Instance valida")
@@ -7362,6 +7457,107 @@ do
 		return #matchedLabels, totalHits
 	end
 
+	function Dec.gcSearch(rawQuery)
+		local query = string.match(tostring(rawQuery or Zenith.values[N.globalSearch] or ""), "^%s*(.-)%s*$")
+		if query == "" then
+			Zenith.log("Warn", "GC Search: escribe un texto en Global Search")
+			return 0
+		end
+		local getGC = Zenith.capFn("getgc")
+		if not getGC then
+			Zenith.log("Warn", "GC Search requiere getgc() en el executor")
+			publish({ "-- GC Closure Search requiere getgc() en el executor" }, "txt")
+			return 0
+		end
+
+		local needle = string.lower(query)
+		local isExecFn = Zenith.capFn("isexecutorclosure")
+		local isLFn = Zenith.capFn("islclosure")
+		local getKs = Zenith.capFn("getconstants") or (type(debug) == "table" and debug.getconstants)
+		local getUps = Zenith.capFn("getupvalues") or (type(debug) == "table" and debug.getupvalues)
+		local okG, gcList = pcall(getGC, false)
+		if not okG or type(gcList) ~= "table" then
+			Zenith.log("Error", "getgc fallo: " .. tostring(gcList))
+			return 0
+		end
+
+		local out = {
+			"-- Zenith Live GC Closure Search",
+			"-- Query: " .. query .. " | GC objects: " .. tostring(#gcList),
+			"",
+		}
+		local matched, scanned = 0, 0
+		for i, obj in ipairs(gcList) do
+			if type(obj) == "function" then
+				local skip = (isExecFn and pcall(isExecFn, obj) and isExecFn(obj) == true)
+					or (isLFn and pcall(isLFn, obj) and isLFn(obj) == false)
+				if not skip then
+					scanned += 1
+					local src, line, fname = "?", "?", ""
+					if type(debug) == "table" and type(debug.info) == "function" then
+						local okI, s, l, n = pcall(debug.info, obj, "sln")
+						if okI then
+							src = tostring(s or "?")
+							line = tostring(l or "?")
+							fname = tostring(n or "")
+						end
+					end
+					if src ~= "[C]" then
+						local hits = {}
+						if fname ~= "" and string.find(string.lower(fname), needle, 1, true) then
+							hits[#hits + 1] = "name=" .. fname
+						end
+						if string.find(string.lower(src), needle, 1, true) then
+							hits[#hits + 1] = "src=" .. src
+						end
+						if getKs then
+							local okK, ks = pcall(getKs, obj)
+							if okK and type(ks) == "table" then
+								for ki, kv in pairs(ks) do
+									if type(kv) == "string" and string.find(string.lower(kv), needle, 1, true) then
+										hits[#hits + 1] = string.format("K[%s]=%q", tostring(ki), string.sub(kv, 1, 80))
+									end
+								end
+							end
+						end
+						if getUps then
+							local okU, ups = pcall(getUps, obj)
+							if okU and type(ups) == "table" then
+								for ui, uv in pairs(ups) do
+									if type(uv) == "string" and string.find(string.lower(uv), needle, 1, true) then
+										hits[#hits + 1] = string.format("U[%s]=%q", tostring(ui), string.sub(uv, 1, 80))
+									end
+								end
+							end
+						end
+						if #hits > 0 then
+							matched += 1
+							if #out < 450 then
+								out[#out + 1] = string.format("[GC #%d] %s:%s fn=%s", matched, src, line, fname ~= "" and fname or "anon")
+								for k = 1, math.min(#hits, 8) do
+									out[#out + 1] = "  " .. hits[k]
+								end
+								out[#out + 1] = ""
+							end
+						end
+					end
+				end
+			end
+			if i % 400 == 0 then
+				task.wait()
+			end
+		end
+
+		out[3] = string.format("-- Closures Lua escaneadas: %d | Coincidencias: %d", scanned, matched)
+		if matched == 0 then
+			out[#out + 1] = "-- Sin closures en memoria para: " .. query
+		end
+		Dec.current = { label = "GCSearch_" .. sanitize(query), inst = nil, bc = nil, size = 0, class = "XRef" }
+		publish(out, "txt")
+		Zenith.log("Info", string.format("GC Search '%s': %d closures de %d", query, matched, scanned))
+		return matched
+	end
+
 	local skipGlobalSearchHook = false
 	function Zenith.findScriptXRefs(query)
 		local q = tostring(query or "")
@@ -7405,7 +7601,7 @@ do
 
 	Zenith.register("Decompiler", {
 		requires = { "getscriptbytecode", "buffer" },
-		optional = { "getscripts", "getloadedmodules", "getnilinstances", "writefile", "makefolder", "isfolder", "setclipboard", "decompile" },
+		optional = { "getscripts", "getloadedmodules", "getnilinstances", "writefile", "makefolder", "isfolder", "setclipboard", "decompile", "getgc", "getconstants", "getupvalues" },
 		init = function()
 			Zenith.actions[N.scan] = function()
 				Index.scan()
@@ -7425,8 +7621,12 @@ do
 			Zenith.actions[N.save] = saveFull
 			Zenith.actions[N.dumpAll] = dumpAllScripts
 			Zenith.actions[N.exportRbxmx] = exportScriptsRbxmx
+			Zenith.actions[N.exportPlace] = exportPlaceRbxmx
 			Zenith.actions[N.globalScan] = function()
 				Dec.globalSearch(Zenith.values[N.globalSearch])
+			end
+			Zenith.actions[N.gcSearch] = function()
+				Dec.gcSearch(Zenith.values[N.globalSearch])
 			end
 
 			hook(N.list, function(arg)
@@ -7475,7 +7675,7 @@ do
 			end
 			table.clear(saved)
 			Zenith.actions[N.scan], Zenith.actions[N.run], Zenith.actions[N.runPath], Zenith.actions[N.save] = nil, nil, nil, nil
-			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.globalScan] = nil, nil, nil, nil
+			Zenith.actions[N.copyDec], Zenith.actions[N.dumpAll], Zenith.actions[N.exportRbxmx], Zenith.actions[N.exportPlace], Zenith.actions[N.globalScan], Zenith.actions[N.gcSearch] = nil, nil, nil, nil, nil, nil
 			Dec.current, Dec.lines = nil, nil
 			table.clear(cache)
 			table.clear(cacheOrder)
@@ -7525,6 +7725,8 @@ do
 		autoIgnoreSpam = "Auto Ignore Spammy",
 		fullSerialize = "Full Serialization",
 		fileLogging = "Spy File Logging",
+		preferOth = "Prefer Stealth Hook (oth)",
+		logInteractions = "Log Interactions",
 	}
 
 	local Players = game:GetService("Players")
@@ -7543,6 +7745,7 @@ do
 		RemoteFunction = { RemoteFunction = true },
 		BindableEvent = { BindableEvent = true },
 		BindableFunction = { BindableFunction = true },
+		Interactions = { ProximityPrompt = true, ClickDetector = true },
 	}
 
 	local S2C_SOURCES = {
@@ -7846,6 +8049,8 @@ do
 		actorChannel = nil,
 		actorConns = {},
 		actorHooked = setmetatable({}, { __mode = "k" }),
+		interactionConns = {},
+		interactionHooked = setmetatable({}, { __mode = "k" }),
 		spamTrack = setmetatable({}, { __mode = "k" }),
 		logFilePath = nil,
 		oldNamecall = nil,
@@ -7931,7 +8136,7 @@ do
 
 	local function formatCallCode(entry)
 		local lines = {}
-		local dirTag = entry.dir == "S2C" and "S->C" or "C->S"
+		local dirTag = entry.dir == "S2C" and "S->C" or (entry.dir == "INT" and "INT" or "C->S")
 		local blkTag = entry.blocked and " [BLOCKED]" or ""
 		local execTag = entry.isExecutor and " [EXECUTOR]" or ""
 		local actorTag = entry.isActor and " [ACTOR]" or ""
@@ -7952,6 +8157,12 @@ do
 			for ln in string.gmatch(entry.stack, "[^\n]+") do
 				table.insert(lines, "--   " .. ln)
 			end
+		end
+
+		if entry.dir == "INT" then
+			local fnName = entry.className == "ProximityPrompt" and "fireproximityprompt" or "fireclickdetector"
+			table.insert(lines, string.format("%s(%s)", fnName, entry.path))
+			return table.concat(lines, "\n")
 		end
 
 		local argCount = entry.args.n or #entry.args
@@ -8055,7 +8266,7 @@ do
 			end
 			for _, g in ipairs(order) do
 				local e = g.latest
-				local dirTag = e.dir == "S2C" and "S->C" or "C->S"
+				local dirTag = e.dir == "S2C" and "S->C" or (e.dir == "INT" and "INT" or "C->S")
 				local blkTag = e.blocked and "[BLK] " or ""
 				local actTag = e.isActor and "[ACT] " or ""
 				local gLabel = string.format("[%s] (x%d) %s%s%s | %s", dirTag, g.count, blkTag, actTag, e.method, e.name)
@@ -8159,7 +8370,7 @@ do
 
 		state.seq += 1
 		local path = instancePath(item.remote)
-		local dirTag = item.dir == "S2C" and "S->C" or "C->S"
+		local dirTag = item.dir == "S2C" and "S->C" or (item.dir == "INT" and "INT" or "C->S")
 		local blkTag = item.blocked and "[BLK] " or ""
 		local actTag = item.isActor and "[ACT] " or ""
 		local label = string.format("#%03d [%s] %s%s%s | %s", state.seq, dirTag, blkTag, actTag, item.method, rName)
@@ -9028,6 +9239,7 @@ do
 		local getNCM = Zenith.capFn("getnamecallmethod")
 		local hookMM = Zenith.capFn("hookmetamethod")
 		local hookFn = Zenith.capFn("hookfunction")
+		local othHook = flag(N.preferOth, true) and Zenith.capFn("oth_hook") or nil
 
 		if hookMM and getNCM then
 			local rec = { active = true, old = nil }
@@ -9070,7 +9282,7 @@ do
 			end
 		end
 
-		if hookFn then
+		if hookFn or othHook then
 			local specs = {
 				{ "RemoteEvent", "FireServer" },
 				{ "UnreliableRemoteEvent", "FireServer" },
@@ -9086,15 +9298,32 @@ do
 					local fn = safeRead(dummy, method)
 					if type(fn) == "function" and not hookedTargets[fn] then
 						hookedTargets[fn] = true
-						local record = { active = true, target = fn, old = nil }
-						local okH, old = pcall(hookFn, fn, wrapC(function(self, ...)
-							return handleOutbound(record, self, method, ...)
-						end))
-						if okH and type(old) == "function" then
-							record.old = old
-							table.insert(state.directHooks, record)
-							state.installed = true
-						else
+						local record = { active = true, target = fn, old = nil, usedOth = false }
+						local hooked = false
+						if othHook then
+							local okO, oldO = pcall(othHook, fn, wrapC(function(self, ...)
+								return handleOutbound(record, self, method, ...)
+							end))
+							if okO and type(oldO) == "function" then
+								record.old = oldO
+								record.usedOth = true
+								table.insert(state.directHooks, record)
+								state.installed = true
+								hooked = true
+							end
+						end
+						if not hooked and hookFn then
+							local okH, old = pcall(hookFn, fn, wrapC(function(self, ...)
+								return handleOutbound(record, self, method, ...)
+							end))
+							if okH and type(old) == "function" then
+								record.old = old
+								table.insert(state.directHooks, record)
+								state.installed = true
+							else
+								record.active = false
+							end
+						elseif not hooked then
 							record.active = false
 						end
 					end
@@ -9114,10 +9343,106 @@ do
 		return state.installed
 	end
 
+	local function uninstallInteractionHooks()
+		for i = #state.interactionConns, 1, -1 do
+			local c = state.interactionConns[i]
+			pcall(function()
+				c:Disconnect()
+			end)
+			state.interactionConns[i] = nil
+		end
+		state.interactionHooked = setmetatable({}, { __mode = "k" })
+	end
+
+	local function installInteractionHooks()
+		uninstallInteractionHooks()
+		if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
+			return false
+		end
+
+		local okP, pps = pcall(game.GetService, game, "ProximityPromptService")
+		if okP and pps and pps.PromptTriggered then
+			local okC, conn = pcall(function()
+				return pps.PromptTriggered:Connect(function(prompt, plr)
+					if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
+						return
+					end
+					if plr and localPlayer and plr ~= localPlayer then
+						return
+					end
+					if typeof(prompt) ~= "Instance" then
+						return
+					end
+					enqueue({
+						remote = prompt,
+						className = "ProximityPrompt",
+						method = "FireProximityPrompt",
+						dir = "INT",
+						args = { n = 0 },
+						timeStr = timeStamp(),
+					})
+				end)
+			end)
+			if okC and conn then
+				table.insert(state.interactionConns, conn)
+			end
+		end
+
+		local function watchClickDetector(cd)
+			if typeof(cd) ~= "Instance" or state.interactionHooked[cd] then
+				return
+			end
+			local okIs, isCD = pcall(cd.IsA, cd, "ClickDetector")
+			if not okIs or not isCD then
+				return
+			end
+			state.interactionHooked[cd] = true
+			local okC, conn = pcall(function()
+				return cd.MouseClick:Connect(function(plr)
+					if stopped or not (flag(N.enabled, false) and flag(N.logInteractions, false)) then
+						return
+					end
+					if plr and localPlayer and plr ~= localPlayer then
+						return
+					end
+					enqueue({
+						remote = cd,
+						className = "ClickDetector",
+						method = "FireClickDetector",
+						dir = "INT",
+						args = { n = 0 },
+						timeStr = timeStamp(),
+					})
+				end)
+			end)
+			if okC and conn then
+				table.insert(state.interactionConns, conn)
+			end
+		end
+
+		local okW, ws = pcall(game.GetService, game, "Workspace")
+		if okW and ws then
+			local okD, desc = pcall(ws.GetDescendants, ws)
+			if okD and type(desc) == "table" then
+				for _, d in ipairs(desc) do
+					watchClickDetector(d)
+				end
+			end
+			local okA, addConn = pcall(function()
+				return ws.DescendantAdded:Connect(watchClickDetector)
+			end)
+			if okA and addConn then
+				table.insert(state.interactionConns, addConn)
+			end
+		end
+		return #state.interactionConns > 0
+	end
+
 	local function uninstallHooks()
 		disconnectS2C()
 		uninstallNewindexHook()
 		uninstallActorHooks()
+		uninstallInteractionHooks()
 
 		-- Deactivate first: any wrapper still alive becomes a pure pass-through
 		if state.namecallRec then
@@ -9162,10 +9487,14 @@ do
 		end
 		state.signalHook = nil
 
+		local othUnhook = Zenith.capFn("oth_unhook")
 		for _, rec in ipairs(state.directHooks) do
 			if rec.target and rec.old then
 				local restored = false
-				if typeof(restorefunction) == "function" then
+				if rec.usedOth and othUnhook then
+					restored = pcall(othUnhook, rec.target)
+				end
+				if not restored and typeof(restorefunction) == "function" then
 					restored = pcall(restorefunction, rec.target)
 				end
 				if not restored and hookFn then
@@ -9186,6 +9515,7 @@ do
 			"getcallingscript", "getnilinstances", "getcallbackvalue", "getcallbackmember", "setclipboard",
 			"getconnections", "getscriptfromthread", "getfunctionhash", "checkcaller", "isexecutorclosure",
 			"islclosure", "setstackhidden", "run_on_actor", "getactors", "create_comm_channel",
+			"oth_hook", "oth_unhook", "fireproximityprompt", "fireclickdetector",
 			"writefile", "appendfile", "makefolder", "isfolder",
 		},
 		init = function()
@@ -9197,9 +9527,11 @@ do
 				if on then
 					local ok = installHooks()
 					syncS2C(true, nil)
+					installInteractionHooks()
 					Zenith.log(ok and "Info" or "Warn", ok and "RSpy: captura en vivo activada" or "RSpy: sin soporte de hooks (__namecall/hookfunction), solo OnClientEvent")
 				else
 					disconnectS2C()
+					uninstallInteractionHooks()
 					restoreWrappedCallbacks()
 					Zenith.log("Info", "RSpy: captura pausada")
 				end
@@ -9238,6 +9570,13 @@ do
 					installActorHooks()
 				elseif not on then
 					uninstallActorHooks()
+				end
+			end)
+			hookUI(N.logInteractions, function(on)
+				if on and flag(N.enabled, false) then
+					installInteractionHooks()
+				elseif not on then
+					uninstallInteractionHooks()
 				end
 			end)
 			hookUI(N.fullSerialize, function() renderSelected() end)
@@ -9394,6 +9733,21 @@ do
 				end
 				if entry.dir == "S2C" then
 					return Zenith.log("Warn", "RSpy: no se puede reenviar una llamada Server->Client")
+				end
+				if entry.dir == "INT" then
+					local fnName = entry.className == "ProximityPrompt" and "fireproximityprompt" or "fireclickdetector"
+					local fn = Zenith.capFn(fnName)
+					if not fn then
+						return Zenith.log("Warn", "RSpy: " .. fnName .. " no soportado en este executor")
+					end
+					task.spawn(function()
+						local thread = coroutine.running() or MAIN_THREAD
+						state.internal[thread] = true
+						local ok, err = pcall(fn, entry.remote)
+						state.internal[thread] = nil
+						Zenith.log(ok and "Info" or "Error", ok and ("RSpy: repetida " .. entry.name) or ("RSpy Repeat error: " .. tostring(err)))
+					end)
+					return
 				end
 				task.spawn(function()
 					local thread = coroutine.running() or MAIN_THREAD
@@ -10026,12 +10380,14 @@ local function initializeScript()
 	addText(decLeft, "Script Search", "Filter scripts")
 	addText(decLeft, "Global Search", "Search bytecode strings/imports")
 	addButton(decLeft, "Global Scan Scripts")
+	addButton(decLeft, "GC Closure Search")
 	addList(decLeft, "Script List", {}, 155)
 	addButton(decLeft, "Decompile Selected")
 	addText(decLeft, "Script Path", "Script path")
 	addButton(decLeft, "Decompile Path")
 	addButton(decLeft, "Dump All Scripts")
 	addButton(decLeft, "Export Scripts .rbxmx")
+	addButton(decLeft, "Export Place .rbxmx")
 
 	addSection(decRight, "Decompiler Output")
 	addCycle(decRight, "Decompile Mode", { "Source", "Function", "Bytecode", "Constants", "Upvalues", "Protos", "Strings & Refs", "Script Info" })
@@ -10048,7 +10404,7 @@ local function initializeScript()
 	addSection(rspyLeft, "Captured Remotes")
 	addToggle(rspyLeft, "Remote Spy", nil, false)
 	addCounter(rspyLeft, "Calls Logged", 0)
-	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction" })
+	addCycle(rspyLeft, "Spy Filter", { "All", "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Interactions" })
 	addText(rspyLeft, "Spy Search", "Search remotes")
 	addText(rspyLeft, "Spy Ignore List", "Names, comma separated")
 	addToggle(rspyLeft, "Group By Remote", nil, false)
@@ -10169,6 +10525,8 @@ local function initializeScript()
 	addSection(cfgRight, "RSpy Advanced")
 	addToggle(cfgRight, "Ignore Executor Calls", nil, true)
 	addToggle(cfgRight, "Log Actors", nil, true)
+	addToggle(cfgRight, "Prefer Stealth Hook (oth)", nil, true)
+	addToggle(cfgRight, "Log Interactions", nil, false)
 	addToggle(cfgRight, "Auto Ignore Spammy", nil, false)
 	addToggle(cfgRight, "Full Serialization", nil, false)
 	addToggle(cfgRight, "Spy File Logging", nil, false)
