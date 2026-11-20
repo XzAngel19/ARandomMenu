@@ -1,7 +1,8 @@
 -- Zenith | standalone client menu for the Violence District source dump.
 -- Only actions with verified local paths and call signatures are wired. The
--- script does not guess killer attack arguments, skill-check callbacks, or
--- unverified tags/paths. Session profiles remain in PlayerGui until the client exits.
+-- script does not guess killer attack arguments or undocumented skill-check
+-- result remotes. Auto Perfect uses the visible skill-check UI and configured input.
+-- Session profiles remain in PlayerGui until the client exits.
 
 local playersService = game:GetService("Players")
 local userInputService = game:GetService("UserInputService")
@@ -1144,9 +1145,9 @@ function ZenithUI.create(guiParent)
 end
 
 -- Source-backed game features ----------------------------------------------
--- The dump confirms the team names, four gameplay tags, window vault call, and
--- exit-lever map path used below. Features without confirmed source semantics
--- are deliberately left out of the active controls.
+-- The dump confirms the team names, gameplay tags, generator repair tuple,
+-- circular skill-check UI/keybind, window vault call, and exit-lever map path.
+-- Features without confirmed source semantics are deliberately left out.
 local function createGameFeatures(hub, localPlayer)
 	local runtime = {
 		alive = true,
@@ -1172,8 +1173,21 @@ local function createGameFeatures(hub, localPlayer)
 		walkValue = 32,
 		jumpEnabled = false,
 		jumpValue = 60,
+		autoGeneratorEnabled = false,
+		autoPerfectEnabled = false,
+		generatorRange = 18,
+		generatorScanElapsed = 0,
+		currentRepairPoint = nil,
+		repairRequestId = nil,
+		repairCharacter = nil,
+		autoGeneratorRemoteWarned = false,
+		skillCheckGuiVisible = false,
+		skillCheckInputSent = false,
+		skillCheckPreviousAngleDifference = nil,
+		skillCheckInputWarned = false,
 	}
 
+	local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	local previousFolder = workspace:FindFirstChild("ZenithLocalVisuals")
 	if previousFolder and previousFolder:GetAttribute("ZenithOwned") == true then
 		previousFolder:Destroy()
@@ -1358,6 +1372,236 @@ local function createGameFeatures(hub, localPlayer)
 		if localPlayer:GetAttribute("IsDead") == true then return nil end
 		if character:GetAttribute("IsCarried") == true or character:GetAttribute("IsHooked") == true then return nil end
 		return character, humanoid, root
+	end
+
+	local function setRepairControllerState(character, requestId, repairing)
+		if not character then return end
+		local controller = character:FindFirstChild("CheckInterractable")
+		if not controller then return end
+		if requestId then controller:SetAttribute("RepairRequestId", requestId) end
+		controller:SetAttribute("isRepairing", repairing)
+	end
+
+	local function getRepairEvent()
+		local remotes = replicatedStorage:FindFirstChild("Remotes")
+		local generator = remotes and remotes:FindFirstChild("Generator")
+		local repairEvent = generator and generator:FindFirstChild("RepairEvent")
+		return repairEvent and repairEvent:IsA("RemoteEvent") and repairEvent or nil
+	end
+
+	local function stopAutoRepair()
+		local point = runtime.currentRepairPoint
+		local requestId = runtime.repairRequestId
+		local character = runtime.repairCharacter
+		runtime.currentRepairPoint = nil
+		runtime.repairRequestId = nil
+		runtime.repairCharacter = nil
+		setRepairControllerState(character, nil, false)
+		if point and point.Parent then
+			local repairEvent = getRepairEvent()
+			if repairEvent then
+				pcall(function()
+					repairEvent:FireServer(point, false, nil, requestId, character)
+				end)
+			end
+		end
+	end
+
+	local function nearestGeneratorPoint(root)
+		local map = workspace:FindFirstChild("Map")
+		if not map then return nil end
+		local nearest, nearestDistance
+		for _, point in ipairs(collectionService:GetTagged("GeneratorPoint")) do
+			if point:IsA("BasePart") and point:IsDescendantOf(map) then
+				local generator = point.Parent
+				local blocked = generator and collectionService:HasTag(generator, "Blocked")
+				local doingAction = collectionService:HasTag(point, "doing action")
+				local progress = generator and generator:GetAttribute("RepairProgress") or 0
+				if type(progress) ~= "number" then progress = 0 end
+				local distance = (point.Position - root.Position).Magnitude
+				if not blocked and not doingAction and progress < 99.95
+					and distance <= runtime.generatorRange
+					and (not nearestDistance or distance < nearestDistance) then
+					nearest, nearestDistance = point, distance
+				end
+			end
+		end
+		return nearest
+	end
+
+	local function updateAutoGenerator()
+		if not runtime.autoGeneratorEnabled then return end
+		local survivorTeam = teamsService:FindFirstChild("Survivors")
+		local character, _, root = canMoveCharacter()
+		if not survivorTeam or localPlayer.Team ~= survivorTeam or not character or not root
+			or character:GetAttribute("Trapped") == true
+			or collectionService:HasTag(root, "doing action") then
+			stopAutoRepair()
+			return
+		end
+
+		local point = nearestGeneratorPoint(root)
+		if point == runtime.currentRepairPoint and runtime.repairCharacter == character then
+			return
+		end
+		stopAutoRepair()
+		if not point then return end
+		local controller = character:FindFirstChild("CheckInterractable")
+		if controller and controller:GetAttribute("isRepairing") == true then return end
+
+		local repairEvent = getRepairEvent()
+		if not repairEvent then
+			if not runtime.autoGeneratorRemoteWarned then
+				runtime.autoGeneratorRemoteWarned = true
+				hub:Notify("Auto Generator: RepairEvent is unavailable.")
+			end
+			return
+		end
+		runtime.autoGeneratorRemoteWarned = false
+		local requestId = httpService:GenerateGUID(false)
+		runtime.currentRepairPoint = point
+		runtime.repairRequestId = requestId
+		runtime.repairCharacter = character
+		setRepairControllerState(character, requestId, true)
+		local ok = pcall(function()
+			repairEvent:FireServer(point, true, nil, requestId, character)
+		end)
+		if not ok then
+			setRepairControllerState(character, nil, false)
+			runtime.currentRepairPoint = nil
+			runtime.repairRequestId = nil
+			runtime.repairCharacter = nil
+			if not runtime.autoGeneratorRemoteWarned then
+				runtime.autoGeneratorRemoteWarned = true
+				hub:Notify("Auto Generator: repair request failed.")
+			end
+		end
+	end
+
+	function runtime:SetAutoGeneratorEnabled(enabled)
+		if not runtime.alive then return end
+		enabled = enabled == true
+		if runtime.autoGeneratorEnabled == enabled then return end
+		runtime.autoGeneratorEnabled = enabled
+		runtime.generatorScanElapsed = 0
+		if enabled then updateAutoGenerator() else stopAutoRepair() end
+	end
+
+	function runtime:SetGeneratorRange(value)
+		if runtime.alive and type(value) == "number" then
+			runtime.generatorRange = math.clamp(value, 5, 40)
+		end
+	end
+
+	local function resetAutoPerfect()
+		runtime.skillCheckGuiVisible = false
+		runtime.skillCheckInputSent = false
+		runtime.skillCheckPreviousAngleDifference = nil
+	end
+
+	local function getSkillCheckInputName()
+		local gamepadInput = false
+		pcall(function()
+			gamepadInput = string.find(userInputService:GetLastInputType().Name, "Gamepad", 1, true) == 1
+		end)
+		local attribute = gamepadInput and "pad_skillcheck" or "kb_skillcheck"
+		local inputName = localPlayer:GetAttribute(attribute)
+		if type(inputName) == "string" and inputName ~= "" then return inputName end
+		return gamepadInput and "ButtonL1" or "Space"
+	end
+
+	local function sendSkillCheckInput()
+		local virtualInput
+		local serviceOk = pcall(function()
+			virtualInput = game:GetService("VirtualInputManager")
+		end)
+		if not serviceOk or not virtualInput then return false end
+
+		local inputName = getSkillCheckInputName()
+		local mouseButton = inputName == "MouseButton1" and 0
+			or inputName == "MouseButton2" and 1
+			or inputName == "MouseButton3" and 2
+		if mouseButton ~= nil then
+			local camera = workspace.CurrentCamera
+			local centre = camera and camera.ViewportSize / 2 or Vector2.new(400, 300)
+			local downOk = pcall(function()
+				virtualInput:SendMouseButtonEvent(centre.X, centre.Y, mouseButton, true, game, false)
+			end)
+			if not downOk then return false end
+			pcall(function()
+				virtualInput:SendMouseButtonEvent(centre.X, centre.Y, mouseButton, false, game, false)
+			end)
+			return true
+		end
+
+		local keyOk, keyCode = pcall(function() return Enum.KeyCode[inputName] end)
+		if not keyOk or not keyCode then return false end
+		local downOk = pcall(function()
+			virtualInput:SendKeyEvent(true, keyCode, false, game)
+		end)
+		if not downOk then return false end
+		pcall(function()
+			virtualInput:SendKeyEvent(false, keyCode, false, game)
+		end)
+		return true
+	end
+
+	local function processAutoPerfect()
+		if not runtime.autoPerfectEnabled then
+			resetAutoPerfect()
+			return
+		end
+		local character = getCharacter()
+		local controller = character and character:FindFirstChild("CheckInterractable")
+		if not controller or controller:GetAttribute("isRepairing") ~= true then
+			resetAutoPerfect()
+			return
+		end
+		local screenGui = playerGui and playerGui:FindFirstChild("SkillCheckPromptGui")
+		if not screenGui or not screenGui:IsA("ScreenGui") or not screenGui.Enabled then
+			resetAutoPerfect()
+			return
+		end
+		local check = screenGui:FindFirstChild("Check")
+		if not check or not check:IsA("GuiObject") or not check.Visible then
+			resetAutoPerfect()
+			return
+		end
+		local goal = check:FindFirstChild("Goal")
+		local line = check:FindFirstChild("Line")
+		if not goal or not goal:IsA("GuiObject") or not goal.Visible
+			or not line or not line:IsA("GuiObject") or not line.Visible then
+			resetAutoPerfect()
+			return
+		end
+
+		if not runtime.skillCheckGuiVisible then
+			runtime.skillCheckInputSent = false
+		end
+		runtime.skillCheckGuiVisible = true
+		if runtime.skillCheckInputSent then return end
+
+		local signedDifference = (line.Rotation - goal.Rotation + 180) % 360 - 180
+		local difference = math.abs(signedDifference)
+		local previousDifference = runtime.skillCheckPreviousAngleDifference
+		runtime.skillCheckPreviousAngleDifference = signedDifference
+		local crossedTarget = previousDifference ~= nil
+			and previousDifference * signedDifference < 0
+			and math.min(math.abs(previousDifference), difference) <= 20
+		if difference > 4 and not crossedTarget then return end
+
+		runtime.skillCheckInputSent = true
+		if not sendSkillCheckInput() and not runtime.skillCheckInputWarned then
+			runtime.skillCheckInputWarned = true
+			hub:Notify("Auto Perfect could not send the configured skill-check input.")
+		end
+	end
+
+	function runtime:SetAutoPerfectEnabled(enabled)
+		if not runtime.alive then return end
+		runtime.autoPerfectEnabled = enabled == true
+		runtime.skillCheckInputWarned = false
+		resetAutoPerfect()
 	end
 
 	function runtime:TeleportToTaggedPoint(tag, label)
@@ -1645,11 +1889,20 @@ local function createGameFeatures(hub, localPlayer)
 			syncVisuals()
 		end
 	end)
+	track(runService.Heartbeat, function(deltaTime)
+		if not runtime.autoGeneratorEnabled then return end
+		runtime.generatorScanElapsed += deltaTime
+		if runtime.generatorScanElapsed < 0.2 then return end
+		runtime.generatorScanElapsed = 0
+		updateAutoGenerator()
+	end)
+	track(runService.RenderStepped, processAutoPerfect)
 	track(localPlayer.CharacterAdded, attachCharacter)
 	if localPlayer.Character then attachCharacter(localPlayer.Character) end
 
 	function runtime:Cleanup()
 		if not runtime.alive then return end
+		stopAutoRepair()
 		runtime.alive = false
 		clearConnections(runtime.connections)
 		restoreCurrentMovement()
@@ -1667,9 +1920,22 @@ function Pages.main(tab, features)
 	local actions = tab:AddSection("Verified Action", "left")
 	actions:AddButton("Vault nearest window", function() features:VaultNearestWindow() end)
 	actions:AddNote("Uses the confirmed VaultPoint tag, the source proximity/visibility rules, and VaultEvent(point, sprinting) plus Vaultbindable. It does not call the post-animation fastvault remote directly.", 64)
+
+	local generator = tab:AddSection("Generator", "left")
+	generator:AddToggle("Auto Generator", false, function(enabled)
+		features:SetAutoGeneratorEnabled(enabled)
+	end)
+	generator:AddSlider("Interaction Range", 5, 40, 18, 0, function(value)
+		features:SetGeneratorRange(value)
+	end)
+	generator:AddToggle("Auto Perfect", false, function(enabled)
+		features:SetAutoPerfectEnabled(enabled)
+	end)
+	generator:AddNote("Auto Perfect tracks SkillCheckPromptGui.Check.Goal against Line and sends the configured skillcheck input at the white target.", 58)
+
 	local unsupported = tab:AddSection("Not wired from this dump", "right")
 	unsupported:AddNote("Killer attacks and kill automation need killer-specific argument callbacks; these are not universal in KillerActionController.", 66)
-	unsupported:AddNote("Auto Perfect is omitted: skill-check remote names exist, but the success callback and argument signature are unconfirmed.", 60)
+	unsupported:AddNote("SkillCheckEvent / SkillCheckResultEvent exist, but their success callback and argument signature are not exposed; Auto Perfect deliberately uses the visible UI and normal input instead.", 72)
 	unsupported:AddNote("Auto escape, auto parry, stun/fall/slowdown bypass, dodge, and aimbot have no verified universal trigger in the reviewed source.", 66)
 end
 
@@ -1685,7 +1951,7 @@ function Pages.extra(tab, features)
 	teleport:AddButton("Nearest Exit Gate", function() features:TeleportToExitGate() end)
 	teleport:AddButton("Nearest Hook", function() features:TeleportToTaggedPoint("HookPoint", "HookPoint") end)
 	local unsupported = tab:AddSection("Not wired from this dump", "left")
-	unsupported:AddNote("Noclip, fly, infinite jump, and automation/keybind actions are omitted because the dump does not establish their behavior or lifecycle.", 62)
+	unsupported:AddNote("Noclip, fly, and infinite jump are omitted because the dump does not establish their behavior or lifecycle. Generator automation is on Main.", 62)
 end
 
 function Pages.visuals(tab, features)
