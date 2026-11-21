@@ -1145,9 +1145,9 @@ function ZenithUI.create(guiParent)
 end
 
 -- Source-backed game features ----------------------------------------------
--- The dump confirms the team names, gameplay tags, generator repair tuple,
--- circular skill-check UI/keybind, window vault call, and exit-lever map path.
--- Features without confirmed source semantics are deliberately left out.
+-- The dump confirms the team names, interaction tags, generator/heal/exit
+-- request tuples, unhook flow and cooldowns, skill-check UI/keybind, window
+-- vault call, and exit-lever map path. Unverified actions stay unwired.
 local function createGameFeatures(hub, localPlayer)
 	local runtime = {
 		alive = true,
@@ -1160,9 +1160,12 @@ local function createGameFeatures(hub, localPlayer)
 			distance = false,
 			generator = false,
 			hook = false,
+			unhook = false,
 			nearestHook = false,
 			pallet = false,
+			palletSlide = false,
 			window = false,
+			exitPoint = false,
 			exitGate = false,
 			maxDistance = 1000,
 			survivorColor = Color3.fromRGB(0, 200, 238),
@@ -1175,12 +1178,31 @@ local function createGameFeatures(hub, localPlayer)
 		jumpValue = 60,
 		autoGeneratorEnabled = false,
 		autoPerfectEnabled = false,
-		generatorRange = 18,
+		autoHealEnabled = false,
+		autoExitEnabled = false,
+		autoUnhookEnabled = false,
+		generatorRange = 4,
 		generatorScanElapsed = 0,
+		healScanElapsed = 0,
+		exitScanElapsed = 0,
+		unhookScanElapsed = 0,
 		currentRepairPoint = nil,
 		repairRequestId = nil,
 		repairCharacter = nil,
+		currentHealPoint = nil,
+		healRequestId = nil,
+		healCharacter = nil,
+		currentExitPoint = nil,
+		exitRequestId = nil,
+		exitCharacter = nil,
+		unhookCharacter = nil,
+		unhookPoint = nil,
+		unhookNextAt = 0,
+		unhookToken = 0,
 		autoGeneratorRemoteWarned = false,
+		autoHealRemoteWarned = false,
+		autoExitRemoteWarned = false,
+		autoUnhookRemoteWarned = false,
 		skillCheckGuiVisible = false,
 		skillCheckInputSent = false,
 		skillCheckPreviousAngleDifference = nil,
@@ -1231,6 +1253,10 @@ local function createGameFeatures(hub, localPlayer)
 		character = character or getCharacter()
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		return root and root:IsA("BasePart") and root or nil
+	end
+
+	local function getInteractable(character)
+		return character and character:FindFirstChild("CheckInterractable") or nil
 	end
 
 	local function restoreCurrentMovement()
@@ -1374,6 +1400,56 @@ local function createGameFeatures(hub, localPlayer)
 		return character, humanoid, root
 	end
 
+	local function canRemainSurvivorInteraction(character, humanoid, root)
+		local survivorTeam = teamsService:FindFirstChild("Survivors")
+		if not survivorTeam or localPlayer.Team ~= survivorTeam then return false end
+		if not character or not humanoid or not root or humanoid.Health <= 50 then return false end
+		if localPlayer:GetAttribute("IsDead") == true or character:GetAttribute("Trapped") == true
+			or character:GetAttribute("IsHooked") == true or character:GetAttribute("IsCarried") == true then
+			return false
+		end
+		local ragdoll = character:FindFirstChild("RagdollTrigger")
+		if ragdoll and ragdoll:IsA("BoolValue") and ragdoll.Value then return false end
+		return true
+	end
+
+	local function canStartSurvivorInteraction(character, humanoid, root)
+		if not canRemainSurvivorInteraction(character, humanoid, root)
+			or collectionService:HasTag(root, "doing action")
+			or runtime.currentRepairPoint or runtime.currentHealPoint or runtime.currentExitPoint or runtime.unhookCharacter then
+			return false
+		end
+		local controller = getInteractable(character)
+		if controller then
+			for _, attribute in ipairs({ "isVaulting", "isSliding", "isDroppingPallet", "isRepairing", "isHealing", "isUnhooking", "isExiting" }) do
+				if controller:GetAttribute(attribute) == true then return false end
+			end
+		end
+		return true
+	end
+
+	local function nearestTaggedInteractionPoint(tag, character, root, maxDistance)
+		local nearest, nearestDistance
+		for _, point in ipairs(collectionService:GetTagged(tag)) do
+			if point:IsA("BasePart") and point:IsDescendantOf(workspace)
+				and not point:IsDescendantOf(character) and point.Parent
+				and not collectionService:HasTag(point.Parent, "Blocked") then
+				local distance = (point.Position - root.Position).Magnitude
+				if distance <= maxDistance and (not nearestDistance or distance < nearestDistance) then
+					nearest, nearestDistance = point, distance
+				end
+			end
+		end
+		if not nearest then return nil end
+		if nearestDistance < 3.5 then return nearest end
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { character }
+		local result = workspace:Raycast(root.Position, nearest.Position - root.Position, rayParams)
+		if result and result.Instance == nearest then return nearest end
+		return nil
+	end
+
 	local function setRepairControllerState(character, requestId, repairing)
 		if not character then return end
 		local controller = character:FindFirstChild("CheckInterractable")
@@ -1420,21 +1496,26 @@ local function createGameFeatures(hub, localPlayer)
 				if type(progress) ~= "number" then progress = 0 end
 				local distance = (point.Position - root.Position).Magnitude
 				if not blocked and not doingAction and progress < 99.95
-					and distance <= runtime.generatorRange
+					and distance <= math.min(runtime.generatorRange, 4)
 					and (not nearestDistance or distance < nearestDistance) then
 					nearest, nearestDistance = point, distance
 				end
 			end
+		end
+		if nearest and nearestDistance >= 3.5 then
+			local rayParams = RaycastParams.new()
+			rayParams.FilterType = Enum.RaycastFilterType.Exclude
+			rayParams.FilterDescendantsInstances = { root.Parent }
+			local result = workspace:Raycast(root.Position, nearest.Position - root.Position, rayParams)
+			if not result or result.Instance ~= nearest then return nil end
 		end
 		return nearest
 	end
 
 	local function updateAutoGenerator()
 		if not runtime.autoGeneratorEnabled then return end
-		local survivorTeam = teamsService:FindFirstChild("Survivors")
-		local character, _, root = canMoveCharacter()
-		if not survivorTeam or localPlayer.Team ~= survivorTeam or not character or not root
-			or character:GetAttribute("Trapped") == true
+		local character, humanoid, root = canMoveCharacter()
+		if not character or not canRemainSurvivorInteraction(character, humanoid, root)
 			or collectionService:HasTag(root, "doing action") then
 			stopAutoRepair()
 			return
@@ -1445,9 +1526,7 @@ local function createGameFeatures(hub, localPlayer)
 			return
 		end
 		stopAutoRepair()
-		if not point then return end
-		local controller = character:FindFirstChild("CheckInterractable")
-		if controller and controller:GetAttribute("isRepairing") == true then return end
+		if not point or not canStartSurvivorInteraction(character, humanoid, root) then return end
 
 		local repairEvent = getRepairEvent()
 		if not repairEvent then
@@ -1457,7 +1536,6 @@ local function createGameFeatures(hub, localPlayer)
 			end
 			return
 		end
-		runtime.autoGeneratorRemoteWarned = false
 		local requestId = httpService:GenerateGUID(false)
 		runtime.currentRepairPoint = point
 		runtime.repairRequestId = requestId
@@ -1475,6 +1553,8 @@ local function createGameFeatures(hub, localPlayer)
 				runtime.autoGeneratorRemoteWarned = true
 				hub:Notify("Auto Generator: repair request failed.")
 			end
+		else
+			runtime.autoGeneratorRemoteWarned = false
 		end
 	end
 
@@ -1484,13 +1564,293 @@ local function createGameFeatures(hub, localPlayer)
 		if runtime.autoGeneratorEnabled == enabled then return end
 		runtime.autoGeneratorEnabled = enabled
 		runtime.generatorScanElapsed = 0
+		runtime.autoGeneratorRemoteWarned = false
 		if enabled then updateAutoGenerator() else stopAutoRepair() end
 	end
 
 	function runtime:SetGeneratorRange(value)
 		if runtime.alive and type(value) == "number" then
-			runtime.generatorRange = math.clamp(value, 5, 40)
+			runtime.generatorRange = math.clamp(value, 1, 4)
 		end
+	end
+
+	local function getHealEvent()
+		local remotes = replicatedStorage:FindFirstChild("Remotes")
+		local healing = remotes and remotes:FindFirstChild("Healing")
+		local event = healing and healing:FindFirstChild("HealEvent")
+		return event and event:IsA("RemoteEvent") and event or nil
+	end
+
+	local function setHealControllerState(character, requestId, healing)
+		local controller = getInteractable(character)
+		if not controller then return end
+		if requestId then controller:SetAttribute("HealRequestId", requestId) end
+		controller:SetAttribute("isHealing", healing)
+	end
+
+	local function nearestHealTarget(character, root)
+		if not character or not root then return nil end
+		local candidates, seen = {}, {}
+		for _, player in ipairs(playersService:GetPlayers()) do
+			if player ~= localPlayer and player.Character and not seen[player.Character] then
+				seen[player.Character] = true
+				table.insert(candidates, player.Character)
+			end
+		end
+		for _, tag in ipairs({ "VDHealTestDummy", "SurvivorBot" }) do
+			for _, model in ipairs(collectionService:GetTagged(tag)) do
+				if model:IsA("Model") and model:IsDescendantOf(workspace) and not seen[model] then
+					seen[model] = true
+					table.insert(candidates, model)
+				end
+			end
+		end
+
+		local nearest, nearestDistance
+		for _, targetCharacter in ipairs(candidates) do
+			local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+			local targetHumanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+			if targetCharacter ~= character and targetRoot and targetRoot:IsA("BasePart")
+				and targetHumanoid and targetHumanoid.Health > 0
+				and targetRoot:GetAttribute("CanGetHealed") == true
+				and targetCharacter:GetAttribute("IsHooked") ~= true
+				and targetCharacter:GetAttribute("IsCarried") ~= true
+				and not collectionService:HasTag(targetRoot, "doing action") then
+				local distance = (targetRoot.Position - root.Position).Magnitude
+				if distance <= 5 and (not nearestDistance or distance < nearestDistance) then
+					nearest, nearestDistance = targetRoot, distance
+				end
+			end
+		end
+		if not nearest then return nil end
+		if nearestDistance < 3.5 then return nearest end
+
+		local targetCharacter = nearest.Parent
+		if not targetCharacter then return nil end
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { character }
+		local result = workspace:Raycast(root.Position, nearest.Position - root.Position, rayParams)
+		if result and result.Instance:IsDescendantOf(targetCharacter) then return nearest end
+		return nil
+	end
+
+	local function stopAutoHeal()
+		local point = runtime.currentHealPoint
+		local requestId = runtime.healRequestId
+		local character = runtime.healCharacter
+		runtime.currentHealPoint = nil
+		runtime.healRequestId = nil
+		runtime.healCharacter = nil
+		setHealControllerState(character, nil, false)
+		if point and character then
+			local event = getHealEvent()
+			if event then
+				pcall(function() event:FireServer(point, false, requestId, character) end)
+			end
+		end
+	end
+
+	local function updateAutoHeal()
+		if not runtime.autoHealEnabled then return end
+		local character, humanoid, root = canMoveCharacter()
+		if not character or not canRemainSurvivorInteraction(character, humanoid, root) then
+			stopAutoHeal()
+			return
+		end
+		local target = nearestHealTarget(character, root)
+		if target == runtime.currentHealPoint and runtime.healCharacter == character then return end
+		stopAutoHeal()
+		if not target or not canStartSurvivorInteraction(character, humanoid, root) then return end
+
+		local event = getHealEvent()
+		if not event then
+			if not runtime.autoHealRemoteWarned then
+				runtime.autoHealRemoteWarned = true
+				hub:Notify("Auto Heal: HealEvent is unavailable.")
+			end
+			return
+		end
+		local requestId = httpService:GenerateGUID(false)
+		runtime.currentHealPoint = target
+		runtime.healRequestId = requestId
+		runtime.healCharacter = character
+		setHealControllerState(character, requestId, true)
+		local ok = pcall(function() event:FireServer(target, true, requestId, character) end)
+		if not ok then
+			setHealControllerState(character, nil, false)
+			runtime.currentHealPoint = nil
+			runtime.healRequestId = nil
+			runtime.healCharacter = nil
+			if not runtime.autoHealRemoteWarned then
+				runtime.autoHealRemoteWarned = true
+				hub:Notify("Auto Heal: heal request failed.")
+			end
+		else
+			runtime.autoHealRemoteWarned = false
+		end
+	end
+
+	function runtime:SetAutoHealEnabled(enabled)
+		if not runtime.alive then return end
+		enabled = enabled == true
+		if runtime.autoHealEnabled == enabled then return end
+		runtime.autoHealEnabled = enabled
+		runtime.healScanElapsed = 0
+		runtime.autoHealRemoteWarned = false
+		if enabled then updateAutoHeal() else stopAutoHeal() end
+	end
+
+	local function getExitEvent()
+		local remotes = replicatedStorage:FindFirstChild("Remotes")
+		local exit = remotes and remotes:FindFirstChild("Exit")
+		local event = exit and exit:FindFirstChild("LeverEvent")
+		return event and event:IsA("RemoteEvent") and event or nil
+	end
+
+	local function setExitControllerState(character, requestId, exiting)
+		local controller = getInteractable(character)
+		if not controller then return end
+		if requestId then controller:SetAttribute("ExitRequestId", requestId) end
+		controller:SetAttribute("isExiting", exiting)
+	end
+
+	local function stopAutoExit()
+		local point = runtime.currentExitPoint
+		local requestId = runtime.exitRequestId
+		local character = runtime.exitCharacter
+		runtime.currentExitPoint = nil
+		runtime.exitRequestId = nil
+		runtime.exitCharacter = nil
+		setExitControllerState(character, nil, false)
+		if point and character then
+			local event = getExitEvent()
+			if event then
+				pcall(function() event:FireServer(point, false, requestId, character) end)
+			end
+		end
+	end
+
+	local function updateAutoExit()
+		if not runtime.autoExitEnabled then return end
+		local character, humanoid, root = canMoveCharacter()
+		if not character or not canRemainSurvivorInteraction(character, humanoid, root) then
+			stopAutoExit()
+			return
+		end
+		local point = nearestTaggedInteractionPoint("ExitPoint", character, root, 4)
+		if point == runtime.currentExitPoint and runtime.exitCharacter == character then return end
+		stopAutoExit()
+		if not point or not canStartSurvivorInteraction(character, humanoid, root) then return end
+
+		local event = getExitEvent()
+		if not event then
+			if not runtime.autoExitRemoteWarned then
+				runtime.autoExitRemoteWarned = true
+				hub:Notify("Auto Exit: LeverEvent is unavailable.")
+			end
+			return
+		end
+		local requestId = httpService:GenerateGUID(false)
+		runtime.currentExitPoint = point
+		runtime.exitRequestId = requestId
+		runtime.exitCharacter = character
+		setExitControllerState(character, requestId, true)
+		local ok = pcall(function() event:FireServer(point, true, requestId, character) end)
+		if not ok then
+			setExitControllerState(character, nil, false)
+			runtime.currentExitPoint = nil
+			runtime.exitRequestId = nil
+			runtime.exitCharacter = nil
+			if not runtime.autoExitRemoteWarned then
+				runtime.autoExitRemoteWarned = true
+				hub:Notify("Auto Exit: lever request failed.")
+			end
+		else
+			runtime.autoExitRemoteWarned = false
+		end
+	end
+
+	function runtime:SetAutoExitEnabled(enabled)
+		if not runtime.alive then return end
+		enabled = enabled == true
+		if runtime.autoExitEnabled == enabled then return end
+		runtime.autoExitEnabled = enabled
+		runtime.exitScanElapsed = 0
+		runtime.autoExitRemoteWarned = false
+		if enabled then updateAutoExit() else stopAutoExit() end
+	end
+
+	local function getUnhookEvent()
+		local remotes = replicatedStorage:FindFirstChild("Remotes")
+		local carry = remotes and remotes:FindFirstChild("Carry")
+		local event = carry and carry:FindFirstChild("UnHookEvent")
+		return event and event:IsA("RemoteEvent") and event or nil
+	end
+
+	local function setUnhookControllerState(character, unhooking)
+		local controller = getInteractable(character)
+		if controller then controller:SetAttribute("isUnhooking", unhooking) end
+	end
+
+	local function clearAutoUnhookState()
+		runtime.unhookToken += 1
+		setUnhookControllerState(runtime.unhookCharacter, false)
+		runtime.unhookCharacter = nil
+		runtime.unhookPoint = nil
+		runtime.unhookNextAt = 0
+	end
+
+	local function updateAutoUnhook()
+		if not runtime.autoUnhookEnabled then return end
+		if os.clock() < runtime.unhookNextAt then return end
+		local character, humanoid, root = canMoveCharacter()
+		if not character or not canStartSurvivorInteraction(character, humanoid, root) then return end
+		local point = nearestTaggedInteractionPoint("UnhookPoint", character, root, 4)
+		if not point then return end
+
+		local event = getUnhookEvent()
+		if not event then
+			if not runtime.autoUnhookRemoteWarned then
+				runtime.autoUnhookRemoteWarned = true
+				hub:Notify("Auto Rescue: UnHookEvent is unavailable.")
+			end
+			return
+		end
+		runtime.unhookToken += 1
+		local token = runtime.unhookToken
+		runtime.unhookCharacter = character
+		runtime.unhookPoint = point
+		runtime.unhookNextAt = os.clock() + 3
+		setUnhookControllerState(character, true)
+		local ok = pcall(function() event:FireServer(point, character) end)
+		if not ok then
+			setUnhookControllerState(character, false)
+			runtime.unhookCharacter = nil
+			runtime.unhookPoint = nil
+			runtime.unhookToken += 1
+			if not runtime.autoUnhookRemoteWarned then
+				runtime.autoUnhookRemoteWarned = true
+				hub:Notify("Auto Rescue: unhook request failed.")
+			end
+			return
+		end
+		runtime.autoUnhookRemoteWarned = false
+		task.delay(2, function()
+			if runtime.unhookToken ~= token then return end
+			setUnhookControllerState(character, false)
+			if runtime.unhookCharacter == character then
+				runtime.unhookCharacter = nil
+				runtime.unhookPoint = nil
+			end
+		end)
+	end
+
+	function runtime:SetAutoUnhookEnabled(enabled)
+		if not runtime.alive then return end
+		runtime.autoUnhookEnabled = enabled == true
+		runtime.unhookScanElapsed = 0
+		runtime.autoUnhookRemoteWarned = false
 	end
 
 	local function resetAutoPerfect()
@@ -1832,8 +2192,11 @@ local function createGameFeatures(hub, localPlayer)
 		local objectDefinitions = {
 			{ tag = "GeneratorPoint", enabled = runtime.visuals.generator, name = "Generator", color = Color3.fromRGB(80, 190, 255) },
 			{ tag = "HookPoint", enabled = runtime.visuals.hook, name = "Hook", color = Color3.fromRGB(255, 120, 120) },
+			{ tag = "UnhookPoint", enabled = runtime.visuals.unhook, name = "Rescue point", color = Color3.fromRGB(110, 235, 150) },
 			{ tag = "PalletPoint", enabled = runtime.visuals.pallet, name = "Pallet", color = Color3.fromRGB(245, 190, 80) },
+			{ tag = "PalletPointSlide", enabled = runtime.visuals.palletSlide, name = "Pallet slide", color = Color3.fromRGB(255, 145, 70) },
 			{ tag = "VaultPoint", enabled = runtime.visuals.window, name = "Vault / window", color = runtime.visuals.windowColor },
+			{ tag = "ExitPoint", enabled = runtime.visuals.exitPoint, name = "Exit interaction", color = Color3.fromRGB(120, 230, 150) },
 		}
 		for _, definition in ipairs(objectDefinitions) do
 			if definition.enabled then
@@ -1890,19 +2253,51 @@ local function createGameFeatures(hub, localPlayer)
 		end
 	end)
 	track(runService.Heartbeat, function(deltaTime)
-		if not runtime.autoGeneratorEnabled then return end
-		runtime.generatorScanElapsed += deltaTime
-		if runtime.generatorScanElapsed < 0.2 then return end
-		runtime.generatorScanElapsed = 0
-		updateAutoGenerator()
+		if runtime.autoGeneratorEnabled then
+			runtime.generatorScanElapsed += deltaTime
+			if runtime.generatorScanElapsed >= 0.2 then
+				runtime.generatorScanElapsed = 0
+				updateAutoGenerator()
+			end
+		end
+		if runtime.autoHealEnabled then
+			runtime.healScanElapsed += deltaTime
+			if runtime.healScanElapsed >= 0.2 then
+				runtime.healScanElapsed = 0
+				updateAutoHeal()
+			end
+		end
+		if runtime.autoExitEnabled then
+			runtime.exitScanElapsed += deltaTime
+			if runtime.exitScanElapsed >= 0.2 then
+				runtime.exitScanElapsed = 0
+				updateAutoExit()
+			end
+		end
+		if runtime.autoUnhookEnabled then
+			runtime.unhookScanElapsed += deltaTime
+			if runtime.unhookScanElapsed >= 0.2 then
+				runtime.unhookScanElapsed = 0
+				updateAutoUnhook()
+			end
+		end
 	end)
 	track(runService.RenderStepped, processAutoPerfect)
-	track(localPlayer.CharacterAdded, attachCharacter)
+	track(localPlayer.CharacterAdded, function(character)
+		stopAutoRepair()
+		stopAutoHeal()
+		stopAutoExit()
+		clearAutoUnhookState()
+		attachCharacter(character)
+	end)
 	if localPlayer.Character then attachCharacter(localPlayer.Character) end
 
 	function runtime:Cleanup()
 		if not runtime.alive then return end
 		stopAutoRepair()
+		stopAutoHeal()
+		stopAutoExit()
+		clearAutoUnhookState()
 		runtime.alive = false
 		clearConnections(runtime.connections)
 		restoreCurrentMovement()
@@ -1925,18 +2320,32 @@ function Pages.main(tab, features)
 	generator:AddToggle("Auto Generator", false, function(enabled)
 		features:SetAutoGeneratorEnabled(enabled)
 	end)
-	generator:AddSlider("Interaction Range", 5, 40, 18, 0, function(value)
+	generator:AddSlider("Interaction Range", 1, 4, 4, 0, function(value)
 		features:SetGeneratorRange(value)
 	end)
+	generator:AddNote("Range follows the source 4-stud generator check; beyond 3.5 studs it also requires a clear ray to the tagged point.", 52)
 	generator:AddToggle("Auto Perfect", false, function(enabled)
 		features:SetAutoPerfectEnabled(enabled)
 	end)
-	generator:AddNote("Auto Perfect tracks SkillCheckPromptGui.Check.Goal against Line and sends the configured skillcheck input at the white target.", 58)
+	generator:AddNote("Auto Perfect tracks SkillCheckPromptGui.Check.Goal against Line and sends the configured input when the moving line reaches the target.", 58)
 
-	local unsupported = tab:AddSection("Not wired from this dump", "right")
-	unsupported:AddNote("Killer attacks and kill automation need killer-specific argument callbacks; these are not universal in KillerActionController.", 66)
-	unsupported:AddNote("SkillCheckEvent / SkillCheckResultEvent exist, but their success callback and argument signature are not exposed; Auto Perfect deliberately uses the visible UI and normal input instead.", 72)
-	unsupported:AddNote("Auto escape, auto parry, stun/fall/slowdown bypass, dodge, and aimbot have no verified universal trigger in the reviewed source.", 66)
+	local support = tab:AddSection("Survivor Support", "right")
+	support:AddToggle("Auto Heal Nearby", false, function(enabled)
+		features:SetAutoHealEnabled(enabled)
+	end)
+	support:AddNote("Heals the nearest eligible player or source-tagged survivor bot using CanGetHealed, action/line-of-sight checks, and the verified HealEvent tuple within 5 studs.", 58)
+	support:AddToggle("Auto Rescue", false, function(enabled)
+		features:SetAutoUnhookEnabled(enabled)
+	end)
+	support:AddNote("Looks for the source UnhookPoint within 4 studs and calls UnHookEvent(point, character); follows the source 2-second action and 3-second cooldown.", 58)
+	support:AddToggle("Auto Exit Lever", false, function(enabled)
+		features:SetAutoExitEnabled(enabled)
+	end)
+	support:AddNote("Holds the confirmed LeverEvent start/stop tuple at a visible ExitPoint within 4 studs; releases when out of range or disabled.", 58)
+
+	local compatibility = tab:AddSection("Source Boundaries", "right")
+	compatibility:AddNote("Killer attacks need killer-specific prediction/context; no generic attack remote is wired.", 52)
+	compatibility:AddNote("Skill-check result remote arguments remain unconfirmed; Auto Perfect uses the visible UI and normal configured input.", 58)
 end
 
 function Pages.extra(tab, features)
@@ -1946,12 +2355,17 @@ function Pages.extra(tab, features)
 	speed:AddToggle("Jump Power", false, function(enabled) features:SetJumpEnabled(enabled) end)
 	speed:AddSlider("Jump Value", 25, 400, 60, 0, function(value) features:SetJumpValue(value) end)
 	local teleport = tab:AddSection("Quick Teleport", "right")
-	teleport:AddNote("Targets use the verified GeneratorPoint / HookPoint tags and Workspace.Map.Gate.ExitLever.Tp path.", 54)
+	teleport:AddNote("Targets use source-confirmed GeneratorPoint, HookPoint, UnhookPoint, VaultPoint, PalletPoint, PalletPointSlide and ExitPoint tags, plus the exit lever marker.", 62)
 	teleport:AddButton("Nearest Generator", function() features:TeleportToTaggedPoint("GeneratorPoint", "GeneratorPoint") end)
 	teleport:AddButton("Nearest Exit Gate", function() features:TeleportToExitGate() end)
 	teleport:AddButton("Nearest Hook", function() features:TeleportToTaggedPoint("HookPoint", "HookPoint") end)
+	teleport:AddButton("Nearest Rescue Point", function() features:TeleportToTaggedPoint("UnhookPoint", "UnhookPoint") end)
+	teleport:AddButton("Nearest Vault Point", function() features:TeleportToTaggedPoint("VaultPoint", "VaultPoint") end)
+	teleport:AddButton("Nearest Pallet Point", function() features:TeleportToTaggedPoint("PalletPoint", "PalletPoint") end)
+	teleport:AddButton("Nearest Pallet Slide", function() features:TeleportToTaggedPoint("PalletPointSlide", "PalletPointSlide") end)
+	teleport:AddButton("Nearest Exit Point", function() features:TeleportToTaggedPoint("ExitPoint", "ExitPoint") end)
 	local unsupported = tab:AddSection("Not wired from this dump", "left")
-	unsupported:AddNote("Noclip, fly, and infinite jump are omitted because the dump does not establish their behavior or lifecycle. Generator automation is on Main.", 62)
+	unsupported:AddNote("Noclip, fly, and infinite jump are omitted because the dump does not establish their behavior or lifecycle. Interaction automation lives on Main.", 62)
 end
 
 function Pages.visuals(tab, features)
@@ -1964,9 +2378,12 @@ function Pages.visuals(tab, features)
 	local object = tab:AddSection("Object ESP", "right")
 	object:AddToggle("Generator ESP", false, function(value) features:SetVisualOption("generator", value) end)
 	object:AddToggle("Hook ESP", false, function(value) features:SetVisualOption("hook", value) end)
+	object:AddToggle("Rescue Point ESP", false, function(value) features:SetVisualOption("unhook", value) end)
 	object:AddToggle("Nearest Hook Only", false, function(value) features:SetVisualOption("nearestHook", value) end)
 	object:AddToggle("Pallet ESP", false, function(value) features:SetVisualOption("pallet", value) end)
+	object:AddToggle("Pallet Slide ESP", false, function(value) features:SetVisualOption("palletSlide", value) end)
 	object:AddToggle("Window ESP", false, function(value) features:SetVisualOption("window", value) end)
+	object:AddToggle("Exit Point ESP", false, function(value) features:SetVisualOption("exitPoint", value) end)
 	object:AddToggle("Exit Gate ESP", false, function(value) features:SetVisualOption("exitGate", value) end)
 
 	local cyan = Color3.fromRGB(0, 200, 238)
@@ -1977,7 +2394,7 @@ function Pages.visuals(tab, features)
 	player:AddColor("Killer Color", { red, purple, magenta, cyan }, function(color) features:SetVisualColor("killerColor", color) end)
 	object:AddColor("Window Color", { magenta, cyan, red, purple }, function(color) features:SetVisualColor("windowColor", color) end)
 	object:AddSlider("ESP Max Distance", 100, 5000, 1000, 0, function(value) features:SetMaxDistance(value) end)
-	object:AddNote("Uses only source-confirmed teams, CollectionService tags, and the ExitLever map path. SCP and ExitPoint-tag ESP are omitted because their target paths/tags were not verified.", 64)
+	object:AddNote("Uses source-confirmed teams, interaction-point tags and the ExitLever map path. ESP targets are local outlines/labels and do not invoke gameplay remotes.", 56)
 end
 
 -- Profiles are session-local. Settings are stored in an owned PlayerGui folder.
