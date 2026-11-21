@@ -1,8 +1,8 @@
--- Violent | native, interactive Luau UI replica, designed at 1337 × 794.
--- All art, controls, and mock overlays are drawn in code. No external assets, image
--- payloads, gameplay logic, live scene reads, or hooks. State is session-local.
+-- Violent | standalone native Luau menu, with a transparent background.
+-- Controls only edit menu state. No game scene, player overlays, or gameplay logic.
 
-local W, H = 1337, 794
+local MENU_WIDTH, MENU_HEIGHT = 308, 513
+local EDITOR_WIDTH, EDITOR_GAP = 228, 12
 local RGB = Color3.fromRGB
 local WHITE = RGB(250, 250, 250)
 local INK = RGB(9, 8, 9)
@@ -42,24 +42,12 @@ local function stroke(parent, color, thickness)
     return create("UIStroke", parent, { Color = color, Thickness = thickness, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
 end
 
-local function gradient(parent, angle, stops)
-    local points = {}
-    for i, item in ipairs(stops) do points[i] = ColorSequenceKeypoint.new(item[1], item[2]) end
-    create("UIGradient", parent, { Color = ColorSequence.new(points), Rotation = angle })
-end
-
 local function line(parent, name, x1, y1, x2, y2, color, width, alpha)
     local dx, dy = x2 - x1, y2 - y1
     local frame = rect(parent, name, (x1+x2)/2, (y1+y2)/2, math.sqrt(dx*dx + dy*dy), width, color, alpha)
     frame.AnchorPoint = Vector2.new(0.5, 0.5)
     frame.Rotation = math.deg(math.atan2(dy, dx))
     return frame
-end
-
-local function rounded(parent, name, x, y, w, h, color, radius, alpha)
-    local f = rect(parent, name, x, y, w, h, color, alpha)
-    create("UICorner", f, { CornerRadius = UDim.new(0, radius) })
-    return f
 end
 
 local function chain(parent, name, points, width, color)
@@ -78,76 +66,6 @@ local function target(parent, name, x, y, w, h, callback)
     return button
 end
 
--- These visuals represent a fixed drawing, not an overlay that follows a player.
-local function healthRail(parent, height, topGap)
-    local rail = rect(parent, "Health rail", -2, -1, 5, height, RGB(18,10,15))
-    rail.AnchorPoint = Vector2.new(1,0)
-    local fill = rect(rail, "Health gradient", 1, topGap, 2, height-topGap, WHITE)
-    gradient(fill, 90, {{0,RGB(87,250,28)}, {0.42,RGB(213,236,19)}, {0.76,RGB(255,113,25)}, {1,RGB(252,34,47)}})
-    return rail, fill
-end
-
-local function demoBox(parent, x, y, w, h, gap)
-    local box = rect(parent, "Static demonstration box", x, y, w, h)
-    local aura = rect(box, "Outline decoration", 0, 0, w, h)
-    local outlineStrokes = {}
-    for i = 1, 9 do
-        local spread = i*2
-        local glow = rect(aura, "Glow layer", -spread, -spread, w+2*spread, h+2*spread)
-        local glowStroke = stroke(glow, RGB(193,12,209), 4)
-        glowStroke.Transparency = 0.89 + i*0.01
-        table.insert(outlineStrokes, glowStroke)
-    end
-    local wash = rect(box, "Highlight fill mock", 0, 0, w, h, WHITE, 0.7)
-    gradient(wash, 90, {{0,RGB(60,45,105)}, {1,RGB(179,45,224)}})
-    stroke(rect(box, "Static bounding box", 0, 0, w, h), RGB(24,12,23), 3)
-    local insetStroke = stroke(rect(aura, "Inset border", 3, 3, w-6, h-6), RGB(153,61,156), 1)
-    insetStroke.Transparency = 0.53
-    table.insert(outlineStrokes, insetStroke)
-    local rail, health = healthRail(box, h+2, gap)
-    return box, {aura=aura, strokes=outlineStrokes, wash=wash, rail=rail, health=health,
-        height=h+2, gap=gap, figures={}}
-end
-
-local function startBones(box, demo)
-    demo.bones = rect(box, "Sample skeleton", 0, 0, 0, 0)
-    return demo.bones
-end
-
-local function rememberFigure(demo, host, isBodyPart)
-    for _, child in ipairs(host:GetChildren()) do
-        if child:IsA("Frame") and child.BackgroundTransparency < 1 and isBodyPart(child.Name) then
-            table.insert(demo.figures, {frame=child, initial=child.BackgroundColor3})
-        end
-    end
-end
-
-local function applyDemo(demo, values)
-    demo.bones.Visible = values.skeleton
-    for _, bone in ipairs(demo.bones:GetChildren()) do
-        bone.BackgroundColor3 = values.boneColor
-        bone.Size = UDim2.fromOffset(bone.Size.X.Offset, values.boneWidth)
-    end
-    local fillOn = values.highlight and values.fill
-    demo.wash.Visible = fillOn
-    demo.wash.BackgroundColor3 = WHITE:Lerp(values.fillColor, 0.37)
-    demo.aura.Visible = values.highlight and values.outline
-    for _, edge in ipairs(demo.strokes) do
-        edge.Color = RGB(122,9,178):Lerp(values.outlineColor, 0.54)
-    end
-    for _, part in ipairs(demo.figures) do
-        local original = part.initial
-        local gray = (original.R + original.G + original.B)/3
-        local plain = Color3.new(gray, gray, gray)
-        local hue = values.fillColor
-        local tint = Color3.new(original.R*hue.R, original.G*hue.G, original.B*hue.B)
-        part.frame.BackgroundColor3 = fillOn and original:Lerp(tint, 0.25) or original:Lerp(plain, 0.86)
-    end
-    demo.rail.Visible = values.health
-    demo.rail.Size = UDim2.fromOffset(values.healthWidth+2, demo.height)
-    demo.health.Size = UDim2.fromOffset(values.healthWidth, demo.height-demo.gap)
-end
-
 local function logo(parent, text, x, y, w, h, size, centered)
     return label(parent, text, text, x, y, w, h, size, {
         font = DISPLAY_FONT, outline = true, align = centered and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left,
@@ -155,20 +73,20 @@ local function logo(parent, text, x, y, w, h, size, centered)
 end
 
 local rows = {
-    {id="skeleton",       text="Enable Skeleton",         y=134, kind="check", default=true},
-    {id="boneWidth",      text="Skeleton Thickness",      y=160, kind="value", default=1, min=0.5, max=5, step=0.5},
-    {id="boneColor",      text="Skeleton Color",          y=187, kind="color", default=RGB(255,255,255)},
-    {id="highlight",      text="Hightlight ESP",          y=241, kind="check", default=true},
-    {id="fill",           text="Hightlight Fill",         y=268, kind="check", default=true},
-    {id="outline",        text="Hightlight Outline",      y=295, kind="check", default=true},
-    {id="fillColor",      text="Hightlight Fill Color",   y=322, kind="color", default=RGB(255,0,234)},
-    {id="outlineColor",   text="Hightlight Outline Color",y=349, kind="color", default=PINK},
-    {id="health",         text="Show Health Bar",         y=403, kind="check", default=true},
-    {id="healthWidth",    text="Healt Bar Size",            y=430, kind="value", default=2.5, min=1, max=8, step=0.5},
+    {id="skeleton",       text="Enable Skeleton",         y=106, kind="check", default=true},
+    {id="boneWidth",      text="Skeleton Thickness",      y=132, kind="value", default=1, min=0.5, max=5, step=0.5},
+    {id="boneColor",      text="Skeleton Color",          y=159, kind="color", default=RGB(255,255,255)},
+    {id="highlight",      text="Hightlight ESP",          y=213, kind="check", default=true},
+    {id="fill",           text="Hightlight Fill",         y=240, kind="check", default=true},
+    {id="outline",        text="Hightlight Outline",      y=267, kind="check", default=true},
+    {id="fillColor",      text="Hightlight Fill Color",   y=294, kind="color", default=RGB(255,0,234)},
+    {id="outlineColor",   text="Hightlight Outline Color",y=321, kind="color", default=PINK},
+    {id="health",         text="Show Health Bar",         y=375, kind="check", default=true},
+    {id="healthWidth",    text="Healt Bar Size",            y=402, kind="value", default=2.5, min=1, max=8, step=0.5},
 }
 
 local function buildMenu(parent, actions)
-    local panel = rect(parent, "Violent settings", 27, 28, 308, 513, RGB(5,6,7), 0.27)
+    local panel = rect(parent, "Violent settings", 0, 0, MENU_WIDTH, MENU_HEIGHT, RGB(5,6,7), 0.27)
     local header = rect(panel, "Pink title banner", 0, 0, 308, 77, PINK)
     local title = logo(header, "VIOLENT", 0, 0, 308, 77, 44, true)
     create("UIStroke", title, {Color=INK, Thickness=2.4, ApplyStrokeMode=Enum.ApplyStrokeMode.Contextual})
@@ -177,7 +95,7 @@ local function buildMenu(parent, actions)
     local counter = label(category, "Position counter", "29/51", 238, 0, 62, 29, 14, {align=Enum.TextXAlignment.Right})
     local views = {}
     for index, spec in ipairs(rows) do
-        local row = rect(panel, spec.text, 0, spec.y-28, 308, 25, SELECTED, 1)
+        local row = rect(panel, spec.text, 0, spec.y, 308, 25, SELECTED, 1)
         local caption = label(row, "Caption", spec.text, 8, 0, 260, 24, 14)
         local view = {row=row, caption=caption}
         if spec.kind == "check" then
@@ -232,103 +150,6 @@ local function buildMenu(parent, actions)
     end
 end
 
-local function buildPreview(parent)
-    local panel = rect(parent, "ESP preview panel", 353, 27, 276, 316, RGB(1, 4, 7), 0.23)
-    rect(panel, "Fuchsia top border", 0, 0, 276, 5, RGB(223, 18, 124))
-    logo(panel, "ESP PREVIEW", 13, 10, 252, 30, 24)
-    for i, text in ipairs({"Roblox doesnt support highlights or selection boxes", "in viewportframes so previews arent possible on", "those options."}) do
-        label(panel, "Preview note " .. i, text, 13, 40+(i-1)*12, 259, 13, 10)
-    end
-    local rig, demo = demoBox(panel, 77, 103, 121, 195, 40)
-    rounded(rig, "Side-profile torso", 40, 53, 37, 75, RGB(143,111,157), 9, 0.19)
-    rounded(rig, "Side-profile head", 44, 21, 35, 42, RGB(158,140,163), 9, 0.17)
-    rounded(rig, "Side-profile arm", 37, 62, 13, 69, RGB(141,109,158), 4, 0.2)
-    rounded(rig, "Side-profile legs", 44, 116, 33, 67, RGB(134,89,162), 4, 0.24)
-    rememberFigure(demo, rig, function(name) return name:sub(1, 12) == "Side-profile" end)
-    local bones = startBones(rig, demo)
-    chain(bones, "Static white bones", {60,39, 60,68, 57,81, 56,113, 59,131, 59,172}, 1, WHITE)
-    chain(bones, "Static white bones", {62,67, 62,104, 63,121, 61,155}, 1, WHITE)
-    return demo
-end
-
--- Procedurally drawn baseplate and fixed sample avatars.
-local function buildScene(parent)
-    local sky = rect(parent, "Sky", 0, 0, W, 300, WHITE)
-    gradient(sky, 90, {{0, RGB(101,183,224)}, {1, RGB(167,213,222)}})
-    rounded(sky, "High cloud", 920, 8, 68, 15, RGB(203,227,227), 7, 0.7)
-    rounded(sky, "Low cloud", 1109, 150, 160, 10, RGB(187,222,230), 5, 0.78)
-    local ground = rect(parent, "Baseplate", 0, 289, W, 505, WHITE)
-    gradient(ground, 90, {{0, RGB(121,119,121)}, {1, RGB(99,97,98)}})
-    for r = 0, 28 do
-        local t = r/28
-        local y = 2 + 490 * t^2.65
-        local pitch = 11 + 36*t^1.8
-        for c = -40, 40 do
-            local x = 719 + c*pitch + (r%2)*pitch*0.45
-            if x > 9 and x < W-9 then
-                local stud = rect(ground, "Stud", x, y, 1.6 + 14*t^2, 0.7 + 7.7*t^2, RGB(129,126,129), 0.24)
-                stud.AnchorPoint = Vector2.new(0.5, 0.5)
-                stud.Rotation = -10 + (x-720)/37
-                stroke(stud, RGB(50,47,49), 0.5 + 0.6*t).Transparency = 0.37
-            end
-        end
-    end
-    local function shadow(x, y, w)
-        rounded(parent, "Soft shadow", x, y, w, 19, RGB(37,32,36), 12, 0.49).Rotation = -16
-    end
-    shadow(658,623,112)
-    shadow(892,550,98)
-    local main, demo = demoBox(parent, 665, 416, 132, 212, 0)
-    label(parent, "Static name tag", "femboy", 665, 390, 124, 21, 14, {align = Enum.TextXAlignment.Center})
-    local function limb(host, name, x1, y1, x2, y2, color, width)
-        local part = line(host, name, x1, y1, x2, y2, color, width)
-        create("UICorner", part, {CornerRadius = UDim.new(0, 5)})
-    end
-    local plum, orchid = RGB(143,37,166), RGB(206,61,188)
-    rounded(main, "Pink avatar torso", 38, 58, 49, 65, plum, 10, 0.12)
-    rounded(main, "Pink avatar head", 42, 25, 40, 36, RGB(220,85,187), 9, 0.07)
-    rounded(main, "Magenta hair", 34, 15, 56, 32, RGB(234,54,171), 14, 0.1)
-    rounded(main, "Tinted glasses", 42, 42, 43, 10, RGB(101,31,136), 4, 0.12)
-    limb(main, "Left arm", 38,70, 29,134, orchid, 15)
-    limb(main, "Right upper arm", 84,68, 105,87, orchid, 14)
-    limb(main, "Right lower arm", 104,87, 92,110, orchid, 14)
-    limb(main, "Left leg", 53,114, 53,184, plum, 18)
-    limb(main, "Right leg", 67,114, 90,181, plum, 17)
-    rounded(main, "Pink left shoe", 47, 181, 21, 19, orchid, 7)
-    rounded(main, "Pink right shoe", 83, 173, 16, 18, orchid, 7)
-    rememberFigure(demo, main, function(name)
-        return name:sub(1, 4) == "Pink" or name:sub(1, 4) == "Left" or name:sub(1, 5) == "Right"
-            or name == "Magenta hair" or name == "Tinted glasses"
-    end)
-    local bones = startBones(main, demo)
-    for _, path in ipairs({{63,45,65,89,66,114}, {31,128,32,96,35,83,65,89,94,73,101,86,95,98}, {55,183,59,140,66,114,78,138,89,173}}) do
-        chain(bones, "Static white bones", path, 1, WHITE)
-    end
-    line(parent, "Static tracer from sample", 732, 629, 850, 794, WHITE, 1, 0.1)
-    line(parent, "Cropped static tracer", 0, 736, 249, 794, WHITE, 1, 0.12)
-    local other = rect(parent, "Bystander cutout", 903, 397, 95, 161)
-    local jacket, skin, pants = RGB(24,24,27), RGB(171,161,152), RGB(31,30,30)
-    rounded(other, "Head", 28, 16, 31, 33, skin, 7)
-    for n = 0, 4 do
-        rounded(other, "Bacon hair curl", 22+n*7, 5+(n%2)*3, 13, 26, n%2==0 and RGB(134,81,35) or RGB(95,50,22), 6).Rotation = -32+n*13
-    end
-    rect(other, "Eye", 38, 31, 2, 4, INK)
-    rect(other, "Eye", 48, 30, 2, 4, INK)
-    chain(other, "Smile", {39,39, 43,42, 48,40}, 1, INK)
-    rect(other, "Jacket", 22, 49, 46, 57, jacket)
-    rect(other, "Blue shirt", 34, 51, 21, 52, RGB(1,92,143))
-    limb(other, "Left sleeve", 21,55, 11,87, jacket, 18)
-    limb(other, "Right sleeve", 70,54, 83,83, jacket, 19)
-    limb(other, "Left hand", 10,89, 11,104, skin, 14)
-    limb(other, "Right hand", 83,84, 88,102, skin, 14)
-    limb(other, "Left leg", 35,105, 30,146, pants, 19)
-    limb(other, "Right leg", 54,105, 64,145, pants, 20)
-    rounded(other, "Left shoe", 18, 142, 20, 13, WHITE, 6)
-    rounded(other, "Right shoe", 52, 142, 22, 13, WHITE, 6)
-    return demo
-end
-
-
 local function button(parent, name, text, x, y, width, height, onClick)
     local tile = rect(parent, name .. " background", x, y, width, height, RGB(45,36,43))
     local caption = label(tile, "Label", text, 0, 0, width, height, 13, {align=Enum.TextXAlignment.Center})
@@ -346,8 +167,9 @@ local palette = {
 }
 
 local function buildEditor(parent, actions)
-    local popup = rect(parent, "Value and color editor", 347, 349, 228, 151, RGB(20,16,20))
+    local popup = rect(parent, "Value and color editor", 0, 0, EDITOR_WIDTH, 151, RGB(20,16,20))
     popup.ZIndex = 5
+    popup.Active = true
     popup.Visible = false
     stroke(popup, RGB(110,47,86), 1)
     rect(popup, "Pink accent", 0, 0, 228, 3, PINK)
@@ -383,6 +205,12 @@ local function buildEditor(parent, actions)
     local number = label(numeric, "Current number", "", 58, 4, 112, 28, 17, {align=Enum.TextXAlignment.Center})
     button(numeric, "Increase", "+", 175, 4, 43, 28, function() actions.step(1) end)
     local range = label(numeric, "Range", "", 10, 36, 208, 18, 11, {align=Enum.TextXAlignment.Center})
+    local function positionEditor()
+        local docked = parent.Size.X.Offset >= MENU_WIDTH + EDITOR_GAP + EDITOR_WIDTH
+        local x = docked and (MENU_WIDTH + EDITOR_GAP) or (MENU_WIDTH - EDITOR_WIDTH) / 2
+        popup.Position = UDim2.fromOffset(x, popup.Position.Y.Offset)
+    end
+    parent:GetPropertyChangedSignal("Size"):Connect(positionEditor)
     return function(spec, value)
         popup.Visible = spec ~= nil
         if not spec then return end
@@ -390,8 +218,9 @@ local function buildEditor(parent, actions)
         heading.Text = spec.text
         colorPage.Visible, numeric.Visible = isColor, not isColor
         local height = isColor and 151 or 96
-        popup.Size = UDim2.fromOffset(228, height)
-        popup.Position = UDim2.fromOffset(347, math.min(spec.y, H-height-12))
+        popup.Size = UDim2.fromOffset(EDITOR_WIDTH, height)
+        popup.Position = UDim2.fromOffset(0, math.min(spec.y, MENU_HEIGHT-height-12))
+        positionEditor()
         if isColor then
             local formatted = colorHex(value)
             if hex.Text ~= formatted then hex.Text = formatted end
@@ -403,15 +232,13 @@ local function buildEditor(parent, actions)
     end
 end
 
--- All state belongs to the demo menu. The only render targets are ScreenGui descendants.
-local function runDemo(canvas, screen)
+-- All state belongs to the menu; controls do not affect the experience.
+local function runMenu(canvas, screen)
     local values = {}
     for _, spec in ipairs(rows) do values[spec.id] = spec.default end
     local selected, editing = 8, nil
     local actions = {}
-    local scene = buildScene(canvas)
     local drawMenu = buildMenu(canvas, actions)
-    local inset = buildPreview(canvas)
     local drawEditor
 
     local function render(message)
@@ -422,8 +249,6 @@ local function runDemo(canvas, screen)
             else message = "Set color to: " .. spec.text end
         end
         drawMenu(values, selected, message)
-        applyDemo(scene, values)
-        applyDemo(inset, values)
         local editorSpec = editing and rows[editing]
         drawEditor(editorSpec, editorSpec and values[editorSpec.id])
     end
@@ -489,30 +314,33 @@ local function mount()
         warn("Violent replica: local PlayerGui is not available.")
         return
     end
-    local screenName = "ViolentScreenshotReplica"
+    local screenName = "ViolentScreenshotReplica" -- reused to replace older copies
     local old = root:FindFirstChild(screenName)
     if old and old:IsA("ScreenGui") and old:GetAttribute("ViolentReplicaOwned") == true then old:Destroy() end
     local screen = create("ScreenGui", nil, {
         Name = screenName, ResetOnSpawn = false, DisplayOrder = 40,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     })
-    screen.IgnoreGuiInset = true
-    screen.ScreenInsets = Enum.ScreenInsets.None
-    screen.ClipToDeviceSafeArea = false
     screen:SetAttribute("ViolentReplicaOwned", true)
-    local viewport = rect(screen, "Viewport", 0, 0, 0, 0, RGB(9,10,12))
+    local viewport = rect(screen, "Transparent viewport", 0, 0, 0, 0)
     viewport.Size = UDim2.fromScale(1, 1)
-    local canvas = rect(viewport, "Reference canvas", 0, 0, W, H)
-    canvas.AnchorPoint = Vector2.new(0.5, 0.5)
-    canvas.Position = UDim2.fromScale(0.5, 0.5)
-    canvas.ClipsDescendants = true
+    local canvas = rect(viewport, "Violent controls", 0, 0, MENU_WIDTH, MENU_HEIGHT)
     local scale = create("UIScale", canvas, {Scale = 1})
     local function fit()
         local size = viewport.AbsoluteSize
-        if size.X > 0 and size.Y > 0 then scale.Scale = math.min(size.X/W, size.Y/H) end
+        if size.X < 24 or size.Y < 24 then return end
+        local left = size.X < 380 and 8 or 27
+        local top = 12
+        local usableWidth = size.X - left - 8
+        local factor = math.min(1, usableWidth/MENU_WIDTH, (size.Y-top-8)/MENU_HEIGHT)
+        local dockedWidth = MENU_WIDTH + EDITOR_GAP + EDITOR_WIDTH
+        local docked = usableWidth >= dockedWidth * factor
+        canvas.Position = UDim2.fromOffset(left, top)
+        canvas.Size = UDim2.fromOffset(docked and dockedWidth or MENU_WIDTH, MENU_HEIGHT)
+        scale.Scale = factor
     end
     viewport:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
-    runDemo(canvas, screen)
+    runMenu(canvas, screen)
     screen.Parent = root
     fit()
 end
