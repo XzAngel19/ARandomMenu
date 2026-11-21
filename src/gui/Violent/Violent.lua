@@ -536,19 +536,33 @@ local Controls = (function()
             Parent = row,
         })
         Util.Stroke(box, Theme.CheckBorder, 1)
-        local check: TextLabel = Util.Create("TextLabel", {
+        -- Checkmark drawn as two rotated bars (font-safe, no unicode glyph dependency).
+        local check: Frame = Util.Create("Frame", {
+            Name = "Check",
             BackgroundTransparency = 1,
             BorderSizePixel = 0,
-            Font = Theme.FontBodyBold,
             Size = UDim2.new(1, 0, 1, 0),
-            Text = "✓",
-            TextColor3 = Color3.fromRGB(255, 255, 255),
-            TextSize = 14,
-            TextXAlignment = Enum.TextXAlignment.Center,
-            TextYAlignment = Enum.TextYAlignment.Center,
             Visible = value,
             ZIndex = 4,
             Parent = box,
+        })
+        Util.Create("Frame", {
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 3, 0.5, -1),
+            Rotation = 45,
+            Size = UDim2.fromOffset(6, 2),
+            ZIndex = 5,
+            Parent = check,
+        })
+        Util.Create("Frame", {
+            BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+            BorderSizePixel = 0,
+            Position = UDim2.new(0, 6, 0.5, -2),
+            Rotation = -45,
+            Size = UDim2.fromOffset(11, 2),
+            ZIndex = 5,
+            Parent = check,
         })
         local function setValue(newValue: boolean)
             value = newValue
